@@ -831,6 +831,19 @@ fn lang_name(lang: Lang) -> &'static str {
     }
 }
 
+/// Status-line tag for a file. Falls through to (lang_icon, lang_name) by
+/// default, but overrides the label by extension where needed — .cshtml and
+/// .razor both highlight as HTML internally but should announce as "razor".
+fn lang_label(path: Option<&std::path::Path>, lang: Lang) -> (char, &'static str) {
+    if let Some(ext) = path.and_then(|p| p.extension()).and_then(|e| e.to_str()) {
+        match ext {
+            "cshtml" | "razor" => return ('\u{f81a}', "razor"),
+            _ => {}
+        }
+    }
+    (lang_icon(lang), lang_name(lang))
+}
+
 fn truncate_left(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count <= max || max == 0 {
@@ -873,9 +886,13 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
         .map(|b| format!(" {} {} ", NF_BRANCH, b))
         .unwrap_or_default();
     let dirty = if app.buffer.dirty { " " } else { " " };
-    let lang = app.buffer.path.as_deref().and_then(Lang::detect);
+    let path = app.buffer.path.as_deref();
+    let lang = path.and_then(Lang::detect);
     let right_text = match lang {
-        Some(l) => format!(" {} {} ", lang_icon(l), lang_name(l)),
+        Some(l) => {
+            let (icon, name) = lang_label(path, l);
+            format!(" {} {} ", icon, name)
+        }
         None => String::new(),
     };
 
