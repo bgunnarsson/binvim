@@ -51,6 +51,7 @@ pub enum LspEvent {
     GotoDef { path: PathBuf, line: usize, col: usize },
     Hover { text: String },
     Completion { items: Vec<CompletionItem> },
+    DiagnosticsUpdated,
     NotFound(&'static str),
 }
 
@@ -383,8 +384,9 @@ impl LspManager {
                 }
             }
         }
-        // Caller can re-render whenever diagnostics arrive even without a code event.
-        let _ = diagnostics_changed;
+        if diagnostics_changed {
+            events.push(LspEvent::DiagnosticsUpdated);
+        }
         events
     }
 

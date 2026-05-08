@@ -6,14 +6,14 @@ use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
     queue,
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
-    terminal::{Clear, ClearType},
+    terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
 };
 use std::io::Write;
 
 const TAB_WIDTH: usize = 4;
 
 pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
-    queue!(out, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
+    queue!(out, BeginSynchronizedUpdate, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
     draw_buffer(out, app)?;
     draw_status_line(out, app)?;
     draw_command_line(out, app)?;
@@ -24,6 +24,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         draw_completion_popup(out, app)?;
     }
     place_cursor(out, app)?;
+    queue!(out, EndSynchronizedUpdate)?;
     Ok(())
 }
 

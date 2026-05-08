@@ -163,18 +163,26 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         let _guard = TerminalGuard::enable()?;
         let mut stdout = io::stdout();
-        // Bootstrap LSP for the file we were started with.
         self.lsp_attach_active();
+        let mut needs_render = true;
         while !self.should_quit {
-            self.adjust_viewport();
-            self.ensure_highlights();
-            let events = self.lsp.drain();
-            self.handle_lsp_events(events);
-            self.lsp_sync_active();
-            render::draw(&mut stdout, self)?;
-            stdout.flush()?;
+            if needs_render {
+                self.adjust_viewport();
+                self.ensure_highlights();
+                self.lsp_sync_active();
+                render::draw(&mut stdout, self)?;
+                stdout.flush()?;
+                needs_render = false;
+            }
+            // Block for input up to 100 ms; wake early if LSP traffic arrives via Resize/Key events.
             if crossterm::event::poll(Duration::from_millis(100))? {
                 self.handle_event()?;
+                needs_render = true;
+            }
+            let events = self.lsp.drain();
+            if !events.is_empty() {
+                self.handle_lsp_events(events);
+                needs_render = true;
             }
         }
         Ok(())
@@ -203,6 +211,7 @@ impl App {
                         .to_string();
                     self.status_msg = summary;
                 }
+                LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
                     self.status_msg = format!("LSP: no {kind} found");
                     if kind == "completions" {
