@@ -51,6 +51,10 @@ pub struct BufferStash {
     pub marks: HashMap<char, (usize, usize)>,
     pub jumplist: Vec<(usize, usize)>,
     pub jump_idx: usize,
+    /// Per-buffer syntax-highlight cache. Stashed alongside the buffer so a
+    /// switch doesn't leave the previous file's byte-color array pointing at
+    /// the new file's contents (which would render as scrambled colours).
+    pub highlight_cache: Option<HighlightCache>,
 }
 
 #[derive(Debug, Clone)]
@@ -360,15 +364,9 @@ impl App {
                 }
                 None => Duration::from_millis(100),
             };
-            // Process every input event currently queued before touching the
-            // LSP backlog — guarantees mouse-drag bursts and keystrokes never
-            // wait behind a `drain()` call.
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
-                while crossterm::event::poll(Duration::from_millis(0))? {
-                    self.handle_event()?;
-                }
             }
             // Prefix timeout fired? Open the matching which-key popup.
             if let Some(t) = self.leader_pressed_at {
@@ -2504,6 +2502,7 @@ impl App {
             marks: std::mem::take(&mut self.marks),
             jumplist: std::mem::take(&mut self.jumplist),
             jump_idx: std::mem::take(&mut self.jump_idx),
+            highlight_cache: self.highlight_cache.take(),
         }
     }
 
@@ -2516,6 +2515,7 @@ impl App {
         self.marks = stash.marks;
         self.jumplist = stash.jumplist;
         self.jump_idx = stash.jump_idx;
+        self.highlight_cache = stash.highlight_cache;
     }
 
     fn switch_to(&mut self, idx: usize) -> Result<()> {
