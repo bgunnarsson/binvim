@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 
 use crate::buffer::Buffer;
-use crate::command::{self, ExCommand};
+use crate::command::{self, ExCommand, ExRange};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
 use crate::motion::{self, MotionKind, MotionResult};
@@ -333,6 +333,22 @@ impl App {
                 if let Err(e) = self.switch_buffer_by_spec(&spec) {
                     self.status_msg = format!("error: {e}");
                 }
+            }
+            ExCommand::Substitute { range, pattern, replacement, global } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                let n = self.substitute(range, &pattern, &replacement, global);
+                self.status_msg = if n == 0 {
+                    format!("Pattern not found: {pattern}")
+                } else {
+                    format!("{n} substitution{}", if n == 1 { "" } else { "s" })
+                };
+            }
+            ExCommand::DeleteRange { range } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.delete_lines(range);
+            }
+            ExCommand::YankRange { range } => {
+                self.yank_lines(range);
             }
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
@@ -1600,6 +1616,124 @@ impl App {
             self.active -= 1;
         }
         Ok(())
+    }
+
+    /// Resolve an `ExRange` to a 0-based inclusive `(start_line, end_line)` pair,
+    /// clamped to the current buffer's bounds.
+    fn resolve_range(&self, range: ExRange, default_current: bool) -> (usize, usize) {
+        let last = self.buffer.line_count().saturating_sub(1);
+        match range {
+            ExRange::Implicit => {
+                if default_current {
+                    (self.cursor.line, self.cursor.line)
+                } else {
+                    (0, last)
+                }
+            }
+            ExRange::Whole => (0, last),
+            ExRange::Single(n) => {
+                let line = n.saturating_sub(1).min(last);
+                (line, line)
+            }
+            ExRange::Lines(a, b) => {
+                let a = a.saturating_sub(1).min(last);
+                let b = b.saturating_sub(1).min(last);
+                if a <= b { (a, b) } else { (b, a) }
+            }
+        }
+    }
+
+    fn substitute(&mut self, range: ExRange, pat: &str, repl: &str, global: bool) -> usize {
+        if pat.is_empty() {
+            return 0;
+        }
+        let (l1, l2) = self.resolve_range(range, true);
+        let mut total = 0usize;
+        // Iterate bottom-up so edits to lower lines don't shift higher line indices.
+        for line in (l1..=l2).rev() {
+            let line_len = self.buffer.line_len(line);
+            if line_len == 0 {
+                continue;
+            }
+            let line_start = self.buffer.line_start_idx(line);
+            let line_text: String = self
+                .buffer
+                .rope
+                .slice(line_start..(line_start + line_len))
+                .to_string();
+            let (new_text, n) = if global {
+                let count = line_text.matches(pat).count();
+                (line_text.replace(pat, repl), count)
+            } else if line_text.contains(pat) {
+                (line_text.replacen(pat, repl, 1), 1)
+            } else {
+                (line_text.clone(), 0)
+            };
+            if n > 0 {
+                self.buffer.delete_range(line_start, line_start + line_len);
+                self.buffer.insert_at_idx(line_start, &new_text);
+                total += n;
+            }
+        }
+        if total > 0 {
+            self.cursor.line = l1;
+            self.cursor.col = 0;
+            self.cursor.want_col = 0;
+            self.clamp_cursor_normal();
+        }
+        total
+    }
+
+    fn delete_lines(&mut self, range: ExRange) {
+        let (l1, l2) = self.resolve_range(range, true);
+        let last_line = self.buffer.line_count().saturating_sub(1);
+        let start = self.buffer.line_start_idx(l1);
+        let end = self.buffer.line_start_idx(l2 + 1);
+        let total = self.buffer.total_chars();
+        let extend_back = end == total && l1 > 0;
+        let effective_start = if extend_back { start - 1 } else { start };
+        let raw = self
+            .buffer
+            .rope
+            .slice(effective_start..end)
+            .to_string();
+        let reg_text = if extend_back {
+            let mut s = raw[1..].to_string();
+            if !s.ends_with('\n') {
+                s.push('\n');
+            }
+            s
+        } else if !raw.ends_with('\n') {
+            let mut s = raw.clone();
+            s.push('\n');
+            s
+        } else {
+            raw
+        };
+        self.write_register(None, reg_text, true);
+        self.buffer.delete_range(effective_start, end);
+        let new_last = self.buffer.line_count().saturating_sub(1);
+        self.cursor.line = l1.min(new_last);
+        self.cursor.col = 0;
+        self.cursor.want_col = 0;
+        self.status_msg = format!("{} lines deleted", l2 - l1 + 1);
+        let _ = last_line;
+    }
+
+    fn yank_lines(&mut self, range: ExRange) {
+        let (l1, l2) = self.resolve_range(range, true);
+        let start = self.buffer.line_start_idx(l1);
+        let end = self.buffer.line_start_idx(l2 + 1);
+        let raw = self.buffer.rope.slice(start..end).to_string();
+        let reg_text = if !raw.ends_with('\n') {
+            let mut s = raw.clone();
+            s.push('\n');
+            s
+        } else {
+            raw
+        };
+        self.write_yank_register(None, reg_text, true);
+        self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
     }
 
     fn list_buffers(&self) -> String {
