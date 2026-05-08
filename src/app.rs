@@ -73,8 +73,16 @@ pub struct CompletionState {
 }
 
 pub struct HoverState {
+    /// Word-wrapped display lines.
     pub lines: Vec<String>,
+    /// First visible line index when scrolling.
+    pub scroll: usize,
+    /// Width the lines were wrapped to.
+    pub wrap_width: usize,
 }
+
+pub const HOVER_MAX_HEIGHT: usize = 15;
+pub const HOVER_MAX_WIDTH: usize = 80;
 
 /// A which-key style helper. Shown after the user holds a prefix (currently leader) for
 /// `WHICHKEY_DELAY` without resolving it.
@@ -106,15 +114,17 @@ fn buffer_prefix_entries() -> Vec<(String, String)> {
 }
 
 impl HoverState {
-    pub fn from_lsp_text(text: &str) -> Option<Self> {
-        let lines: Vec<String> = text
+    pub fn from_lsp_text(text: &str, term_width: usize) -> Option<Self> {
+        let stripped: Vec<String> = text
             .lines()
             .filter(|line| !is_code_fence(line))
             .map(|s| s.trim_end().to_string())
             .collect();
-        // Trim leading/trailing blank lines.
-        let start = lines.iter().position(|l| !l.trim().is_empty()).unwrap_or(lines.len());
-        let end = lines
+        let start = stripped
+            .iter()
+            .position(|l| !l.trim().is_empty())
+            .unwrap_or(stripped.len());
+        let end = stripped
             .iter()
             .rposition(|l| !l.trim().is_empty())
             .map(|i| i + 1)
@@ -122,9 +132,29 @@ impl HoverState {
         if start >= end {
             return None;
         }
-        Some(HoverState {
-            lines: lines[start..end].to_vec(),
-        })
+        let wrap_width = HOVER_MAX_WIDTH.min(term_width.saturating_sub(8).max(20));
+        let mut lines = Vec::new();
+        for raw in &stripped[start..end] {
+            if raw.is_empty() {
+                lines.push(String::new());
+            } else {
+                lines.extend(wrap_line(raw, wrap_width));
+            }
+        }
+        if lines.is_empty() {
+            return None;
+        }
+        Some(HoverState { lines, scroll: 0, wrap_width })
+    }
+
+    pub fn max_scroll(&self, visible: usize) -> usize {
+        self.lines.len().saturating_sub(visible)
+    }
+
+    pub fn scroll_by(&mut self, delta: i64, visible: usize) {
+        let max = self.max_scroll(visible);
+        let new = (self.scroll as i64 + delta).clamp(0, max as i64);
+        self.scroll = new as usize;
     }
 }
 
@@ -136,6 +166,67 @@ fn is_code_fence(line: &str) -> bool {
     t.chars()
         .skip(3)
         .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.')
+}
+
+/// Word-wrap a single line. Hard-breaks tokens longer than the width.
+fn wrap_line(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_string()];
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut current_len = 0usize;
+    for word in line.split(' ') {
+        if word.is_empty() {
+            if current_len < width && !current.is_empty() {
+                current.push(' ');
+                current_len += 1;
+            }
+            continue;
+        }
+        let word_len = word.chars().count();
+        if word_len > width {
+            if !current.is_empty() {
+                out.push(std::mem::take(&mut current));
+                current_len = 0;
+            }
+            let chars: Vec<char> = word.chars().collect();
+            for chunk in chars.chunks(width) {
+                let s: String = chunk.iter().collect();
+                if s.chars().count() == width {
+                    out.push(s);
+                } else {
+                    current = s;
+                    current_len = current.chars().count();
+                }
+            }
+            continue;
+        }
+        let need = if current.is_empty() {
+            word_len
+        } else {
+            current_len + 1 + word_len
+        };
+        if need <= width {
+            if !current.is_empty() {
+                current.push(' ');
+                current_len += 1;
+            }
+            current.push_str(word);
+            current_len += word_len;
+        } else {
+            out.push(std::mem::take(&mut current));
+            current.push_str(word);
+            current_len = word_len;
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
 }
 
 pub struct App {
