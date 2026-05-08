@@ -1128,6 +1128,7 @@ impl App {
             ExCommand::NoHighlight => {
                 self.search_hl_off = true;
             }
+            ExCommand::Format => self.format_active(),
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
                 self.cursor = m.target;
@@ -2583,6 +2584,39 @@ impl App {
         self.refresh_git_branch();
         self.refresh_editorconfig();
         Ok(())
+    }
+
+    /// Pipe the active buffer through the configured formatter for its
+    /// extension (currently biome for ts/tsx/js/jsx/json) and replace the
+    /// contents in place. Records an undo entry first; clamps the cursor into
+    /// the (possibly-shorter) result.
+    fn format_active(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "format: buffer has no file path".into();
+            return;
+        };
+        let source = self.buffer.rope.to_string();
+        match crate::format::format_buffer(&path, &source) {
+            Ok(formatted) => {
+                if formatted == source {
+                    self.status_msg = "already formatted".into();
+                    return;
+                }
+                self.history.record(&self.buffer.rope, self.cursor);
+                let total = self.buffer.total_chars();
+                self.buffer.delete_range(0, total);
+                self.buffer.insert_at_idx(0, &formatted);
+                let last_line = self.buffer.line_count().saturating_sub(1);
+                if self.cursor.line > last_line {
+                    self.cursor.line = last_line;
+                }
+                self.clamp_cursor_normal();
+                self.status_msg = "formatted".into();
+            }
+            Err(msg) => {
+                self.status_msg = format!("format: {msg}");
+            }
+        }
     }
 
     /// Apply on-save transforms (`trim_trailing_whitespace`, `insert_final_newline`)

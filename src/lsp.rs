@@ -347,7 +347,7 @@ pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
 /// Walk up from `start` looking for `node_modules/.bin/<name>`. Returns the
 /// first match (the closest one to the file). Used for tools like biome that
 /// don't support global installs.
-fn find_node_modules_bin(start: &Path, name: &str) -> Option<String> {
+pub fn find_node_modules_bin(start: &Path, name: &str) -> Option<String> {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     let mut dir: &Path = canon.as_path();
     loop {

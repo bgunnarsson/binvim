@@ -8,6 +8,7 @@ mod command;
 mod config;
 mod cursor;
 mod editorconfig;
+mod format;
 mod lang;
 mod lsp;
 mod mode;

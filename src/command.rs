@@ -16,6 +16,7 @@ pub enum ExCommand {
     DeleteRange { range: ExRange },
     YankRange { range: ExRange },
     NoHighlight,
+    Format,
     Unknown(String),
 }
 
@@ -86,6 +87,7 @@ pub fn parse(line: &str) -> ExCommand {
         "ls" | "buffers" => ExCommand::BufferList,
         "b" | "buffer" => ExCommand::BufferSwitch(rest.to_string()),
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
+        "fmt" | "format" => ExCommand::Format,
         _ => ExCommand::Unknown(line.to_string()),
     }
 }
