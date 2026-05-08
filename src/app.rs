@@ -410,9 +410,13 @@ impl App {
                 }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
-                    self.status_msg = format!("LSP: no {kind} found");
                     if kind == "completions" {
+                        // Auto-trigger fires on every keystroke; silently dismiss
+                        // when the server has nothing to offer instead of spamming
+                        // the status line.
                         self.completion = None;
+                    } else {
+                        self.status_msg = format!("LSP: no {kind} found");
                     }
                 }
                 LspEvent::Completion { items } => {
@@ -851,6 +855,11 @@ impl App {
                     self.cursor.col += 1;
                     self.cursor.want_col = self.cursor.col;
                 }
+                // Auto-trigger completion on identifier and member-access chars.
+                // Skipped during macro replay so playback doesn't spam LSP requests.
+                if !self.replaying && is_completion_trigger(c) {
+                    self.lsp_request_completion();
+                }
             }
             KeyCode::Enter => {
                 self.buffer
@@ -860,6 +869,7 @@ impl App {
                 self.cursor.want_col = 0;
             }
             KeyCode::Backspace => {
+                let popup_was_open = self.completion.is_some();
                 if self.cursor.col > 0 {
                     // If the cursor sits between an auto-inserted pair like {|},
                     // wipe out both characters in one stroke.
@@ -886,6 +896,9 @@ impl App {
                     self.cursor.line = prev;
                     self.cursor.col = prev_len;
                     self.cursor.want_col = prev_len;
+                }
+                if popup_was_open && !self.replaying {
+                    self.lsp_request_completion();
                 }
             }
             KeyCode::Tab => {
@@ -937,7 +950,9 @@ impl App {
     }
 
     /// Return `true` if the key was handled by the completion popup (cycle / accept / dismiss).
-    /// Otherwise close the popup and let the normal insert handler process the key.
+    /// Otherwise let the normal insert handler process the key — and for typing or
+    /// backspace inside an identifier, leave the popup open so it refreshes after
+    /// the edit (the auto-trigger in `handle_insert_key` re-fires the request).
     fn handle_insert_key_with_completion(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Esc => {
@@ -970,6 +985,16 @@ impl App {
                     false
                 }
             },
+            // Typing an identifier/trigger char: keep popup open; the main handler
+            // inserts the char and the auto-trigger refreshes the completion list.
+            KeyCode::Char(c)
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && is_completion_trigger(c) =>
+            {
+                false
+            }
+            // Backspace inside the popup: refresh, don't dismiss.
+            KeyCode::Backspace => false,
             _ => {
                 self.completion = None;
                 false
@@ -3055,6 +3080,14 @@ fn open_pair_for(c: char) -> Option<char> {
 
 fn is_close_char(c: char) -> bool {
     matches!(c, ')' | ']' | '}' | '\'' | '"' | '`')
+}
+
+/// Characters that should re-fire `textDocument/completion` after being inserted.
+/// Identifier chars catch the typing-a-name case; the symbol set covers the
+/// trigger characters servers care about most: member access (`.`), Rust paths
+/// (`:`), Razor/decorator anchors (`@`), and JSX/HTML opens (`<`).
+fn is_completion_trigger(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<')
 }
 
 /// Decide whether to auto-pair when typing `c` at `(line, col)`. Quotes/backticks
