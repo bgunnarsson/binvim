@@ -1346,16 +1346,33 @@ impl App {
             _ => return,
         };
         // Indent / outdent take only the line span and ignore column boundaries.
+        // Crucially, keep the selection alive afterwards so the user can keep
+        // hammering > / < to indent further without re-selecting.
         if matches!(op, Operator::Indent | Operator::Outdent) {
             let anchor = self.visual_anchor.unwrap_or(self.cursor);
-            let l1 = anchor.line.min(self.cursor.line);
-            let l2 = anchor.line.max(self.cursor.line);
+            let saved_anchor_line = anchor.line;
+            let saved_anchor_col = anchor.col;
+            let saved_cursor_line = self.cursor.line;
+            let saved_cursor_col = self.cursor.col;
+            let l1 = saved_anchor_line.min(saved_cursor_line);
+            let l2 = saved_anchor_line.max(saved_cursor_line);
             if matches!(op, Operator::Indent) {
                 self.indent_lines(l1, l2);
             } else {
                 self.outdent_lines(l1, l2);
             }
-            self.exit_visual();
+            // Restore the selection: same lines, columns clamped to whatever the
+            // shift left of them. The line range is what matters for indent.
+            let anchor_max = self.buffer.line_len(saved_anchor_line).saturating_sub(1);
+            let cursor_max = self.buffer.line_len(saved_cursor_line).saturating_sub(1);
+            self.visual_anchor = Some(Cursor {
+                line: saved_anchor_line,
+                col: saved_anchor_col.min(anchor_max),
+                want_col: saved_anchor_col.min(anchor_max),
+            });
+            self.cursor.line = saved_cursor_line;
+            self.cursor.col = saved_cursor_col.min(cursor_max);
+            self.cursor.want_col = self.cursor.col;
             return;
         }
         let (start, end, linewise) = self.visual_range_chars(kind);
