@@ -344,13 +344,16 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
         Print("─".repeat(inner_w)),
         Print('╮'),
     )?;
+    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Catppuccin Text
     queue!(
         out,
         MoveTo(left as u16, (top + 1) as u16),
         SetBackgroundColor(bg),
         SetForegroundColor(level),
         Print('│'),
+        SetForegroundColor(text_fg),
         Print(format!(" {} ", inner)),
+        SetForegroundColor(level),
         Print('│'),
     )?;
     queue!(
