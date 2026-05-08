@@ -199,10 +199,12 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let arrow_fg = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
 
-    // Top border with title (and a "1/N" scroll indicator on the right).
+    // Top border with title (and a "start-end/total" scroll indicator on the right).
     let total = hover.lines.len();
     let scroll_label = if total > visible {
-        format!(" {}/{} ", hover.scroll + 1, total)
+        let first = hover.scroll + 1;
+        let last = (hover.scroll + visible).min(total);
+        format!(" {}-{}/{} ", first, last, total)
     } else {
         String::new()
     };
