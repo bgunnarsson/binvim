@@ -102,6 +102,7 @@ pub enum Action {
     JumpBack,
     JumpForward,
     OpenPicker { kind: PickerLeader },
+    OpenYazi,
     LspGotoDefinition,
     LspHover,
     VisualOperate { op: Operator, register: Option<char> },
@@ -383,15 +384,16 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if state.awaiting_leader {
         state.awaiting_leader = false;
         if ctx == ParseCtx::Normal {
-            let kind = match ch {
-                'f' => Some(PickerLeader::Files),
-                'b' => Some(PickerLeader::Buffers),
-                'g' => Some(PickerLeader::Grep),
+            let action = match ch {
+                'f' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
+                'b' => Some(Action::OpenPicker { kind: PickerLeader::Buffers }),
+                'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
+                'e' => Some(Action::OpenYazi),
                 _ => None,
             };
-            if let Some(k) = kind {
+            if let Some(a) = action {
                 state.reset();
-                return ParseResult::Action(Action::OpenPicker { kind: k });
+                return ParseResult::Action(a);
             }
         }
         state.reset();

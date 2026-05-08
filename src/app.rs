@@ -745,6 +745,7 @@ impl App {
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),
+            Action::OpenYazi => self.open_yazi(),
             Action::LspGotoDefinition => self.lsp_request_goto(),
             Action::LspHover => self.lsp_request_hover(),
             Action::EnterVisual(kind) => {
@@ -2097,6 +2098,62 @@ impl App {
         };
         self.write_yank_register(None, reg_text, true);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
+    }
+
+    fn open_yazi(&mut self) {
+        use crossterm::{
+            cursor::{Hide, Show},
+            execute,
+            terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+        };
+        use std::process::Command;
+
+        let start_dir = self
+            .buffer
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .filter(|p| p.is_dir())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+        let chooser = std::env::temp_dir()
+            .join(format!("binvim-yazi-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&chooser);
+
+        let mut stdout = io::stdout();
+        let _ = execute!(stdout, LeaveAlternateScreen, Show);
+        let _ = disable_raw_mode();
+
+        let status = Command::new("yazi")
+            .arg("--chooser-file")
+            .arg(&chooser)
+            .arg(&start_dir)
+            .status();
+
+        let _ = enable_raw_mode();
+        let _ = execute!(stdout, EnterAlternateScreen, Hide);
+
+        match status {
+            Err(_) => {
+                self.status_msg = "yazi not on PATH".into();
+            }
+            Ok(_) => {
+                if let Ok(text) = std::fs::read_to_string(&chooser) {
+                    for line in text.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.is_empty() {
+                            continue;
+                        }
+                        let path = PathBuf::from(trimmed);
+                        if let Err(e) = self.open_buffer(path) {
+                            self.status_msg = format!("error: {e}");
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&chooser);
     }
 
     fn open_picker(&mut self, kind: PickerLeader) {
