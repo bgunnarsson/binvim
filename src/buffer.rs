@@ -4,10 +4,17 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct Buffer {
     pub rope: Rope,
     pub path: Option<PathBuf>,
     pub dirty: bool,
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::empty()
+    }
 }
 
 impl Buffer {

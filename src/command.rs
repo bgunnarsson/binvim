@@ -7,6 +7,11 @@ pub enum ExCommand {
     WriteQuit,
     Edit(String),
     Goto(usize),
+    BufferNext,
+    BufferPrev,
+    BufferDelete { force: bool },
+    BufferList,
+    BufferSwitch(String),
     Unknown(String),
 }
 
@@ -35,6 +40,12 @@ pub fn parse(line: &str) -> ExCommand {
         "q!" | "quit!" => ExCommand::QuitForce,
         "wq" | "x" => ExCommand::WriteQuit,
         "e" | "edit" => ExCommand::Edit(rest.to_string()),
+        "bn" | "bnext" => ExCommand::BufferNext,
+        "bp" | "bprev" | "bprevious" => ExCommand::BufferPrev,
+        "bd" | "bdelete" => ExCommand::BufferDelete { force: false },
+        "bd!" | "bdelete!" => ExCommand::BufferDelete { force: true },
+        "ls" | "buffers" => ExCommand::BufferList,
+        "b" | "buffer" => ExCommand::BufferSwitch(rest.to_string()),
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

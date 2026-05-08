@@ -1,16 +1,18 @@
 use crate::cursor::Cursor;
 use ropey::Rope;
 
+#[derive(Clone)]
 pub struct Snapshot {
     pub rope: Rope,
     pub cursor: Cursor,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct History {
     past: Vec<Snapshot>,
     future: Vec<Snapshot>,
 }
+
 
 impl History {
     pub fn new() -> Self {

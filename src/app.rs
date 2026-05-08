@@ -30,6 +30,20 @@ pub struct FindRecord {
     pub before: bool,
 }
 
+/// Per-buffer state. The active buffer's state lives directly on App fields;
+/// inactive buffers are stored as stashes in `App.buffers`.
+#[derive(Default, Clone)]
+pub struct BufferStash {
+    pub buffer: Buffer,
+    pub cursor: Cursor,
+    pub view_top: usize,
+    pub history: History,
+    pub visual_anchor: Option<Cursor>,
+    pub marks: HashMap<char, (usize, usize)>,
+    pub jumplist: Vec<(usize, usize)>,
+    pub jump_idx: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum LastEdit {
     Plain(Action),
@@ -70,6 +84,9 @@ pub struct App {
     pub recording_macro: Option<char>,
     pub macro_buffer: Vec<KeyEvent>,
     pub last_replayed_macro: Option<char>,
+    /// All buffers; `buffers[active]` is a placeholder while its real state lives on App fields.
+    pub buffers: Vec<BufferStash>,
+    pub active: usize,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -106,6 +123,8 @@ impl App {
             recording_macro: None,
             macro_buffer: Vec::new(),
             last_replayed_macro: None,
+            buffers: vec![BufferStash::default()],
+            active: 0,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -296,16 +315,23 @@ impl App {
             ExCommand::Edit(p) => {
                 if p.is_empty() {
                     self.status_msg = "E32: No file name".into();
-                } else {
-                    match Buffer::from_path(PathBuf::from(p)) {
-                        Ok(b) => {
-                            self.buffer = b;
-                            self.cursor = Cursor::default();
-                            self.view_top = 0;
-                            self.history = History::new();
-                        }
-                        Err(e) => self.status_msg = format!("error: {e}"),
-                    }
+                } else if let Err(e) = self.open_buffer(PathBuf::from(p)) {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
+            ExCommand::BufferNext => self.cycle_buffer(1),
+            ExCommand::BufferPrev => self.cycle_buffer(-1),
+            ExCommand::BufferDelete { force } => {
+                if let Err(e) = self.delete_buffer(force) {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
+            ExCommand::BufferList => {
+                self.status_msg = self.list_buffers();
+            }
+            ExCommand::BufferSwitch(spec) => {
+                if let Err(e) = self.switch_buffer_by_spec(&spec) {
+                    self.status_msg = format!("error: {e}");
                 }
             }
             ExCommand::Goto(n) => {
@@ -1434,6 +1460,174 @@ impl App {
                 };
                 Some((start_col, end_col))
             }
+        }
+    }
+}
+
+impl App {
+    fn snapshot_active(&mut self) -> BufferStash {
+        BufferStash {
+            buffer: std::mem::take(&mut self.buffer),
+            cursor: std::mem::take(&mut self.cursor),
+            view_top: std::mem::take(&mut self.view_top),
+            history: std::mem::take(&mut self.history),
+            visual_anchor: self.visual_anchor.take(),
+            marks: std::mem::take(&mut self.marks),
+            jumplist: std::mem::take(&mut self.jumplist),
+            jump_idx: std::mem::take(&mut self.jump_idx),
+        }
+    }
+
+    fn load_stash(&mut self, stash: BufferStash) {
+        self.buffer = stash.buffer;
+        self.cursor = stash.cursor;
+        self.view_top = stash.view_top;
+        self.history = stash.history;
+        self.visual_anchor = stash.visual_anchor;
+        self.marks = stash.marks;
+        self.jumplist = stash.jumplist;
+        self.jump_idx = stash.jump_idx;
+    }
+
+    fn switch_to(&mut self, idx: usize) -> Result<()> {
+        if idx >= self.buffers.len() {
+            anyhow::bail!("invalid buffer index {idx}");
+        }
+        if idx == self.active {
+            return Ok(());
+        }
+        let active = self.active;
+        let snap = self.snapshot_active();
+        self.buffers[active] = snap;
+        let stash = std::mem::take(&mut self.buffers[idx]);
+        self.load_stash(stash);
+        self.active = idx;
+        Ok(())
+    }
+
+    pub fn open_buffer(&mut self, path: PathBuf) -> Result<()> {
+        // Switch to existing buffer if this path is already open.
+        if self.buffer.path.as_deref() == Some(path.as_path()) {
+            return Ok(());
+        }
+        for (i, stash) in self.buffers.iter().enumerate() {
+            if i == self.active {
+                continue;
+            }
+            if stash.buffer.path.as_deref() == Some(path.as_path()) {
+                return self.switch_to(i);
+            }
+        }
+        let buf = Buffer::from_path(path)?;
+        let stash = BufferStash {
+            buffer: buf,
+            ..Default::default()
+        };
+        self.buffers.push(stash);
+        let new_idx = self.buffers.len() - 1;
+        self.switch_to(new_idx)
+    }
+
+    fn cycle_buffer(&mut self, step: i64) {
+        if self.buffers.len() <= 1 {
+            self.status_msg = "Only one buffer".into();
+            return;
+        }
+        let n = self.buffers.len() as i64;
+        let next = ((self.active as i64) + step).rem_euclid(n) as usize;
+        if let Err(e) = self.switch_to(next) {
+            self.status_msg = format!("error: {e}");
+        }
+    }
+
+    fn switch_buffer_by_spec(&mut self, spec: &str) -> Result<()> {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            anyhow::bail!("E94: No matching buffer");
+        }
+        // Numeric: 1-based buffer number.
+        if let Ok(n) = spec.parse::<usize>() {
+            if n == 0 || n > self.buffers.len() {
+                anyhow::bail!("E86: Buffer {n} does not exist");
+            }
+            return self.switch_to(n - 1);
+        }
+        // Substring match against buffer paths.
+        let mut matches: Vec<usize> = Vec::new();
+        for (i, stash) in self.buffers.iter().enumerate() {
+            let path = if i == self.active {
+                self.buffer.path.as_ref()
+            } else {
+                stash.buffer.path.as_ref()
+            };
+            if let Some(p) = path {
+                if p.to_string_lossy().contains(spec) {
+                    matches.push(i);
+                }
+            }
+        }
+        match matches.len() {
+            0 => anyhow::bail!("E94: No matching buffer for '{spec}'"),
+            1 => self.switch_to(matches[0]),
+            _ => anyhow::bail!("E93: More than one match for '{spec}'"),
+        }
+    }
+
+    fn delete_buffer(&mut self, force: bool) -> Result<()> {
+        if !force && self.buffer.dirty {
+            anyhow::bail!("E89: No write since last change (use :bd!)");
+        }
+        if self.buffers.len() == 1 {
+            // Last buffer — replace with an empty one.
+            self.buffer = Buffer::empty();
+            self.cursor = Cursor::default();
+            self.view_top = 0;
+            self.history = History::default();
+            self.visual_anchor = None;
+            self.marks.clear();
+            self.jumplist.clear();
+            self.jump_idx = 0;
+            self.buffers[0] = BufferStash::default();
+            self.status_msg = "Buffer closed".into();
+            return Ok(());
+        }
+        let prev = self.active;
+        let next = if prev + 1 < self.buffers.len() { prev + 1 } else { prev - 1 };
+        self.switch_to(next)?;
+        // Now the slot at `prev` holds the snapshot we want to drop.
+        self.buffers.remove(prev);
+        if self.active > prev {
+            self.active -= 1;
+        }
+        Ok(())
+    }
+
+    fn list_buffers(&self) -> String {
+        let mut out = String::new();
+        for (i, stash) in self.buffers.iter().enumerate() {
+            let (path, dirty) = if i == self.active {
+                (
+                    self.buffer.path.as_ref().map(|p| p.display().to_string()),
+                    self.buffer.dirty,
+                )
+            } else {
+                (
+                    stash.buffer.path.as_ref().map(|p| p.display().to_string()),
+                    stash.buffer.dirty,
+                )
+            };
+            let name = path.unwrap_or_else(|| "[No Name]".into());
+            let marker = if i == self.active { "%" } else { " " };
+            let dirty_marker = if dirty { "+" } else { " " };
+            if !out.is_empty() {
+                out.push_str(" | ");
+            }
+            out.push_str(&format!("{} {}{} {}", i + 1, marker, dirty_marker, name));
+        }
+        if out.is_empty() {
+            "[No buffers]".into()
+        } else {
+            out
         }
     }
 }
