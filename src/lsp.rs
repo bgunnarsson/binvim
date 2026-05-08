@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -222,8 +223,9 @@ impl LspClient {
         let (in_tx, in_rx) = channel();
         let initialized = Arc::new(Mutex::new(false));
         let init_clone = initialized.clone();
+        let stdin_for_reader = stdin.clone();
         thread::spawn(move || {
-            reader_loop(stdout, in_tx, init_clone);
+            reader_loop(stdout, stdin_for_reader, in_tx, init_clone);
         });
 
         let root_uri = path_to_uri(root);
@@ -316,10 +318,25 @@ impl LspClient {
                 }
             }),
         );
-        let _ = client.send_notification(
-            "initialized",
-            json!({}),
-        );
+        // Per LSP spec the client must wait for the initialize response before sending any
+        // other request or notification. Block here (with a generous timeout) draining the
+        // channel until we see the matching response. The reader thread auto-replies to any
+        // server-to-client requests that arrive during this window so the server doesn't stall.
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if Instant::now() >= deadline {
+                break;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            match client.incoming_rx.recv_timeout(remaining) {
+                Ok(LspIncoming::Response { id, .. }) if id == init_id => break,
+                Ok(_) => continue,
+                Err(RecvTimeoutError::Disconnected) => return None,
+                Err(RecvTimeoutError::Timeout) => break,
+            }
+        }
+
+        let _ = client.send_notification("initialized", json!({}));
         Some(client)
     }
 
@@ -386,6 +403,7 @@ impl LspClient {
 
 fn reader_loop(
     stdout: impl Read + Send + 'static,
+    stdin: Arc<Mutex<ChildStdin>>,
     tx: Sender<LspIncoming>,
     initialized: Arc<Mutex<bool>>,
 ) {
@@ -411,13 +429,27 @@ fn reader_loop(
             return;
         }
         let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
-        dispatch(value, &tx, &initialized);
+        dispatch(value, &stdin, &tx, &initialized);
     }
 }
 
-fn dispatch(msg: Value, tx: &Sender<LspIncoming>, initialized: &Arc<Mutex<bool>>) {
-    // Response: has "id" and either "result" or "error".
-    if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+fn dispatch(
+    msg: Value,
+    stdin: &Arc<Mutex<ChildStdin>>,
+    tx: &Sender<LspIncoming>,
+    initialized: &Arc<Mutex<bool>>,
+) {
+    // Server-to-client request: has both `id` and `method`. Auto-reply so the server
+    // doesn't stall waiting for a response we won't otherwise produce.
+    let id = msg.get("id").and_then(|v| v.as_u64());
+    let method = msg.get("method").and_then(|v| v.as_str()).map(|s| s.to_string());
+    if let (Some(id), Some(method)) = (id, method.clone()) {
+        auto_respond(stdin, id, &method, msg.get("params"));
+        return;
+    }
+
+    // Response: has `id` and either `result` or `error`.
+    if let Some(id) = id {
         if let Some(result) = msg.get("result").cloned() {
             if let Ok(mut g) = initialized.lock() {
                 *g = true;
@@ -435,7 +467,8 @@ fn dispatch(msg: Value, tx: &Sender<LspIncoming>, initialized: &Arc<Mutex<bool>>
             return;
         }
     }
-    // Notification.
+
+    // Plain notification (no `id`).
     let Some(method) = msg.get("method").and_then(|v| v.as_str()) else { return; };
     if method == "textDocument/publishDiagnostics" {
         if let Some(params) = msg.get("params") {
@@ -443,6 +476,41 @@ fn dispatch(msg: Value, tx: &Sender<LspIncoming>, initialized: &Arc<Mutex<bool>>
                 let _ = tx.send(LspIncoming::Diagnostics(d));
             }
         }
+    }
+}
+
+/// Reply to server-to-client requests with reasonable defaults so the server's
+/// initialization (and ongoing operation) isn't blocked waiting for us.
+fn auto_respond(
+    stdin: &Arc<Mutex<ChildStdin>>,
+    id: u64,
+    method: &str,
+    params: Option<&Value>,
+) {
+    let result = match method {
+        // workspace/configuration → array of nulls, sized to params.items.len().
+        "workspace/configuration" => {
+            let n = params
+                .and_then(|p| p.get("items"))
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            json!(vec![Value::Null; n])
+        }
+        // workspace/applyEdit → claim we applied (we don't yet).
+        "workspace/applyEdit" => json!({ "applied": false }),
+        // Various capability registrations / progress windows → null is fine.
+        _ => Value::Null,
+    };
+    let resp = json!({ "jsonrpc": "2.0", "id": id, "result": result });
+    let body = match serde_json::to_string(&resp) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+    if let Ok(mut s) = stdin.lock() {
+        let _ = s.write_all(frame.as_bytes());
+        let _ = s.flush();
     }
 }
 
