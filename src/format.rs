@@ -60,9 +60,27 @@ fn run_biome(path: &Path, source: &str) -> Result<String, String> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let snippet = stderr.lines().next().unwrap_or("(no error output)");
+        // biome wraps real diagnostics in box-drawing chrome and prints the
+        // file path on the first line. Strip that chrome and join the
+        // payload lines so the user actually sees what's wrong.
+        let cleaned: Vec<String> = stderr
+            .lines()
+            .map(|l| {
+                l.trim_matches(|c: char| {
+                    c.is_whitespace() || matches!(c, '━' | '│' | '╭' | '╮' | '╯' | '╰' | '┃')
+                })
+                .to_string()
+            })
+            .filter(|l| !l.is_empty())
+            .take(6)
+            .collect();
+        let msg = if cleaned.is_empty() {
+            "(no error output)".to_string()
+        } else {
+            cleaned.join(" / ")
+        };
         let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
-        return Err(format!("biome exit {code}: {snippet}"));
+        return Err(format!("biome exit {code}: {msg}"));
     }
 
     String::from_utf8(output.stdout).map_err(|e| format!("biome stdout not utf-8: {e}"))
