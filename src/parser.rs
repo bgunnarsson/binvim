@@ -385,7 +385,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.awaiting_leader = false;
         if ctx == ParseCtx::Normal {
             let action = match ch {
-                'f' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
+                ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
                 'b' => Some(Action::OpenPicker { kind: PickerLeader::Buffers }),
                 'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
                 'e' => Some(Action::OpenYazi),
@@ -613,6 +613,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'O' => Some(Action::EnterInsert(InsertWhere::LineAbove)),
             'x' => Some(Action::DeleteCharForward { count: state.total_count(), register: state.register }),
             'u' => Some(Action::Undo),
+            'U' => Some(Action::Redo),
             'p' => Some(Action::Put { before: false, count: state.total_count(), register: state.register }),
             'P' => Some(Action::Put { before: true, count: state.total_count(), register: state.register }),
             ':' => Some(Action::EnterCommand),
