@@ -50,13 +50,24 @@ pub enum LspIncoming {
 pub enum LspEvent {
     GotoDef { path: PathBuf, line: usize, col: usize },
     Hover { text: String },
+    Completion { items: Vec<CompletionItem> },
     NotFound(&'static str),
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CompletionItem {
+    pub label: String,
+    pub insert_text: String,
+    pub kind: Option<String>,
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum PendingRequest {
     GotoDef,
     Hover,
+    Completion,
 }
 
 pub struct LspClient {
@@ -420,6 +431,21 @@ impl LspManager {
         self.pending.insert(id, PendingRequest::Hover);
         true
     }
+
+    pub fn request_completion(&mut self, path: &Path, line: usize, col: usize) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/completion",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": col }
+            }),
+        );
+        self.pending.insert(id, PendingRequest::Completion);
+        true
+    }
 }
 
 fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
@@ -432,7 +458,92 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
             Some(text) => Some(LspEvent::Hover { text }),
             None => Some(LspEvent::NotFound("hover")),
         },
+        PendingRequest::Completion => {
+            let items = parse_completion_response(result);
+            if items.is_empty() {
+                Some(LspEvent::NotFound("completions"))
+            } else {
+                Some(LspEvent::Completion { items })
+            }
+        }
     }
+}
+
+fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
+    let arr = if result.is_array() {
+        result.as_array().cloned().unwrap_or_default()
+    } else if let Some(items) = result.get("items").and_then(|v| v.as_array()) {
+        items.clone()
+    } else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(arr.len().min(200));
+    for item in arr.iter().take(200) {
+        let label = item
+            .get("label")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if label.is_empty() {
+            continue;
+        }
+        let insert_text = item
+            .get("insertText")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                item.get("textEdit")
+                    .and_then(|t| t.get("newText"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| label.clone());
+        let kind = item.get("kind").and_then(|v| v.as_u64()).map(kind_label);
+        let detail = item
+            .get("detail")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        out.push(CompletionItem {
+            label,
+            insert_text,
+            kind,
+            detail,
+        });
+    }
+    out
+}
+
+fn kind_label(k: u64) -> String {
+    // Mapping per LSP spec.
+    match k {
+        1 => "text",
+        2 => "method",
+        3 => "function",
+        4 => "constructor",
+        5 => "field",
+        6 => "variable",
+        7 => "class",
+        8 => "interface",
+        9 => "module",
+        10 => "property",
+        11 => "unit",
+        12 => "value",
+        13 => "enum",
+        14 => "keyword",
+        15 => "snippet",
+        16 => "color",
+        17 => "file",
+        18 => "reference",
+        19 => "folder",
+        20 => "enum-member",
+        21 => "constant",
+        22 => "struct",
+        23 => "event",
+        24 => "operator",
+        25 => "type-param",
+        _ => "?",
+    }
+    .into()
 }
 
 fn parse_def_response(result: &Value) -> Option<(PathBuf, usize, usize)> {

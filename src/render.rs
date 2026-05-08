@@ -20,7 +20,98 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if app.mode == Mode::Picker {
         draw_picker(out, app)?;
     }
+    if app.completion.is_some() {
+        draw_completion_popup(out, app)?;
+    }
     place_cursor(out, app)?;
+    Ok(())
+}
+
+fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(c) = app.completion.as_ref() else { return Ok(()); };
+    if c.items.is_empty() {
+        return Ok(());
+    }
+    let max_h = (app.height as usize).saturating_sub(2);
+    let popup_h = c.items.len().min(10).min(max_h.saturating_sub(2));
+    if popup_h == 0 {
+        return Ok(());
+    }
+    // Compute popup width from labels (cap at 60).
+    let max_label = c
+        .items
+        .iter()
+        .map(|i| i.label.chars().count())
+        .max()
+        .unwrap_or(8);
+    let max_kind = c
+        .items
+        .iter()
+        .filter_map(|i| i.kind.as_ref().map(|k| k.chars().count()))
+        .max()
+        .unwrap_or(0);
+    let popup_w = (max_label + max_kind + 4).min(60).min((app.width as usize).saturating_sub(4));
+
+    // Scroll window so the selected item is visible.
+    let start = if c.selected >= popup_h {
+        c.selected + 1 - popup_h
+    } else {
+        0
+    };
+
+    // Anchor at cursor position in the buffer area.
+    let gutter = app.gutter_width();
+    let cursor_row = app.cursor.line.saturating_sub(app.view_top);
+    let cursor_col = gutter + app.cursor.col;
+    // Below the cursor unless that would overflow; otherwise above.
+    let buffer_rows = app.buffer_rows();
+    let mut top_row = cursor_row + 1;
+    if top_row + popup_h > buffer_rows {
+        top_row = cursor_row.saturating_sub(popup_h);
+    }
+    let mut left_col = cursor_col;
+    if left_col + popup_w > app.width as usize {
+        left_col = (app.width as usize).saturating_sub(popup_w);
+    }
+
+    for row in 0..popup_h {
+        let pos = start + row;
+        if pos >= c.items.len() {
+            break;
+        }
+        let item = &c.items[pos];
+        let selected = pos == c.selected;
+        let y = (top_row + row) as u16;
+        queue!(out, MoveTo(left_col as u16, y))?;
+        if selected {
+            queue!(
+                out,
+                SetBackgroundColor(Color::DarkBlue),
+                SetForegroundColor(Color::White)
+            )?;
+        } else {
+            queue!(
+                out,
+                SetBackgroundColor(Color::DarkGrey),
+                SetForegroundColor(Color::White)
+            )?;
+        }
+        let kind = item.kind.as_deref().unwrap_or("");
+        let label_max = popup_w.saturating_sub(kind.chars().count() + 3);
+        let label_trunc: String = item.label.chars().take(label_max).collect();
+        let pad = popup_w
+            .saturating_sub(label_trunc.chars().count() + kind.chars().count() + 3);
+        queue!(
+            out,
+            Print(format!(
+                " {}{} {} ",
+                label_trunc,
+                " ".repeat(pad),
+                kind
+            ))
+        )?;
+        queue!(out, ResetColor)?;
+    }
     Ok(())
 }
 

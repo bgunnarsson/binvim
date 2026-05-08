@@ -9,7 +9,7 @@ use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
 use crate::config::Config;
 use crate::lang::{self, HighlightCache};
-use crate::lsp::{Diagnostic, LspEvent, LspManager, Severity};
+use crate::lsp::{CompletionItem, Diagnostic, LspEvent, LspManager, Severity};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
@@ -64,6 +64,14 @@ struct RecordingState {
     keys: Vec<KeyEvent>,
 }
 
+pub struct CompletionState {
+    pub items: Vec<CompletionItem>,
+    pub selected: usize,
+    /// Position where the existing word-prefix begins; replaced with the chosen item on accept.
+    pub anchor_line: usize,
+    pub anchor_col: usize,
+}
+
 pub struct App {
     pub buffer: Buffer,
     pub cursor: Cursor,
@@ -100,6 +108,7 @@ pub struct App {
     pub lsp: LspManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
+    pub completion: Option<CompletionState>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -144,6 +153,7 @@ impl App {
             config: Config::load(),
             lsp: LspManager::new(),
             last_sent_version: HashMap::new(),
+            completion: None,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -195,8 +205,81 @@ impl App {
                 }
                 LspEvent::NotFound(kind) => {
                     self.status_msg = format!("LSP: no {kind} found");
+                    if kind == "completions" {
+                        self.completion = None;
+                    }
+                }
+                LspEvent::Completion { items } => {
+                    let (anchor_line, anchor_col) = self.word_prefix_start();
+                    self.completion = Some(CompletionState {
+                        items,
+                        selected: 0,
+                        anchor_line,
+                        anchor_col,
+                    });
                 }
             }
+        }
+    }
+
+    /// Walk back from the cursor through identifier-class chars to find where the
+    /// in-progress word started — that's the chunk we'll replace on completion accept.
+    fn word_prefix_start(&self) -> (usize, usize) {
+        let line = self.cursor.line;
+        let mut col = self.cursor.col;
+        while col > 0 {
+            let prev = self
+                .buffer
+                .char_at(line, col - 1)
+                .unwrap_or(' ');
+            if prev.is_alphanumeric() || prev == '_' {
+                col -= 1;
+            } else {
+                break;
+            }
+        }
+        (line, col)
+    }
+
+    fn lsp_request_completion(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        if !self.lsp.request_completion(&path, line, col) {
+            // No LSP — silently ignore so editing isn't disrupted.
+        }
+    }
+
+    fn completion_cycle(&mut self, delta: i64) {
+        let Some(c) = self.completion.as_mut() else {
+            return;
+        };
+        if c.items.is_empty() {
+            return;
+        }
+        let n = c.items.len() as i64;
+        c.selected = ((c.selected as i64 + delta).rem_euclid(n)) as usize;
+    }
+
+    fn completion_accept(&mut self) {
+        let Some(c) = self.completion.take() else {
+            return;
+        };
+        let Some(item) = c.items.get(c.selected).cloned() else {
+            return;
+        };
+        // Replace [(anchor_line, anchor_col), cursor) with insert_text.
+        if c.anchor_line == self.cursor.line {
+            let start = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
+            let end = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+            if end >= start {
+                self.buffer.delete_range(start, end);
+            }
+            self.buffer.insert_at_idx(start, &item.insert_text);
+            let new_idx = start + item.insert_text.chars().count();
+            self.cursor_to_idx(new_idx);
         }
     }
 
@@ -337,6 +420,14 @@ impl App {
 
     fn handle_insert_key(&mut self, key: KeyEvent) {
         let is_esc = matches!(key.code, KeyCode::Esc);
+        // Completion popup intercepts a small set of keys; everything else dismisses it.
+        if self.completion.is_some() {
+            let captured = self.handle_insert_key_with_completion(key);
+            if captured {
+                return;
+            }
+            // Fall through with completion now closed.
+        }
         if !self.replaying && !is_esc {
             if let Some(rec) = self.recording.as_mut() {
                 rec.keys.push(key);
@@ -357,6 +448,11 @@ impl App {
                         });
                     }
                 }
+            }
+            KeyCode::Char(c)
+                if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'n' || c == 'p') =>
+            {
+                self.lsp_request_completion();
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
@@ -429,6 +525,47 @@ impl App {
                 self.cursor.want_col = len;
             }
             _ => {}
+        }
+    }
+
+    /// Return `true` if the key was handled by the completion popup (cycle / accept / dismiss).
+    /// Otherwise close the popup and let the normal insert handler process the key.
+    fn handle_insert_key_with_completion(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.completion = None;
+                true
+            }
+            KeyCode::Up => {
+                self.completion_cycle(-1);
+                true
+            }
+            KeyCode::Down => {
+                self.completion_cycle(1);
+                true
+            }
+            KeyCode::Tab | KeyCode::Enter => {
+                self.completion_accept();
+                true
+            }
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => match c {
+                'n' | 'N' => {
+                    self.completion_cycle(1);
+                    true
+                }
+                'p' | 'P' => {
+                    self.completion_cycle(-1);
+                    true
+                }
+                _ => {
+                    self.completion = None;
+                    false
+                }
+            },
+            _ => {
+                self.completion = None;
+                false
+            }
         }
     }
 
