@@ -211,18 +211,46 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             root_markers: vec!["astro.config.mjs".into(), "astro.config.ts".into(), "package.json".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
+        "cs" | "vb" => Some(ServerSpec {
+            key: "omnisharp".into(),
+            language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
+            cmd_candidates: vec!["OmniSharp".into(), mason("OmniSharp"), "omnisharp".into()],
+            args: vec![
+                "-z".into(),
+                "--hostPID".into(),
+                std::process::id().to_string(),
+                "DotNet:enablePackageRestore=false".into(),
+                "--encoding".into(),
+                "utf-8".into(),
+                "--languageserver".into(),
+            ],
+            root_markers: vec![
+                "*.sln".into(),
+                "*.csproj".into(),
+                "*.fsproj".into(),
+                "*.vbproj".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
         _ => None,
     }
 }
 
-/// Walk up from `start` looking for any of the marker filenames. Returns the first dir
-/// that contains a marker, falling back to `start` itself if none found.
+/// Walk up from `start` looking for any of the marker filenames. Markers
+/// starting with `*.` match any directory entry with that extension (used for
+/// `.sln` / `.csproj` etc. where the actual filename varies). Falls back to
+/// `start` if no marker matches.
 pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     let mut dir: &Path = canon.as_path();
     loop {
         for marker in markers {
-            if dir.join(marker).exists() {
+            if let Some(ext) = marker.strip_prefix("*.") {
+                if dir_contains_extension(dir, ext) {
+                    return dir.to_path_buf();
+                }
+            } else if dir.join(marker).exists() {
                 return dir.to_path_buf();
             }
         }
@@ -232,6 +260,19 @@ pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
         }
     }
     canon
+}
+
+fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else { return false };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if let Some(file_ext) = path.extension().and_then(|e| e.to_str()) {
+            if file_ext.eq_ignore_ascii_case(ext) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn resolve_command(candidates: &[String]) -> Option<(String, Vec<String>)> {
