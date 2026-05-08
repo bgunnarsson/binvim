@@ -305,7 +305,7 @@ impl App {
                     self.clamp_cursor_normal();
                 }
                 LspEvent::Hover { text } => {
-                    self.hover = HoverState::from_lsp_text(&text);
+                    self.hover = HoverState::from_lsp_text(&text, self.width as usize);
                     if self.hover.is_none() {
                         self.status_msg = "LSP: empty hover".into();
                     }
@@ -448,6 +448,35 @@ impl App {
         }
     }
 
+    /// Returns `true` if the key was consumed to scroll the hover popup. Otherwise
+    /// the caller should dismiss the popup and let the key fall through.
+    fn try_scroll_hover(&mut self, key: &KeyEvent) -> bool {
+        let Some(h) = self.hover.as_mut() else { return false };
+        let visible = HOVER_MAX_HEIGHT;
+        match key.code {
+            KeyCode::Down => { h.scroll_by(1, visible); true }
+            KeyCode::Up => { h.scroll_by(-1, visible); true }
+            KeyCode::PageDown => { h.scroll_by(visible as i64, visible); true }
+            KeyCode::PageUp => { h.scroll_by(-(visible as i64), visible); true }
+            KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                h.scroll_by(1, visible);
+                true
+            }
+            KeyCode::Char('k') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                h.scroll_by(-1, visible);
+                true
+            }
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => match c {
+                'd' | 'D' => { h.scroll_by((visible / 2) as i64, visible); true }
+                'u' | 'U' => { h.scroll_by(-((visible / 2) as i64), visible); true }
+                'n' | 'N' => { h.scroll_by(1, visible); true }
+                'p' | 'P' => { h.scroll_by(-1, visible); true }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     pub fn line_diagnostics(&self, line: usize) -> Vec<&Diagnostic> {
         let Some(path) = self.buffer.path.as_ref() else { return Vec::new(); };
         let Some(diags) = self.lsp.diagnostics_for(path) else { return Vec::new(); };
@@ -480,7 +509,12 @@ impl App {
                 if !matches!(self.mode, Mode::Command) {
                     self.status_msg.clear();
                 }
-                // Any keystroke dismisses transient overlays (hover, which-key).
+                // Hover popup intercepts scroll keys; everything else dismisses it.
+                if self.hover.is_some() {
+                    if self.try_scroll_hover(&k) {
+                        return Ok(());
+                    }
+                }
                 self.hover = None;
                 self.whichkey = None;
                 // Macro recording: stop on `q` in normal, otherwise capture every key.

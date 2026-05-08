@@ -167,16 +167,20 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     if hover.lines.is_empty() {
         return Ok(());
     }
-    let max_w_avail = (app.width as usize).saturating_sub(8).max(20);
-    let max_h_avail = (app.height as usize).saturating_sub(4).max(4);
 
-    let widest = hover.lines.iter().map(|l| l.chars().count()).max().unwrap_or(20);
-    let inner_w = widest.min(max_w_avail).max(20);
-    let popup_w = inner_w + 4; // border + padding on each side
-    let visible = hover.lines.len().min(max_h_avail.saturating_sub(2));
+    // Width: lines were word-wrapped at hover.wrap_width, so use that.
+    let widest_actual = hover.lines.iter().map(|l| l.chars().count()).max().unwrap_or(20);
+    let content_w = widest_actual.min(hover.wrap_width).max(20);
+    let popup_w = content_w + 2;
+
+    // Height: cap at HOVER_MAX_HEIGHT, also cap at half the screen.
+    let total_h = app.height as usize;
+    let max_visible = crate::app::HOVER_MAX_HEIGHT
+        .min(total_h.saturating_sub(4).max(4));
+    let visible = hover.lines.len().min(max_visible);
     let popup_h = visible + 2;
 
-    // Position: try below the cursor; fall back to above.
+    // Position: prefer below cursor; flip above if overflow.
     let buffer_rows = app.buffer_rows();
     let cursor_row = app.cursor.line.saturating_sub(app.view_top);
     let mut top_row = cursor_row + 1;
@@ -192,28 +196,48 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
+    let arrow_fg = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
 
-    // Top border with title.
+    // Top border with title (and a "1/N" scroll indicator on the right).
+    let total = hover.lines.len();
+    let scroll_label = if total > visible {
+        format!(" {}/{} ", hover.scroll + 1, total)
+    } else {
+        String::new()
+    };
     let title = " hover ";
     let title_w = title.chars().count();
-    let pre = inner_w.saturating_sub(title_w + 2) / 2;
-    let post = inner_w.saturating_sub(title_w + 2 + pre);
+    let scroll_w = scroll_label.chars().count();
+    let dashes_total = content_w.saturating_sub(title_w + scroll_w);
+    let pre = dashes_total / 2;
+    let post = dashes_total - pre;
     queue!(
         out,
         MoveTo(left_col as u16, top_row as u16),
         SetBackgroundColor(bg),
         SetForegroundColor(border),
         Print('╭'),
-        Print(format!(" {}", "─".repeat(pre))),
+        Print("─".repeat(pre)),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
         Print(title),
-        Print(format!("{} ", "─".repeat(post))),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("─".repeat(post)),
+        SetForegroundColor(arrow_fg),
+        Print(&scroll_label),
+        SetForegroundColor(border),
         Print('╮'),
     )?;
 
-    // Body.
-    for (i, line) in hover.lines.iter().take(visible).enumerate() {
-        let truncated: String = line.chars().take(inner_w).collect();
-        let pad = inner_w.saturating_sub(truncated.chars().count());
+    // Body — show `visible` lines starting at `scroll`.
+    for i in 0..visible {
+        let idx = hover.scroll + i;
+        let line = hover.lines.get(idx).map(|s| s.as_str()).unwrap_or("");
+        let truncated: String = line.chars().take(content_w).collect();
+        let pad = content_w.saturating_sub(truncated.chars().count());
         queue!(
             out,
             MoveTo(left_col as u16, (top_row + 1 + i) as u16),
@@ -221,7 +245,8 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
             SetForegroundColor(border),
             Print('│'),
             SetForegroundColor(text_fg),
-            Print(format!(" {}{} ", truncated, " ".repeat(pad))),
+            Print(&truncated),
+            Print(" ".repeat(pad)),
             SetForegroundColor(border),
             Print('│'),
         )?;
@@ -234,7 +259,7 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
         SetBackgroundColor(bg),
         SetForegroundColor(border),
         Print('╰'),
-        Print("─".repeat(inner_w + 2)),
+        Print("─".repeat(content_w)),
         Print('╯'),
         ResetColor,
     )?;
