@@ -148,8 +148,8 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     let left = total_w.saturating_sub(box_w + 1);
     let top = 0usize;
 
-    let bg = Color::Rgb { r: 22, g: 25, b: 38 };
-    let border = Color::Rgb { r: 95, g: 105, b: 140 };
+    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
 
     // Top border.
     queue!(
@@ -409,7 +409,7 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
         out,
         MoveTo(0, input_row as u16),
         Clear(ClearType::CurrentLine),
-        SetForegroundColor(Color::Yellow),
+        SetForegroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
         Print("> "),
         ResetColor,
         Print(&picker.input)
@@ -464,10 +464,10 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
         if line_idx < app.buffer.line_count() {
             // Diagnostic sign column.
             let sign = app.worst_diagnostic(line_idx).map(|s| match s {
-                Severity::Error => ('!', Color::Red),
-                Severity::Warning => ('?', Color::Yellow),
-                Severity::Info => ('i', Color::Blue),
-                Severity::Hint => ('h', Color::DarkBlue),
+                Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }), // Red
+                Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
+                Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }), // Blue
+                Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }), // Sky
             });
             if let Some((ch, color)) = sign {
                 queue!(
