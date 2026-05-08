@@ -187,7 +187,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             root_markers: vec!["go.mod".into(), "go.work".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
-        "html" | "htm" | "cshtml" | "razor" => Some(ServerSpec {
+        "html" | "htm" => Some(ServerSpec {
             key: "html".into(),
             language_id: "html".into(),
             cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
@@ -195,6 +195,31 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
+        "cshtml" | "razor" => {
+            // Prefer rzls (Razor Language Server) when installed — it understands
+            // both the markup and the embedded C# blocks. Fall back to the plain
+            // HTML server so users still get markup IntelliSense without rzls.
+            let rzls = ServerSpec {
+                key: "rzls".into(),
+                language_id: "razor".into(),
+                cmd_candidates: vec!["rzls".into(), mason("rzls")],
+                args: vec![],
+                root_markers: vec!["*.csproj".into(), "*.sln".into(), ".git".into()],
+                initialization_options: Value::Null,
+            };
+            if resolve_command(&rzls.cmd_candidates).is_some() {
+                Some(rzls)
+            } else {
+                Some(ServerSpec {
+                    key: "html".into(),
+                    language_id: "html".into(),
+                    cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
+                    args: stdio(),
+                    root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
+                    initialization_options: Value::Null,
+                })
+            }
+        }
         "css" | "scss" | "less" => Some(ServerSpec {
             key: "css".into(),
             language_id: ext.into(),
