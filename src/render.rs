@@ -384,7 +384,7 @@ fn cmdline_box_layout(app: &App) -> (usize, usize, usize) {
 /// Mode → (title, prompt char). Prompt is `>` for `:` and shows direction for search.
 fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
     match mode {
-        Mode::Command => ("Cmdline", '>'),
+        Mode::Command => ("binvim", '>'),
         Mode::Search { backward: false } => ("Search", '/'),
         Mode::Search { backward: true } => ("Search", '?'),
         _ => ("", ' '),
