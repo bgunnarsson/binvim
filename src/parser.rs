@@ -113,6 +113,10 @@ pub enum Action {
     VisualSwitch(VisualKind),
     StartMacro { name: char },
     ReplayMacro { name: char },
+    BufferDelete { force: bool },
+    BufferOnly,
+    BufferNext,
+    BufferPrev,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -138,6 +142,8 @@ pub struct PendingCmd {
     pub awaiting_macro_record: bool,
     /// Set after `@` — next char is the macro register to replay.
     pub awaiting_macro_play: bool,
+    /// Set after `<leader>b` — next char picks a buffer-related action.
+    pub awaiting_buffer_leader: bool,
 }
 
 impl PendingCmd {
@@ -386,9 +392,13 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if state.awaiting_leader {
         state.awaiting_leader = false;
         if ctx == ParseCtx::Normal {
+            // `b` opens a buffer-prefix sub-menu — defer to the next key.
+            if ch == 'b' {
+                state.awaiting_buffer_leader = true;
+                return ParseResult::Pending;
+            }
             let action = match ch {
                 ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
-                'b' => Some(Action::OpenPicker { kind: PickerLeader::Buffers }),
                 'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
                 'e' => Some(Action::OpenYazi),
                 _ => None,
@@ -400,6 +410,25 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         }
         state.reset();
         return ParseResult::Cancelled;
+    }
+
+    // Buffer-prefix dispatch (after `<leader>b`).
+    if state.awaiting_buffer_leader {
+        state.awaiting_buffer_leader = false;
+        let action = match ch {
+            ' ' | 'b' => Some(Action::OpenPicker { kind: PickerLeader::Buffers }),
+            'd' => Some(Action::BufferDelete { force: false }),
+            'D' => Some(Action::BufferDelete { force: true }),
+            'o' => Some(Action::BufferOnly),
+            'n' => Some(Action::BufferNext),
+            'p' => Some(Action::BufferPrev),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
     }
 
     if state.awaiting_g {

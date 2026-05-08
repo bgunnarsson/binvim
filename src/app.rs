@@ -88,9 +88,20 @@ pub const WHICHKEY_DELAY: Duration = Duration::from_millis(250);
 fn leader_entries() -> Vec<(String, String)> {
     vec![
         ("<space>".into(), "Files".into()),
-        ("b".into(), "Buffers".into()),
+        ("b".into(), "+Buffer".into()),
         ("g".into(), "Grep".into()),
         ("e".into(), "Yazi".into()),
+    ]
+}
+
+fn buffer_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("<space>".into(), "Picker".into()),
+        ("d".into(), "Delete".into()),
+        ("D".into(), "Delete (force)".into()),
+        ("o".into(), "Only (close others)".into()),
+        ("n".into(), "Next".into()),
+        ("p".into(), "Prev".into()),
     ]
 }
 
@@ -253,15 +264,21 @@ impl App {
                 self.handle_event()?;
                 needs_render = true;
             }
-            // Leader timeout fired? Open which-key.
+            // Prefix timeout fired? Open the matching which-key popup.
             if let Some(t) = self.leader_pressed_at {
-                if Instant::now() >= t + WHICHKEY_DELAY && self.pending.awaiting_leader {
-                    self.whichkey = Some(WhichKeyState {
-                        title: "Leader".into(),
-                        entries: leader_entries(),
-                    });
+                if Instant::now() >= t + WHICHKEY_DELAY {
+                    let popup = if self.pending.awaiting_leader {
+                        Some(WhichKeyState { title: "Leader".into(), entries: leader_entries() })
+                    } else if self.pending.awaiting_buffer_leader {
+                        Some(WhichKeyState { title: "Buffer".into(), entries: buffer_prefix_entries() })
+                    } else {
+                        None
+                    };
+                    if let Some(p) = popup {
+                        self.whichkey = Some(p);
+                        needs_render = true;
+                    }
                     self.leader_pressed_at = None;
-                    needs_render = true;
                 }
             }
             let events = self.lsp.drain();
@@ -508,8 +525,9 @@ impl App {
             }
             ParseResult::Action(a) => self.apply_action(a),
         }
-        // Track leader-prefix timing for the which-key helper.
-        if self.pending.awaiting_leader {
+        // Track any prefix that's awaiting its next key — drives the which-key timer.
+        let prefix_active = self.pending.awaiting_leader || self.pending.awaiting_buffer_leader;
+        if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(Instant::now());
             }
@@ -842,6 +860,18 @@ impl App {
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
             Action::StartMacro { name } => self.start_macro_recording(name),
             Action::ReplayMacro { name } => self.replay_macro(name),
+            Action::BufferDelete { force } => {
+                if let Err(e) = self.delete_buffer(force) {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
+            Action::BufferOnly => {
+                if let Err(e) = self.buffer_only() {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
+            Action::BufferNext => self.cycle_buffer(1),
+            Action::BufferPrev => self.cycle_buffer(-1),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),
@@ -2430,6 +2460,35 @@ impl App {
             Some(l) => lang::compute_highlights(l, &self.buffer, &self.config),
             None => None,
         };
+    }
+
+    /// Close every buffer except the active one. Refuses if any of them is dirty.
+    fn buffer_only(&mut self) -> Result<()> {
+        // Check for dirty inactive buffers first.
+        for (i, stash) in self.buffers.iter().enumerate() {
+            if i == self.active {
+                continue;
+            }
+            if stash.buffer.dirty {
+                anyhow::bail!(
+                    "E89: buffer {} has unsaved changes (use :bd! or save)",
+                    i + 1
+                );
+            }
+        }
+        // Remove from highest to lowest so indices stay valid.
+        let mut to_drop: Vec<usize> = (0..self.buffers.len())
+            .filter(|i| *i != self.active)
+            .collect();
+        to_drop.sort_by(|a, b| b.cmp(a));
+        for idx in to_drop {
+            self.buffers.remove(idx);
+            if self.active > idx {
+                self.active -= 1;
+            }
+        }
+        self.status_msg = format!("kept buffer {}", self.active + 1);
+        Ok(())
     }
 
     fn list_buffers(&self) -> String {
