@@ -196,9 +196,12 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             initialization_options: Value::Null,
         }),
         "cshtml" | "razor" => {
-            // Prefer rzls (Razor Language Server) when installed — it understands
-            // both the markup and the embedded C# blocks. Fall back to the plain
-            // HTML server so users still get markup IntelliSense without rzls.
+            // Razor IntelliSense is best with rzls (Razor Language Server) but
+            // it isn't packaged in mason or as a NuGet/dotnet tool today. Try
+            // it anyway in case the user installed it manually — and otherwise
+            // fall back to OmniSharp, which handles .cshtml as a C# document
+            // and gives real IntelliSense for the embedded code blocks (@{},
+            // @Model.X, etc.). Better than html-LSP-only.
             let rzls = ServerSpec {
                 key: "rzls".into(),
                 language_id: "razor".into(),
@@ -208,17 +211,42 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
                 initialization_options: Value::Null,
             };
             if resolve_command(&rzls.cmd_candidates).is_some() {
-                Some(rzls)
-            } else {
-                Some(ServerSpec {
-                    key: "html".into(),
-                    language_id: "html".into(),
-                    cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
-                    args: stdio(),
-                    root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
-                    initialization_options: Value::Null,
-                })
+                return Some(rzls);
             }
+            let omnisharp = ServerSpec {
+                key: "omnisharp".into(),
+                language_id: "razor".into(),
+                cmd_candidates: vec!["OmniSharp".into(), mason("OmniSharp"), "omnisharp".into()],
+                args: vec![
+                    "-z".into(),
+                    "--hostPID".into(),
+                    std::process::id().to_string(),
+                    "DotNet:enablePackageRestore=false".into(),
+                    "--encoding".into(),
+                    "utf-8".into(),
+                    "--languageserver".into(),
+                ],
+                root_markers: vec![
+                    "*.sln".into(),
+                    "*.csproj".into(),
+                    "*.fsproj".into(),
+                    "*.vbproj".into(),
+                    ".git".into(),
+                ],
+                initialization_options: Value::Null,
+            };
+            if resolve_command(&omnisharp.cmd_candidates).is_some() {
+                return Some(omnisharp);
+            }
+            // Last resort — at least give markup IntelliSense.
+            Some(ServerSpec {
+                key: "html".into(),
+                language_id: "html".into(),
+                cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
+                args: stdio(),
+                root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
+                initialization_options: Value::Null,
+            })
         }
         "css" | "scss" | "less" => Some(ServerSpec {
             key: "css".into(),
