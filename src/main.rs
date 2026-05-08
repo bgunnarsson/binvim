@@ -5,6 +5,7 @@ use std::path::PathBuf;
 mod app;
 mod buffer;
 mod command;
+mod config;
 mod cursor;
 mod lang;
 mod mode;

@@ -1,4 +1,5 @@
 use crate::buffer::Buffer;
+use crate::config::Config;
 use crossterm::style::Color;
 use std::path::Path;
 use streaming_iterator::StreamingIterator;
@@ -59,7 +60,7 @@ pub struct HighlightCache {
     pub byte_colors: Vec<Option<Color>>,
 }
 
-pub fn compute_highlights(lang: Lang, buf: &Buffer) -> Option<HighlightCache> {
+pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<HighlightCache> {
     let language = lang.ts_language();
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
@@ -76,7 +77,7 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer) -> Option<HighlightCache> {
     while let Some(m) = matches.next() {
         for capture in m.captures {
             let name = capture_names[capture.index as usize];
-            if let Some(color) = capture_to_color(name) {
+            if let Some(color) = config.color_for_capture(name) {
                 let node = capture.node;
                 let s = node.start_byte().min(total_bytes);
                 let e = node.end_byte().min(total_bytes);
@@ -92,29 +93,4 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer) -> Option<HighlightCache> {
         buffer_version: buf.version,
         byte_colors: colors,
     })
-}
-
-/// Map a tree-sitter capture name to a terminal colour. Returns `None` for capture
-/// names we leave as default (operators, punctuation, plain identifiers).
-fn capture_to_color(name: &str) -> Option<Color> {
-    let head = name.split('.').next().unwrap_or(name);
-    match head {
-        "comment" => Some(Color::DarkGrey),
-        "string" => Some(Color::Green),
-        "character" => Some(Color::Green),
-        "escape" => Some(Color::DarkRed),
-        "keyword" | "include" | "conditional" | "repeat" | "exception" => Some(Color::Magenta),
-        "function" | "method" | "macro" => Some(Color::Blue),
-        "type" => Some(Color::Cyan),
-        "constructor" => Some(Color::Cyan),
-        "namespace" | "module" => Some(Color::Cyan),
-        "constant" | "boolean" | "number" | "float" => Some(Color::Red),
-        "attribute" => Some(Color::Yellow),
-        "tag" => Some(Color::Magenta),
-        "label" => Some(Color::Yellow),
-        "preproc" => Some(Color::DarkYellow),
-        "title" => Some(Color::Yellow),
-        // Default-coloured: variable, parameter, property, operator, punctuation, text...
-        _ => None,
-    }
 }

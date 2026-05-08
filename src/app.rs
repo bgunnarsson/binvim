@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
+use crate::config::Config;
 use crate::lang::{self, HighlightCache};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
@@ -93,6 +94,7 @@ pub struct App {
     pub active: usize,
     pub highlight_cache: Option<HighlightCache>,
     pub picker: Option<PickerState>,
+    pub config: Config,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -134,6 +136,7 @@ impl App {
             active: 0,
             highlight_cache: None,
             picker: None,
+            config: Config::load(),
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -1928,7 +1931,7 @@ impl App {
             return;
         }
         self.highlight_cache = match lang {
-            Some(l) => lang::compute_highlights(l, &self.buffer),
+            Some(l) => lang::compute_highlights(l, &self.buffer, &self.config),
             None => None,
         };
     }
