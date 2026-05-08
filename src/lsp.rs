@@ -245,18 +245,75 @@ impl LspClient {
             "initialize",
             json!({
                 "processId": std::process::id(),
+                "clientInfo": { "name": "binvim", "version": env!("CARGO_PKG_VERSION") },
                 "rootUri": root_uri,
+                "workspaceFolders": [{ "uri": root_uri, "name": "root" }],
                 "capabilities": {
+                    "general": {
+                        "positionEncodings": ["utf-8", "utf-16"]
+                    },
                     "textDocument": {
                         "synchronization": {
-                            "didOpen": true,
-                            "didChange": true,
-                            "didClose": true
+                            "dynamicRegistration": false,
+                            "didSave": true
                         },
-                        "publishDiagnostics": { "relatedInformation": false }
+                        "publishDiagnostics": {
+                            "relatedInformation": false,
+                            "versionSupport": false,
+                            "tagSupport": { "valueSet": [1, 2] }
+                        },
+                        "hover": {
+                            "dynamicRegistration": false,
+                            "contentFormat": ["markdown", "plaintext"]
+                        },
+                        "definition": {
+                            "dynamicRegistration": false,
+                            "linkSupport": true
+                        },
+                        "references": { "dynamicRegistration": false },
+                        "documentSymbol": { "dynamicRegistration": false },
+                        "rename": {
+                            "dynamicRegistration": false,
+                            "prepareSupport": false
+                        },
+                        "completion": {
+                            "dynamicRegistration": false,
+                            "completionItem": {
+                                "snippetSupport": false,
+                                "documentationFormat": ["markdown", "plaintext"],
+                                "deprecatedSupport": true,
+                                "preselectSupport": false,
+                                "insertReplaceSupport": false,
+                                "resolveSupport": { "properties": ["documentation", "detail"] }
+                            },
+                            "completionItemKind": {
+                                "valueSet": (1..=25).collect::<Vec<_>>()
+                            },
+                            "contextSupport": true
+                        },
+                        "signatureHelp": { "dynamicRegistration": false },
+                        "codeAction": {
+                            "dynamicRegistration": false,
+                            "codeActionLiteralSupport": {
+                                "codeActionKind": {
+                                    "valueSet": [
+                                        "", "quickfix", "refactor",
+                                        "refactor.extract", "refactor.inline", "refactor.rewrite",
+                                        "source", "source.organizeImports"
+                                    ]
+                                }
+                            }
+                        },
+                        "formatting": { "dynamicRegistration": false }
+                    },
+                    "workspace": {
+                        "applyEdit": true,
+                        "workspaceEdit": { "documentChanges": false },
+                        "configuration": true,
+                        "didChangeConfiguration": { "dynamicRegistration": false },
+                        "workspaceFolders": true
                     }
-                },
-                "workspaceFolders": [{ "uri": root_uri, "name": "root" }]
+                }
             }),
         );
         let _ = client.send_notification(
