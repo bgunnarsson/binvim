@@ -72,6 +72,43 @@ pub struct CompletionState {
     pub anchor_col: usize,
 }
 
+pub struct HoverState {
+    pub lines: Vec<String>,
+}
+
+impl HoverState {
+    pub fn from_lsp_text(text: &str) -> Option<Self> {
+        let lines: Vec<String> = text
+            .lines()
+            .filter(|line| !is_code_fence(line))
+            .map(|s| s.trim_end().to_string())
+            .collect();
+        // Trim leading/trailing blank lines.
+        let start = lines.iter().position(|l| !l.trim().is_empty()).unwrap_or(lines.len());
+        let end = lines
+            .iter()
+            .rposition(|l| !l.trim().is_empty())
+            .map(|i| i + 1)
+            .unwrap_or(start);
+        if start >= end {
+            return None;
+        }
+        Some(HoverState {
+            lines: lines[start..end].to_vec(),
+        })
+    }
+}
+
+fn is_code_fence(line: &str) -> bool {
+    let t = line.trim();
+    if !t.starts_with("```") {
+        return false;
+    }
+    t.chars()
+        .skip(3)
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.')
+}
+
 pub struct App {
     pub buffer: Buffer,
     pub cursor: Cursor,
@@ -109,6 +146,7 @@ pub struct App {
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
     pub completion: Option<CompletionState>,
+    pub hover: Option<HoverState>,
     pub git_branch: Option<String>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
@@ -155,6 +193,7 @@ impl App {
             lsp: LspManager::new(),
             last_sent_version: HashMap::new(),
             completion: None,
+            hover: None,
             git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
             replaying_macro: false,
             recording: None,
@@ -205,13 +244,10 @@ impl App {
                     self.clamp_cursor_normal();
                 }
                 LspEvent::Hover { text } => {
-                    // Status line is one row — show only the first non-empty line.
-                    let summary = text
-                        .lines()
-                        .find(|l| !l.trim().is_empty())
-                        .unwrap_or("")
-                        .to_string();
-                    self.status_msg = summary;
+                    self.hover = HoverState::from_lsp_text(&text);
+                    if self.hover.is_none() {
+                        self.status_msg = "LSP: empty hover".into();
+                    }
                 }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
@@ -383,6 +419,8 @@ impl App {
                 if !matches!(self.mode, Mode::Command) {
                     self.status_msg.clear();
                 }
+                // Any keystroke dismisses an open hover popup.
+                self.hover = None;
                 // Macro recording: stop on `q` in normal, otherwise capture every key.
                 if !self.replaying_macro && self.recording_macro.is_some() {
                     let stop = matches!(self.mode, Mode::Normal)

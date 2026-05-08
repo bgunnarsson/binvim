@@ -27,8 +27,90 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if app.completion.is_some() {
         draw_completion_popup(out, app)?;
     }
+    if app.hover.is_some() {
+        draw_hover_popup(out, app)?;
+    }
     place_cursor(out, app)?;
     queue!(out, EndSynchronizedUpdate)?;
+    Ok(())
+}
+
+fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(hover) = app.hover.as_ref() else { return Ok(()); };
+    if hover.lines.is_empty() {
+        return Ok(());
+    }
+    let max_w_avail = (app.width as usize).saturating_sub(8).max(20);
+    let max_h_avail = (app.height as usize).saturating_sub(4).max(4);
+
+    let widest = hover.lines.iter().map(|l| l.chars().count()).max().unwrap_or(20);
+    let inner_w = widest.min(max_w_avail).max(20);
+    let popup_w = inner_w + 4; // border + padding on each side
+    let visible = hover.lines.len().min(max_h_avail.saturating_sub(2));
+    let popup_h = visible + 2;
+
+    // Position: try below the cursor; fall back to above.
+    let buffer_rows = app.buffer_rows();
+    let cursor_row = app.cursor.line.saturating_sub(app.view_top);
+    let mut top_row = cursor_row + 1;
+    if top_row + popup_h > buffer_rows {
+        top_row = cursor_row.saturating_sub(popup_h);
+    }
+    let gutter = app.gutter_width();
+    let mut left_col = gutter + app.cursor.col;
+    if left_col + popup_w > app.width as usize {
+        left_col = (app.width as usize).saturating_sub(popup_w);
+    }
+
+    let bg = Color::Rgb { r: 22, g: 25, b: 38 };
+    let border = Color::Rgb { r: 95, g: 105, b: 140 };
+    let text_fg = Color::Rgb { r: 220, g: 220, b: 235 };
+
+    // Top border with title.
+    let title = " hover ";
+    let title_w = title.chars().count();
+    let pre = inner_w.saturating_sub(title_w + 2) / 2;
+    let post = inner_w.saturating_sub(title_w + 2 + pre);
+    queue!(
+        out,
+        MoveTo(left_col as u16, top_row as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print(format!(" {}", "─".repeat(pre))),
+        Print(title),
+        Print(format!("{} ", "─".repeat(post))),
+        Print('╮'),
+    )?;
+
+    // Body.
+    for (i, line) in hover.lines.iter().take(visible).enumerate() {
+        let truncated: String = line.chars().take(inner_w).collect();
+        let pad = inner_w.saturating_sub(truncated.chars().count());
+        queue!(
+            out,
+            MoveTo(left_col as u16, (top_row + 1 + i) as u16),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+            SetForegroundColor(text_fg),
+            Print(format!(" {}{} ", truncated, " ".repeat(pad))),
+            SetForegroundColor(border),
+            Print('│'),
+        )?;
+    }
+
+    // Bottom border.
+    queue!(
+        out,
+        MoveTo(left_col as u16, (top_row + 1 + visible) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w + 2)),
+        Print('╯'),
+        ResetColor,
+    )?;
     Ok(())
 }
 
