@@ -49,17 +49,22 @@ impl Lang {
         }
     }
 
-    fn highlights_query(self) -> &'static str {
+    fn highlights_query(self) -> String {
         match self {
-            Lang::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY,
-            Lang::TypeScript => tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            Lang::Tsx => tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            Lang::JavaScript => tree_sitter_javascript::HIGHLIGHT_QUERY,
-            Lang::Json => tree_sitter_json::HIGHLIGHTS_QUERY,
-            Lang::Go => tree_sitter_go::HIGHLIGHTS_QUERY,
-            Lang::Html => tree_sitter_html::HIGHLIGHTS_QUERY,
-            Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY,
-            Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+            Lang::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY.into(),
+            // tree-sitter-typescript ships only a TS-specific overlay (5 captures).
+            // Combine with the tree-sitter-javascript query for full coverage.
+            Lang::TypeScript | Lang::Tsx => format!(
+                "{}\n{}",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_typescript::HIGHLIGHTS_QUERY
+            ),
+            Lang::JavaScript => tree_sitter_javascript::HIGHLIGHT_QUERY.into(),
+            Lang::Json => tree_sitter_json::HIGHLIGHTS_QUERY.into(),
+            Lang::Go => tree_sitter_go::HIGHLIGHTS_QUERY.into(),
+            Lang::Html => tree_sitter_html::HIGHLIGHTS_QUERY.into(),
+            Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY.into(),
+            Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
         }
     }
 }
@@ -78,7 +83,8 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<H
     parser.set_language(&language).ok()?;
     let source = buf.rope.to_string();
     let tree = parser.parse(&source, None)?;
-    let query = Query::new(&language, lang.highlights_query()).ok()?;
+    let query_src = lang.highlights_query();
+    let query = Query::new(&language, &query_src).ok()?;
     let capture_names = query.capture_names();
 
     let total_bytes = source.len();
