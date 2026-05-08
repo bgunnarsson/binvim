@@ -856,11 +856,25 @@ impl LspManager {
         self.clients.get(&spec.key)
     }
 
-    pub fn drain(&mut self) -> Vec<LspEvent> {
+    /// Drain pending LSP messages, bounded per call. Returns `(events, more)`
+    /// where `more` is true if any client still has unread messages — the main
+    /// loop uses this to know whether to keep polling for input or come back
+    /// for another drain pass. Without the bound, OmniSharp's initial
+    /// diagnostics flood (hundreds of files re-published in a burst) starves
+    /// the event poll for tens of seconds — fine for slow keyboard input but
+    /// painfully visible for mouse clicks.
+    pub fn drain(&mut self) -> (Vec<LspEvent>, bool) {
+        const MAX_PER_CALL: usize = 64;
         let mut events = Vec::new();
         let mut diagnostics_changed = false;
+        let mut processed = 0usize;
+        let mut more = false;
         for client in self.clients.values() {
-            while let Ok(msg) = client.incoming_rx.try_recv() {
+            while processed < MAX_PER_CALL {
+                let Ok(msg) = client.incoming_rx.try_recv() else {
+                    break;
+                };
+                processed += 1;
                 match msg {
                     LspIncoming::Diagnostics(d) => {
                         if let Some(path) = uri_to_path(&d.uri) {
@@ -880,11 +894,17 @@ impl LspManager {
                     }
                 }
             }
+            // If we hit the per-call cap, peek the rest of the clients to know
+            // whether to flag `more` without actually processing them this turn.
+            if processed >= MAX_PER_CALL {
+                more = true;
+                break;
+            }
         }
         if diagnostics_changed {
             events.push(LspEvent::DiagnosticsUpdated);
         }
-        events
+        (events, more)
     }
 
     pub fn diagnostics_for(&self, path: &Path) -> Option<&Vec<Diagnostic>> {
