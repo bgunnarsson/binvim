@@ -420,13 +420,31 @@ impl App {
                     }
                 }
                 LspEvent::Completion { items } => {
+                    // Servers (typescript-language-server especially) often dump
+                    // their entire symbol table and expect the client to filter.
+                    // Match the items against the user's typed prefix
+                    // (anchor → cursor) so the popup actually narrows as you type.
                     let (anchor_line, anchor_col) = self.word_prefix_start();
-                    self.completion = Some(CompletionState {
-                        items,
-                        selected: 0,
-                        anchor_line,
-                        anchor_col,
-                    });
+                    let start_idx = self.buffer.pos_to_char(anchor_line, anchor_col);
+                    let end_idx = self
+                        .buffer
+                        .pos_to_char(self.cursor.line, self.cursor.col);
+                    let prefix = if end_idx > start_idx {
+                        self.buffer.rope.slice(start_idx..end_idx).to_string()
+                    } else {
+                        String::new()
+                    };
+                    let filtered = filter_completion_items(items, &prefix);
+                    if filtered.is_empty() {
+                        self.completion = None;
+                    } else {
+                        self.completion = Some(CompletionState {
+                            items: filtered,
+                            selected: 0,
+                            anchor_line,
+                            anchor_col,
+                        });
+                    }
                 }
             }
         }
@@ -2368,9 +2386,10 @@ impl App {
     /// Any overlay (command line, search prompt, picker, hover, completion) is active —
     /// the buffer should render dimmed so the overlay is the focal point.
     pub fn has_modal_overlay(&self) -> bool {
+        // Completion is intentionally absent — it's an inline assist that
+        // shouldn't dim the buffer or capture mouse input while you type.
         matches!(self.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
             || self.hover.is_some()
-            || self.completion.is_some()
             || self.picker.is_some()
             || self.whichkey.is_some()
     }
@@ -3088,6 +3107,32 @@ fn is_close_char(c: char) -> bool {
 /// (`:`), Razor/decorator anchors (`@`), and JSX/HTML opens (`<`).
 fn is_completion_trigger(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<')
+}
+
+/// Narrow a server-returned completion list to entries that match what the
+/// user has actually typed. Items whose label begins with the prefix are
+/// promoted above items where the prefix appears later; the rest are dropped.
+/// An empty prefix passes everything through unchanged.
+fn filter_completion_items(
+    items: Vec<crate::lsp::CompletionItem>,
+    prefix: &str,
+) -> Vec<crate::lsp::CompletionItem> {
+    if prefix.is_empty() {
+        return items;
+    }
+    let needle = prefix.to_lowercase();
+    let mut starts: Vec<crate::lsp::CompletionItem> = Vec::new();
+    let mut contains: Vec<crate::lsp::CompletionItem> = Vec::new();
+    for item in items {
+        let hay = item.label.to_lowercase();
+        if hay.starts_with(&needle) {
+            starts.push(item);
+        } else if hay.contains(&needle) {
+            contains.push(item);
+        }
+    }
+    starts.extend(contains);
+    starts
 }
 
 /// Decide whether to auto-pair when typing `c` at `(line, col)`. Quotes/backticks
