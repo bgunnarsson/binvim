@@ -270,10 +270,6 @@ pub struct App {
     pub lsp: LspManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
-    /// Set when the previous LSP drain hit its per-call cap and there are
-    /// still messages queued. The main loop uses this to shrink the input
-    /// poll timeout so we come back round quickly without spin-looping.
-    pub lsp_has_more: bool,
     pub completion: Option<CompletionState>,
     pub hover: Option<HoverState>,
     pub whichkey: Option<WhichKeyState>,
@@ -324,7 +320,6 @@ impl App {
             editorconfig: EditorConfig::default(),
             lsp: LspManager::new(),
             last_sent_version: HashMap::new(),
-            lsp_has_more: false,
             completion: None,
             hover: None,
             whichkey: None,
@@ -352,28 +347,28 @@ impl App {
                 needs_render = false;
             }
             // Compute the poll budget — a pending leader-prefix shortens it so the
-            // which-key popup appears promptly when the user pauses. While the
-            // LSP still has queued messages we drop to a near-zero poll so we
-            // come back round and chip away at the backlog without starving
-            // input either way.
-            let base = if self.lsp_has_more {
-                Duration::from_millis(0)
-            } else {
-                Duration::from_millis(100)
-            };
+            // which-key popup appears promptly when the user pauses. The poll
+            // wakes early on any input event, so a 100ms ceiling is fine even
+            // when the LSP backlog is being drained in chunks.
             let poll_dur = match self.leader_pressed_at {
                 Some(t) => {
                     let target = t + WHICHKEY_DELAY;
                     target
                         .checked_duration_since(Instant::now())
                         .unwrap_or(Duration::from_millis(0))
-                        .min(base)
+                        .min(Duration::from_millis(100))
                 }
-                None => base,
+                None => Duration::from_millis(100),
             };
+            // Process every input event currently queued before touching the
+            // LSP backlog — guarantees mouse-drag bursts and keystrokes never
+            // wait behind a `drain()` call.
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
+                while crossterm::event::poll(Duration::from_millis(0))? {
+                    self.handle_event()?;
+                }
             }
             // Prefix timeout fired? Open the matching which-key popup.
             if let Some(t) = self.leader_pressed_at {
@@ -392,8 +387,7 @@ impl App {
                     self.leader_pressed_at = None;
                 }
             }
-            let (events, more) = self.lsp.drain();
-            self.lsp_has_more = more;
+            let (events, _more) = self.lsp.drain();
             if !events.is_empty() {
                 self.handle_lsp_events(events);
                 needs_render = true;
