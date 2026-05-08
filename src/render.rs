@@ -343,14 +343,14 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
         if selected {
             queue!(
                 out,
-                SetBackgroundColor(Color::DarkBlue),
-                SetForegroundColor(Color::White)
+                SetBackgroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
+                SetForegroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })  // Lavender
             )?;
         } else {
             queue!(
                 out,
-                SetBackgroundColor(Color::DarkGrey),
-                SetForegroundColor(Color::White)
+                SetBackgroundColor(Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }), // Surface0
+                SetForegroundColor(Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 })  // Text
             )?;
         }
         let kind = item.kind.as_deref().unwrap_or("");
@@ -436,8 +436,8 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
         if selected {
             queue!(
                 out,
-                SetBackgroundColor(Color::DarkBlue),
-                SetForegroundColor(Color::White)
+                SetBackgroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
+                SetForegroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })  // Lavender
             )?;
         }
         let max_w = w.saturating_sub(2);
@@ -481,7 +481,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
             }
             queue!(
                 out,
-                SetForegroundColor(Color::DarkGrey),
+                SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
                 Print(format!("{:>width$} ", line_idx + 1, width = gutter - 2)),
                 ResetColor
             )?;
@@ -489,7 +489,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
         } else {
             queue!(
                 out,
-                SetForegroundColor(Color::DarkBlue),
+                SetForegroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
                 Print("~"),
                 ResetColor
             )?;
@@ -530,10 +530,11 @@ fn draw_line_with_selection(
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
+            // Catppuccin Yellow bg with Base fg for high contrast on matched chars.
             queue!(
                 out,
-                SetBackgroundColor(Color::Yellow),
-                SetForegroundColor(Color::Black)
+                SetBackgroundColor(Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
+                SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
             )?;
         } else if let Some(fg) = syntax_color {
             queue!(out, SetForegroundColor(fg))?;
