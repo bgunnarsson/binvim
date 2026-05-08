@@ -542,6 +542,25 @@ impl App {
         }
     }
 
+    /// Bounds-check a mouse position against the rendered top-right notification box.
+    /// Mirrors the layout in `render::draw_notification` (height = 3 rows).
+    fn click_inside_notification(&self, row: usize, col: usize) -> bool {
+        if self.status_msg.is_empty() {
+            return false;
+        }
+        if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
+            return false;
+        }
+        let max_inner = (self.width as usize).saturating_sub(8).max(20);
+        let msg_chars = self.status_msg.lines().next().unwrap_or("").chars().count();
+        let displayed_chars = msg_chars.min(max_inner);
+        let inner_w = displayed_chars + 2;
+        let box_w = inner_w + 2;
+        let total_w = self.width as usize;
+        let left = total_w.saturating_sub(box_w + 1);
+        row < 3 && col >= left && col < left + box_w
+    }
+
     /// Returns `true` if the key was consumed to scroll the hover popup. Otherwise
     /// the caller should dismiss the popup and let the key fall through.
     fn try_scroll_hover(&mut self, key: &KeyEvent) -> bool {
@@ -653,6 +672,30 @@ impl App {
         let row = ev.row as usize;
         let col = ev.column as usize;
         let buffer_rows = self.buffer_rows();
+
+        // Left-click on the top-right notification → copy its content to the
+        // system clipboard and the unnamed register. Lets the user grab paths
+        // and other reported strings without dropping into selection mode.
+        if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left))
+            && self.click_inside_notification(row, col)
+        {
+            let text = self.status_msg.clone();
+            if !text.is_empty() {
+                let mut copied_clipboard = false;
+                if let Ok(mut cb) = arboard::Clipboard::new() {
+                    if cb.set_text(text.clone()).is_ok() {
+                        copied_clipboard = true;
+                    }
+                }
+                self.write_register(None, text, false);
+                self.status_msg = if copied_clipboard {
+                    "Copied notification to clipboard".into()
+                } else {
+                    "Copied notification to register \"".into()
+                };
+            }
+            return;
+        }
 
         match ev.kind {
             MouseEventKind::ScrollUp => {
