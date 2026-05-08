@@ -30,8 +30,117 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if app.hover.is_some() {
         draw_hover_popup(out, app)?;
     }
+    if app.whichkey.is_some() {
+        draw_whichkey(out, app)?;
+    }
     place_cursor(out, app)?;
     queue!(out, EndSynchronizedUpdate)?;
+    Ok(())
+}
+
+fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(wk) = app.whichkey.as_ref() else { return Ok(()); };
+    if wk.entries.is_empty() {
+        return Ok(());
+    }
+    // Width: longest "key  →  label" line. We pad keys to a uniform column.
+    let key_w = wk.entries.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(1);
+    let label_w = wk.entries.iter().map(|(_, l)| l.chars().count()).max().unwrap_or(1);
+    let inner_w = (key_w + 4 + label_w).max(wk.title.chars().count() + 4);
+    let popup_w = inner_w + 4;
+    let popup_h = wk.entries.len() + 4; // top + entries + footer + bottom (+1 padding)
+
+    let total_w = app.width as usize;
+    let total_h = app.height as usize;
+    let popup_w = popup_w.min(total_w.saturating_sub(4));
+    let popup_h = popup_h.min(total_h.saturating_sub(2));
+    let inner_w = popup_w.saturating_sub(4);
+
+    let left = total_w.saturating_sub(popup_w) / 2;
+    let top = (total_h.saturating_sub(popup_h)) / 2;
+
+    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
+    let key_fg = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }; // Mauve
+    let label_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let arrow_fg = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
+    let hint_fg = Color::Rgb { r: 0x9e, g: 0xa3, b: 0xb6 }; // Subtext-ish
+
+    // Top border with title.
+    let title_text = format!(" {} ", wk.title);
+    let title_len = title_text.chars().count();
+    let pre = inner_w.saturating_sub(title_len + 2) / 2;
+    let post = inner_w.saturating_sub(title_len + 2 + pre);
+    queue!(
+        out,
+        MoveTo(left as u16, top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print(format!(" {}", "─".repeat(pre))),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
+        Print(title_text),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print(format!("{} ", "─".repeat(post))),
+        Print('╮'),
+    )?;
+
+    // Entry rows.
+    let max_entries = popup_h.saturating_sub(3); // leave room for footer + borders
+    for (i, (key, label)) in wk.entries.iter().take(max_entries).enumerate() {
+        let key_pad = key_w.saturating_sub(key.chars().count());
+        let label_max = inner_w.saturating_sub(key_w + 4);
+        let label_trunc: String = label.chars().take(label_max).collect();
+        let trail = inner_w.saturating_sub(key_w + 4 + label_trunc.chars().count());
+        queue!(
+            out,
+            MoveTo(left as u16, (top + 1 + i) as u16),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+            SetForegroundColor(key_fg),
+            Print(format!(" {}{} ", " ".repeat(key_pad), key)),
+            SetForegroundColor(arrow_fg),
+            Print("→ "),
+            SetForegroundColor(label_fg),
+            Print(label_trunc),
+            Print(" ".repeat(trail)),
+            SetForegroundColor(border),
+            Print('│'),
+        )?;
+    }
+
+    // Footer hint row.
+    let footer_row = top + 1 + max_entries.min(wk.entries.len());
+    let hint = " ESC close ";
+    let hint_pad = inner_w.saturating_sub(hint.chars().count() + 2);
+    queue!(
+        out,
+        MoveTo(left as u16, footer_row as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        SetForegroundColor(hint_fg),
+        Print(format!(" {}{} ", hint, " ".repeat(hint_pad))),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+
+    // Bottom border.
+    queue!(
+        out,
+        MoveTo(left as u16, (footer_row + 1) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w + 2)),
+        Print('╯'),
+        ResetColor,
+    )?;
     Ok(())
 }
 

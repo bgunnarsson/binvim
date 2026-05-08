@@ -3,7 +3,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
@@ -74,6 +74,24 @@ pub struct CompletionState {
 
 pub struct HoverState {
     pub lines: Vec<String>,
+}
+
+/// A which-key style helper. Shown after the user holds a prefix (currently leader) for
+/// `WHICHKEY_DELAY` without resolving it.
+pub struct WhichKeyState {
+    pub title: String,
+    pub entries: Vec<(String, String)>,
+}
+
+pub const WHICHKEY_DELAY: Duration = Duration::from_millis(250);
+
+fn leader_entries() -> Vec<(String, String)> {
+    vec![
+        ("<space>".into(), "Files".into()),
+        ("b".into(), "Buffers".into()),
+        ("g".into(), "Grep".into()),
+        ("e".into(), "Yazi".into()),
+    ]
 }
 
 impl HoverState {
@@ -147,6 +165,8 @@ pub struct App {
     pub last_sent_version: HashMap<PathBuf, u64>,
     pub completion: Option<CompletionState>,
     pub hover: Option<HoverState>,
+    pub whichkey: Option<WhichKeyState>,
+    pub leader_pressed_at: Option<Instant>,
     pub git_branch: Option<String>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
@@ -194,6 +214,8 @@ impl App {
             last_sent_version: HashMap::new(),
             completion: None,
             hover: None,
+            whichkey: None,
+            leader_pressed_at: None,
             git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
             replaying_macro: false,
             recording: None,
@@ -215,10 +237,32 @@ impl App {
                 stdout.flush()?;
                 needs_render = false;
             }
-            // Block for input up to 100 ms; wake early if LSP traffic arrives via Resize/Key events.
-            if crossterm::event::poll(Duration::from_millis(100))? {
+            // Compute the poll budget — a pending leader-prefix shortens it so the
+            // which-key popup appears promptly when the user pauses.
+            let poll_dur = match self.leader_pressed_at {
+                Some(t) => {
+                    let target = t + WHICHKEY_DELAY;
+                    target
+                        .checked_duration_since(Instant::now())
+                        .unwrap_or(Duration::from_millis(0))
+                        .min(Duration::from_millis(100))
+                }
+                None => Duration::from_millis(100),
+            };
+            if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
+            }
+            // Leader timeout fired? Open which-key.
+            if let Some(t) = self.leader_pressed_at {
+                if Instant::now() >= t + WHICHKEY_DELAY && self.pending.awaiting_leader {
+                    self.whichkey = Some(WhichKeyState {
+                        title: "Leader".into(),
+                        entries: leader_entries(),
+                    });
+                    self.leader_pressed_at = None;
+                    needs_render = true;
+                }
             }
             let events = self.lsp.drain();
             if !events.is_empty() {
@@ -419,8 +463,9 @@ impl App {
                 if !matches!(self.mode, Mode::Command) {
                     self.status_msg.clear();
                 }
-                // Any keystroke dismisses an open hover popup.
+                // Any keystroke dismisses transient overlays (hover, which-key).
                 self.hover = None;
+                self.whichkey = None;
                 // Macro recording: stop on `q` in normal, otherwise capture every key.
                 if !self.replaying_macro && self.recording_macro.is_some() {
                     let stop = matches!(self.mode, Mode::Normal)
@@ -462,6 +507,14 @@ impl App {
                 }
             }
             ParseResult::Action(a) => self.apply_action(a),
+        }
+        // Track leader-prefix timing for the which-key helper.
+        if self.pending.awaiting_leader {
+            if self.leader_pressed_at.is_none() {
+                self.leader_pressed_at = Some(Instant::now());
+            }
+        } else {
+            self.leader_pressed_at = None;
         }
     }
 
@@ -1835,6 +1888,7 @@ impl App {
             || self.hover.is_some()
             || self.completion.is_some()
             || self.picker.is_some()
+            || self.whichkey.is_some()
     }
 
     pub fn gutter_width(&self) -> usize {
