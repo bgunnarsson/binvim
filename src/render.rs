@@ -268,61 +268,96 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
+/// Classify a status message by content into a Catppuccin severity colour. We
+/// avoid threading a level enum through every callsite by reading the prefix
+/// patterns at render time.
+fn notification_color(msg: &str) -> Color {
+    let lower = msg.to_lowercase();
+    // Error: "error: <foo>" or vim-style E37 / E89 / E492…
+    let vim_error = msg
+        .strip_prefix('E')
+        .map(|rest| {
+            let digits: usize = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+            digits >= 1 && rest[..digits].len() <= 4 && rest[digits..].starts_with(':')
+        })
+        .unwrap_or(false);
+    if lower.starts_with("error:") || vim_error {
+        return Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }; // Red
+    }
+    // Success: file write, substitution count, range yank / delete summaries.
+    if lower.contains("written")
+        || lower.contains("substitution")
+        || lower.ends_with(" yanked")
+        || lower.ends_with(" deleted")
+        || lower.starts_with("recorded ")
+        || lower.starts_with("kept buffer")
+    {
+        return Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
+    }
+    // Warning: not-found, no-such, edge-of-history.
+    if lower.contains("not found")
+        || lower.contains("no write")
+        || lower.contains("no previous")
+        || lower.contains("already at")
+        || lower.contains("only one")
+        || lower.contains("empty ")
+        || lower.contains("not on path")
+        || lower.contains("no word")
+        || lower.contains("no files")
+        || lower.contains("buffer closed")
+    {
+        return Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }; // Yellow
+    }
+    Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa } // Blue — info default
+}
+
 fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     // Cmdline and search modes get the centred box; their floating widget covers any notification.
     if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
         return Ok(());
     }
-    // Only ad-hoc status messages render in the top-right box now.
-    // Diagnostics are shown inline at the end of their line (Error Lens style).
     if app.status_msg.is_empty() {
         return Ok(());
     }
     let msg = truncate_oneline(&app.status_msg);
-    let accent = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     if msg.is_empty() {
         return Ok(());
     }
+    let level = notification_color(&msg);
 
     let max_inner = (app.width as usize).saturating_sub(8).max(20);
     let inner: String = msg.chars().take(max_inner).collect();
     let inner_w = inner.chars().count() + 2; // padding inside borders
-    let box_w = inner_w + 2; // borders
+    let box_w = inner_w + 2;
     let total_w = app.width as usize;
     let left = total_w.saturating_sub(box_w + 1);
     let top = 0usize;
 
     let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
-    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
 
-    // Top border.
     queue!(
         out,
         MoveTo(left as u16, top as u16),
         SetBackgroundColor(bg),
-        SetForegroundColor(border),
+        SetForegroundColor(level),
         Print('╭'),
         Print("─".repeat(inner_w)),
         Print('╮'),
     )?;
-    // Body.
     queue!(
         out,
         MoveTo(left as u16, (top + 1) as u16),
         SetBackgroundColor(bg),
-        SetForegroundColor(border),
+        SetForegroundColor(level),
         Print('│'),
-        SetForegroundColor(accent),
         Print(format!(" {} ", inner)),
-        SetForegroundColor(border),
         Print('│'),
     )?;
-    // Bottom.
     queue!(
         out,
         MoveTo(left as u16, (top + 2) as u16),
         SetBackgroundColor(bg),
-        SetForegroundColor(border),
+        SetForegroundColor(level),
         Print('╰'),
         Print("─".repeat(inner_w)),
         Print('╯'),
