@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
     queue,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use std::io::Write;
@@ -59,6 +59,7 @@ fn draw_line_with_selection(
         text.pop();
     }
     let sel = app.line_selection(line_idx);
+    let search_matches = app.line_search_matches(line_idx);
     let chars: Vec<char> = text.chars().collect();
     let mut visual_used = 0usize;
     for (col, c) in chars.iter().enumerate() {
@@ -67,8 +68,15 @@ fn draw_line_with_selection(
             break;
         }
         let in_sel = sel.map(|(s, e)| col >= s && col < e).unwrap_or(false);
+        let in_search = !in_sel && search_matches.iter().any(|(s, e)| col >= *s && col < *e);
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
+        } else if in_search {
+            queue!(
+                out,
+                SetBackgroundColor(Color::Yellow),
+                SetForegroundColor(Color::Black)
+            )?;
         }
         if *c == '\t' {
             queue!(out, Print(" ".repeat(TAB_WIDTH)))?;
@@ -77,10 +85,11 @@ fn draw_line_with_selection(
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
+        } else if in_search {
+            queue!(out, ResetColor)?;
         }
         visual_used += display_w;
     }
-    // Empty line in visual mode: show a single highlighted space so the line is visible.
     if chars.is_empty() {
         if let Some((s, e)) = sel {
             if s < e {

@@ -15,6 +15,7 @@ pub enum ExCommand {
     Substitute { range: ExRange, pattern: String, replacement: String, global: bool },
     DeleteRange { range: ExRange },
     YankRange { range: ExRange },
+    NoHighlight,
     Unknown(String),
 }
 
@@ -84,6 +85,7 @@ pub fn parse(line: &str) -> ExCommand {
         "bd!" | "bdelete!" => ExCommand::BufferDelete { force: true },
         "ls" | "buffers" => ExCommand::BufferList,
         "b" | "buffer" => ExCommand::BufferSwitch(rest.to_string()),
+        "noh" | "nohlsearch" => ExCommand::NoHighlight,
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

@@ -76,6 +76,8 @@ pub struct App {
     pub last_find: Option<FindRecord>,
     /// `(query, backward)` — direction is the original search direction so `n`/`N` honour it.
     pub last_search: Option<(String, bool)>,
+    /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
+    pub search_hl_off: bool,
     pub last_edit: Option<LastEdit>,
     pub marks: HashMap<char, (usize, usize)>,
     pub jumplist: Vec<(usize, usize)>,
@@ -115,6 +117,7 @@ impl App {
             visual_anchor: None,
             last_find: None,
             last_search: None,
+            search_hl_off: false,
             last_edit: None,
             marks: HashMap::new(),
             jumplist: Vec::new(),
@@ -349,6 +352,9 @@ impl App {
             }
             ExCommand::YankRange { range } => {
                 self.yank_lines(range);
+            }
+            ExCommand::NoHighlight => {
+                self.search_hl_off = true;
             }
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
@@ -835,6 +841,7 @@ impl App {
             return;
         };
         self.last_search = Some((word.clone(), backward));
+        self.search_hl_off = false;
         let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
         let total = self.buffer.total_chars();
         let from = if backward {
@@ -1033,6 +1040,7 @@ impl App {
             query.to_string()
         };
         self.last_search = Some((q.clone(), backward));
+        self.search_hl_off = false;
         let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
         let forward = !backward;
         match self.search(&q, cur_idx, forward, true) {
@@ -1442,6 +1450,42 @@ impl App {
         let n = self.buffer.line_count();
         let digits = format!("{n}").len();
         digits + 1
+    }
+
+    /// Char-column ranges of search-highlight matches on `line`.
+    pub fn line_search_matches(&self, line: usize) -> Vec<(usize, usize)> {
+        if self.search_hl_off {
+            return Vec::new();
+        }
+        let Some((q, _)) = &self.last_search else {
+            return Vec::new();
+        };
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let line_len = self.buffer.line_len(line);
+        if line_len == 0 {
+            return Vec::new();
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        let text: String = self
+            .buffer
+            .rope
+            .slice(line_start..(line_start + line_len))
+            .to_string();
+        let qlen = q.chars().count();
+        let mut out = Vec::new();
+        let mut byte = 0usize;
+        while byte <= text.len() {
+            let Some(rel) = text[byte..].find(q.as_str()) else {
+                break;
+            };
+            let abs_byte = byte + rel;
+            let char_start = text[..abs_byte].chars().count();
+            out.push((char_start, char_start + qlen));
+            byte = abs_byte + q.len().max(1);
+        }
+        out
     }
 
     /// For visual mode rendering: return the half-open `[start_col, end_col)` of selected
