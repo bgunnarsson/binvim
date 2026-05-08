@@ -109,6 +109,7 @@ pub struct App {
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
     pub completion: Option<CompletionState>,
+    pub git_branch: Option<String>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -154,6 +155,7 @@ impl App {
             lsp: LspManager::new(),
             last_sent_version: HashMap::new(),
             completion: None,
+            git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -1914,7 +1916,18 @@ impl App {
         let new_idx = self.buffers.len() - 1;
         self.switch_to(new_idx)?;
         self.lsp_attach_active();
+        self.refresh_git_branch();
         Ok(())
+    }
+
+    fn refresh_git_branch(&mut self) {
+        let start = self
+            .buffer
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        self.git_branch = detect_git_branch(&start);
     }
 
     fn cycle_buffer(&mut self, step: i64) {
@@ -2329,6 +2342,38 @@ impl App {
         } else {
             out
         }
+    }
+}
+
+/// Walk up from `start` looking for a `.git` dir; return the current branch (or short SHA in
+/// detached-HEAD mode). Returns `None` outside a git repo.
+fn detect_git_branch(start: &std::path::Path) -> Option<String> {
+    let mut dir = start.canonicalize().ok()?;
+    loop {
+        let git_dir = dir.join(".git");
+        if git_dir.exists() {
+            // .git can be a directory or a file (worktrees / submodules).
+            let head_path = if git_dir.is_dir() {
+                git_dir.join("HEAD")
+            } else {
+                // .git file: contains "gitdir: <path>" — not handling worktrees in v1.
+                return None;
+            };
+            let text = std::fs::read_to_string(&head_path).ok()?;
+            let trimmed = text.trim();
+            if let Some(rest) = trimmed.strip_prefix("ref: refs/heads/") {
+                return Some(rest.to_string());
+            }
+            if trimmed.len() >= 7 {
+                return Some(format!("{}…", &trimmed[..7]));
+            }
+            return None;
+        }
+        let parent = dir.parent()?.to_path_buf();
+        if parent == dir {
+            return None;
+        }
+        dir = parent;
     }
 }
 

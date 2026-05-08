@@ -1,6 +1,7 @@
 use crate::app::App;
+use crate::lang::Lang;
 use crate::lsp::Severity;
-use crate::mode::Mode;
+use crate::mode::{Mode, VisualKind};
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
@@ -310,35 +311,188 @@ fn draw_line_with_selection(
     Ok(())
 }
 
+// Powerline-style status line: mode block | branch | path | …filler… | language tag.
+// Nerd Font glyphs are used directly (user has Nerd Font in their terminal).
+const PL_RIGHT: char = '\u{e0b0}'; // right-pointing arrow (filled)
+const PL_LEFT: char = '\u{e0b2}'; // left-pointing arrow (filled)
+const NF_BRANCH: char = '\u{e0a0}';
+
+fn mode_color(mode: Mode) -> Color {
+    match mode {
+        Mode::Normal => Color::Rgb { r: 135, g: 175, b: 240 },
+        Mode::Insert => Color::Rgb { r: 165, g: 220, b: 130 },
+        Mode::Visual(VisualKind::Char) => Color::Rgb { r: 200, g: 130, b: 220 },
+        Mode::Visual(VisualKind::Line) => Color::Rgb { r: 200, g: 130, b: 220 },
+        Mode::Command => Color::Rgb { r: 240, g: 200, b: 110 },
+        Mode::Search { .. } => Color::Rgb { r: 240, g: 200, b: 110 },
+        Mode::Picker => Color::Rgb { r: 130, g: 220, b: 220 },
+    }
+}
+
+fn lang_icon(lang: Lang) -> char {
+    match lang {
+        Lang::Rust => '\u{e7a8}',
+        Lang::TypeScript | Lang::Tsx => '\u{e628}',
+        Lang::Json => '\u{e60b}',
+        Lang::Go => '\u{e627}',
+        Lang::Markdown => '\u{e609}',
+    }
+}
+
+fn lang_name(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Rust => "rust",
+        Lang::TypeScript => "typescript",
+        Lang::Tsx => "tsx",
+        Lang::Json => "json",
+        Lang::Go => "go",
+        Lang::Markdown => "markdown",
+    }
+}
+
+fn truncate_left(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max || max == 0 {
+        return s.chars().take(max).collect();
+    }
+    if max == 1 {
+        return "…".to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    let start = count - (max - 1);
+    let mut out = String::from("…");
+    out.extend(chars[start..].iter());
+    out
+}
+
 fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let row = (app.height as usize).saturating_sub(2) as u16;
-    let name = app
-        .buffer
-        .path
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|| "[No Name]".into());
-    let dirty = if app.buffer.dirty { " [+]" } else { "" };
-    let mode = app.mode.label();
-    let pos = format!("{}:{}", app.cursor.line + 1, app.cursor.col + 1);
-    let recording_tag = match app.recording_macro {
-        Some(c) => format!("rec @{}  ", c),
+    let total = app.width as usize;
+
+    let mode_bg = mode_color(app.mode);
+    let mode_fg = Color::Rgb { r: 20, g: 22, b: 32 };
+    let branch_bg = Color::Rgb { r: 54, g: 60, b: 86 };
+    let branch_fg = Color::Rgb { r: 200, g: 200, b: 220 };
+    let path_bg = Color::Rgb { r: 36, g: 40, b: 56 };
+    let path_fg = Color::Rgb { r: 170, g: 175, b: 195 };
+    let right_bg = branch_bg;
+    let right_fg = branch_fg;
+
+    queue!(out, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
+
+    // Build segment strings first so we can size everything.
+    let recording = app
+        .recording_macro
+        .map(|c| format!(" @{c}"))
+        .unwrap_or_default();
+    let mode_text = format!(" {}{} ", app.mode.label(), recording);
+    let branch_text = app
+        .git_branch
+        .as_deref()
+        .map(|b| format!(" {} {} ", NF_BRANCH, b))
+        .unwrap_or_default();
+    let dirty = if app.buffer.dirty { " " } else { " " };
+    let lang = app.buffer.path.as_deref().and_then(Lang::detect);
+    let right_text = match lang {
+        Some(l) => format!(" {} {} ", lang_icon(l), lang_name(l)),
         None => String::new(),
     };
-    let left = format!(" {} | {}{}", mode, name, dirty);
-    let right = format!("{}{} ", recording_tag, pos);
-    let total = app.width as usize;
-    let left_count = left.chars().count();
-    let right_count = right.chars().count();
-    let pad = total.saturating_sub(left_count + right_count);
-    let line = format!("{}{}{}", left, " ".repeat(pad), right);
+
+    // Width budget. Powerline arrows take 1 column each.
+    let mode_w = mode_text.chars().count();
+    let mode_arrow_w = 1;
+    let branch_w = branch_text.chars().count();
+    let branch_arrow_w = if branch_text.is_empty() { 0 } else { 1 };
+    let right_w = right_text.chars().count();
+    let right_arrow_w = if right_text.is_empty() { 0 } else { 1 };
+
+    let path_used =
+        mode_w + mode_arrow_w + branch_w + branch_arrow_w + right_arrow_w + right_w;
+    let path_room = total
+        .saturating_sub(path_used)
+        .saturating_sub(2 + dirty.chars().count()); // surrounding spaces + dirty marker
+
+    let path_str = match app.buffer.path.as_ref() {
+        Some(p) => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let display = match p.strip_prefix(&cwd) {
+                Ok(rel) => rel.display().to_string(),
+                Err(_) => p.display().to_string(),
+            };
+            truncate_left(&display, path_room.max(1))
+        }
+        None => "[No Name]".into(),
+    };
+
+    // === Mode segment ===
     queue!(
         out,
-        MoveTo(0, row),
-        SetAttribute(Attribute::Reverse),
-        Print(line),
-        SetAttribute(Attribute::Reset)
+        SetBackgroundColor(mode_bg),
+        SetForegroundColor(mode_fg),
+        SetAttribute(Attribute::Bold),
+        Print(&mode_text),
+        SetAttribute(Attribute::Reset),
     )?;
+
+    // mode → branch transition (or → path if no branch)
+    if !branch_text.is_empty() {
+        queue!(
+            out,
+            SetBackgroundColor(branch_bg),
+            SetForegroundColor(mode_bg),
+            Print(PL_RIGHT.to_string()),
+            SetBackgroundColor(branch_bg),
+            SetForegroundColor(branch_fg),
+            Print(&branch_text),
+            SetBackgroundColor(path_bg),
+            SetForegroundColor(branch_bg),
+            Print(PL_RIGHT.to_string()),
+        )?;
+    } else {
+        queue!(
+            out,
+            SetBackgroundColor(path_bg),
+            SetForegroundColor(mode_bg),
+            Print(PL_RIGHT.to_string()),
+        )?;
+    }
+
+    // === Path segment ===
+    queue!(
+        out,
+        SetBackgroundColor(path_bg),
+        SetForegroundColor(path_fg),
+        Print(format!(" {}{} ", path_str, dirty)),
+    )?;
+
+    // Fill the middle with the path background.
+    let drawn = mode_w
+        + mode_arrow_w
+        + (if branch_text.is_empty() { 0 } else { branch_w + branch_arrow_w })
+        + 2
+        + path_str.chars().count()
+        + dirty.chars().count();
+    let fill = total.saturating_sub(drawn + right_arrow_w + right_w);
+    queue!(
+        out,
+        SetBackgroundColor(path_bg),
+        Print(" ".repeat(fill)),
+    )?;
+
+    // === Right segment (language) ===
+    if !right_text.is_empty() {
+        queue!(
+            out,
+            SetBackgroundColor(right_bg),
+            SetForegroundColor(path_bg),
+            Print(PL_LEFT.to_string()),
+            SetBackgroundColor(right_bg),
+            SetForegroundColor(right_fg),
+            Print(&right_text),
+        )?;
+    }
+
+    queue!(out, ResetColor)?;
     Ok(())
 }
 
