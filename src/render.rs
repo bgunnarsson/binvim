@@ -642,7 +642,9 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     let avail = (app.width as usize).saturating_sub(gutter);
     for row in 0..rows {
         let line_idx = app.view_top + row;
-        queue!(out, MoveTo(0, row as u16))?;
+        // Clear the row before drawing — guards against terminal-side wrap
+        // from the previous row's render leaking onto this one.
+        queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
         if line_idx < app.buffer.line_count() {
             // Diagnostic sign column.
             let sign = app.worst_diagnostic(line_idx).map(|s| match s {
@@ -751,23 +753,37 @@ fn draw_line_with_selection(
         }
     }
 
-    // Error Lens-style inline diagnostic at the end of the line.
+    // Error Lens-style inline diagnostic at the end of the line. We carefully
+    // measure the prefix and message in display columns (not chars), and leave
+    // one column of slack so any width-miscount can't push past the row edge
+    // and force the terminal to wrap onto the next row — which would clobber
+    // the next line's render with the diagnostic's tail.
     if !dim {
         if let Some(diag) = app.line_diagnostics(line_idx).first() {
+            use unicode_width::UnicodeWidthChar;
             let remaining = avail.saturating_sub(visual_used);
-            if remaining > 4 {
-                let (icon, color) = match diag.severity {
-                    Severity::Error => ('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }), // Red
-                    Severity::Warning => ('▲', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
-                    Severity::Info => ('●', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }), // Blue
-                    Severity::Hint => ('●', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }), // Sky
-                };
-                // Spacing: "  ● " (2 leading + icon + space) → 4 cols.
-                let prefix_w = 4usize;
-                let text_room = remaining.saturating_sub(prefix_w);
-                let mut msg: String = diag.message.lines().next().unwrap_or("").to_string();
-                if msg.chars().count() > text_room {
-                    msg = msg.chars().take(text_room).collect();
+            let (icon, color) = match diag.severity {
+                Severity::Error => ('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }),
+                Severity::Warning => ('▲', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }),
+                Severity::Info => ('●', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }),
+                Severity::Hint => ('●', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }),
+            };
+            // "  <icon> " — leading 2 spaces, icon (1 or 2 cols), trailing space.
+            let icon_w = UnicodeWidthChar::width(icon).unwrap_or(1);
+            let prefix_w = 2 + icon_w + 1;
+            let safety = 1usize; // never write the very last column
+            if remaining > prefix_w + safety {
+                let text_budget = remaining - prefix_w - safety;
+                let raw = diag.message.lines().next().unwrap_or("");
+                let mut used = 0usize;
+                let mut msg = String::new();
+                for c in raw.chars() {
+                    let w = UnicodeWidthChar::width(c).unwrap_or(0);
+                    if used + w > text_budget {
+                        break;
+                    }
+                    msg.push(c);
+                    used += w;
                 }
                 queue!(
                     out,
