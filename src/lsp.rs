@@ -108,12 +108,16 @@ pub struct ServerSpec {
 }
 
 /// Pick the LSP server config for a path's extension. `None` if we don't know the extension.
+///
+/// Command candidates are bare names — `resolve_command` then walks `$PATH` to find them.
+/// We only special-case `~/.cargo/bin` for rust-analyzer because that's the Rust toolchain
+/// convention (and not tied to any other tool's package manager).
 pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
     let ext = path.extension().and_then(|s| s.to_str())?;
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
-    let mason = |bin: &str| format!("{}/.local/share/nvim/mason/bin/{}", home, bin);
     let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
     let stdio = || vec!["--stdio".to_string()];
+    let _ = home;
 
     let ts_markers = || {
         vec![
@@ -142,7 +146,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "ts" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "typescript".into(),
-            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            cmd_candidates: vec!["typescript-language-server".into()],
             args: stdio(),
             root_markers: ts_markers(),
             initialization_options: ts_init(),
@@ -150,7 +154,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "tsx" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "typescriptreact".into(),
-            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            cmd_candidates: vec!["typescript-language-server".into()],
             args: stdio(),
             root_markers: ts_markers(),
             initialization_options: ts_init(),
@@ -158,7 +162,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "jsx" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "javascriptreact".into(),
-            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            cmd_candidates: vec!["typescript-language-server".into()],
             args: stdio(),
             root_markers: ts_markers(),
             initialization_options: ts_init(),
@@ -166,7 +170,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "js" | "mjs" | "cjs" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "javascript".into(),
-            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            cmd_candidates: vec!["typescript-language-server".into()],
             args: stdio(),
             root_markers: ts_markers(),
             initialization_options: ts_init(),
@@ -174,7 +178,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "json" | "jsonc" => Some(ServerSpec {
             key: "biome".into(),
             language_id: "json".into(),
-            cmd_candidates: vec!["biome".into(), mason("biome")],
+            cmd_candidates: vec!["biome".into()],
             args: vec!["lsp-proxy".into()],
             root_markers: vec!["biome.json".into(), "biome.jsonc".into(), "package.json".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -182,7 +186,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "go" => Some(ServerSpec {
             key: "go".into(),
             language_id: "go".into(),
-            cmd_candidates: vec!["gopls".into(), mason("gopls")],
+            cmd_candidates: vec!["gopls".into()],
             args: vec![],
             root_markers: vec!["go.mod".into(), "go.work".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -190,7 +194,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "html" | "htm" => Some(ServerSpec {
             key: "html".into(),
             language_id: "html".into(),
-            cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
+            cmd_candidates: vec!["vscode-html-language-server".into()],
             args: stdio(),
             root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -205,11 +209,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             let rzls = ServerSpec {
                 key: "rzls".into(),
                 language_id: "razor".into(),
-                cmd_candidates: vec![
-                    "rzls".into(),
-                    mason("rzls"),
-                    format!("{}/.local/bin/rzls/rzls", home),
-                ],
+                cmd_candidates: vec!["rzls".into()],
                 args: vec![],
                 root_markers: vec!["*.csproj".into(), "*.sln".into(), ".git".into()],
                 initialization_options: Value::Null,
@@ -220,7 +220,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             let omnisharp = ServerSpec {
                 key: "omnisharp".into(),
                 language_id: "razor".into(),
-                cmd_candidates: vec!["OmniSharp".into(), mason("OmniSharp"), "omnisharp".into()],
+                cmd_candidates: vec!["OmniSharp".into(), "omnisharp".into()],
                 args: vec![
                     "-z".into(),
                     "--hostPID".into(),
@@ -246,7 +246,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             Some(ServerSpec {
                 key: "html".into(),
                 language_id: "html".into(),
-                cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
+                cmd_candidates: vec!["vscode-html-language-server".into()],
                 args: stdio(),
                 root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
                 initialization_options: Value::Null,
@@ -255,7 +255,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "css" | "scss" | "less" => Some(ServerSpec {
             key: "css".into(),
             language_id: ext.into(),
-            cmd_candidates: vec!["vscode-css-language-server".into(), mason("vscode-css-language-server")],
+            cmd_candidates: vec!["vscode-css-language-server".into()],
             args: stdio(),
             root_markers: vec!["package.json".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -263,7 +263,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "astro" => Some(ServerSpec {
             key: "astro".into(),
             language_id: "astro".into(),
-            cmd_candidates: vec!["astro-ls".into(), mason("astro-ls")],
+            cmd_candidates: vec!["astro-ls".into()],
             args: stdio(),
             root_markers: vec!["astro.config.mjs".into(), "astro.config.ts".into(), "package.json".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -271,7 +271,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "cs" | "vb" => Some(ServerSpec {
             key: "omnisharp".into(),
             language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
-            cmd_candidates: vec!["OmniSharp".into(), mason("OmniSharp"), "omnisharp".into()],
+            cmd_candidates: vec!["OmniSharp".into(), "omnisharp".into()],
             args: vec![
                 "-z".into(),
                 "--hostPID".into(),

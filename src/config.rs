@@ -96,7 +96,7 @@ fn parse_hex(s: &str) -> Option<Color> {
 }
 
 // Catppuccin Mocha palette helpers — used as the baked-in defaults so a fresh
-// install renders the same as the user's nvim setup.
+// install renders sensibly on first launch.
 const CATP_MAUVE: Color = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
 const CATP_GREEN: Color = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
 const CATP_BLUE: Color = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
