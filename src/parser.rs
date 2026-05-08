@@ -75,6 +75,8 @@ pub enum InsertWhere {
     AfterCursor,
     LineBelow,
     LineAbove,
+    LineFirstNonBlank,
+    LineEnd,
 }
 
 #[derive(Debug, Clone)]
@@ -611,6 +613,8 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'a' => Some(Action::EnterInsert(InsertWhere::AfterCursor)),
             'o' => Some(Action::EnterInsert(InsertWhere::LineBelow)),
             'O' => Some(Action::EnterInsert(InsertWhere::LineAbove)),
+            'I' => Some(Action::EnterInsert(InsertWhere::LineFirstNonBlank)),
+            'A' => Some(Action::EnterInsert(InsertWhere::LineEnd)),
             'x' => Some(Action::DeleteCharForward { count: state.total_count(), register: state.register }),
             'u' => Some(Action::Undo),
             'U' => Some(Action::Redo),

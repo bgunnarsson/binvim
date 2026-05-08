@@ -1560,6 +1560,23 @@ impl App {
                 self.cursor.col = 0;
                 self.cursor.want_col = 0;
             }
+            InsertWhere::LineFirstNonBlank => {
+                let line_len = self.buffer.line_len(self.cursor.line);
+                let mut col = 0;
+                while col < line_len {
+                    match self.buffer.char_at(self.cursor.line, col) {
+                        Some(c) if c.is_whitespace() => col += 1,
+                        _ => break,
+                    }
+                }
+                self.cursor.col = col;
+                self.cursor.want_col = col;
+            }
+            InsertWhere::LineEnd => {
+                let len = self.buffer.line_len(self.cursor.line);
+                self.cursor.col = len;
+                self.cursor.want_col = len;
+            }
         }
         self.mode = Mode::Insert;
     }
