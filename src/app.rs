@@ -2619,9 +2619,28 @@ impl App {
         }
     }
 
-    /// Apply on-save transforms (`trim_trailing_whitespace`, `insert_final_newline`)
-    /// from .editorconfig, then write the buffer to disk.
+    /// Run the configured formatter (if any), apply .editorconfig on-save
+    /// transforms, then write to disk. Formatter failures are swallowed
+    /// silently — a missing biome or a syntax error mid-edit shouldn't block
+    /// the user from saving. Use `:fmt` for explicit formatting if you want
+    /// to see why it didn't run.
     fn save_active(&mut self) -> Result<()> {
+        if let Some(path) = self.buffer.path.clone() {
+            let source = self.buffer.rope.to_string();
+            if let Ok(formatted) = crate::format::format_buffer(&path, &source) {
+                if formatted != source {
+                    self.history.record(&self.buffer.rope, self.cursor);
+                    let total = self.buffer.total_chars();
+                    self.buffer.delete_range(0, total);
+                    self.buffer.insert_at_idx(0, &formatted);
+                    let last_line = self.buffer.line_count().saturating_sub(1);
+                    if self.cursor.line > last_line {
+                        self.cursor.line = last_line;
+                    }
+                    self.clamp_cursor_normal();
+                }
+            }
+        }
         if self.editorconfig.trim_trailing_whitespace {
             self.trim_trailing_whitespace();
         }
