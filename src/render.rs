@@ -17,7 +17,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, BeginSynchronizedUpdate, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
     draw_buffer(out, app)?;
     draw_status_line(out, app)?;
-    draw_command_line(out, app)?;
+    draw_notification(out, app)?;
     if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
         draw_floating_cmdline(out, app)?;
     }
@@ -30,6 +30,84 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     place_cursor(out, app)?;
     queue!(out, EndSynchronizedUpdate)?;
     Ok(())
+}
+
+fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
+    // Cmdline and search modes get the centred box; their floating widget covers any notification.
+    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
+        return Ok(());
+    }
+    // Pick what to show: explicit status_msg wins, else first diagnostic on the cursor line.
+    let (msg, accent) = if !app.status_msg.is_empty() {
+        let truncated = truncate_oneline(&app.status_msg);
+        (truncated, Color::Rgb { r: 165, g: 175, b: 210 })
+    } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
+        let color = match diag.severity {
+            Severity::Error => Color::Rgb { r: 230, g: 110, b: 110 },
+            Severity::Warning => Color::Rgb { r: 230, g: 200, b: 110 },
+            Severity::Info => Color::Rgb { r: 130, g: 180, b: 230 },
+            Severity::Hint => Color::Rgb { r: 130, g: 180, b: 230 },
+        };
+        let mut text = diag.message.lines().next().unwrap_or("").to_string();
+        text = truncate_oneline(&text);
+        (text, color)
+    } else {
+        return Ok(());
+    };
+    if msg.is_empty() {
+        return Ok(());
+    }
+
+    let max_inner = (app.width as usize).saturating_sub(8).max(20);
+    let inner: String = msg.chars().take(max_inner).collect();
+    let inner_w = inner.chars().count() + 2; // padding inside borders
+    let box_w = inner_w + 2; // borders
+    let total_w = app.width as usize;
+    let left = total_w.saturating_sub(box_w + 1);
+    let top = 0usize;
+
+    let bg = Color::Rgb { r: 22, g: 25, b: 38 };
+    let border = Color::Rgb { r: 95, g: 105, b: 140 };
+
+    // Top border.
+    queue!(
+        out,
+        MoveTo(left as u16, top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print("─".repeat(inner_w)),
+        Print('╮'),
+    )?;
+    // Body.
+    queue!(
+        out,
+        MoveTo(left as u16, (top + 1) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        SetForegroundColor(accent),
+        Print(format!(" {} ", inner)),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+    // Bottom.
+    queue!(
+        out,
+        MoveTo(left as u16, (top + 2) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+fn truncate_oneline(s: &str) -> String {
+    let one = s.lines().next().unwrap_or("").to_string();
+    one
 }
 
 /// Layout for the floating command line — returns (left_col, top_row, width).
@@ -461,7 +539,7 @@ fn truncate_left(s: &str, max: usize) -> String {
 }
 
 fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
-    let row = (app.height as usize).saturating_sub(2) as u16;
+    let row = (app.height as usize).saturating_sub(1) as u16;
     let total = app.width as usize;
 
     let mode_bg = mode_color(app.mode);
@@ -591,31 +669,6 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-fn draw_command_line(out: &mut impl Write, app: &App) -> Result<()> {
-    let row = (app.height as usize).saturating_sub(1) as u16;
-    queue!(out, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
-    // Command and search prompts render as a floating box; bottom row stays clear.
-    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
-        return Ok(());
-    }
-    if !app.status_msg.is_empty() {
-        queue!(out, Print(&app.status_msg))?;
-    } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
-        let color = match diag.severity {
-            Severity::Error => Color::Red,
-            Severity::Warning => Color::Yellow,
-            Severity::Info => Color::Blue,
-            Severity::Hint => Color::DarkBlue,
-        };
-        let max = (app.width as usize).saturating_sub(2);
-        let mut msg: String = diag.message.lines().next().unwrap_or("").to_string();
-        if msg.chars().count() > max {
-            msg = msg.chars().take(max).collect();
-        }
-        queue!(out, SetForegroundColor(color), Print(msg), ResetColor)?;
-    }
-    Ok(())
-}
 
 fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     let style = match app.mode {

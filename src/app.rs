@@ -1771,7 +1771,8 @@ impl App {
     }
 
     pub fn buffer_rows(&self) -> usize {
-        (self.height as usize).saturating_sub(2)
+        // Reserve only the status line at the bottom; status_msg + diagnostic floats top-right.
+        (self.height as usize).saturating_sub(1)
     }
 
     pub fn gutter_width(&self) -> usize {
