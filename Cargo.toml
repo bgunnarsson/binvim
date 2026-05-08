@@ -19,6 +19,7 @@ tree-sitter-go = "0.23"
 tree-sitter-md = "0.3"
 tree-sitter-html = "0.23"
 tree-sitter-css = "0.23"
+tree-sitter-c-sharp = "0.23"
 streaming-iterator = "0.1"
 ignore = "0.4"
 serde = { version = "1", features = ["derive"] }

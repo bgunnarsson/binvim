@@ -16,6 +16,7 @@ pub enum Lang {
     Html,
     Css,
     Markdown,
+    CSharp,
 }
 
 impl Lang {
@@ -31,6 +32,7 @@ impl Lang {
             "html" | "htm" | "cshtml" | "razor" => Some(Lang::Html),
             "css" | "scss" | "less" => Some(Lang::Css),
             "md" | "markdown" => Some(Lang::Markdown),
+            "cs" => Some(Lang::CSharp),
             _ => None,
         }
     }
@@ -46,6 +48,7 @@ impl Lang {
             Lang::Html => tree_sitter_html::LANGUAGE.into(),
             Lang::Css => tree_sitter_css::LANGUAGE.into(),
             Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
+            Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
         }
     }
 
@@ -65,6 +68,7 @@ impl Lang {
             Lang::Html => tree_sitter_html::HIGHLIGHTS_QUERY.into(),
             Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY.into(),
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
+            Lang::CSharp => tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(),
         }
     }
 }
