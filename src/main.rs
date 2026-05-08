@@ -7,6 +7,7 @@ mod buffer;
 mod command;
 mod config;
 mod cursor;
+mod editorconfig;
 mod lang;
 mod lsp;
 mod mode;

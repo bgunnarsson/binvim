@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
 use crate::config::Config;
+use crate::editorconfig::{EditorConfig, IndentStyle};
 use crate::lang::{self, HighlightCache};
 use crate::lsp::{CompletionItem, Diagnostic, LspEvent, LspManager, Severity};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
@@ -265,6 +266,7 @@ pub struct App {
     pub highlight_cache: Option<HighlightCache>,
     pub picker: Option<PickerState>,
     pub config: Config,
+    pub editorconfig: EditorConfig,
     pub lsp: LspManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
@@ -315,6 +317,7 @@ impl App {
             highlight_cache: None,
             picker: None,
             config: Config::load(),
+            editorconfig: EditorConfig::default(),
             lsp: LspManager::new(),
             last_sent_version: HashMap::new(),
             completion: None,
@@ -332,6 +335,7 @@ impl App {
         let _guard = TerminalGuard::enable()?;
         let mut stdout = io::stdout();
         self.lsp_attach_active();
+        self.refresh_editorconfig();
         let mut needs_render = true;
         while !self.should_quit {
             if needs_render {
@@ -885,8 +889,10 @@ impl App {
                 }
             }
             KeyCode::Tab => {
-                self.buffer.insert_str(self.cursor.line, self.cursor.col, "  ");
-                self.cursor.col += 2;
+                let s = self.editorconfig.indent_string();
+                let inserted = s.chars().count();
+                self.buffer.insert_str(self.cursor.line, self.cursor.col, &s);
+                self.cursor.col += inserted;
                 self.cursor.want_col = self.cursor.col;
             }
             KeyCode::Left => {
@@ -998,7 +1004,7 @@ impl App {
 
     fn exec_command(&mut self, line: &str) {
         match command::parse(line) {
-            ExCommand::Write => match self.buffer.save() {
+            ExCommand::Write => match self.save_active() {
                 Ok(()) => {
                     let path = self
                         .buffer
@@ -1013,7 +1019,8 @@ impl App {
             },
             ExCommand::WriteAs(p) => {
                 self.buffer.path = Some(PathBuf::from(p));
-                if let Err(e) = self.buffer.save() {
+                self.refresh_editorconfig();
+                if let Err(e) = self.save_active() {
                     self.status_msg = format!("error: {e}");
                 }
             }
@@ -1025,7 +1032,7 @@ impl App {
                 }
             }
             ExCommand::QuitForce => self.should_quit = true,
-            ExCommand::WriteQuit => match self.buffer.save() {
+            ExCommand::WriteQuit => match self.save_active() {
                 Ok(()) => self.should_quit = true,
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
@@ -1870,17 +1877,19 @@ impl App {
         }
     }
 
-    /// Insert two spaces at the start of every line in `[l1, l2]`. Skips empty lines.
+    /// Insert one indent unit (per .editorconfig) at the start of every line
+    /// in `[l1, l2]`. Skips empty lines.
     fn indent_lines(&mut self, l1: usize, l2: usize) {
         let last = self.buffer.line_count().saturating_sub(1);
         let l2 = l2.min(last);
+        let unit = self.editorconfig.indent_string();
         for line in l1..=l2 {
             let line_len = self.buffer.line_len(line);
             if line_len == 0 {
                 continue;
             }
             let line_start = self.buffer.line_start_idx(line);
-            self.buffer.insert_at_idx(line_start, "  ");
+            self.buffer.insert_at_idx(line_start, &unit);
         }
         self.cursor.line = l1;
         let col = self.first_non_blank_col(l1);
@@ -1888,23 +1897,35 @@ impl App {
         self.cursor.want_col = col;
     }
 
-    /// Remove up to two leading whitespace chars from every line in `[l1, l2]`.
+    /// Remove up to one indent unit's worth of leading whitespace from every
+    /// line in `[l1, l2]`. For tab indent style we strip one tab if present;
+    /// for spaces we strip up to `indent_size` whitespace chars.
     fn outdent_lines(&mut self, l1: usize, l2: usize) {
         let last = self.buffer.line_count().saturating_sub(1);
         let l2 = l2.min(last);
+        let style = self.editorconfig.indent_style;
+        let max_chars = self.editorconfig.indent_size.max(1);
         for line in l1..=l2 {
             let line_len = self.buffer.line_len(line);
             if line_len == 0 {
                 continue;
             }
             let line_start = self.buffer.line_start_idx(line);
-            let mut take = 0usize;
-            while take < 2 && take < line_len {
-                match self.buffer.char_at(line, take) {
-                    Some(c) if c.is_whitespace() => take += 1,
-                    _ => break,
+            let take = match style {
+                IndentStyle::Tabs => {
+                    if matches!(self.buffer.char_at(line, 0), Some('\t')) { 1 } else { 0 }
                 }
-            }
+                IndentStyle::Spaces => {
+                    let mut t = 0usize;
+                    while t < max_chars && t < line_len {
+                        match self.buffer.char_at(line, t) {
+                            Some(c) if c.is_whitespace() => t += 1,
+                            _ => break,
+                        }
+                    }
+                    t
+                }
+            };
             if take > 0 {
                 self.buffer.delete_range(line_start, line_start + take);
             }
@@ -2472,7 +2493,64 @@ impl App {
         self.switch_to(new_idx)?;
         self.lsp_attach_active();
         self.refresh_git_branch();
+        self.refresh_editorconfig();
         Ok(())
+    }
+
+    /// Apply on-save transforms (`trim_trailing_whitespace`, `insert_final_newline`)
+    /// from .editorconfig, then write the buffer to disk.
+    fn save_active(&mut self) -> Result<()> {
+        if self.editorconfig.trim_trailing_whitespace {
+            self.trim_trailing_whitespace();
+        }
+        if self.editorconfig.insert_final_newline {
+            self.ensure_final_newline();
+        }
+        self.buffer.save()
+    }
+
+    fn trim_trailing_whitespace(&mut self) {
+        let line_count = self.buffer.line_count();
+        // Iterate top-down — we only ever shrink lines, so indices stay valid.
+        for line in 0..line_count {
+            let line_len = self.buffer.line_len(line);
+            if line_len == 0 {
+                continue;
+            }
+            let mut last_non_ws = line_len;
+            while last_non_ws > 0 {
+                let c = self.buffer.char_at(line, last_non_ws - 1);
+                match c {
+                    Some(ch) if ch.is_whitespace() => last_non_ws -= 1,
+                    _ => break,
+                }
+            }
+            if last_non_ws < line_len {
+                let line_start = self.buffer.line_start_idx(line);
+                let trim_start = line_start + last_non_ws;
+                let trim_end = line_start + line_len;
+                self.buffer.delete_range(trim_start, trim_end);
+            }
+        }
+        self.clamp_cursor_normal();
+    }
+
+    fn ensure_final_newline(&mut self) {
+        let total = self.buffer.total_chars();
+        if total == 0 {
+            return;
+        }
+        let last_char = self.buffer.rope.get_char(total - 1);
+        if last_char != Some('\n') {
+            self.buffer.insert_at_idx(total, "\n");
+        }
+    }
+
+    fn refresh_editorconfig(&mut self) {
+        self.editorconfig = match self.buffer.path.as_ref() {
+            Some(p) => EditorConfig::detect(p),
+            None => EditorConfig::default(),
+        };
     }
 
     fn refresh_git_branch(&mut self) {
