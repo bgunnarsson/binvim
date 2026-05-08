@@ -10,6 +10,7 @@ mod lang;
 mod mode;
 mod motion;
 mod parser;
+mod picker;
 mod render;
 mod text_object;
 mod undo;

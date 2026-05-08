@@ -5,6 +5,7 @@ pub enum Mode {
     Command,
     Visual(VisualKind),
     Search { backward: bool },
+    Picker,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +23,7 @@ impl Mode {
             Mode::Visual(VisualKind::Char) => "VISUAL",
             Mode::Visual(VisualKind::Line) => "V-LINE",
             Mode::Search { .. } => "SEARCH",
+            Mode::Picker => "PICK",
         }
     }
 }

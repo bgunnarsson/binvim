@@ -17,6 +17,7 @@ tree-sitter-json = "0.24"
 tree-sitter-go = "0.23"
 tree-sitter-md = "0.3"
 streaming-iterator = "0.1"
+ignore = "0.4"
 
 [profile.release]
 lto = "thin"

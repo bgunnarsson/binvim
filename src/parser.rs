@@ -57,6 +57,12 @@ pub enum MarkAction {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum PickerLeader {
+    Files,
+    Buffers,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct FindSpec {
     pub forward: bool,
     pub before: bool,
@@ -94,6 +100,7 @@ pub enum Action {
     SearchWord { backward: bool },
     JumpBack,
     JumpForward,
+    OpenPicker { kind: PickerLeader },
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
     VisualSwap,
@@ -109,6 +116,7 @@ pub struct PendingCmd {
     pub count2: Option<usize>,
     pub awaiting_g: bool,
     pub awaiting_z: bool,
+    pub awaiting_leader: bool,
     /// `Some(true)` for inner (`i`), `Some(false)` for around (`a`).
     pub awaiting_textobj: Option<bool>,
     /// Set after f/F/t/T — next char is the literal find target.
@@ -338,6 +346,24 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         };
     }
 
+    // Resolve leader key (space) → picker dispatch. Only meaningful in normal mode.
+    if state.awaiting_leader {
+        state.awaiting_leader = false;
+        if ctx == ParseCtx::Normal {
+            let kind = match ch {
+                'f' => Some(PickerLeader::Files),
+                'b' => Some(PickerLeader::Buffers),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                state.reset();
+                return ParseResult::Action(Action::OpenPicker { kind: k });
+            }
+        }
+        state.reset();
+        return ParseResult::Cancelled;
+    }
+
     if state.awaiting_g {
         state.awaiting_g = false;
         let mv = match ch {
@@ -454,6 +480,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 
     if ch == 'z' {
         state.awaiting_z = true;
+        return ParseResult::Pending;
+    }
+
+    if ch == ' ' && ctx == ParseCtx::Normal && state.operator.is_none() {
+        state.awaiting_leader = true;
         return ParseResult::Pending;
     }
 

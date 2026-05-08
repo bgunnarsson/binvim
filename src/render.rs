@@ -16,7 +16,92 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     draw_buffer(out, app)?;
     draw_status_line(out, app)?;
     draw_command_line(out, app)?;
+    if app.mode == Mode::Picker {
+        draw_picker(out, app)?;
+    }
     place_cursor(out, app)?;
+    Ok(())
+}
+
+fn picker_layout(app: &App) -> (usize, usize, usize) {
+    let h = app.height as usize;
+    let picker_h = (h * 2 / 5).clamp(6, 20);
+    let bottom_chrome = 2; // status line + cmdline
+    let top_row = h.saturating_sub(picker_h + bottom_chrome);
+    (top_row, picker_h, h.saturating_sub(bottom_chrome))
+}
+
+fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(picker) = app.picker.as_ref() else { return Ok(()); };
+    let (top_row, picker_h, end_row) = picker_layout(app);
+    let w = app.width as usize;
+
+    // Title row.
+    let title = format!(
+        " {}  {}/{} ",
+        picker.title,
+        if picker.filtered.is_empty() { 0 } else { picker.selected + 1 },
+        picker.filtered.len()
+    );
+    let pad = w.saturating_sub(title.chars().count());
+    queue!(
+        out,
+        MoveTo(0, top_row as u16),
+        Clear(ClearType::CurrentLine),
+        SetAttribute(Attribute::Reverse),
+        Print(title),
+        Print(" ".repeat(pad)),
+        SetAttribute(Attribute::Reset)
+    )?;
+
+    // Input row.
+    let input_row = top_row + 1;
+    queue!(
+        out,
+        MoveTo(0, input_row as u16),
+        Clear(ClearType::CurrentLine),
+        SetForegroundColor(Color::Yellow),
+        Print("> "),
+        ResetColor,
+        Print(&picker.input)
+    )?;
+
+    // List rows.
+    let list_top = top_row + 2;
+    let list_h = (end_row.saturating_sub(list_top)).min(picker_h.saturating_sub(2));
+    let start = if picker.selected >= list_h {
+        picker.selected + 1 - list_h
+    } else {
+        0
+    };
+    for row in 0..list_h {
+        let y = list_top + row;
+        queue!(out, MoveTo(0, y as u16), Clear(ClearType::CurrentLine))?;
+        let pos = start + row;
+        if pos >= picker.filtered.len() {
+            continue;
+        }
+        let item_idx = picker.filtered[pos];
+        let display = &picker.items[item_idx];
+        let selected = pos == picker.selected;
+        if selected {
+            queue!(
+                out,
+                SetBackgroundColor(Color::DarkBlue),
+                SetForegroundColor(Color::White)
+            )?;
+        }
+        let max_w = w.saturating_sub(2);
+        let truncated: String = display.chars().take(max_w).collect();
+        let pad = max_w.saturating_sub(truncated.chars().count());
+        queue!(
+            out,
+            Print(format!(" {}{}", truncated, " ".repeat(pad)))
+        )?;
+        if selected {
+            queue!(out, ResetColor)?;
+        }
+    }
     Ok(())
 }
 
@@ -178,6 +263,15 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         let col = (app.cmdline.chars().count() + 1) as u16;
         queue!(out, MoveTo(col, row))?;
         return Ok(());
+    }
+    if app.mode == Mode::Picker {
+        if let Some(picker) = app.picker.as_ref() {
+            let (top_row, _, _) = picker_layout(app);
+            let input_row = (top_row + 1) as u16;
+            let col = (picker.input.chars().count() + 2) as u16;
+            queue!(out, SetCursorStyle::SteadyBar, MoveTo(col, input_row))?;
+            return Ok(());
+        }
     }
     let gutter = app.gutter_width();
     let row = app.cursor.line.saturating_sub(app.view_top) as u16;

@@ -7,12 +7,13 @@ use std::path::PathBuf;
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
 use crate::lang::{self, HighlightCache};
+use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
 use crate::motion::{self, MotionKind, MotionResult};
 use crate::parser::{
     self, Action, InsertWhere, MotionVerb, PageScrollKind, ParseCtx, ParseResult, PendingCmd,
-    ViewportAdjust,
+    PickerLeader, ViewportAdjust,
 };
 use crate::render;
 use crate::text_object::{self, TextObjectVerb, TextRange};
@@ -91,6 +92,7 @@ pub struct App {
     pub buffers: Vec<BufferStash>,
     pub active: usize,
     pub highlight_cache: Option<HighlightCache>,
+    pub picker: Option<PickerState>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -131,6 +133,7 @@ impl App {
             buffers: vec![BufferStash::default()],
             active: 0,
             highlight_cache: None,
+            picker: None,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -178,6 +181,7 @@ impl App {
                     Mode::Command => self.handle_command_key(k),
                     Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
                     Mode::Search { .. } => self.handle_search_key(k),
+                    Mode::Picker => self.handle_picker_key(k),
                 }
             }
             Event::Resize(w, h) => {
@@ -436,6 +440,7 @@ impl App {
             Action::ReplayMacro { name } => self.replay_macro(name),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
+            Action::OpenPicker { kind } => self.open_picker(kind),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
                 self.visual_anchor = Some(self.cursor);
@@ -532,6 +537,7 @@ impl App {
                 Mode::Command => self.handle_command_key(k),
                 Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
                 Mode::Search { .. } => self.handle_search_key(k),
+                Mode::Picker => self.handle_picker_key(k),
             }
         }
         self.replaying_macro = false;
@@ -1782,6 +1788,91 @@ impl App {
         };
         self.write_yank_register(None, reg_text, true);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
+    }
+
+    fn open_picker(&mut self, kind: PickerLeader) {
+        let state = match kind {
+            PickerLeader::Files => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let items = picker::enumerate_files(&cwd, 5000);
+                if items.is_empty() {
+                    self.status_msg = "No files found".into();
+                    return;
+                }
+                PickerState::new(PickerKind::Files, "Files".into(), items)
+            }
+            PickerLeader::Buffers => {
+                let mut items: Vec<(String, PickerPayload)> = Vec::new();
+                for (i, stash) in self.buffers.iter().enumerate() {
+                    let name = if i == self.active {
+                        self.buffer
+                            .path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "[No Name]".into())
+                    } else {
+                        stash
+                            .buffer
+                            .path
+                            .as_ref()
+                            .map(|p| p.display().to_string())
+                            .unwrap_or_else(|| "[No Name]".into())
+                    };
+                    items.push((name, PickerPayload::BufferIdx(i)));
+                }
+                PickerState::new(PickerKind::Buffers, "Buffers".into(), items)
+            }
+        };
+        self.picker = Some(state);
+        self.mode = Mode::Picker;
+    }
+
+    fn handle_picker_key(&mut self, key: KeyEvent) {
+        let Some(picker) = self.picker.as_mut() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.picker = None;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let payload = picker.current().cloned();
+                self.picker = None;
+                self.mode = Mode::Normal;
+                if let Some(p) = payload {
+                    match p {
+                        PickerPayload::Path(path) => {
+                            if let Err(e) = self.open_buffer(path) {
+                                self.status_msg = format!("error: {e}");
+                            }
+                        }
+                        PickerPayload::BufferIdx(idx) => {
+                            if let Err(e) = self.switch_to(idx) {
+                                self.status_msg = format!("error: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+            KeyCode::Backspace => {
+                picker.input.pop();
+                picker.refilter();
+            }
+            KeyCode::Up => picker.move_up(),
+            KeyCode::Down => picker.move_down(),
+            KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => match c {
+                'n' | 'j' => picker.move_down(),
+                'p' | 'k' => picker.move_up(),
+                _ => {}
+            },
+            KeyCode::Char(c) => {
+                picker.input.push(c);
+                picker.refilter();
+            }
+            _ => {}
+        }
     }
 
     fn ensure_highlights(&mut self) {
