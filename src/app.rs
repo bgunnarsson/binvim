@@ -64,6 +64,8 @@ pub struct App {
     pub last_search: Option<(String, bool)>,
     pub last_edit: Option<LastEdit>,
     pub marks: HashMap<char, (usize, usize)>,
+    pub jumplist: Vec<(usize, usize)>,
+    pub jump_idx: usize,
     pub macros: HashMap<char, Vec<KeyEvent>>,
     pub recording_macro: Option<char>,
     pub macro_buffer: Vec<KeyEvent>,
@@ -98,6 +100,8 @@ impl App {
             last_search: None,
             last_edit: None,
             marks: HashMap::new(),
+            jumplist: Vec::new(),
+            jump_idx: 0,
             macros: HashMap::new(),
             recording_macro: None,
             macro_buffer: Vec::new(),
@@ -318,6 +322,9 @@ impl App {
         self.maybe_record_edit(&action);
         match action {
             Action::Move { motion, count } => {
+                if is_jump_motion(motion) {
+                    self.push_jump();
+                }
                 let m = self.run_motion(motion, count);
                 self.cursor = m.target;
                 self.clamp_cursor_normal();
@@ -375,6 +382,8 @@ impl App {
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
             Action::StartMacro { name } => self.start_macro_recording(name),
             Action::ReplayMacro { name } => self.replay_macro(name),
+            Action::JumpBack => self.jump_back(),
+            Action::JumpForward => self.jump_forward(),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
                 self.visual_anchor = Some(self.cursor);
@@ -793,11 +802,56 @@ impl App {
         };
         match self.search(&word, from, !backward, true) {
             Some(idx) => {
+                self.push_jump();
                 self.cursor_to_idx(idx);
                 self.clamp_cursor_normal();
             }
             None => self.status_msg = format!("Pattern not found: {word}"),
         }
+    }
+
+    fn push_jump(&mut self) {
+        let pos = (self.cursor.line, self.cursor.col);
+        // If we've stepped back via Ctrl-O, drop the forward history before pushing.
+        self.jumplist.truncate(self.jump_idx);
+        // Avoid duplicate consecutive entries.
+        if self.jumplist.last() != Some(&pos) {
+            self.jumplist.push(pos);
+        }
+        self.jump_idx = self.jumplist.len();
+    }
+
+    fn jump_back(&mut self) {
+        if self.jump_idx == 0 {
+            self.status_msg = "Already at oldest jump".into();
+            return;
+        }
+        // If we're at the head, save current position so Ctrl-I can return to it.
+        if self.jump_idx == self.jumplist.len() {
+            let pos = (self.cursor.line, self.cursor.col);
+            if self.jumplist.last() != Some(&pos) {
+                self.jumplist.push(pos);
+            }
+        }
+        self.jump_idx -= 1;
+        let (l, c) = self.jumplist[self.jump_idx];
+        self.cursor.line = l;
+        self.cursor.col = c;
+        self.cursor.want_col = c;
+        self.clamp_cursor_normal();
+    }
+
+    fn jump_forward(&mut self) {
+        if self.jump_idx + 1 >= self.jumplist.len() {
+            self.status_msg = "Already at newest jump".into();
+            return;
+        }
+        self.jump_idx += 1;
+        let (l, c) = self.jumplist[self.jump_idx];
+        self.cursor.line = l;
+        self.cursor.col = c;
+        self.cursor.want_col = c;
+        self.clamp_cursor_normal();
     }
 
     fn word_under_cursor(&self) -> Option<String> {
@@ -939,9 +993,9 @@ impl App {
         self.last_search = Some((q.clone(), backward));
         let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
         let forward = !backward;
-        // For the initial search, vim includes the cursor position. We mimic by starting at cur_idx.
         match self.search(&q, cur_idx, forward, true) {
             Some(idx) => {
+                self.push_jump();
                 self.cursor_to_idx(idx);
                 self.clamp_cursor_normal();
             }
@@ -1382,6 +1436,20 @@ impl App {
             }
         }
     }
+}
+
+fn is_jump_motion(m: MotionVerb) -> bool {
+    matches!(
+        m,
+        MotionVerb::FirstLine
+            | MotionVerb::LastLine
+            | MotionVerb::GotoLine(_)
+            | MotionVerb::Mark { .. }
+            | MotionVerb::ViewportTop
+            | MotionVerb::ViewportMiddle
+            | MotionVerb::ViewportBottom
+            | MotionVerb::SearchNext { .. }
+    )
 }
 
 struct TerminalGuard;

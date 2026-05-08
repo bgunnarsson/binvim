@@ -92,6 +92,8 @@ pub enum Action {
     AdjustViewport(ViewportAdjust),
     SetMark { name: char },
     SearchWord { backward: bool },
+    JumpBack,
+    JumpForward,
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
     VisualSwap,
@@ -208,6 +210,14 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'y' | 'Y' => {
                 state.reset();
                 ParseResult::Action(Action::PageScroll(PageScrollKind::LineUp))
+            }
+            'o' | 'O' => {
+                state.reset();
+                ParseResult::Action(Action::JumpBack)
+            }
+            'i' | 'I' => {
+                state.reset();
+                ParseResult::Action(Action::JumpForward)
             }
             _ => ParseResult::Pending,
         };
