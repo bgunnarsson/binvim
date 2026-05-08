@@ -95,6 +95,10 @@ pub struct ServerSpec {
     /// Candidate command paths in priority order. First one that resolves wins.
     pub cmd_candidates: Vec<String>,
     pub args: Vec<String>,
+    /// Filenames whose presence marks a project root, in priority order.
+    pub root_markers: Vec<String>,
+    /// initializationOptions field on the initialize request.
+    pub initialization_options: Value,
 }
 
 /// Pick the LSP server config for a path's extension. `None` if we don't know the extension.
@@ -105,69 +109,123 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
     let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
     let stdio = || vec!["--stdio".to_string()];
 
+    let ts_markers = || {
+        vec![
+            "package-lock.json".into(),
+            "yarn.lock".into(),
+            "pnpm-lock.yaml".into(),
+            "bun.lockb".into(),
+            "bun.lock".into(),
+            "tsconfig.json".into(),
+            "jsconfig.json".into(),
+            "package.json".into(),
+            ".git".into(),
+        ]
+    };
+    let ts_init = || json!({ "hostInfo": "binvim", "preferences": {} });
+
     match ext {
         "rs" => Some(ServerSpec {
             key: "rust".into(),
             language_id: "rust".into(),
             cmd_candidates: vec!["rust-analyzer".into(), cargo_bin("rust-analyzer")],
             args: vec![],
+            root_markers: vec!["Cargo.toml".into(), "rust-project.json".into(), ".git".into()],
+            initialization_options: Value::Null,
         }),
         "ts" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "typescript".into(),
             cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
             args: stdio(),
+            root_markers: ts_markers(),
+            initialization_options: ts_init(),
         }),
         "tsx" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "typescriptreact".into(),
             cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
             args: stdio(),
+            root_markers: ts_markers(),
+            initialization_options: ts_init(),
         }),
         "jsx" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "javascriptreact".into(),
             cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
             args: stdio(),
+            root_markers: ts_markers(),
+            initialization_options: ts_init(),
         }),
         "js" | "mjs" | "cjs" => Some(ServerSpec {
             key: "ts".into(),
             language_id: "javascript".into(),
             cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
             args: stdio(),
+            root_markers: ts_markers(),
+            initialization_options: ts_init(),
         }),
         "json" | "jsonc" => Some(ServerSpec {
             key: "biome".into(),
             language_id: "json".into(),
             cmd_candidates: vec!["biome".into(), mason("biome")],
             args: vec!["lsp-proxy".into()],
+            root_markers: vec!["biome.json".into(), "biome.jsonc".into(), "package.json".into(), ".git".into()],
+            initialization_options: Value::Null,
         }),
         "go" => Some(ServerSpec {
             key: "go".into(),
             language_id: "go".into(),
             cmd_candidates: vec!["gopls".into(), mason("gopls")],
             args: vec![],
+            root_markers: vec!["go.mod".into(), "go.work".into(), ".git".into()],
+            initialization_options: Value::Null,
         }),
         "html" => Some(ServerSpec {
             key: "html".into(),
             language_id: "html".into(),
             cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
             args: stdio(),
+            root_markers: vec!["package.json".into(), ".git".into()],
+            initialization_options: Value::Null,
         }),
         "css" | "scss" | "less" => Some(ServerSpec {
             key: "css".into(),
             language_id: ext.into(),
             cmd_candidates: vec!["vscode-css-language-server".into(), mason("vscode-css-language-server")],
             args: stdio(),
+            root_markers: vec!["package.json".into(), ".git".into()],
+            initialization_options: Value::Null,
         }),
         "astro" => Some(ServerSpec {
             key: "astro".into(),
             language_id: "astro".into(),
             cmd_candidates: vec!["astro-ls".into(), mason("astro-ls")],
             args: stdio(),
+            root_markers: vec!["astro.config.mjs".into(), "astro.config.ts".into(), "package.json".into(), ".git".into()],
+            initialization_options: Value::Null,
         }),
         _ => None,
     }
+}
+
+/// Walk up from `start` looking for any of the marker filenames. Returns the first dir
+/// that contains a marker, falling back to `start` itself if none found.
+pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
+    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut dir: &Path = canon.as_path();
+    loop {
+        for marker in markers {
+            if dir.join(marker).exists() {
+                return dir.to_path_buf();
+            }
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => break,
+        }
+    }
+    canon
 }
 
 fn resolve_command(candidates: &[String]) -> Option<(String, Vec<String>)> {
@@ -249,7 +307,9 @@ impl LspClient {
                 "processId": std::process::id(),
                 "clientInfo": { "name": "binvim", "version": env!("CARGO_PKG_VERSION") },
                 "rootUri": root_uri,
-                "workspaceFolders": [{ "uri": root_uri, "name": "root" }],
+                "rootPath": root.to_string_lossy(),
+                "workspaceFolders": [{ "uri": root_uri, "name": root.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "root".into()) }],
+                "initializationOptions": spec.initialization_options,
                 "capabilities": {
                     "general": {
                         "positionEncodings": ["utf-8", "utf-16"]
@@ -586,10 +646,16 @@ impl LspManager {
         }
     }
 
-    pub fn ensure_for_path(&mut self, path: &Path, root: &Path) -> Option<&LspClient> {
+    pub fn ensure_for_path(&mut self, path: &Path, fallback_root: &Path) -> Option<&LspClient> {
         let spec = spec_for_path(path)?;
         if !self.clients.contains_key(&spec.key) {
-            let client = LspClient::spawn_spec(&spec, root)?;
+            // Walk up from the buffer's parent dir for the actual project root.
+            let start = path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| fallback_root.to_path_buf());
+            let root = find_workspace_root(&start, &spec.root_markers);
+            let client = LspClient::spawn_spec(&spec, &root)?;
             self.clients.insert(spec.key.clone(), client);
         }
         self.clients.get(&spec.key)
