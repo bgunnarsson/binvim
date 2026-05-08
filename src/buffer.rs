@@ -9,6 +9,8 @@ pub struct Buffer {
     pub rope: Rope,
     pub path: Option<PathBuf>,
     pub dirty: bool,
+    /// Bumped on every mutation; used to invalidate the syntax-highlight cache.
+    pub version: u64,
 }
 
 impl Default for Buffer {
@@ -19,7 +21,7 @@ impl Default for Buffer {
 
 impl Buffer {
     pub fn empty() -> Self {
-        Self { rope: Rope::new(), path: None, dirty: false }
+        Self { rope: Rope::new(), path: None, dirty: false, version: 0 }
     }
 
     pub fn from_path(path: PathBuf) -> Result<Self> {
@@ -28,9 +30,9 @@ impl Buffer {
                 .with_context(|| format!("opening {}", path.display()))?;
             let rope = Rope::from_reader(BufReader::new(file))
                 .with_context(|| format!("reading {}", path.display()))?;
-            Ok(Self { rope, path: Some(path), dirty: false })
+            Ok(Self { rope, path: Some(path), dirty: false, version: 0 })
         } else {
-            Ok(Self { rope: Rope::new(), path: Some(path), dirty: false })
+            Ok(Self { rope: Rope::new(), path: Some(path), dirty: false, version: 0 })
         }
     }
 
@@ -94,12 +96,14 @@ impl Buffer {
         let mut buf = [0u8; 4];
         self.rope.insert(idx, ch.encode_utf8(&mut buf));
         self.dirty = true;
+        self.version = self.version.wrapping_add(1);
     }
 
     pub fn insert_str(&mut self, line: usize, col: usize, s: &str) {
         let idx = self.pos_to_char(line, col);
         self.rope.insert(idx, s);
         self.dirty = true;
+        self.version = self.version.wrapping_add(1);
     }
 
     /// Insert text at an absolute char index.
@@ -107,6 +111,7 @@ impl Buffer {
         self.rope.insert(idx, s);
         if !s.is_empty() {
             self.dirty = true;
+            self.version = self.version.wrapping_add(1);
         }
     }
 
@@ -119,6 +124,7 @@ impl Buffer {
         self.rope.remove(start..end);
         if !removed.is_empty() {
             self.dirty = true;
+            self.version = self.version.wrapping_add(1);
         }
         removed
     }

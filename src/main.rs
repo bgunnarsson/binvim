@@ -6,6 +6,7 @@ mod app;
 mod buffer;
 mod command;
 mod cursor;
+mod lang;
 mod mode;
 mod motion;
 mod parser;

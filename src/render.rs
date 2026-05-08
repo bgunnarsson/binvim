@@ -60,8 +60,10 @@ fn draw_line_with_selection(
     }
     let sel = app.line_selection(line_idx);
     let search_matches = app.line_search_matches(line_idx);
+    let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
     let mut visual_used = 0usize;
+    let mut byte_off = line_byte_start;
     for (col, c) in chars.iter().enumerate() {
         let display_w = if *c == '\t' { TAB_WIDTH } else { 1 };
         if visual_used + display_w > avail {
@@ -69,6 +71,11 @@ fn draw_line_with_selection(
         }
         let in_sel = sel.map(|(s, e)| col >= s && col < e).unwrap_or(false);
         let in_search = !in_sel && search_matches.iter().any(|(s, e)| col >= *s && col < *e);
+        let syntax_color = app
+            .highlight_cache
+            .as_ref()
+            .and_then(|cache| cache.byte_colors.get(byte_off).copied())
+            .flatten();
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
@@ -77,6 +84,8 @@ fn draw_line_with_selection(
                 SetBackgroundColor(Color::Yellow),
                 SetForegroundColor(Color::Black)
             )?;
+        } else if let Some(fg) = syntax_color {
+            queue!(out, SetForegroundColor(fg))?;
         }
         if *c == '\t' {
             queue!(out, Print(" ".repeat(TAB_WIDTH)))?;
@@ -85,10 +94,11 @@ fn draw_line_with_selection(
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
-        } else if in_search {
+        } else if in_search || syntax_color.is_some() {
             queue!(out, ResetColor)?;
         }
         visual_used += display_w;
+        byte_off += c.len_utf8();
     }
     if chars.is_empty() {
         if let Some((s, e)) = sel {

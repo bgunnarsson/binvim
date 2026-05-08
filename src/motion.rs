@@ -500,6 +500,7 @@ mod tests {
             rope: Rope::from_str(s),
             path: None,
             dirty: false,
+            version: 0,
         }
     }
 

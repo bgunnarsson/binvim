@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
+use crate::lang::{self, HighlightCache};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
 use crate::motion::{self, MotionKind, MotionResult};
@@ -89,6 +90,7 @@ pub struct App {
     /// All buffers; `buffers[active]` is a placeholder while its real state lives on App fields.
     pub buffers: Vec<BufferStash>,
     pub active: usize,
+    pub highlight_cache: Option<HighlightCache>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -128,6 +130,7 @@ impl App {
             last_replayed_macro: None,
             buffers: vec![BufferStash::default()],
             active: 0,
+            highlight_cache: None,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -139,6 +142,7 @@ impl App {
         let mut stdout = io::stdout();
         while !self.should_quit {
             self.adjust_viewport();
+            self.ensure_highlights();
             render::draw(&mut stdout, self)?;
             stdout.flush()?;
             self.handle_event()?;
@@ -1778,6 +1782,27 @@ impl App {
         };
         self.write_yank_register(None, reg_text, true);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
+    }
+
+    fn ensure_highlights(&mut self) {
+        let lang = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(lang::Lang::detect);
+        let need_refresh = match (&self.highlight_cache, lang) {
+            (None, Some(_)) => true,
+            (Some(c), Some(l)) => c.lang != l || c.buffer_version != self.buffer.version,
+            (Some(_), None) => true,
+            (None, None) => false,
+        };
+        if !need_refresh {
+            return;
+        }
+        self.highlight_cache = match lang {
+            Some(l) => lang::compute_highlights(l, &self.buffer),
+            None => None,
+        };
     }
 
     fn list_buffers(&self) -> String {
