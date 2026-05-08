@@ -3110,29 +3110,59 @@ fn is_completion_trigger(c: char) -> bool {
 }
 
 /// Narrow a server-returned completion list to entries that match what the
-/// user has actually typed. Items whose label begins with the prefix are
-/// promoted above items where the prefix appears later; the rest are dropped.
-/// An empty prefix passes everything through unchanged.
+/// user has actually typed. Matches case-insensitively against `filter_text`
+/// (falls back to label inside the item itself), grouped by tier: prefix
+/// matches first, then substring, then subsequence (fuzzy). Within each tier
+/// the server's `sort_text` decides order — that's how typescript-language-
+/// server signals that `document` outranks `documentElement` for prefix
+/// `docu`. Capped to 200 visible items after filtering. An empty prefix
+/// passes everything through, sorted by `sort_text`.
 fn filter_completion_items(
     items: Vec<crate::lsp::CompletionItem>,
     prefix: &str,
 ) -> Vec<crate::lsp::CompletionItem> {
+    const VISIBLE_CAP: usize = 200;
     if prefix.is_empty() {
-        return items;
+        let mut sorted = items;
+        sorted.sort_by(|a, b| a.sort_text.cmp(&b.sort_text));
+        sorted.truncate(VISIBLE_CAP);
+        return sorted;
     }
     let needle = prefix.to_lowercase();
-    let mut starts: Vec<crate::lsp::CompletionItem> = Vec::new();
-    let mut contains: Vec<crate::lsp::CompletionItem> = Vec::new();
-    for item in items {
-        let hay = item.label.to_lowercase();
-        if hay.starts_with(&needle) {
-            starts.push(item);
-        } else if hay.contains(&needle) {
-            contains.push(item);
+    let mut tiered: Vec<(u8, crate::lsp::CompletionItem)> = items
+        .into_iter()
+        .filter_map(|item| {
+            let hay = item.filter_text.to_lowercase();
+            let tier = if hay.starts_with(&needle) {
+                0
+            } else if hay.contains(&needle) {
+                1
+            } else if subsequence_match(&hay, &needle) {
+                2
+            } else {
+                return None;
+            };
+            Some((tier, item))
+        })
+        .collect();
+    tiered.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.sort_text.cmp(&b.1.sort_text)));
+    tiered.truncate(VISIBLE_CAP);
+    tiered.into_iter().map(|(_, item)| item).collect()
+}
+
+/// True if every char of `needle` appears in `hay` in order (not necessarily
+/// contiguous). Both inputs should already be lowercased.
+fn subsequence_match(hay: &str, needle: &str) -> bool {
+    let mut hay_iter = hay.chars();
+    'outer: for nc in needle.chars() {
+        for hc in hay_iter.by_ref() {
+            if hc == nc {
+                continue 'outer;
+            }
         }
+        return false;
     }
-    starts.extend(contains);
-    starts
+    true
 }
 
 /// Decide whether to auto-pair when typing `c` at `(line, col)`. Quotes/backticks

@@ -62,6 +62,12 @@ pub struct CompletionItem {
     pub insert_text: String,
     pub kind: Option<String>,
     pub detail: Option<String>,
+    /// Server-supplied filter key. Falls back to `label` when absent.
+    pub filter_text: String,
+    /// Server-supplied sort key. Falls back to `label` when absent. Lets the
+    /// LSP's relevance order survive client-side filtering (e.g. typescript's
+    /// "0~document" sorts globals before locals when relevant).
+    pub sort_text: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -970,8 +976,12 @@ fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
     } else {
         return Vec::new();
     };
-    let mut out = Vec::with_capacity(arr.len().min(200));
-    for item in arr.iter().take(200) {
+    // Don't cap here — the client filters by typed prefix afterwards, and
+    // capping at the wire would silently drop relevant items past the cap
+    // (typescript-language-server can return several thousand for a top-level
+    // identifier position).
+    let mut out = Vec::with_capacity(arr.len());
+    for item in arr.iter() {
         let label = item
             .get("label")
             .and_then(|v| v.as_str())
@@ -996,11 +1006,23 @@ fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
             .get("detail")
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
+        let filter_text = item
+            .get("filterText")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| label.clone());
+        let sort_text = item
+            .get("sortText")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| label.clone());
         out.push(CompletionItem {
             label,
             insert_text,
             kind,
             detail,
+            filter_text,
+            sort_text,
         });
     }
     out
