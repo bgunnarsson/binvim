@@ -261,6 +261,43 @@ impl App {
                 self.cursor.col += 2;
                 self.cursor.want_col = self.cursor.col;
             }
+            KeyCode::Left => {
+                if self.cursor.col > 0 {
+                    self.cursor.col -= 1;
+                    self.cursor.want_col = self.cursor.col;
+                }
+            }
+            KeyCode::Right => {
+                let len = self.buffer.line_len(self.cursor.line);
+                if self.cursor.col < len {
+                    self.cursor.col += 1;
+                    self.cursor.want_col = self.cursor.col;
+                }
+            }
+            KeyCode::Up => {
+                if self.cursor.line > 0 {
+                    self.cursor.line -= 1;
+                    let len = self.buffer.line_len(self.cursor.line);
+                    self.cursor.col = self.cursor.want_col.min(len);
+                }
+            }
+            KeyCode::Down => {
+                let last = self.buffer.line_count().saturating_sub(1);
+                if self.cursor.line < last {
+                    self.cursor.line += 1;
+                    let len = self.buffer.line_len(self.cursor.line);
+                    self.cursor.col = self.cursor.want_col.min(len);
+                }
+            }
+            KeyCode::Home => {
+                self.cursor.col = 0;
+                self.cursor.want_col = 0;
+            }
+            KeyCode::End => {
+                let len = self.buffer.line_len(self.cursor.line);
+                self.cursor.col = len;
+                self.cursor.want_col = len;
+            }
             _ => {}
         }
     }

@@ -184,6 +184,36 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Cancelled;
     }
 
+    // Arrow keys + Home/End mirror the hjkl/0/$ motions in any non-Insert context.
+    let arrow_motion = match key.code {
+        KeyCode::Left => Some(MotionVerb::Left),
+        KeyCode::Right => Some(MotionVerb::Right),
+        KeyCode::Up => Some(MotionVerb::Up),
+        KeyCode::Down => Some(MotionVerb::Down),
+        KeyCode::Home => Some(MotionVerb::LineStart),
+        KeyCode::End => Some(MotionVerb::LineEnd),
+        _ => None,
+    };
+    if let Some(motion) = arrow_motion {
+        let count = state.total_count();
+        if let Some(op) = state.operator.take() {
+            let register = state.take_register();
+            state.reset();
+            return ParseResult::Action(Action::Operate { op, motion, count, register });
+        }
+        state.reset();
+        return ParseResult::Action(Action::Move { motion, count });
+    }
+    let page = match key.code {
+        KeyCode::PageUp => Some(PageScrollKind::FullUp),
+        KeyCode::PageDown => Some(PageScrollKind::FullDown),
+        _ => None,
+    };
+    if let Some(p) = page {
+        state.reset();
+        return ParseResult::Action(Action::PageScroll(p));
+    }
+
     let ch = match key.code {
         KeyCode::Char(c) => c,
         _ => return ParseResult::Pending,
