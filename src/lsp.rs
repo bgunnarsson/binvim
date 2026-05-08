@@ -116,8 +116,9 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
     let ext = path.extension().and_then(|s| s.to_str())?;
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
     let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
+    let go_bin = |bin: &str| format!("{}/go/bin/{}", home, bin);
+    let local_bin = |sub: &str, bin: &str| format!("{}/.local/bin/{}/{}", home, sub, bin);
     let stdio = || vec!["--stdio".to_string()];
-    let _ = home;
 
     let ts_markers = || {
         vec![
@@ -186,7 +187,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "go" => Some(ServerSpec {
             key: "go".into(),
             language_id: "go".into(),
-            cmd_candidates: vec!["gopls".into()],
+            cmd_candidates: vec!["gopls".into(), go_bin("gopls")],
             args: vec![],
             root_markers: vec!["go.mod".into(), "go.work".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -209,7 +210,7 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             let rzls = ServerSpec {
                 key: "rzls".into(),
                 language_id: "razor".into(),
-                cmd_candidates: vec!["rzls".into()],
+                cmd_candidates: vec!["rzls".into(), local_bin("rzls", "rzls")],
                 args: vec![],
                 root_markers: vec!["*.csproj".into(), "*.sln".into(), ".git".into()],
                 initialization_options: Value::Null,
@@ -220,7 +221,11 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             let omnisharp = ServerSpec {
                 key: "omnisharp".into(),
                 language_id: "razor".into(),
-                cmd_candidates: vec!["OmniSharp".into(), "omnisharp".into()],
+                cmd_candidates: vec![
+                    "OmniSharp".into(),
+                    "omnisharp".into(),
+                    local_bin("omnisharp", "OmniSharp"),
+                ],
                 args: vec![
                     "-z".into(),
                     "--hostPID".into(),
@@ -271,7 +276,11 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
         "cs" | "vb" => Some(ServerSpec {
             key: "omnisharp".into(),
             language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
-            cmd_candidates: vec!["OmniSharp".into(), "omnisharp".into()],
+            cmd_candidates: vec![
+                "OmniSharp".into(),
+                "omnisharp".into(),
+                local_bin("omnisharp", "OmniSharp"),
+            ],
             args: vec![
                 "-z".into(),
                 "--hostPID".into(),
