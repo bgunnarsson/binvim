@@ -823,9 +823,30 @@ impl App {
                 self.lsp_request_completion();
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
-                self.cursor.col += 1;
-                self.cursor.want_col = self.cursor.col;
+                // If the cursor sits on the same closing char the user is typing,
+                // step past it instead of inserting a duplicate. Lets `}`/`)`/`"`
+                // skip over an auto-inserted closer.
+                if is_close_char(c)
+                    && self.buffer.char_at(self.cursor.line, self.cursor.col) == Some(c)
+                {
+                    self.cursor.col += 1;
+                    self.cursor.want_col = self.cursor.col;
+                } else if let Some(close) = open_pair_for(c) {
+                    if should_auto_pair(c, &self.buffer, self.cursor.line, self.cursor.col) {
+                        self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
+                        self.buffer.insert_char(self.cursor.line, self.cursor.col + 1, close);
+                        self.cursor.col += 1;
+                        self.cursor.want_col = self.cursor.col;
+                    } else {
+                        self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
+                        self.cursor.col += 1;
+                        self.cursor.want_col = self.cursor.col;
+                    }
+                } else {
+                    self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
+                    self.cursor.col += 1;
+                    self.cursor.want_col = self.cursor.col;
+                }
             }
             KeyCode::Enter => {
                 self.buffer
@@ -836,6 +857,19 @@ impl App {
             }
             KeyCode::Backspace => {
                 if self.cursor.col > 0 {
+                    // If the cursor sits between an auto-inserted pair like {|},
+                    // wipe out both characters in one stroke.
+                    let prev = self.buffer.char_at(self.cursor.line, self.cursor.col - 1);
+                    let next = self.buffer.char_at(self.cursor.line, self.cursor.col);
+                    if let (Some(p), Some(n)) = (prev, next) {
+                        if open_pair_for(p) == Some(n) {
+                            let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                            self.buffer.delete_range(idx - 1, idx + 1);
+                            self.cursor.col -= 1;
+                            self.cursor.want_col = self.cursor.col;
+                            return;
+                        }
+                    }
                     let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
                     self.buffer.delete_range(idx - 1, idx);
                     self.cursor.col -= 1;
@@ -2908,6 +2942,43 @@ fn detect_git_branch(start: &std::path::Path) -> Option<String> {
         }
         dir = parent;
     }
+}
+
+/// Map an opening pair character to its closing counterpart, or `None` for chars
+/// that don't auto-pair.
+fn open_pair_for(c: char) -> Option<char> {
+    match c {
+        '(' => Some(')'),
+        '[' => Some(']'),
+        '{' => Some('}'),
+        '\'' => Some('\''),
+        '"' => Some('"'),
+        '`' => Some('`'),
+        _ => None,
+    }
+}
+
+fn is_close_char(c: char) -> bool {
+    matches!(c, ')' | ']' | '}' | '\'' | '"' | '`')
+}
+
+/// Decide whether to auto-pair when typing `c` at `(line, col)`. Quotes/backticks
+/// skip pairing when adjacent to identifier-class characters (so `don't` and
+/// trailing apostrophes don't pair surprisingly). Brackets always pair.
+fn should_auto_pair(c: char, buffer: &Buffer, line: usize, col: usize) -> bool {
+    if !matches!(c, '\'' | '"' | '`') {
+        return true;
+    }
+    let prev = if col > 0 { buffer.char_at(line, col - 1) } else { None };
+    let next = buffer.char_at(line, col);
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    if prev.map(is_word).unwrap_or(false) {
+        return false;
+    }
+    if next.map(is_word).unwrap_or(false) {
+        return false;
+    }
+    true
 }
 
 fn is_jump_motion(m: MotionVerb) -> bool {
