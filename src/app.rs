@@ -469,13 +469,17 @@ impl App {
         (line, col)
     }
 
-    fn lsp_request_completion(&mut self) {
+    fn lsp_request_completion(&mut self, trigger_char: Option<char>) {
         let Some(path) = self.buffer.path.clone() else {
             return;
         };
+        // Push the latest buffer to the server before asking — otherwise the
+        // request lands against last frame's text and the server sees stale
+        // content (no `.`, wrong identifier prefix, etc).
+        self.lsp_sync_active();
         let line = self.cursor.line;
         let col = self.cursor.col;
-        if !self.lsp.request_completion(&path, line, col) {
+        if !self.lsp.request_completion(&path, line, col, trigger_char) {
             // No LSP — silently ignore so editing isn't disrupted.
         }
     }
@@ -846,7 +850,7 @@ impl App {
             KeyCode::Char(c)
                 if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'n' || c == 'p') =>
             {
-                self.lsp_request_completion();
+                self.lsp_request_completion(None);
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // If the cursor sits on the same closing char the user is typing,
@@ -876,7 +880,15 @@ impl App {
                 // Auto-trigger completion on identifier and member-access chars.
                 // Skipped during macro replay so playback doesn't spam LSP requests.
                 if !self.replaying && is_completion_trigger(c) {
-                    self.lsp_request_completion();
+                    // Punctuation triggers (`.`, `:`, etc.) get sent to the
+                    // server as triggerCharacter so it returns member-access
+                    // completions; identifier chars are an Invoked refresh.
+                    let trigger = if matches!(c, '.' | ':' | '@' | '<') {
+                        Some(c)
+                    } else {
+                        None
+                    };
+                    self.lsp_request_completion(trigger);
                 }
             }
             KeyCode::Enter => {
@@ -916,7 +928,7 @@ impl App {
                     self.cursor.want_col = prev_len;
                 }
                 if popup_was_open && !self.replaying {
-                    self.lsp_request_completion();
+                    self.lsp_request_completion(None);
                 }
             }
             KeyCode::Tab => {

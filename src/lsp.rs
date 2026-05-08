@@ -931,15 +931,29 @@ impl LspManager {
         true
     }
 
-    pub fn request_completion(&mut self, path: &Path, line: usize, col: usize) -> bool {
+    pub fn request_completion(
+        &mut self,
+        path: &Path,
+        line: usize,
+        col: usize,
+        trigger_char: Option<char>,
+    ) -> bool {
         let Some(client) = self.client_for_path(path) else { return false; };
         let id = client.alloc_id();
+        // LSP CompletionTriggerKind: 1=Invoked, 2=TriggerCharacter.
+        // Servers use this to decide whether to return member-access
+        // completions (after `.`, `:`, etc.) versus general scope items.
+        let context = match trigger_char {
+            Some(c) => json!({ "triggerKind": 2, "triggerCharacter": c.to_string() }),
+            None => json!({ "triggerKind": 1 }),
+        };
         let _ = client.send_request(
             id,
             "textDocument/completion",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col }
+                "position": { "line": line, "character": col },
+                "context": context,
             }),
         );
         self.pending.insert(id, PendingRequest::Completion);
