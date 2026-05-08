@@ -8,10 +8,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -72,6 +71,14 @@ pub enum PendingRequest {
     Completion,
 }
 
+/// State of a client's outgoing pipe. Until the server has answered the
+/// `initialize` request we buffer frames; the reader thread flushes them in
+/// order once it sees the response.
+enum InitState {
+    Buffering(Vec<Vec<u8>>),
+    Ready,
+}
+
 pub struct LspClient {
     #[allow(dead_code)]
     pub name: String,
@@ -79,8 +86,7 @@ pub struct LspClient {
     stdin: Arc<Mutex<ChildStdin>>,
     pub incoming_rx: Receiver<LspIncoming>,
     next_id: Arc<Mutex<u64>>,
-    #[allow(dead_code)]
-    pub initialized: Arc<Mutex<bool>>,
+    init_state: Arc<Mutex<InitState>>,
     #[allow(dead_code)]
     pub root_uri: String,
     pub language_id: String,
@@ -279,11 +285,11 @@ impl LspClient {
         let stdout = child.stdout.take()?;
 
         let (in_tx, in_rx) = channel();
-        let initialized = Arc::new(Mutex::new(false));
-        let init_clone = initialized.clone();
+        let init_state = Arc::new(Mutex::new(InitState::Buffering(Vec::new())));
+        let init_state_for_reader = init_state.clone();
         let stdin_for_reader = stdin.clone();
         thread::spawn(move || {
-            reader_loop(stdout, stdin_for_reader, in_tx, init_clone);
+            reader_loop(stdout, stdin_for_reader, init_state_for_reader, in_tx);
         });
 
         let root_uri = path_to_uri(root);
@@ -293,14 +299,16 @@ impl LspClient {
             stdin,
             incoming_rx: in_rx,
             next_id: Arc::new(Mutex::new(1)),
-            initialized,
+            init_state,
             root_uri: root_uri.clone(),
             language_id: spec.language_id.clone(),
         };
 
-        // Fire initialize + initialized; the server publishes diagnostics later.
+        // Send initialize directly (bypassing the queue gate, which only holds
+        // back later messages). Initialized + queued frames are flushed by the
+        // reader thread once the response arrives — we don't block here.
         let init_id = client.alloc_id();
-        let _ = client.send_request(
+        let _ = client.send_request_direct(
             init_id,
             "initialize",
             json!({
@@ -378,25 +386,8 @@ impl LspClient {
                 }
             }),
         );
-        // Per LSP spec the client must wait for the initialize response before sending any
-        // other request or notification. Block here (with a generous timeout) draining the
-        // channel until we see the matching response. The reader thread auto-replies to any
-        // server-to-client requests that arrive during this window so the server doesn't stall.
-        let deadline = Instant::now() + Duration::from_secs(15);
-        loop {
-            if Instant::now() >= deadline {
-                break;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match client.incoming_rx.recv_timeout(remaining) {
-                Ok(LspIncoming::Response { id, .. }) if id == init_id => break,
-                Ok(_) => continue,
-                Err(RecvTimeoutError::Disconnected) => return None,
-                Err(RecvTimeoutError::Timeout) => break,
-            }
-        }
-
-        let _ = client.send_notification("initialized", json!({}));
+        // No blocking wait — reader thread handles "initialized" + queue flush when
+        // the response comes back. The user can keep editing in the meantime.
         Some(client)
     }
 
@@ -407,12 +398,43 @@ impl LspClient {
         id
     }
 
+    /// Write a frame straight to stdin. Used by `send_request_direct` for the
+    /// initialize request and by the reader thread when flushing the queue.
+    fn write_frame_unconditional(&self, frame: &[u8]) -> std::io::Result<()> {
+        let mut stdin = self.stdin.lock().unwrap();
+        stdin.write_all(frame)?;
+        stdin.flush()
+    }
+
+    /// Public send path — buffers if init isn't done; otherwise writes directly.
     fn send_raw(&self, msg: &Value) -> Result<()> {
         let body = serde_json::to_string(msg)?;
+        let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body).into_bytes();
+        let mut g = self.init_state.lock().unwrap();
+        match &mut *g {
+            InitState::Ready => {
+                drop(g);
+                self.write_frame_unconditional(&frame)?;
+            }
+            InitState::Buffering(q) => {
+                q.push(frame);
+            }
+        }
+        Ok(())
+    }
+
+    /// Send a request without going through the init gate. Reserved for the
+    /// initialize request itself (it must be the first thing on the wire).
+    fn send_request_direct(&self, id: u64, method: &str, params: Value) -> Result<()> {
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        let body = serde_json::to_string(&msg)?;
         let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        let mut stdin = self.stdin.lock().unwrap();
-        stdin.write_all(frame.as_bytes())?;
-        stdin.flush()?;
+        self.write_frame_unconditional(frame.as_bytes())?;
         Ok(())
     }
 
@@ -464,8 +486,8 @@ impl LspClient {
 fn reader_loop(
     stdout: impl Read + Send + 'static,
     stdin: Arc<Mutex<ChildStdin>>,
+    init_state: Arc<Mutex<InitState>>,
     tx: Sender<LspIncoming>,
-    initialized: Arc<Mutex<bool>>,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -489,15 +511,15 @@ fn reader_loop(
             return;
         }
         let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
-        dispatch(value, &stdin, &tx, &initialized);
+        dispatch(value, &stdin, &init_state, &tx);
     }
 }
 
 fn dispatch(
     msg: Value,
     stdin: &Arc<Mutex<ChildStdin>>,
+    init_state: &Arc<Mutex<InitState>>,
     tx: &Sender<LspIncoming>,
-    initialized: &Arc<Mutex<bool>>,
 ) {
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
     // doesn't stall waiting for a response we won't otherwise produce.
@@ -511,9 +533,36 @@ fn dispatch(
     // Response: has `id` and either `result` or `error`.
     if let Some(id) = id {
         if let Some(result) = msg.get("result").cloned() {
-            if let Ok(mut g) = initialized.lock() {
-                *g = true;
+            // First response while still buffering = answer to `initialize`.
+            // Promote the queue to Ready, send "initialized", then flush queued
+            // frames in order. We hold the lock for the whole flush so any
+            // main-thread sends wait until we're done — preserving order.
+            let mut g = init_state.lock().unwrap();
+            if matches!(*g, InitState::Buffering(_)) {
+                let frames = match std::mem::replace(&mut *g, InitState::Ready) {
+                    InitState::Buffering(f) => f,
+                    InitState::Ready => Vec::new(),
+                };
+                let init_notif = json!({
+                    "jsonrpc": "2.0",
+                    "method": "initialized",
+                    "params": {},
+                });
+                if let Ok(body) = serde_json::to_string(&init_notif) {
+                    let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
+                    if let Ok(mut s) = stdin.lock() {
+                        let _ = s.write_all(frame.as_bytes());
+                        let _ = s.flush();
+                    }
+                }
+                for frame in frames {
+                    if let Ok(mut s) = stdin.lock() {
+                        let _ = s.write_all(&frame);
+                        let _ = s.flush();
+                    }
+                }
             }
+            drop(g);
             let _ = tx.send(LspIncoming::Response { id, result });
             return;
         }
