@@ -1,5 +1,8 @@
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+    MouseEventKind,
+};
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -631,6 +634,9 @@ impl App {
                     Mode::Picker => self.handle_picker_key(k),
                 }
             }
+            Event::Mouse(me) => {
+                self.handle_mouse_event(me);
+            }
             Event::Resize(w, h) => {
                 self.width = w;
                 self.height = h;
@@ -638,6 +644,82 @@ impl App {
             _ => {}
         }
         Ok(())
+    }
+
+    fn handle_mouse_event(&mut self, ev: MouseEvent) {
+        // Don't process mouse events while an overlay is up — picker/cmdline/etc
+        // expect keyboard interaction. Scroll wheel still works to dismiss them.
+        let in_overlay = self.has_modal_overlay();
+        let row = ev.row as usize;
+        let col = ev.column as usize;
+        let buffer_rows = self.buffer_rows();
+
+        match ev.kind {
+            MouseEventKind::ScrollUp => {
+                self.hover = None;
+                self.whichkey = None;
+                self.view_top = self.view_top.saturating_sub(3);
+                let last_visible = self.view_top + buffer_rows.saturating_sub(1);
+                if self.cursor.line > last_visible {
+                    self.cursor.line = last_visible;
+                    self.clamp_cursor_normal();
+                }
+                return;
+            }
+            MouseEventKind::ScrollDown => {
+                self.hover = None;
+                self.whichkey = None;
+                let last = self.buffer.line_count().saturating_sub(1);
+                self.view_top = (self.view_top + 3).min(last);
+                if self.cursor.line < self.view_top {
+                    self.cursor.line = self.view_top;
+                    self.clamp_cursor_normal();
+                }
+                return;
+            }
+            _ => {}
+        }
+
+        if in_overlay {
+            return;
+        }
+        if row >= buffer_rows {
+            return; // status line / off-buffer area
+        }
+        let gutter = self.gutter_width();
+        if col < gutter {
+            return; // sign column / line numbers
+        }
+        let buf_line = row + self.view_top;
+        if buf_line >= self.buffer.line_count() {
+            return;
+        }
+        let line_len = self.buffer.line_len(buf_line);
+        let raw_col = col.saturating_sub(gutter);
+        let max_col = if line_len == 0 { 0 } else { line_len - 1 };
+        let buf_col = raw_col.min(max_col);
+
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                if matches!(self.mode, Mode::Visual(_)) {
+                    self.exit_visual();
+                }
+                self.cursor.line = buf_line;
+                self.cursor.col = buf_col;
+                self.cursor.want_col = buf_col;
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if !matches!(self.mode, Mode::Visual(_)) {
+                    let anchor = self.cursor;
+                    self.mode = Mode::Visual(VisualKind::Char);
+                    self.visual_anchor = Some(anchor);
+                }
+                self.cursor.line = buf_line;
+                self.cursor.col = buf_col;
+                self.cursor.want_col = buf_col;
+            }
+            _ => {}
+        }
     }
 
     fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
@@ -2697,12 +2779,13 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enable() -> Result<Self> {
         use crossterm::{
+            event::EnableMouseCapture,
             execute,
             terminal::{enable_raw_mode, EnterAlternateScreen},
         };
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         Ok(TerminalGuard)
     }
 }
@@ -2711,12 +2794,14 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         use crossterm::{
             cursor::{SetCursorStyle, Show},
+            event::DisableMouseCapture,
             execute,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
         let mut stdout = io::stdout();
         let _ = execute!(
             stdout,
+            DisableMouseCapture,
             SetCursorStyle::DefaultUserShape,
             Show,
             LeaveAlternateScreen
