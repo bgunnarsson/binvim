@@ -1056,15 +1056,18 @@ impl App {
     fn exec_command(&mut self, line: &str) {
         match command::parse(line) {
             ExCommand::Write => match self.save_active() {
-                Ok(()) => {
+                Ok(format_note) => {
                     let path = self
                         .buffer
                         .path
                         .as_ref()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| "[No Name]".into());
-                    self.status_msg =
-                        format!("\"{}\" {}L written", path, self.buffer.line_count());
+                    let lines = self.buffer.line_count();
+                    self.status_msg = match format_note {
+                        Some(note) => format!("\"{path}\" {lines}L written ({note})"),
+                        None => format!("\"{path}\" {lines}L written"),
+                    };
                 }
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
@@ -1084,7 +1087,7 @@ impl App {
             }
             ExCommand::QuitForce => self.should_quit = true,
             ExCommand::WriteQuit => match self.save_active() {
-                Ok(()) => self.should_quit = true,
+                Ok(_) => self.should_quit = true,
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
             ExCommand::Edit(p) => {
@@ -2620,15 +2623,15 @@ impl App {
     }
 
     /// Run the configured formatter (if any), apply .editorconfig on-save
-    /// transforms, then write to disk. Formatter failures are swallowed
-    /// silently — a missing biome or a syntax error mid-edit shouldn't block
-    /// the user from saving. Use `:fmt` for explicit formatting if you want
-    /// to see why it didn't run.
-    fn save_active(&mut self) -> Result<()> {
+    /// transforms, then write to disk. Records a `format_status` message that
+    /// the caller can surface — this is the only signal the user gets that
+    /// the formatter ran or didn't.
+    fn save_active(&mut self) -> Result<Option<String>> {
+        let mut format_note: Option<String> = None;
         if let Some(path) = self.buffer.path.clone() {
             let source = self.buffer.rope.to_string();
-            if let Ok(formatted) = crate::format::format_buffer(&path, &source) {
-                if formatted != source {
+            match crate::format::format_buffer(&path, &source) {
+                Ok(formatted) if formatted != source => {
                     self.history.record(&self.buffer.rope, self.cursor);
                     let total = self.buffer.total_chars();
                     self.buffer.delete_range(0, total);
@@ -2638,7 +2641,11 @@ impl App {
                         self.cursor.line = last_line;
                     }
                     self.clamp_cursor_normal();
+                    format_note = Some("formatted".into());
                 }
+                Ok(_) => {} // already formatted — quiet
+                Err(msg) if msg.starts_with("no formatter") => {} // expected for unsupported extensions
+                Err(msg) => format_note = Some(format!("fmt: {msg}")),
             }
         }
         if self.editorconfig.trim_trailing_whitespace {
@@ -2647,7 +2654,8 @@ impl App {
         if self.editorconfig.insert_final_newline {
             self.ensure_final_newline();
         }
-        self.buffer.save()
+        self.buffer.save()?;
+        Ok(format_note)
     }
 
     fn trim_trailing_whitespace(&mut self) {
