@@ -1,0 +1,1315 @@
+use anyhow::Result;
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use std::collections::HashMap;
+use std::io::{self, Write};
+use std::path::PathBuf;
+
+use crate::buffer::Buffer;
+use crate::command::{self, ExCommand};
+use crate::cursor::Cursor;
+use crate::mode::{Mode, Operator, VisualKind};
+use crate::motion::{self, MotionKind, MotionResult};
+use crate::parser::{
+    self, Action, InsertWhere, MotionVerb, PageScrollKind, ParseCtx, ParseResult, PendingCmd,
+    ViewportAdjust,
+};
+use crate::render;
+use crate::text_object::{self, TextObjectVerb, TextRange};
+use crate::undo::History;
+
+#[derive(Debug, Clone)]
+pub struct Register {
+    pub text: String,
+    pub linewise: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FindRecord {
+    pub ch: char,
+    pub forward: bool,
+    pub before: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum LastEdit {
+    Plain(Action),
+    InsertSession {
+        prelude: Action,
+        keys: Vec<KeyEvent>,
+    },
+}
+
+#[derive(Debug)]
+struct RecordingState {
+    prelude: Action,
+    keys: Vec<KeyEvent>,
+}
+
+pub struct App {
+    pub buffer: Buffer,
+    pub cursor: Cursor,
+    pub mode: Mode,
+    pub pending: PendingCmd,
+    pub history: History,
+    pub register: Option<Register>,
+    pub cmdline: String,
+    pub status_msg: String,
+    pub view_top: usize,
+    pub width: u16,
+    pub height: u16,
+    pub should_quit: bool,
+    pub visual_anchor: Option<Cursor>,
+    pub last_find: Option<FindRecord>,
+    /// `(query, backward)` — direction is the original search direction so `n`/`N` honour it.
+    pub last_search: Option<(String, bool)>,
+    pub last_edit: Option<LastEdit>,
+    pub marks: HashMap<char, (usize, usize)>,
+    recording: Option<RecordingState>,
+    replaying: bool,
+}
+
+impl App {
+    pub fn new(path: Option<PathBuf>) -> Result<Self> {
+        let buffer = match path {
+            Some(p) => Buffer::from_path(p)?,
+            None => Buffer::empty(),
+        };
+        let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
+        Ok(Self {
+            buffer,
+            cursor: Cursor::default(),
+            mode: Mode::Normal,
+            pending: PendingCmd::default(),
+            history: History::new(),
+            register: None,
+            cmdline: String::new(),
+            status_msg: String::new(),
+            view_top: 0,
+            width: w,
+            height: h,
+            should_quit: false,
+            visual_anchor: None,
+            last_find: None,
+            last_search: None,
+            last_edit: None,
+            marks: HashMap::new(),
+            recording: None,
+            replaying: false,
+        })
+    }
+
+    pub fn run(&mut self) -> Result<()> {
+        let _guard = TerminalGuard::enable()?;
+        let mut stdout = io::stdout();
+        while !self.should_quit {
+            self.adjust_viewport();
+            render::draw(&mut stdout, self)?;
+            stdout.flush()?;
+            self.handle_event()?;
+        }
+        Ok(())
+    }
+
+    fn handle_event(&mut self) -> Result<()> {
+        match event::read()? {
+            Event::Key(k)
+                if matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
+            {
+                if !matches!(self.mode, Mode::Command) {
+                    self.status_msg.clear();
+                }
+                match self.mode {
+                    Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
+                    Mode::Insert => self.handle_insert_key(k),
+                    Mode::Command => self.handle_command_key(k),
+                    Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
+                    Mode::Search { .. } => self.handle_search_key(k),
+                }
+            }
+            Event::Resize(w, h) => {
+                self.width = w;
+                self.height = h;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
+        match parser::parse(&mut self.pending, key, ctx) {
+            ParseResult::Pending => {}
+            ParseResult::Cancelled => {
+                if matches!(self.mode, Mode::Visual(_)) {
+                    self.exit_visual();
+                }
+            }
+            ParseResult::Action(a) => self.apply_action(a),
+        }
+    }
+
+    fn handle_insert_key(&mut self, key: KeyEvent) {
+        let is_esc = matches!(key.code, KeyCode::Esc);
+        if !self.replaying && !is_esc {
+            if let Some(rec) = self.recording.as_mut() {
+                rec.keys.push(key);
+            }
+        }
+        match key.code {
+            KeyCode::Esc => {
+                if self.cursor.col > 0 {
+                    self.cursor.col -= 1;
+                    self.cursor.want_col = self.cursor.col;
+                }
+                self.mode = Mode::Normal;
+                if !self.replaying {
+                    if let Some(rec) = self.recording.take() {
+                        self.last_edit = Some(LastEdit::InsertSession {
+                            prelude: rec.prelude,
+                            keys: rec.keys,
+                        });
+                    }
+                }
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
+                self.cursor.col += 1;
+                self.cursor.want_col = self.cursor.col;
+            }
+            KeyCode::Enter => {
+                self.buffer
+                    .insert_char(self.cursor.line, self.cursor.col, '\n');
+                self.cursor.line += 1;
+                self.cursor.col = 0;
+                self.cursor.want_col = 0;
+            }
+            KeyCode::Backspace => {
+                if self.cursor.col > 0 {
+                    let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                    self.buffer.delete_range(idx - 1, idx);
+                    self.cursor.col -= 1;
+                    self.cursor.want_col = self.cursor.col;
+                } else if self.cursor.line > 0 {
+                    let prev = self.cursor.line - 1;
+                    let prev_len = self.buffer.line_len(prev);
+                    let idx = self.buffer.pos_to_char(prev, prev_len);
+                    self.buffer.delete_range(idx, idx + 1);
+                    self.cursor.line = prev;
+                    self.cursor.col = prev_len;
+                    self.cursor.want_col = prev_len;
+                }
+            }
+            KeyCode::Tab => {
+                self.buffer.insert_str(self.cursor.line, self.cursor.col, "  ");
+                self.cursor.col += 2;
+                self.cursor.want_col = self.cursor.col;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_command_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.cmdline.clear();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let line = std::mem::take(&mut self.cmdline);
+                self.mode = Mode::Normal;
+                self.exec_command(&line);
+            }
+            KeyCode::Backspace => {
+                if self.cmdline.is_empty() {
+                    self.mode = Mode::Normal;
+                } else {
+                    self.cmdline.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                self.cmdline.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn exec_command(&mut self, line: &str) {
+        match command::parse(line) {
+            ExCommand::Write => match self.buffer.save() {
+                Ok(()) => {
+                    let path = self
+                        .buffer
+                        .path
+                        .as_ref()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| "[No Name]".into());
+                    self.status_msg =
+                        format!("\"{}\" {}L written", path, self.buffer.line_count());
+                }
+                Err(e) => self.status_msg = format!("error: {e}"),
+            },
+            ExCommand::WriteAs(p) => {
+                self.buffer.path = Some(PathBuf::from(p));
+                if let Err(e) = self.buffer.save() {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
+            ExCommand::Quit => {
+                if self.buffer.dirty {
+                    self.status_msg = "E37: No write since last change (use :q!)".into();
+                } else {
+                    self.should_quit = true;
+                }
+            }
+            ExCommand::QuitForce => self.should_quit = true,
+            ExCommand::WriteQuit => match self.buffer.save() {
+                Ok(()) => self.should_quit = true,
+                Err(e) => self.status_msg = format!("error: {e}"),
+            },
+            ExCommand::Edit(p) => {
+                if p.is_empty() {
+                    self.status_msg = "E32: No file name".into();
+                } else {
+                    match Buffer::from_path(PathBuf::from(p)) {
+                        Ok(b) => {
+                            self.buffer = b;
+                            self.cursor = Cursor::default();
+                            self.view_top = 0;
+                            self.history = History::new();
+                        }
+                        Err(e) => self.status_msg = format!("error: {e}"),
+                    }
+                }
+            }
+            ExCommand::Goto(n) => {
+                let m = motion::goto_line(&self.buffer, n);
+                self.cursor = m.target;
+            }
+            ExCommand::Unknown(s) => {
+                self.status_msg = format!("E492: Not an editor command: {s}");
+            }
+        }
+    }
+
+    fn apply_action(&mut self, action: Action) {
+        self.maybe_record_edit(&action);
+        match action {
+            Action::Move { motion, count } => {
+                let m = self.run_motion(motion, count);
+                self.cursor = m.target;
+                self.clamp_cursor_normal();
+            }
+            Action::Operate { op, motion, count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                let m = self.run_motion(motion, count);
+                self.apply_op_with_motion(op, m);
+            }
+            Action::OperateLine { op, count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.apply_op_linewise(op, count);
+            }
+            Action::OperateTextObject { op, obj, count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.apply_text_object(op, obj, count);
+            }
+            Action::EnterInsert(w) => self.enter_insert(w),
+            Action::DeleteCharForward { count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.delete_char_forward(count);
+            }
+            Action::ReplaceChar { ch, count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.replace_char(ch, count);
+            }
+            Action::JoinLines { count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.join_lines(count);
+            }
+            Action::ToggleCase { count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.toggle_case(count);
+            }
+            Action::Undo => self.undo(),
+            Action::Redo => self.redo(),
+            Action::Put { before, count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.put(before, count);
+            }
+            Action::EnterCommand => {
+                self.cmdline.clear();
+                self.mode = Mode::Command;
+            }
+            Action::EnterSearch { backward } => {
+                self.cmdline.clear();
+                self.mode = Mode::Search { backward };
+            }
+            Action::Repeat => self.repeat_last_edit(),
+            Action::PageScroll(kind) => self.page_scroll(kind),
+            Action::AdjustViewport(kind) => self.adjust_viewport_to(kind),
+            Action::SetMark { name } => {
+                self.marks.insert(name, (self.cursor.line, self.cursor.col));
+            }
+            Action::SearchWord { backward } => self.search_word_under_cursor(backward),
+            Action::EnterVisual(kind) => {
+                self.mode = Mode::Visual(kind);
+                self.visual_anchor = Some(self.cursor);
+            }
+            Action::VisualOperate { op } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.apply_visual_operate(op);
+            }
+            Action::VisualSelectTextObject { obj } => {
+                self.apply_visual_select_textobj(obj);
+            }
+            Action::VisualSwap => {
+                if let Some(anchor) = self.visual_anchor {
+                    self.visual_anchor = Some(self.cursor);
+                    self.cursor = anchor;
+                }
+            }
+            Action::VisualSwitch(target) => match self.mode {
+                Mode::Visual(cur) if cur == target => self.exit_visual(),
+                _ => self.mode = Mode::Visual(target),
+            },
+        }
+    }
+
+    fn exit_visual(&mut self) {
+        self.mode = Mode::Normal;
+        self.visual_anchor = None;
+    }
+
+    /// Decide whether an about-to-fire action should set up a recording for `.` repeat.
+    fn maybe_record_edit(&mut self, action: &Action) {
+        if self.replaying {
+            return;
+        }
+        // Actions that enter insert mode begin a recording session that ends on Esc.
+        let enters_insert = matches!(
+            action,
+            Action::EnterInsert(_)
+                | Action::Operate { op: Operator::Change, .. }
+                | Action::OperateLine { op: Operator::Change, .. }
+                | Action::OperateTextObject { op: Operator::Change, .. }
+        );
+        if enters_insert {
+            self.recording = Some(RecordingState { prelude: action.clone(), keys: Vec::new() });
+            return;
+        }
+        let plain_recordable = match action {
+            Action::Operate { op, .. }
+            | Action::OperateLine { op, .. }
+            | Action::OperateTextObject { op, .. } => matches!(op, Operator::Delete),
+            Action::DeleteCharForward { .. }
+            | Action::Put { .. }
+            | Action::ReplaceChar { .. }
+            | Action::JoinLines { .. }
+            | Action::ToggleCase { .. } => true,
+            _ => false,
+        };
+        if plain_recordable {
+            self.last_edit = Some(LastEdit::Plain(action.clone()));
+        }
+    }
+
+    fn repeat_last_edit(&mut self) {
+        let Some(last) = self.last_edit.clone() else {
+            self.status_msg = "No previous edit to repeat".into();
+            return;
+        };
+        self.replaying = true;
+        match last {
+            LastEdit::Plain(action) => self.apply_action(action),
+            LastEdit::InsertSession { prelude, keys } => {
+                self.apply_action(prelude);
+                for k in keys {
+                    self.handle_insert_key(k);
+                }
+                let esc = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+                self.handle_insert_key(esc);
+            }
+        }
+        self.replaying = false;
+    }
+
+    fn visual_range_chars(&self, kind: VisualKind) -> (usize, usize, bool) {
+        let anchor = self.visual_anchor.unwrap_or(self.cursor);
+        match kind {
+            VisualKind::Char => {
+                let a = self.buffer.pos_to_char(anchor.line, anchor.col);
+                let c = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                let (lo, hi) = if a <= c { (a, c) } else { (c, a) };
+                let total = self.buffer.total_chars();
+                (lo, (hi + 1).min(total), false)
+            }
+            VisualKind::Line => {
+                let l1 = anchor.line.min(self.cursor.line);
+                let l2 = anchor.line.max(self.cursor.line);
+                let s = self.buffer.line_start_idx(l1);
+                let e = self.buffer.line_start_idx(l2 + 1);
+                let total = self.buffer.total_chars();
+                let extend = e == total && l1 > 0;
+                let s_eff = if extend { s - 1 } else { s };
+                (s_eff, e, true)
+            }
+        }
+    }
+
+    fn apply_visual_operate(&mut self, op: Operator) {
+        let kind = match self.mode {
+            Mode::Visual(k) => k,
+            _ => return,
+        };
+        let (start, end, linewise) = self.visual_range_chars(kind);
+        if end <= start {
+            self.exit_visual();
+            return;
+        }
+        let removed = self.buffer.rope.slice(start..end).to_string();
+        match op {
+            Operator::Yank => {
+                self.register = Some(Register { text: removed, linewise });
+                // Vim convention: yank in visual returns cursor to selection start.
+                self.cursor_to_idx(start);
+                self.clamp_cursor_normal();
+                self.exit_visual();
+            }
+            Operator::Delete => {
+                self.register = Some(Register { text: removed, linewise });
+                self.buffer.delete_range(start, end);
+                self.cursor_to_idx(start);
+                self.clamp_cursor_normal();
+                self.exit_visual();
+            }
+            Operator::Change => {
+                self.register = Some(Register { text: removed, linewise });
+                self.buffer.delete_range(start, end);
+                if linewise {
+                    self.buffer.insert_at_idx(start, "\n");
+                }
+                self.cursor_to_idx(start);
+                self.mode = Mode::Insert;
+                self.visual_anchor = None;
+            }
+        }
+    }
+
+    fn apply_text_object(&mut self, op: Operator, obj: TextObjectVerb, _count: usize) {
+        // TODO: count > 1 should expand the object (e.g. d2aw = delete 2 around-words).
+        let range = match text_object::compute(&self.buffer, self.cursor, obj) {
+            Some(r) => r,
+            None => return,
+        };
+        self.apply_op_to_range(op, range);
+    }
+
+    fn apply_op_to_range(&mut self, op: Operator, range: TextRange) {
+        if range.end <= range.start {
+            return;
+        }
+        let removed = self.buffer.rope.slice(range.start..range.end).to_string();
+        match op {
+            Operator::Yank => {
+                self.register = Some(Register { text: removed, linewise: range.linewise });
+            }
+            Operator::Delete => {
+                self.register = Some(Register { text: removed, linewise: range.linewise });
+                self.buffer.delete_range(range.start, range.end);
+                self.cursor_to_idx(range.start);
+                self.clamp_cursor_normal();
+            }
+            Operator::Change => {
+                self.register = Some(Register { text: removed, linewise: range.linewise });
+                self.buffer.delete_range(range.start, range.end);
+                self.cursor_to_idx(range.start);
+                self.mode = Mode::Insert;
+            }
+        }
+    }
+
+    fn apply_visual_select_textobj(&mut self, obj: TextObjectVerb) {
+        let range = match text_object::compute(&self.buffer, self.cursor, obj) {
+            Some(r) => r,
+            None => return,
+        };
+        // Anchor → start, cursor → end-1 (inclusive endpoint for visual).
+        self.cursor_to_idx(range.start);
+        let anchor = self.cursor;
+        let end_idx = range.end.saturating_sub(1).max(range.start);
+        self.cursor_to_idx(end_idx);
+        self.visual_anchor = Some(anchor);
+    }
+
+    fn run_motion(&mut self, m: MotionVerb, count: usize) -> MotionResult {
+        match m {
+            MotionVerb::Left => motion::left(&self.buffer, self.cursor, count),
+            MotionVerb::Right => motion::right(&self.buffer, self.cursor, count),
+            MotionVerb::Up => motion::up(&self.buffer, self.cursor, count),
+            MotionVerb::Down => motion::down(&self.buffer, self.cursor, count),
+            MotionVerb::LineStart => motion::line_start(&self.buffer, self.cursor),
+            MotionVerb::LineEnd => motion::line_end(&self.buffer, self.cursor),
+            MotionVerb::WordForward => motion::word_forward(&self.buffer, self.cursor, count),
+            MotionVerb::WordBackward => motion::word_backward(&self.buffer, self.cursor, count),
+            MotionVerb::BigWordForward => motion::big_word_forward(&self.buffer, self.cursor, count),
+            MotionVerb::BigWordBackward => motion::big_word_backward(&self.buffer, self.cursor, count),
+            MotionVerb::EndWord => motion::end_word(&self.buffer, self.cursor, count),
+            MotionVerb::BigEndWord => motion::big_end_word(&self.buffer, self.cursor, count),
+            MotionVerb::EndWordBackward => motion::end_word_backward(&self.buffer, self.cursor, count),
+            MotionVerb::BigEndWordBackward => motion::big_end_word_backward(&self.buffer, self.cursor, count),
+            MotionVerb::FirstLine => motion::first_line(&self.buffer, self.cursor),
+            MotionVerb::LastLine => motion::last_line(&self.buffer, self.cursor),
+            MotionVerb::GotoLine(n) => motion::goto_line(&self.buffer, n),
+            MotionVerb::FirstNonBlank => motion::first_non_blank(&self.buffer, self.cursor),
+            MotionVerb::LastNonBlank => motion::last_non_blank(&self.buffer, self.cursor),
+            MotionVerb::ViewportTop => self.viewport_motion(0),
+            MotionVerb::ViewportMiddle => self.viewport_motion(self.buffer_rows() / 2),
+            MotionVerb::ViewportBottom => self.viewport_motion(self.buffer_rows().saturating_sub(1)),
+            MotionVerb::Mark { name, exact } => self.mark_motion(name, exact),
+            MotionVerb::FindChar { ch, forward, before } => {
+                self.last_find = Some(FindRecord { ch, forward, before });
+                motion::find_char(&self.buffer, self.cursor, ch, forward, before, count)
+                    .unwrap_or(MotionResult { target: self.cursor, kind: MotionKind::CharExclusive })
+            }
+            MotionVerb::RepeatFind { reverse } => match self.last_find {
+                Some(rec) => {
+                    let forward = if reverse { !rec.forward } else { rec.forward };
+                    motion::find_char(&self.buffer, self.cursor, rec.ch, forward, rec.before, count)
+                        .unwrap_or(MotionResult { target: self.cursor, kind: MotionKind::CharExclusive })
+                }
+                None => MotionResult { target: self.cursor, kind: MotionKind::CharExclusive },
+            },
+            MotionVerb::SearchNext { reverse } => self.run_search_next(reverse, count),
+        }
+    }
+
+    fn viewport_motion(&self, offset: usize) -> MotionResult {
+        let line = (self.view_top + offset).min(self.buffer.line_count().saturating_sub(1));
+        let r = motion::first_non_blank(&self.buffer, Cursor { line, col: 0, want_col: 0 });
+        // Treat as linewise so operators like dH delete whole lines.
+        MotionResult { target: r.target, kind: MotionKind::Linewise }
+    }
+
+    fn mark_motion(&self, name: char, exact: bool) -> MotionResult {
+        let Some((mline, mcol)) = self.marks.get(&name).copied() else {
+            return MotionResult {
+                target: self.cursor,
+                kind: MotionKind::CharExclusive,
+            };
+        };
+        let last = self.buffer.line_count().saturating_sub(1);
+        let line = mline.min(last);
+        if exact {
+            let len = self.buffer.line_len(line);
+            let col = if len == 0 { 0 } else { mcol.min(len - 1) };
+            MotionResult {
+                target: Cursor { line, col, want_col: col },
+                kind: MotionKind::CharExclusive,
+            }
+        } else {
+            // ' jumps to first non-blank, linewise.
+            let r = motion::first_non_blank(&self.buffer, Cursor { line, col: 0, want_col: 0 });
+            MotionResult { target: r.target, kind: MotionKind::Linewise }
+        }
+    }
+
+    fn page_scroll(&mut self, kind: PageScrollKind) {
+        let rows = self.buffer_rows();
+        if rows == 0 {
+            return;
+        }
+        let last = self.buffer.line_count().saturating_sub(1);
+        match kind {
+            PageScrollKind::HalfDown | PageScrollKind::HalfUp => {
+                let amount = (rows / 2).max(1);
+                let down = matches!(kind, PageScrollKind::HalfDown);
+                self.shift_view_and_cursor(amount, down, last);
+            }
+            PageScrollKind::FullDown | PageScrollKind::FullUp => {
+                let amount = rows.saturating_sub(2).max(1);
+                let down = matches!(kind, PageScrollKind::FullDown);
+                self.shift_view_and_cursor(amount, down, last);
+            }
+            PageScrollKind::LineDown => {
+                self.view_top = (self.view_top + 1).min(last);
+                if self.cursor.line < self.view_top {
+                    self.cursor.line = self.view_top;
+                }
+                self.snap_cursor_col_to_want();
+            }
+            PageScrollKind::LineUp => {
+                self.view_top = self.view_top.saturating_sub(1);
+                if self.cursor.line > self.view_top + rows.saturating_sub(1) {
+                    self.cursor.line = self.view_top + rows.saturating_sub(1);
+                }
+                self.snap_cursor_col_to_want();
+            }
+        }
+    }
+
+    fn shift_view_and_cursor(&mut self, amount: usize, down: bool, last: usize) {
+        if down {
+            self.view_top = (self.view_top + amount).min(last);
+            self.cursor.line = (self.cursor.line + amount).min(last);
+        } else {
+            self.view_top = self.view_top.saturating_sub(amount);
+            self.cursor.line = self.cursor.line.saturating_sub(amount);
+        }
+        self.snap_cursor_col_to_want();
+    }
+
+    fn snap_cursor_col_to_want(&mut self) {
+        let len = self.buffer.line_len(self.cursor.line);
+        let max = if len == 0 { 0 } else { len - 1 };
+        self.cursor.col = self.cursor.want_col.min(max);
+    }
+
+    fn adjust_viewport_to(&mut self, kind: ViewportAdjust) {
+        let rows = self.buffer_rows();
+        if rows == 0 {
+            return;
+        }
+        let cur = self.cursor.line;
+        self.view_top = match kind {
+            ViewportAdjust::Top => cur,
+            ViewportAdjust::Center => cur.saturating_sub(rows / 2),
+            ViewportAdjust::Bottom => cur.saturating_sub(rows.saturating_sub(1)),
+        };
+    }
+
+    fn search_word_under_cursor(&mut self, backward: bool) {
+        let Some(word) = self.word_under_cursor() else {
+            self.status_msg = "No word under cursor".into();
+            return;
+        };
+        self.last_search = Some((word.clone(), backward));
+        let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let total = self.buffer.total_chars();
+        let from = if backward {
+            cur_idx.saturating_sub(1)
+        } else {
+            (cur_idx + 1).min(total)
+        };
+        match self.search(&word, from, !backward, true) {
+            Some(idx) => {
+                self.cursor_to_idx(idx);
+                self.clamp_cursor_normal();
+            }
+            None => self.status_msg = format!("Pattern not found: {word}"),
+        }
+    }
+
+    fn word_under_cursor(&self) -> Option<String> {
+        let line_len = self.buffer.line_len(self.cursor.line);
+        if line_len == 0 {
+            return None;
+        }
+        let cls = |c: char| -> u8 {
+            if c.is_whitespace() {
+                0
+            } else if c.is_alphanumeric() || c == '_' {
+                1
+            } else {
+                2
+            }
+        };
+        let here = self.buffer.char_at(self.cursor.line, self.cursor.col)?;
+        let here_class = cls(here);
+        if here_class == 0 {
+            return None;
+        }
+        let mut start = self.cursor.col;
+        while start > 0 {
+            let c = self.buffer.char_at(self.cursor.line, start - 1)?;
+            if cls(c) == here_class {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        let mut end = self.cursor.col + 1;
+        while end < line_len {
+            let c = self.buffer.char_at(self.cursor.line, end)?;
+            if cls(c) == here_class {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        let line_start = self.buffer.line_start_idx(self.cursor.line);
+        Some(
+            self.buffer
+                .rope
+                .slice((line_start + start)..(line_start + end))
+                .to_string(),
+        )
+    }
+
+    fn run_search_next(&self, reverse: bool, _count: usize) -> MotionResult {
+        let Some((query, was_backward)) = self.last_search.clone() else {
+            return MotionResult { target: self.cursor, kind: MotionKind::CharExclusive };
+        };
+        // n continues original direction; N reverses it.
+        let forward = if reverse { was_backward } else { !was_backward };
+        let total = self.buffer.total_chars();
+        let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let from = if forward { (cur_idx + 1).min(total) } else { cur_idx.saturating_sub(1) };
+        match self.search(&query, from, forward, true) {
+            Some(idx) => {
+                let line = self.buffer.rope.char_to_line(idx);
+                let col = idx - self.buffer.rope.line_to_char(line);
+                MotionResult {
+                    target: Cursor { line, col, want_col: col },
+                    kind: MotionKind::CharExclusive,
+                }
+            }
+            None => MotionResult { target: self.cursor, kind: MotionKind::CharExclusive },
+        }
+    }
+
+    fn search(&self, query: &str, from_char: usize, forward: bool, wrap: bool) -> Option<usize> {
+        if query.is_empty() {
+            return None;
+        }
+        let rope = &self.buffer.rope;
+        let text = rope.to_string();
+        let total = rope.len_chars();
+        let from_byte = rope.char_to_byte(from_char.min(total));
+        if forward {
+            if let Some(b) = text.get(from_byte..).and_then(|s| s.find(query)) {
+                return Some(rope.byte_to_char(from_byte + b));
+            }
+            if wrap {
+                if let Some(b) = text.get(..from_byte).and_then(|s| s.find(query)) {
+                    return Some(rope.byte_to_char(b));
+                }
+            }
+        } else {
+            if let Some(b) = text.get(..from_byte).and_then(|s| s.rfind(query)) {
+                return Some(rope.byte_to_char(b));
+            }
+            if wrap {
+                if let Some(b) = text.get(from_byte..).and_then(|s| s.rfind(query)) {
+                    return Some(rope.byte_to_char(from_byte + b));
+                }
+            }
+        }
+        None
+    }
+
+    fn handle_search_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.cmdline.clear();
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Enter => {
+                let query = std::mem::take(&mut self.cmdline);
+                let backward = match self.mode {
+                    Mode::Search { backward } => backward,
+                    _ => return,
+                };
+                self.mode = Mode::Normal;
+                self.execute_search(&query, backward);
+            }
+            KeyCode::Backspace => {
+                if self.cmdline.is_empty() {
+                    self.mode = Mode::Normal;
+                } else {
+                    self.cmdline.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                self.cmdline.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn execute_search(&mut self, query: &str, backward: bool) {
+        let q = if query.is_empty() {
+            match self.last_search.as_ref() {
+                Some((q, _)) => q.clone(),
+                None => return,
+            }
+        } else {
+            query.to_string()
+        };
+        self.last_search = Some((q.clone(), backward));
+        let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let forward = !backward;
+        // For the initial search, vim includes the cursor position. We mimic by starting at cur_idx.
+        match self.search(&q, cur_idx, forward, true) {
+            Some(idx) => {
+                self.cursor_to_idx(idx);
+                self.clamp_cursor_normal();
+            }
+            None => {
+                self.status_msg = format!("Pattern not found: {q}");
+            }
+        }
+    }
+
+    fn apply_op_with_motion(&mut self, op: Operator, m: MotionResult) {
+        let (start, end) = self.range_from_motion(m);
+        if end <= start {
+            return;
+        }
+        let removed = self.buffer.rope.slice(start..end).to_string();
+        let linewise = matches!(m.kind, MotionKind::Linewise);
+
+        match op {
+            Operator::Yank => {
+                self.register = Some(Register { text: removed, linewise });
+            }
+            Operator::Delete => {
+                self.register = Some(Register { text: removed, linewise });
+                self.buffer.delete_range(start, end);
+                self.cursor_to_idx(start);
+                self.clamp_cursor_normal();
+            }
+            Operator::Change => {
+                self.register = Some(Register { text: removed, linewise });
+                self.buffer.delete_range(start, end);
+                self.cursor_to_idx(start);
+                self.mode = Mode::Insert;
+            }
+        }
+    }
+
+    fn apply_op_linewise(&mut self, op: Operator, count: usize) {
+        let last_line = self.buffer.line_count().saturating_sub(1);
+        let l1 = self.cursor.line;
+        let l2 = (l1 + count - 1).min(last_line);
+        let start = self.buffer.line_start_idx(l1);
+        let end = self.buffer.line_start_idx(l2 + 1);
+        let total = self.buffer.total_chars();
+        let extend_back = end == total && l1 > 0;
+        let effective_start = if extend_back { start - 1 } else { start };
+
+        // Build register text — always presented as linewise (ends with '\n').
+        let raw = self.buffer.rope.slice(effective_start..end).to_string();
+        let reg_text = if extend_back {
+            let mut s = raw[1..].to_string();
+            if !s.ends_with('\n') {
+                s.push('\n');
+            }
+            s
+        } else if !raw.ends_with('\n') {
+            let mut s = raw.clone();
+            s.push('\n');
+            s
+        } else {
+            raw
+        };
+
+        match op {
+            Operator::Yank => {
+                self.register = Some(Register { text: reg_text, linewise: true });
+            }
+            Operator::Delete => {
+                self.register = Some(Register { text: reg_text, linewise: true });
+                self.buffer.delete_range(effective_start, end);
+                let new_last = self.buffer.line_count().saturating_sub(1);
+                self.cursor.line = l1.min(new_last);
+                self.cursor.col = 0;
+                self.cursor.want_col = 0;
+            }
+            Operator::Change => {
+                self.register = Some(Register { text: reg_text, linewise: true });
+                self.buffer.delete_range(effective_start, end);
+                self.buffer.insert_at_idx(effective_start, "\n");
+                self.cursor.line = l1;
+                self.cursor.col = 0;
+                self.cursor.want_col = 0;
+                self.mode = Mode::Insert;
+            }
+        }
+    }
+
+    fn range_from_motion(&self, m: MotionResult) -> (usize, usize) {
+        let from = self.cursor;
+        let mut to = m.target;
+        let mut kind = m.kind;
+        // Vim "exclusive becomes inclusive" rule: if the motion is exclusive and lands on
+        // column 0 of a later line, push target back to end of the previous line and treat
+        // as inclusive. This is what makes `dw` feel right across line breaks.
+        if matches!(kind, MotionKind::CharExclusive) && to.col == 0 && to.line > from.line {
+            let prev = to.line - 1;
+            let len = self.buffer.line_len(prev);
+            let col = if len == 0 { 0 } else { len - 1 };
+            to = Cursor { line: prev, col, want_col: col };
+            kind = MotionKind::CharInclusive;
+        }
+        match kind {
+            MotionKind::CharExclusive => {
+                let f = self.buffer.pos_to_char(from.line, from.col);
+                let t = self.buffer.pos_to_char(to.line, to.col);
+                if f <= t { (f, t) } else { (t, f) }
+            }
+            MotionKind::CharInclusive => {
+                let f = self.buffer.pos_to_char(from.line, from.col);
+                let t = self.buffer.pos_to_char(to.line, to.col);
+                if f <= t {
+                    (f, (t + 1).min(self.buffer.total_chars()))
+                } else {
+                    (t, (f + 1).min(self.buffer.total_chars()))
+                }
+            }
+            MotionKind::Linewise => {
+                let l1 = from.line.min(to.line);
+                let l2 = from.line.max(to.line);
+                let start = self.buffer.line_start_idx(l1);
+                let end = self.buffer.line_start_idx(l2 + 1);
+                (start, end)
+            }
+        }
+    }
+
+    fn enter_insert(&mut self, w: InsertWhere) {
+        self.history.record(&self.buffer.rope, self.cursor);
+        match w {
+            InsertWhere::Cursor => {}
+            InsertWhere::AfterCursor => {
+                let len = self.buffer.line_len(self.cursor.line);
+                if self.cursor.col < len {
+                    self.cursor.col += 1;
+                    self.cursor.want_col = self.cursor.col;
+                }
+            }
+            InsertWhere::LineBelow => {
+                let len = self.buffer.line_len(self.cursor.line);
+                let idx = self.buffer.pos_to_char(self.cursor.line, len);
+                self.buffer.insert_at_idx(idx, "\n");
+                self.cursor.line += 1;
+                self.cursor.col = 0;
+                self.cursor.want_col = 0;
+            }
+            InsertWhere::LineAbove => {
+                let idx = self.buffer.line_start_idx(self.cursor.line);
+                self.buffer.insert_at_idx(idx, "\n");
+                self.cursor.col = 0;
+                self.cursor.want_col = 0;
+            }
+        }
+        self.mode = Mode::Insert;
+    }
+
+    fn replace_char(&mut self, ch: char, count: usize) {
+        let line = self.cursor.line;
+        let line_len = self.buffer.line_len(line);
+        if line_len == 0 {
+            return;
+        }
+        let start = self.buffer.pos_to_char(line, self.cursor.col);
+        let max_end = self.buffer.pos_to_char(line, line_len);
+        let end = (start + count.max(1)).min(max_end);
+        let actual = end - start;
+        if actual == 0 {
+            return;
+        }
+        self.buffer.delete_range(start, end);
+        let mut buf = String::new();
+        for _ in 0..actual {
+            buf.push(ch);
+        }
+        self.buffer.insert_at_idx(start, &buf);
+        self.cursor.col = self.cursor.col + actual.saturating_sub(1);
+        self.cursor.want_col = self.cursor.col;
+        self.clamp_cursor_normal();
+    }
+
+    fn join_lines(&mut self, count: usize) {
+        let times = count.max(1);
+        for _ in 0..times {
+            let cur_line = self.cursor.line;
+            if cur_line + 1 >= self.buffer.line_count() {
+                break;
+            }
+            let line_len = self.buffer.line_len(cur_line);
+            let nl_idx = self.buffer.pos_to_char(cur_line, line_len);
+            // Skip leading whitespace on the next line.
+            let next_len = self.buffer.line_len(cur_line + 1);
+            let mut skip = 0usize;
+            while skip < next_len {
+                match self.buffer.char_at(cur_line + 1, skip) {
+                    Some(c) if c.is_whitespace() => skip += 1,
+                    _ => break,
+                }
+            }
+            self.buffer.delete_range(nl_idx, nl_idx + 1 + skip);
+            // Insert a single space unless the cur line is empty or already ends in whitespace,
+            // or the next line started with `)`.
+            let cur_ends_ws = line_len > 0
+                && self
+                    .buffer
+                    .char_at(cur_line, line_len - 1)
+                    .map(|c| c.is_whitespace())
+                    .unwrap_or(false);
+            let next_starts_close = self
+                .buffer
+                .char_at(cur_line, line_len)
+                .map(|c| c == ')')
+                .unwrap_or(false);
+            let insert_space = line_len > 0 && !cur_ends_ws && !next_starts_close;
+            if insert_space {
+                self.buffer.insert_at_idx(nl_idx, " ");
+            }
+            self.cursor.col = line_len;
+            self.cursor.want_col = self.cursor.col;
+        }
+        self.clamp_cursor_normal();
+    }
+
+    fn toggle_case(&mut self, count: usize) {
+        let line = self.cursor.line;
+        let line_len = self.buffer.line_len(line);
+        if line_len == 0 {
+            return;
+        }
+        for _ in 0..count.max(1) {
+            if self.cursor.col >= self.buffer.line_len(self.cursor.line) {
+                break;
+            }
+            let c = match self.buffer.char_at(self.cursor.line, self.cursor.col) {
+                Some(c) => c,
+                None => break,
+            };
+            let new_c = if c.is_lowercase() {
+                c.to_uppercase().next().unwrap_or(c)
+            } else if c.is_uppercase() {
+                c.to_lowercase().next().unwrap_or(c)
+            } else {
+                c
+            };
+            let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+            self.buffer.delete_range(idx, idx + 1);
+            self.buffer.insert_char(self.cursor.line, self.cursor.col, new_c);
+            // Advance unless we're at end of line.
+            let len_now = self.buffer.line_len(self.cursor.line);
+            if self.cursor.col + 1 < len_now {
+                self.cursor.col += 1;
+            }
+        }
+        self.cursor.want_col = self.cursor.col;
+        self.clamp_cursor_normal();
+    }
+
+    fn delete_char_forward(&mut self, count: usize) {
+        let line_len = self.buffer.line_len(self.cursor.line);
+        if line_len == 0 {
+            return;
+        }
+        let start = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let max_end = self.buffer.pos_to_char(self.cursor.line, line_len);
+        let end = (start + count).min(max_end);
+        let removed = self.buffer.delete_range(start, end);
+        if !removed.is_empty() {
+            self.register = Some(Register { text: removed, linewise: false });
+        }
+        self.clamp_cursor_normal();
+    }
+
+    fn put(&mut self, before: bool, count: usize) {
+        let Some(reg) = self.register.clone() else {
+            return;
+        };
+        if reg.text.is_empty() {
+            return;
+        }
+        if reg.linewise {
+            let target_line = if before {
+                self.cursor.line
+            } else {
+                self.cursor.line + 1
+            };
+            let mut text = String::new();
+            for _ in 0..count {
+                text.push_str(&reg.text);
+            }
+            if !text.ends_with('\n') {
+                text.push('\n');
+            }
+            let total = self.buffer.total_chars();
+            let idx = self.buffer.line_start_idx(target_line);
+            // If pasting "below" past the end of a file with no trailing newline,
+            // we need to lead with a newline rather than trailing one.
+            let has_trailing_nl = total == 0
+                || self
+                    .buffer
+                    .rope
+                    .get_char(total - 1)
+                    .map(|c| c == '\n')
+                    .unwrap_or(false);
+            if idx >= total && !has_trailing_nl {
+                let to_insert = format!("\n{}", text.trim_end_matches('\n'));
+                self.buffer.insert_at_idx(idx, &to_insert);
+            } else {
+                self.buffer.insert_at_idx(idx, &text);
+            }
+            self.cursor.line = target_line;
+            self.cursor.col = 0;
+            self.cursor.want_col = 0;
+        } else {
+            let target_idx = if before {
+                self.buffer.pos_to_char(self.cursor.line, self.cursor.col)
+            } else {
+                let line_len = self.buffer.line_len(self.cursor.line);
+                if line_len == 0 {
+                    self.buffer.line_start_idx(self.cursor.line)
+                } else {
+                    self.buffer
+                        .pos_to_char(self.cursor.line, self.cursor.col + 1)
+                }
+            };
+            let mut text = String::new();
+            for _ in 0..count {
+                text.push_str(&reg.text);
+            }
+            let inserted_chars = text.chars().count();
+            self.buffer.insert_at_idx(target_idx, &text);
+            if inserted_chars > 0 {
+                let new_idx = target_idx + inserted_chars - 1;
+                self.cursor_to_idx(new_idx);
+            }
+            self.clamp_cursor_normal();
+        }
+    }
+
+    fn undo(&mut self) {
+        if let Some(snap) = self.history.undo(&self.buffer.rope, self.cursor) {
+            self.buffer.rope = snap.rope;
+            self.cursor = snap.cursor;
+            self.buffer.dirty = true;
+            self.clamp_cursor_normal();
+        } else {
+            self.status_msg = "Already at oldest change".into();
+        }
+    }
+
+    fn redo(&mut self) {
+        if let Some(snap) = self.history.redo(&self.buffer.rope, self.cursor) {
+            self.buffer.rope = snap.rope;
+            self.cursor = snap.cursor;
+            self.buffer.dirty = true;
+            self.clamp_cursor_normal();
+        } else {
+            self.status_msg = "Already at newest change".into();
+        }
+    }
+
+    fn cursor_to_idx(&mut self, idx: usize) {
+        let total = self.buffer.total_chars();
+        let idx = idx.min(total);
+        let line = self.buffer.rope.char_to_line(idx);
+        let line_start = self.buffer.rope.line_to_char(line);
+        let col = idx - line_start;
+        self.cursor.line = line;
+        self.cursor.col = col;
+        self.cursor.want_col = col;
+    }
+
+    fn clamp_cursor_normal(&mut self) {
+        let last = self.buffer.line_count().saturating_sub(1);
+        if self.cursor.line > last {
+            self.cursor.line = last;
+        }
+        let len = self.buffer.line_len(self.cursor.line);
+        let max = if len == 0 { 0 } else { len - 1 };
+        if self.cursor.col > max {
+            self.cursor.col = max;
+        }
+    }
+
+    fn adjust_viewport(&mut self) {
+        let buffer_rows = self.buffer_rows();
+        if buffer_rows == 0 {
+            return;
+        }
+        let scrolloff = 3.min(buffer_rows / 2);
+        let cur = self.cursor.line;
+        if cur < self.view_top + scrolloff {
+            self.view_top = cur.saturating_sub(scrolloff);
+        }
+        if cur >= self.view_top + buffer_rows.saturating_sub(scrolloff) {
+            let want = cur + scrolloff + 1;
+            self.view_top = want.saturating_sub(buffer_rows);
+        }
+    }
+
+    pub fn buffer_rows(&self) -> usize {
+        (self.height as usize).saturating_sub(2)
+    }
+
+    pub fn gutter_width(&self) -> usize {
+        let n = self.buffer.line_count();
+        let digits = format!("{n}").len();
+        digits + 1
+    }
+
+    /// For visual mode rendering: return the half-open `[start_col, end_col)` of selected
+    /// chars on this line, or `None` if none. For V-line, returns full line range.
+    pub fn line_selection(&self, line: usize) -> Option<(usize, usize)> {
+        let kind = match self.mode {
+            Mode::Visual(k) => k,
+            _ => return None,
+        };
+        let anchor = self.visual_anchor?;
+        let cursor = self.cursor;
+        let (lo, hi) = if (anchor.line, anchor.col) <= (cursor.line, cursor.col) {
+            (anchor, cursor)
+        } else {
+            (cursor, anchor)
+        };
+        if line < lo.line || line > hi.line {
+            return None;
+        }
+        let line_len = self.buffer.line_len(line);
+        match kind {
+            VisualKind::Line => {
+                let end = if line_len == 0 { 1 } else { line_len };
+                Some((0, end))
+            }
+            VisualKind::Char => {
+                let start_col = if line == lo.line { lo.col } else { 0 };
+                let end_col = if line == hi.line {
+                    (hi.col + 1).min(line_len.max(1))
+                } else {
+                    line_len.max(1)
+                };
+                Some((start_col, end_col))
+            }
+        }
+    }
+}
+
+struct TerminalGuard;
+
+impl TerminalGuard {
+    fn enable() -> Result<Self> {
+        use crossterm::{
+            execute,
+            terminal::{enable_raw_mode, EnterAlternateScreen},
+        };
+        enable_raw_mode()?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen)?;
+        Ok(TerminalGuard)
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        use crossterm::{
+            cursor::{SetCursorStyle, Show},
+            execute,
+            terminal::{disable_raw_mode, LeaveAlternateScreen},
+        };
+        let mut stdout = io::stdout();
+        let _ = execute!(
+            stdout,
+            SetCursorStyle::DefaultUserShape,
+            Show,
+            LeaveAlternateScreen
+        );
+        let _ = disable_raw_mode();
+    }
+}

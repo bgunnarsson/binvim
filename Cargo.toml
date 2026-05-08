@@ -1,0 +1,17 @@
+[package]
+name = "bined"
+version = "0.1.0"
+edition = "2024"
+description = "Vim-grammar TUI editor with batteries included (placeholder name)"
+
+[dependencies]
+ropey = "1.6"
+crossterm = "0.28"
+anyhow = "1"
+unicode-segmentation = "1.12"
+unicode-width = "0.2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
