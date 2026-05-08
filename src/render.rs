@@ -62,9 +62,9 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
         left_col = (app.width as usize).saturating_sub(popup_w);
     }
 
-    let bg = Color::Rgb { r: 22, g: 25, b: 38 };
-    let border = Color::Rgb { r: 95, g: 105, b: 140 };
-    let text_fg = Color::Rgb { r: 220, g: 220, b: 235 };
+    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
 
     // Top border with title.
     let title = " hover ";
@@ -122,13 +122,13 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     // Pick what to show: explicit status_msg wins, else first diagnostic on the cursor line.
     let (msg, accent) = if !app.status_msg.is_empty() {
         let truncated = truncate_oneline(&app.status_msg);
-        (truncated, Color::Rgb { r: 165, g: 175, b: 210 })
+        (truncated, Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }) // Lavender
     } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
         let color = match diag.severity {
-            Severity::Error => Color::Rgb { r: 230, g: 110, b: 110 },
-            Severity::Warning => Color::Rgb { r: 230, g: 200, b: 110 },
-            Severity::Info => Color::Rgb { r: 130, g: 180, b: 230 },
-            Severity::Hint => Color::Rgb { r: 130, g: 180, b: 230 },
+            Severity::Error => Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
+            Severity::Warning => Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
+            Severity::Info => Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }, // Blue
+            Severity::Hint => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
         };
         let mut text = diag.message.lines().next().unwrap_or("").to_string();
         text = truncate_oneline(&text);
@@ -217,11 +217,11 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
     let (title, prompt) = cmdline_chrome(app.mode);
     let inner_w = box_w.saturating_sub(2);
 
-    let border = Color::Rgb { r: 95, g: 105, b: 140 };
-    let bg = Color::Rgb { r: 22, g: 25, b: 38 };
-    let title_fg = Color::Rgb { r: 165, g: 175, b: 210 };
-    let prompt_fg = Color::Rgb { r: 135, g: 175, b: 240 };
-    let text_fg = Color::Rgb { r: 220, g: 220, b: 235 };
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
+    let prompt_fg = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }; // Blue
+    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
 
     // Top border with centred title.
     let title_text = format!(" {} ", title);
@@ -572,15 +572,16 @@ const PL_RIGHT: char = '\u{e0b0}'; // right-pointing arrow (filled)
 const PL_LEFT: char = '\u{e0b2}'; // left-pointing arrow (filled)
 const NF_BRANCH: char = '\u{e0a0}';
 
+// Catppuccin Mocha mode block colours (matches the syntax-highlighting palette).
 fn mode_color(mode: Mode) -> Color {
     match mode {
-        Mode::Normal => Color::Rgb { r: 135, g: 175, b: 240 },
-        Mode::Insert => Color::Rgb { r: 165, g: 220, b: 130 },
-        Mode::Visual(VisualKind::Char) => Color::Rgb { r: 200, g: 130, b: 220 },
-        Mode::Visual(VisualKind::Line) => Color::Rgb { r: 200, g: 130, b: 220 },
-        Mode::Command => Color::Rgb { r: 240, g: 200, b: 110 },
-        Mode::Search { .. } => Color::Rgb { r: 240, g: 200, b: 110 },
-        Mode::Picker => Color::Rgb { r: 130, g: 220, b: 220 },
+        Mode::Normal => Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }, // Lavender
+        Mode::Insert => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
+        Mode::Visual(VisualKind::Char) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
+        Mode::Visual(VisualKind::Line) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
+        Mode::Command => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
+        Mode::Search { .. } => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
+        Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
     }
 }
 
@@ -631,11 +632,11 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let total = app.width as usize;
 
     let mode_bg = mode_color(app.mode);
-    let mode_fg = Color::Rgb { r: 20, g: 22, b: 32 };
-    let branch_bg = Color::Rgb { r: 54, g: 60, b: 86 };
-    let branch_fg = Color::Rgb { r: 200, g: 200, b: 220 };
-    let path_bg = Color::Rgb { r: 36, g: 40, b: 56 };
-    let path_fg = Color::Rgb { r: 170, g: 175, b: 195 };
+    let mode_fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
+    let branch_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
+    let branch_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let path_bg = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }; // Surface0
+    let path_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
     let right_bg = branch_bg;
     let right_fg = branch_fg;
 

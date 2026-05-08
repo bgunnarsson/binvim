@@ -95,23 +95,49 @@ fn parse_hex(s: &str) -> Option<Color> {
     Some(Color::Rgb { r, g, b })
 }
 
+// Catppuccin Mocha palette helpers — used as the baked-in defaults so a fresh
+// install renders the same as the user's nvim setup.
+const CATP_MAUVE: Color = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+const CATP_GREEN: Color = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
+const CATP_BLUE: Color = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
+const CATP_YELLOW: Color = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+const CATP_PEACH: Color = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+#[allow(dead_code)]
+const CATP_RED: Color = Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 };
+const CATP_MAROON: Color = Color::Rgb { r: 0xeb, g: 0xa0, b: 0xac };
+const CATP_PINK: Color = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
+const CATP_SKY: Color = Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb };
+const CATP_SAPPHIRE: Color = Color::Rgb { r: 0x74, g: 0xc7, b: 0xec };
+const CATP_TEAL: Color = Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 };
+const CATP_LAVENDER: Color = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
+const CATP_OVERLAY1: Color = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c };
+const CATP_OVERLAY2: Color = Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 };
+
 fn default_capture_color(head: &str) -> Option<Color> {
     match head {
-        "comment" => Some(Color::DarkGrey),
-        "string" => Some(Color::Green),
-        "character" => Some(Color::Green),
-        "escape" => Some(Color::DarkRed),
-        "keyword" | "include" | "conditional" | "repeat" | "exception" => Some(Color::Magenta),
-        "function" | "method" | "macro" => Some(Color::Blue),
-        "type" => Some(Color::Cyan),
-        "constructor" => Some(Color::Cyan),
-        "namespace" | "module" => Some(Color::Cyan),
-        "constant" | "boolean" | "number" | "float" => Some(Color::Red),
-        "attribute" => Some(Color::Yellow),
-        "tag" => Some(Color::Magenta),
-        "label" => Some(Color::Yellow),
-        "preproc" => Some(Color::DarkYellow),
-        "title" => Some(Color::Yellow),
+        "comment" => Some(CATP_OVERLAY1),
+        "string" => Some(CATP_GREEN),
+        "character" => Some(CATP_TEAL),
+        "escape" => Some(CATP_PINK),
+        "keyword" | "include" | "conditional" | "repeat" | "exception" => Some(CATP_MAUVE),
+        "function" | "method" => Some(CATP_BLUE),
+        "macro" => Some(CATP_PEACH),
+        "type" => Some(CATP_YELLOW),
+        "constructor" => Some(CATP_YELLOW),
+        "namespace" | "module" => Some(CATP_YELLOW),
+        "constant" | "boolean" | "number" | "float" => Some(CATP_PEACH),
+        "operator" => Some(CATP_SKY),
+        "attribute" => Some(CATP_YELLOW),
+        "tag" => Some(CATP_MAUVE),
+        "label" => Some(CATP_SAPPHIRE),
+        "property" => Some(CATP_LAVENDER),
+        "parameter" => Some(CATP_MAROON),
+        "variable" => None, // default text colour
+        "punctuation" => Some(CATP_OVERLAY2),
+        "preproc" => Some(CATP_PEACH),
+        "title" => Some(CATP_YELLOW),
+        "text" => None,
+        "regex" => Some(CATP_PINK),
         _ => None,
     }
 }
