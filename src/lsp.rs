@@ -205,7 +205,11 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             let rzls = ServerSpec {
                 key: "rzls".into(),
                 language_id: "razor".into(),
-                cmd_candidates: vec!["rzls".into(), mason("rzls")],
+                cmd_candidates: vec![
+                    "rzls".into(),
+                    mason("rzls"),
+                    format!("{}/.local/bin/rzls/rzls", home),
+                ],
                 args: vec![],
                 root_markers: vec!["*.csproj".into(), "*.sln".into(), ".git".into()],
                 initialization_options: Value::Null,
