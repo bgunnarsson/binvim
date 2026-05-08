@@ -3102,6 +3102,7 @@ fn open_pair_for(c: char) -> Option<char> {
         '(' => Some(')'),
         '[' => Some(']'),
         '{' => Some('}'),
+        '<' => Some('>'),
         '\'' => Some('\''),
         '"' => Some('"'),
         '`' => Some('`'),
@@ -3110,7 +3111,7 @@ fn open_pair_for(c: char) -> Option<char> {
 }
 
 fn is_close_char(c: char) -> bool {
-    matches!(c, ')' | ']' | '}' | '\'' | '"' | '`')
+    matches!(c, ')' | ']' | '}' | '>' | '\'' | '"' | '`')
 }
 
 /// Characters that should re-fire `textDocument/completion` after being inserted.
@@ -3179,21 +3180,25 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 
 /// Decide whether to auto-pair when typing `c` at `(line, col)`. Quotes/backticks
 /// skip pairing when adjacent to identifier-class characters (so `don't` and
-/// trailing apostrophes don't pair surprisingly). Brackets always pair.
+/// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
+/// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
+/// Brackets always pair.
 fn should_auto_pair(c: char, buffer: &Buffer, line: usize, col: usize) -> bool {
-    if !matches!(c, '\'' | '"' | '`') {
-        return true;
-    }
     let prev = if col > 0 { buffer.char_at(line, col - 1) } else { None };
     let next = buffer.char_at(line, col);
-    let is_word = |c: char| c.is_alphanumeric() || c == '_';
-    if prev.map(is_word).unwrap_or(false) {
-        return false;
+    match c {
+        '\'' | '"' | '`' => {
+            let is_word = |c: char| c.is_alphanumeric() || c == '_';
+            !prev.map(is_word).unwrap_or(false) && !next.map(is_word).unwrap_or(false)
+        }
+        '<' => {
+            let is_ws = |ch: char| ch.is_whitespace();
+            let prev_ws = prev.map(is_ws).unwrap_or(true);
+            let next_ws = next.map(is_ws).unwrap_or(true);
+            !(prev_ws && next_ws)
+        }
+        _ => true,
     }
-    if next.map(is_word).unwrap_or(false) {
-        return false;
-    }
-    true
 }
 
 fn is_jump_motion(m: MotionVerb) -> bool {
