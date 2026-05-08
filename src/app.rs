@@ -1828,6 +1828,15 @@ impl App {
         (self.height as usize).saturating_sub(1)
     }
 
+    /// Any overlay (command line, search prompt, picker, hover, completion) is active —
+    /// the buffer should render dimmed so the overlay is the focal point.
+    pub fn has_modal_overlay(&self) -> bool {
+        matches!(self.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
+            || self.hover.is_some()
+            || self.completion.is_some()
+            || self.picker.is_some()
+    }
+
     pub fn gutter_width(&self) -> usize {
         let n = self.buffer.line_count();
         let digits = format!("{n}").len();

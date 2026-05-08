@@ -515,6 +515,8 @@ fn draw_line_with_selection(
     let chars: Vec<char> = text.chars().collect();
     let mut visual_used = 0usize;
     let mut byte_off = line_byte_start;
+    let dim = app.has_modal_overlay();
+    let dim_color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
     for (col, c) in chars.iter().enumerate() {
         let display_w = if *c == '\t' { TAB_WIDTH } else { 1 };
         if visual_used + display_w > avail {
@@ -530,12 +532,14 @@ fn draw_line_with_selection(
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
-            // Catppuccin Yellow bg with Base fg for high contrast on matched chars.
             queue!(
                 out,
                 SetBackgroundColor(Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
                 SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
             )?;
+        } else if dim {
+            // Modal mode: drop syntax colour, render everything muted.
+            queue!(out, SetForegroundColor(dim_color))?;
         } else if let Some(fg) = syntax_color {
             queue!(out, SetForegroundColor(fg))?;
         }
@@ -546,7 +550,7 @@ fn draw_line_with_selection(
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
-        } else if in_search || syntax_color.is_some() {
+        } else if in_search || syntax_color.is_some() || dim {
             queue!(out, ResetColor)?;
         }
         visual_used += display_w;
