@@ -506,8 +506,11 @@ fn lang_icon(lang: Lang) -> char {
     match lang {
         Lang::Rust => '\u{e7a8}',
         Lang::TypeScript | Lang::Tsx => '\u{e628}',
+        Lang::JavaScript => '\u{e60c}',
         Lang::Json => '\u{e60b}',
         Lang::Go => '\u{e627}',
+        Lang::Html => '\u{e60e}',
+        Lang::Css => '\u{e749}',
         Lang::Markdown => '\u{e609}',
     }
 }
@@ -517,8 +520,11 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::Rust => "rust",
         Lang::TypeScript => "typescript",
         Lang::Tsx => "tsx",
+        Lang::JavaScript => "javascript",
         Lang::Json => "json",
         Lang::Go => "go",
+        Lang::Html => "html",
+        Lang::Css => "css",
         Lang::Markdown => "markdown",
     }
 }

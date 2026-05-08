@@ -10,8 +10,11 @@ pub enum Lang {
     Rust,
     TypeScript,
     Tsx,
+    JavaScript,
     Json,
     Go,
+    Html,
+    Css,
     Markdown,
 }
 
@@ -21,9 +24,12 @@ impl Lang {
         match ext {
             "rs" => Some(Lang::Rust),
             "ts" => Some(Lang::TypeScript),
-            "tsx" | "jsx" => Some(Lang::Tsx),
-            "json" => Some(Lang::Json),
+            "tsx" => Some(Lang::Tsx),
+            "jsx" | "js" | "mjs" | "cjs" => Some(Lang::JavaScript),
+            "json" | "jsonc" => Some(Lang::Json),
             "go" => Some(Lang::Go),
+            "html" | "htm" => Some(Lang::Html),
+            "css" | "scss" | "less" => Some(Lang::Css),
             "md" | "markdown" => Some(Lang::Markdown),
             _ => None,
         }
@@ -34,8 +40,11 @@ impl Lang {
             Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
             Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             Lang::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
+            Lang::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
             Lang::Json => tree_sitter_json::LANGUAGE.into(),
             Lang::Go => tree_sitter_go::LANGUAGE.into(),
+            Lang::Html => tree_sitter_html::LANGUAGE.into(),
+            Lang::Css => tree_sitter_css::LANGUAGE.into(),
             Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
         }
     }
@@ -45,8 +54,11 @@ impl Lang {
             Lang::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY,
             Lang::TypeScript => tree_sitter_typescript::HIGHLIGHTS_QUERY,
             Lang::Tsx => tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            Lang::JavaScript => tree_sitter_javascript::HIGHLIGHT_QUERY,
             Lang::Json => tree_sitter_json::HIGHLIGHTS_QUERY,
             Lang::Go => tree_sitter_go::HIGHLIGHTS_QUERY,
+            Lang::Html => tree_sitter_html::HIGHLIGHTS_QUERY,
+            Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY,
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
         }
     }
