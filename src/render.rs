@@ -18,6 +18,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     draw_buffer(out, app)?;
     draw_status_line(out, app)?;
     draw_command_line(out, app)?;
+    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
+        draw_floating_cmdline(out, app)?;
+    }
     if app.mode == Mode::Picker {
         draw_picker(out, app)?;
     }
@@ -26,6 +29,98 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     }
     place_cursor(out, app)?;
     queue!(out, EndSynchronizedUpdate)?;
+    Ok(())
+}
+
+/// Layout for the floating command line — returns (left_col, top_row, width).
+fn cmdline_box_layout(app: &App) -> (usize, usize, usize) {
+    let total_w = app.width as usize;
+    let total_h = app.height as usize;
+    let box_w = total_w.saturating_sub(20).min(60).max(24);
+    let left = total_w.saturating_sub(box_w) / 2;
+    let top = (total_h * 4 / 10).max(2);
+    (left, top, box_w)
+}
+
+/// Mode → (title, prompt char). Prompt is `>` for `:` and shows direction for search.
+fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
+    match mode {
+        Mode::Command => ("Cmdline", '>'),
+        Mode::Search { backward: false } => ("Search", '/'),
+        Mode::Search { backward: true } => ("Search", '?'),
+        _ => ("", ' '),
+    }
+}
+
+fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
+    let (left, top, box_w) = cmdline_box_layout(app);
+    let (title, prompt) = cmdline_chrome(app.mode);
+    let inner_w = box_w.saturating_sub(2);
+
+    let border = Color::Rgb { r: 95, g: 105, b: 140 };
+    let bg = Color::Rgb { r: 22, g: 25, b: 38 };
+    let title_fg = Color::Rgb { r: 165, g: 175, b: 210 };
+    let prompt_fg = Color::Rgb { r: 135, g: 175, b: 240 };
+    let text_fg = Color::Rgb { r: 220, g: 220, b: 235 };
+
+    // Top border with centred title.
+    let title_text = format!(" {} ", title);
+    let title_w = title_text.chars().count();
+    let left_pad = inner_w.saturating_sub(title_w) / 2;
+    let right_pad = inner_w.saturating_sub(title_w + left_pad);
+
+    queue!(
+        out,
+        MoveTo(left as u16, top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print("─".repeat(left_pad)),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
+        Print(&title_text),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("─".repeat(right_pad)),
+        Print('╮'),
+    )?;
+
+    // Input row.
+    let input: String = app.cmdline.chars().take(inner_w.saturating_sub(4)).collect();
+    let pad = inner_w
+        .saturating_sub(3)
+        .saturating_sub(input.chars().count());
+    queue!(
+        out,
+        MoveTo(left as u16, (top + 1) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        SetForegroundColor(prompt_fg),
+        SetAttribute(Attribute::Bold),
+        Print(format!(" {} ", prompt)),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(text_fg),
+        Print(&input),
+        Print(" ".repeat(pad)),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+
+    // Bottom border.
+    queue!(
+        out,
+        MoveTo(left as u16, (top + 2) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
+
     Ok(())
 }
 
@@ -499,37 +594,25 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
 fn draw_command_line(out: &mut impl Write, app: &App) -> Result<()> {
     let row = (app.height as usize).saturating_sub(1) as u16;
     queue!(out, MoveTo(0, row), Clear(ClearType::CurrentLine))?;
-    match app.mode {
-        Mode::Command => {
-            queue!(out, Print(format!(":{}", app.cmdline)))?;
+    // Command and search prompts render as a floating box; bottom row stays clear.
+    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
+        return Ok(());
+    }
+    if !app.status_msg.is_empty() {
+        queue!(out, Print(&app.status_msg))?;
+    } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
+        let color = match diag.severity {
+            Severity::Error => Color::Red,
+            Severity::Warning => Color::Yellow,
+            Severity::Info => Color::Blue,
+            Severity::Hint => Color::DarkBlue,
+        };
+        let max = (app.width as usize).saturating_sub(2);
+        let mut msg: String = diag.message.lines().next().unwrap_or("").to_string();
+        if msg.chars().count() > max {
+            msg = msg.chars().take(max).collect();
         }
-        Mode::Search { backward } => {
-            let prefix = if backward { '?' } else { '/' };
-            queue!(out, Print(format!("{}{}", prefix, app.cmdline)))?;
-        }
-        _ => {
-            if !app.status_msg.is_empty() {
-                queue!(out, Print(&app.status_msg))?;
-            } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
-                let color = match diag.severity {
-                    Severity::Error => Color::Red,
-                    Severity::Warning => Color::Yellow,
-                    Severity::Info => Color::Blue,
-                    Severity::Hint => Color::DarkBlue,
-                };
-                let max = (app.width as usize).saturating_sub(2);
-                let mut msg: String = diag.message.lines().next().unwrap_or("").to_string();
-                if msg.chars().count() > max {
-                    msg = msg.chars().take(max).collect();
-                }
-                queue!(
-                    out,
-                    SetForegroundColor(color),
-                    Print(msg),
-                    ResetColor
-                )?;
-            }
-        }
+        queue!(out, SetForegroundColor(color), Print(msg), ResetColor)?;
     }
     Ok(())
 }
@@ -541,9 +624,14 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     };
     queue!(out, style, Show)?;
     if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
-        let row = (app.height as usize).saturating_sub(1) as u16;
-        let col = (app.cmdline.chars().count() + 1) as u16;
-        queue!(out, MoveTo(col, row))?;
+        let (left, top, _) = cmdline_box_layout(app);
+        // Box layout:  │ <prompt> <input>   │  → cursor at left + 4 + len(input)
+        let col = left + 4 + app.cmdline.chars().count();
+        queue!(
+            out,
+            SetCursorStyle::SteadyBar,
+            MoveTo(col as u16, (top + 1) as u16)
+        )?;
         return Ok(());
     }
     if app.mode == Mode::Picker {
