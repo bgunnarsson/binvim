@@ -737,23 +737,13 @@ impl App {
             MouseEventKind::ScrollUp => {
                 self.hover = None;
                 self.whichkey = None;
-                self.view_top = self.view_top.saturating_sub(3);
-                let last_visible = self.view_top + buffer_rows.saturating_sub(1);
-                if self.cursor.line > last_visible {
-                    self.cursor.line = last_visible;
-                    self.clamp_cursor_normal();
-                }
+                self.scroll_view(-3);
                 return;
             }
             MouseEventKind::ScrollDown => {
                 self.hover = None;
                 self.whichkey = None;
-                let last = self.buffer.line_count().saturating_sub(1);
-                self.view_top = (self.view_top + 3).min(last);
-                if self.cursor.line < self.view_top {
-                    self.cursor.line = self.view_top;
-                    self.clamp_cursor_normal();
-                }
+                self.scroll_view(3);
                 return;
             }
             _ => {}
@@ -2378,6 +2368,40 @@ impl App {
         if self.cursor.col > max {
             self.cursor.col = max;
         }
+    }
+
+    /// Mouse-wheel scroll: shift the viewport by `delta` lines and drag the
+    /// cursor along just enough to keep it inside the scroll-off zone, so the
+    /// next `adjust_viewport` doesn't snap the view back. Positive = down,
+    /// negative = up.
+    fn scroll_view(&mut self, delta: i64) {
+        let buffer_rows = self.buffer_rows();
+        if buffer_rows == 0 {
+            return;
+        }
+        let line_count = self.buffer.line_count();
+        if line_count == 0 {
+            return;
+        }
+        let last = line_count.saturating_sub(1);
+        let max_top = line_count.saturating_sub(buffer_rows.min(line_count));
+        let scrolloff = 3.min(buffer_rows / 2);
+
+        // Move the viewport.
+        let new_top = (self.view_top as i64 + delta).max(0) as usize;
+        self.view_top = new_top.min(max_top);
+
+        // Drag the cursor by the same amount, then clamp it into the scroll-off
+        // zone of the (possibly clamped) viewport.
+        let new_cursor_line = (self.cursor.line as i64 + delta).max(0) as usize;
+        let mut line = new_cursor_line.min(last);
+        let top_min = self.view_top + scrolloff;
+        let bot_max = self
+            .view_top
+            .saturating_add(buffer_rows.saturating_sub(scrolloff + 1));
+        line = line.max(top_min).min(bot_max).min(last);
+        self.cursor.line = line;
+        self.clamp_cursor_normal();
     }
 
     fn adjust_viewport(&mut self) {
