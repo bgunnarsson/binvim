@@ -187,12 +187,12 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             root_markers: vec!["go.mod".into(), "go.work".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
-        "html" => Some(ServerSpec {
+        "html" | "htm" | "cshtml" | "razor" => Some(ServerSpec {
             key: "html".into(),
             language_id: "html".into(),
             cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
             args: stdio(),
-            root_markers: vec!["package.json".into(), ".git".into()],
+            root_markers: vec!["package.json".into(), "*.csproj".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
         "css" | "scss" | "less" => Some(ServerSpec {

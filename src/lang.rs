@@ -28,7 +28,7 @@ impl Lang {
             "jsx" | "js" | "mjs" | "cjs" => Some(Lang::JavaScript),
             "json" | "jsonc" => Some(Lang::Json),
             "go" => Some(Lang::Go),
-            "html" | "htm" => Some(Lang::Html),
+            "html" | "htm" | "cshtml" | "razor" => Some(Lang::Html),
             "css" | "scss" | "less" => Some(Lang::Css),
             "md" | "markdown" => Some(Lang::Markdown),
             _ => None,
