@@ -273,23 +273,13 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
         return Ok(());
     }
-    // Pick what to show: explicit status_msg wins, else first diagnostic on the cursor line.
-    let (msg, accent) = if !app.status_msg.is_empty() {
-        let truncated = truncate_oneline(&app.status_msg);
-        (truncated, Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }) // Lavender
-    } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
-        let color = match diag.severity {
-            Severity::Error => Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
-            Severity::Warning => Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
-            Severity::Info => Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }, // Blue
-            Severity::Hint => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
-        };
-        let mut text = diag.message.lines().next().unwrap_or("").to_string();
-        text = truncate_oneline(&text);
-        (text, color)
-    } else {
+    // Only ad-hoc status messages render in the top-right box now.
+    // Diagnostics are shown inline at the end of their line (Error Lens style).
+    if app.status_msg.is_empty() {
         return Ok(());
-    };
+    }
+    let msg = truncate_oneline(&app.status_msg);
+    let accent = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     if msg.is_empty() {
         return Ok(());
     }
@@ -718,6 +708,36 @@ fn draw_line_with_selection(
                     SetAttribute(Attribute::Reverse),
                     Print(" "),
                     SetAttribute(Attribute::Reset)
+                )?;
+            }
+        }
+    }
+
+    // Error Lens-style inline diagnostic at the end of the line.
+    if !dim {
+        if let Some(diag) = app.line_diagnostics(line_idx).first() {
+            let remaining = avail.saturating_sub(visual_used);
+            if remaining > 4 {
+                let (icon, color) = match diag.severity {
+                    Severity::Error => ('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }), // Red
+                    Severity::Warning => ('▲', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
+                    Severity::Info => ('●', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }), // Blue
+                    Severity::Hint => ('●', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }), // Sky
+                };
+                // Spacing: "  ● " (2 leading + icon + space) → 4 cols.
+                let prefix_w = 4usize;
+                let text_room = remaining.saturating_sub(prefix_w);
+                let mut msg: String = diag.message.lines().next().unwrap_or("").to_string();
+                if msg.chars().count() > text_room {
+                    msg = msg.chars().take(text_room).collect();
+                }
+                queue!(
+                    out,
+                    SetForegroundColor(color),
+                    SetAttribute(Attribute::Italic),
+                    Print(format!("  {} {}", icon, msg)),
+                    SetAttribute(Attribute::NoItalic),
+                    ResetColor
                 )?;
             }
         }
