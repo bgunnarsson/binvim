@@ -73,7 +73,7 @@ pub enum PendingRequest {
 
 pub struct LspClient {
     #[allow(dead_code)]
-    pub name: &'static str,
+    pub name: String,
     _child: Child,
     stdin: Arc<Mutex<ChildStdin>>,
     pub incoming_rx: Receiver<LspIncoming>,
@@ -82,12 +82,135 @@ pub struct LspClient {
     pub initialized: Arc<Mutex<bool>>,
     #[allow(dead_code)]
     pub root_uri: String,
+    pub language_id: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ServerSpec {
+    /// Stable key — one client per (key) per workspace root.
+    pub key: String,
+    /// LSP languageId sent on textDocument/didOpen.
+    pub language_id: String,
+    /// Candidate command paths in priority order. First one that resolves wins.
+    pub cmd_candidates: Vec<String>,
+    pub args: Vec<String>,
+}
+
+/// Pick the LSP server config for a path's extension. `None` if we don't know the extension.
+pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
+    let ext = path.extension().and_then(|s| s.to_str())?;
+    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
+    let mason = |bin: &str| format!("{}/.local/share/nvim/mason/bin/{}", home, bin);
+    let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
+    let stdio = || vec!["--stdio".to_string()];
+
+    match ext {
+        "rs" => Some(ServerSpec {
+            key: "rust".into(),
+            language_id: "rust".into(),
+            cmd_candidates: vec!["rust-analyzer".into(), cargo_bin("rust-analyzer")],
+            args: vec![],
+        }),
+        "ts" => Some(ServerSpec {
+            key: "ts".into(),
+            language_id: "typescript".into(),
+            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            args: stdio(),
+        }),
+        "tsx" => Some(ServerSpec {
+            key: "ts".into(),
+            language_id: "typescriptreact".into(),
+            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            args: stdio(),
+        }),
+        "jsx" => Some(ServerSpec {
+            key: "ts".into(),
+            language_id: "javascriptreact".into(),
+            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            args: stdio(),
+        }),
+        "js" | "mjs" | "cjs" => Some(ServerSpec {
+            key: "ts".into(),
+            language_id: "javascript".into(),
+            cmd_candidates: vec!["typescript-language-server".into(), mason("typescript-language-server")],
+            args: stdio(),
+        }),
+        "json" | "jsonc" => Some(ServerSpec {
+            key: "biome".into(),
+            language_id: "json".into(),
+            cmd_candidates: vec!["biome".into(), mason("biome")],
+            args: vec!["lsp-proxy".into()],
+        }),
+        "go" => Some(ServerSpec {
+            key: "go".into(),
+            language_id: "go".into(),
+            cmd_candidates: vec!["gopls".into(), mason("gopls")],
+            args: vec![],
+        }),
+        "html" => Some(ServerSpec {
+            key: "html".into(),
+            language_id: "html".into(),
+            cmd_candidates: vec!["vscode-html-language-server".into(), mason("vscode-html-language-server")],
+            args: stdio(),
+        }),
+        "css" | "scss" | "less" => Some(ServerSpec {
+            key: "css".into(),
+            language_id: ext.into(),
+            cmd_candidates: vec!["vscode-css-language-server".into(), mason("vscode-css-language-server")],
+            args: stdio(),
+        }),
+        "astro" => Some(ServerSpec {
+            key: "astro".into(),
+            language_id: "astro".into(),
+            cmd_candidates: vec!["astro-ls".into(), mason("astro-ls")],
+            args: stdio(),
+        }),
+        _ => None,
+    }
+}
+
+fn resolve_command(candidates: &[String]) -> Option<(String, Vec<String>)> {
+    for c in candidates {
+        let path = if c.starts_with("~/") {
+            let home = std::env::var("HOME").ok()?;
+            format!("{}/{}", home, &c[2..])
+        } else {
+            c.clone()
+        };
+        if path.contains('/') {
+            if std::path::Path::new(&path).is_file() {
+                return Some((path, vec![]));
+            }
+            continue;
+        }
+        if let Some(found) = which_in_path(&path) {
+            return Some((found, vec![]));
+        }
+    }
+    None
+}
+
+fn which_in_path(name: &str) -> Option<String> {
+    let path = std::env::var("PATH").ok()?;
+    for dir in path.split(':') {
+        let full = std::path::Path::new(dir).join(name);
+        if full.is_file() {
+            return Some(full.to_string_lossy().to_string());
+        }
+    }
+    None
 }
 
 impl LspClient {
-    /// Spawn an LSP server. Returns `None` if the binary isn't on PATH.
-    pub fn spawn(name: &'static str, cmd: &str, root: &Path) -> Option<Self> {
-        let mut child = Command::new(cmd)
+    /// Spawn an LSP server given a [`ServerSpec`] and a workspace root.
+    /// Returns `None` if no candidate command resolves or spawning fails.
+    pub fn spawn_spec(spec: &ServerSpec, root: &Path) -> Option<Self> {
+        let (cmd_path, _) = resolve_command(&spec.cmd_candidates)?;
+        let mut command = Command::new(&cmd_path);
+        for arg in &spec.args {
+            command.arg(arg);
+        }
+        let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -105,13 +228,14 @@ impl LspClient {
 
         let root_uri = path_to_uri(root);
         let client = Self {
-            name,
+            name: spec.key.clone(),
             _child: child,
             stdin,
             incoming_rx: in_rx,
             next_id: Arc::new(Mutex::new(1)),
             initialized,
             root_uri: root_uri.clone(),
+            language_id: spec.language_id.clone(),
         };
 
         // Fire initialize + initialized; the server publishes diagnostics later.
@@ -175,13 +299,13 @@ impl LspClient {
         }))
     }
 
-    pub fn did_open(&self, path: &Path, language_id: &str, text: &str) -> Result<()> {
+    pub fn did_open(&self, path: &Path, text: &str) -> Result<()> {
         self.send_notification(
             "textDocument/didOpen",
             json!({
                 "textDocument": {
                     "uri": path_to_uri(path),
-                    "languageId": language_id,
+                    "languageId": self.language_id,
                     "version": 1,
                     "text": text,
                 }
@@ -321,11 +445,10 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(stripped))
 }
 
-/// Container for per-language LSP clients. Phase-5 v1 just speaks rust-analyzer.
+/// Container for per-language LSP clients keyed by `ServerSpec.key`.
 pub struct LspManager {
-    clients: HashMap<&'static str, LspClient>,
+    clients: HashMap<String, LspClient>,
     pub diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
-    /// Outstanding requests we issued; matched against incoming responses by id.
     pending: HashMap<u64, PendingRequest>,
 }
 
@@ -338,25 +461,18 @@ impl LspManager {
         }
     }
 
-    fn lang_key_for_path(path: &Path) -> Option<&'static str> {
-        match path.extension().and_then(|s| s.to_str()) {
-            Some("rs") => Some("rust"),
-            _ => None,
-        }
-    }
-
     pub fn ensure_for_path(&mut self, path: &Path, root: &Path) -> Option<&LspClient> {
-        let key = Self::lang_key_for_path(path)?;
-        if !self.clients.contains_key(key) {
-            let client = LspClient::spawn(key, "rust-analyzer", root)?;
-            self.clients.insert(key, client);
+        let spec = spec_for_path(path)?;
+        if !self.clients.contains_key(&spec.key) {
+            let client = LspClient::spawn_spec(&spec, root)?;
+            self.clients.insert(spec.key.clone(), client);
         }
-        self.clients.get(key)
+        self.clients.get(&spec.key)
     }
 
     pub fn client_for_path(&self, path: &Path) -> Option<&LspClient> {
-        let key = Self::lang_key_for_path(path)?;
-        self.clients.get(key)
+        let spec = spec_for_path(path)?;
+        self.clients.get(&spec.key)
     }
 
     pub fn drain(&mut self) -> Vec<LspEvent> {

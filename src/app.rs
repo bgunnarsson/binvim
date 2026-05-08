@@ -299,7 +299,7 @@ impl App {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         if let Some(client) = self.lsp.ensure_for_path(&path, &cwd) {
             let text = self.buffer.rope.to_string();
-            let _ = client.did_open(&path, "rust", &text);
+            let _ = client.did_open(&path, &text);
             self.last_sent_version
                 .insert(path.clone(), self.buffer.version);
         }
@@ -311,16 +311,14 @@ impl App {
         if last == self.buffer.version {
             return;
         }
-        // Make sure a client exists for this path (handles late attach on first edit).
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         if self.lsp.ensure_for_path(&path, &cwd).is_none() {
             return;
         }
         let text = self.buffer.rope.to_string();
         if last == u64::MAX {
-            // First sync — emit didOpen.
             if let Some(client) = self.lsp.ensure_for_path(&path, &cwd) {
-                let _ = client.did_open(&path, "rust", &text);
+                let _ = client.did_open(&path, &text);
             }
         } else {
             self.lsp.did_change_all(&path, self.buffer.version, &text);
