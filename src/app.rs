@@ -1311,6 +1311,19 @@ impl App {
             Mode::Visual(k) => k,
             _ => return,
         };
+        // Indent / outdent take only the line span and ignore column boundaries.
+        if matches!(op, Operator::Indent | Operator::Outdent) {
+            let anchor = self.visual_anchor.unwrap_or(self.cursor);
+            let l1 = anchor.line.min(self.cursor.line);
+            let l2 = anchor.line.max(self.cursor.line);
+            if matches!(op, Operator::Indent) {
+                self.indent_lines(l1, l2);
+            } else {
+                self.outdent_lines(l1, l2);
+            }
+            self.exit_visual();
+            return;
+        }
         let (start, end, linewise) = self.visual_range_chars(kind);
         if end <= start {
             self.exit_visual();
@@ -1341,6 +1354,7 @@ impl App {
                 self.mode = Mode::Insert;
                 self.visual_anchor = None;
             }
+            Operator::Indent | Operator::Outdent => unreachable!(),
         }
     }
 
@@ -1363,6 +1377,18 @@ impl App {
         if range.end <= range.start {
             return;
         }
+        // Indent / outdent on a text-object range: derive line span and shift them.
+        if matches!(op, Operator::Indent | Operator::Outdent) {
+            let l1 = self.buffer.rope.char_to_line(range.start);
+            let l2_idx = range.end.saturating_sub(1);
+            let l2 = self.buffer.rope.char_to_line(l2_idx.min(self.buffer.total_chars()));
+            if matches!(op, Operator::Indent) {
+                self.indent_lines(l1, l2);
+            } else {
+                self.outdent_lines(l1, l2);
+            }
+            return;
+        }
         let removed = self.buffer.rope.slice(range.start..range.end).to_string();
         match op {
             Operator::Yank => {
@@ -1380,6 +1406,7 @@ impl App {
                 self.cursor_to_idx(range.start);
                 self.mode = Mode::Insert;
             }
+            Operator::Indent | Operator::Outdent => unreachable!(),
         }
     }
 
@@ -1753,6 +1780,18 @@ impl App {
     }
 
     fn apply_op_with_motion(&mut self, op: Operator, m: MotionResult, target: Option<char>) {
+        // Indent/outdent operate on whole lines from cursor to motion target,
+        // regardless of motion kind. Bypass the byte-range path used by d/c/y.
+        if matches!(op, Operator::Indent | Operator::Outdent) {
+            let l1 = self.cursor.line.min(m.target.line);
+            let l2 = self.cursor.line.max(m.target.line);
+            if matches!(op, Operator::Indent) {
+                self.indent_lines(l1, l2);
+            } else {
+                self.outdent_lines(l1, l2);
+            }
+            return;
+        }
         let (start, end) = self.range_from_motion(m);
         if end <= start {
             return;
@@ -1776,13 +1815,80 @@ impl App {
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;
             }
+            Operator::Indent | Operator::Outdent => unreachable!(),
         }
+    }
+
+    /// Insert two spaces at the start of every line in `[l1, l2]`. Skips empty lines.
+    fn indent_lines(&mut self, l1: usize, l2: usize) {
+        let last = self.buffer.line_count().saturating_sub(1);
+        let l2 = l2.min(last);
+        for line in l1..=l2 {
+            let line_len = self.buffer.line_len(line);
+            if line_len == 0 {
+                continue;
+            }
+            let line_start = self.buffer.line_start_idx(line);
+            self.buffer.insert_at_idx(line_start, "  ");
+        }
+        self.cursor.line = l1;
+        let col = self.first_non_blank_col(l1);
+        self.cursor.col = col;
+        self.cursor.want_col = col;
+    }
+
+    /// Remove up to two leading whitespace chars from every line in `[l1, l2]`.
+    fn outdent_lines(&mut self, l1: usize, l2: usize) {
+        let last = self.buffer.line_count().saturating_sub(1);
+        let l2 = l2.min(last);
+        for line in l1..=l2 {
+            let line_len = self.buffer.line_len(line);
+            if line_len == 0 {
+                continue;
+            }
+            let line_start = self.buffer.line_start_idx(line);
+            let mut take = 0usize;
+            while take < 2 && take < line_len {
+                match self.buffer.char_at(line, take) {
+                    Some(c) if c.is_whitespace() => take += 1,
+                    _ => break,
+                }
+            }
+            if take > 0 {
+                self.buffer.delete_range(line_start, line_start + take);
+            }
+        }
+        self.cursor.line = l1;
+        let col = self.first_non_blank_col(l1);
+        self.cursor.col = col;
+        self.cursor.want_col = col;
+    }
+
+    fn first_non_blank_col(&self, line: usize) -> usize {
+        let line_len = self.buffer.line_len(line);
+        let mut col = 0;
+        while col < line_len {
+            match self.buffer.char_at(line, col) {
+                Some(c) if c.is_whitespace() => col += 1,
+                _ => break,
+            }
+        }
+        col
     }
 
     fn apply_op_linewise(&mut self, op: Operator, count: usize, target: Option<char>) {
         let last_line = self.buffer.line_count().saturating_sub(1);
         let l1 = self.cursor.line;
         let l2 = (l1 + count - 1).min(last_line);
+        // Indent / outdent (>>, <<, count-prefixed) operate purely on line content.
+        if matches!(op, Operator::Indent) {
+            self.indent_lines(l1, l2);
+            return;
+        }
+        if matches!(op, Operator::Outdent) {
+            self.outdent_lines(l1, l2);
+            return;
+        }
         let start = self.buffer.line_start_idx(l1);
         let end = self.buffer.line_start_idx(l2 + 1);
         let total = self.buffer.total_chars();
@@ -1826,6 +1932,7 @@ impl App {
                 self.cursor.want_col = 0;
                 self.mode = Mode::Insert;
             }
+            Operator::Indent | Operator::Outdent => unreachable!(),
         }
     }
 

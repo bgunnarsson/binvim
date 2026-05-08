@@ -33,4 +33,6 @@ pub enum Operator {
     Delete,
     Change,
     Yank,
+    Indent,
+    Outdent,
 }

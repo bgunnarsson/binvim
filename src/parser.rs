@@ -496,6 +496,14 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate { op: Operator::Change, register });
             }
+            '>' => {
+                state.reset();
+                return ParseResult::Action(Action::VisualOperate { op: Operator::Indent, register: None });
+            }
+            '<' => {
+                state.reset();
+                return ParseResult::Action(Action::VisualOperate { op: Operator::Outdent, register: None });
+            }
             'i' | 'a' => {
                 state.awaiting_textobj = Some(ch == 'i');
                 return ParseResult::Pending;
@@ -517,12 +525,14 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         }
     }
 
-    // Operators (only in normal mode — visual handles d/c/y above).
-    if ctx == ParseCtx::Normal && matches!(ch, 'd' | 'c' | 'y') {
+    // Operators (only in normal mode — visual handles d/c/y/>/< above).
+    if ctx == ParseCtx::Normal && matches!(ch, 'd' | 'c' | 'y' | '>' | '<') {
         let op = match ch {
             'd' => Operator::Delete,
             'c' => Operator::Change,
             'y' => Operator::Yank,
+            '>' => Operator::Indent,
+            '<' => Operator::Outdent,
             _ => unreachable!(),
         };
         if let Some(existing) = state.operator {
