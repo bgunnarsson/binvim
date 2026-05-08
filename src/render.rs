@@ -264,6 +264,24 @@ fn draw_command_line(out: &mut impl Write, app: &App) -> Result<()> {
         _ => {
             if !app.status_msg.is_empty() {
                 queue!(out, Print(&app.status_msg))?;
+            } else if let Some(diag) = app.line_diagnostics(app.cursor.line).first() {
+                let color = match diag.severity {
+                    Severity::Error => Color::Red,
+                    Severity::Warning => Color::Yellow,
+                    Severity::Info => Color::Blue,
+                    Severity::Hint => Color::DarkBlue,
+                };
+                let max = (app.width as usize).saturating_sub(2);
+                let mut msg: String = diag.message.lines().next().unwrap_or("").to_string();
+                if msg.chars().count() > max {
+                    msg = msg.chars().take(max).collect();
+                }
+                queue!(
+                    out,
+                    SetForegroundColor(color),
+                    Print(msg),
+                    ResetColor
+                )?;
             }
         }
     }

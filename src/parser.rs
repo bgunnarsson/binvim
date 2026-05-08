@@ -102,6 +102,8 @@ pub enum Action {
     JumpBack,
     JumpForward,
     OpenPicker { kind: PickerLeader },
+    LspGotoDefinition,
+    LspHover,
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
     VisualSwap,
@@ -398,6 +400,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 
     if state.awaiting_g {
         state.awaiting_g = false;
+        // gd / gD jump to definition via LSP — only meaningful in normal mode.
+        if ch == 'd' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::LspGotoDefinition);
+        }
         let mv = match ch {
             'g' => Some(MotionVerb::FirstLine),
             'e' => Some(MotionVerb::EndWordBackward),
@@ -635,6 +642,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             '~' => Some(Action::ToggleCase { count: state.total_count() }),
             '*' => Some(Action::SearchWord { backward: false }),
             '#' => Some(Action::SearchWord { backward: true }),
+            'K' => Some(Action::LspHover),
             _ => None,
         };
         if let Some(a) = act {

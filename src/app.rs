@@ -9,7 +9,7 @@ use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
 use crate::config::Config;
 use crate::lang::{self, HighlightCache};
-use crate::lsp::{Diagnostic, LspManager, Severity};
+use crate::lsp::{Diagnostic, LspEvent, LspManager, Severity};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
@@ -158,7 +158,8 @@ impl App {
         while !self.should_quit {
             self.adjust_viewport();
             self.ensure_highlights();
-            self.lsp.drain();
+            let events = self.lsp.drain();
+            self.handle_lsp_events(events);
             self.lsp_sync_active();
             render::draw(&mut stdout, self)?;
             stdout.flush()?;
@@ -167,6 +168,36 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn handle_lsp_events(&mut self, events: Vec<LspEvent>) {
+        for ev in events {
+            match ev {
+                LspEvent::GotoDef { path, line, col } => {
+                    self.push_jump();
+                    if let Err(e) = self.open_buffer(path) {
+                        self.status_msg = format!("error: {e}");
+                        continue;
+                    }
+                    self.cursor.line = line;
+                    self.cursor.col = col;
+                    self.cursor.want_col = col;
+                    self.clamp_cursor_normal();
+                }
+                LspEvent::Hover { text } => {
+                    // Status line is one row — show only the first non-empty line.
+                    let summary = text
+                        .lines()
+                        .find(|l| !l.trim().is_empty())
+                        .unwrap_or("")
+                        .to_string();
+                    self.status_msg = summary;
+                }
+                LspEvent::NotFound(kind) => {
+                    self.status_msg = format!("LSP: no {kind} found");
+                }
+            }
+        }
     }
 
     fn lsp_attach_active(&mut self) {
@@ -202,6 +233,30 @@ impl App {
         }
         self.last_sent_version
             .insert(path, self.buffer.version);
+    }
+
+    fn lsp_request_goto(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "LSP: buffer has no file".into();
+            return;
+        };
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        if !self.lsp.request_definition(&path, line, col) {
+            self.status_msg = "LSP: not active for this buffer".into();
+        }
+    }
+
+    fn lsp_request_hover(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "LSP: buffer has no file".into();
+            return;
+        };
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        if !self.lsp.request_hover(&path, line, col) {
+            self.status_msg = "LSP: not active for this buffer".into();
+        }
     }
 
     pub fn line_diagnostics(&self, line: usize) -> Vec<&Diagnostic> {
@@ -553,6 +608,8 @@ impl App {
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),
+            Action::LspGotoDefinition => self.lsp_request_goto(),
+            Action::LspHover => self.lsp_request_hover(),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
                 self.visual_anchor = Some(self.cursor);
