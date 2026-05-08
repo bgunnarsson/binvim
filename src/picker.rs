@@ -1,9 +1,11 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerKind {
     Files,
     Buffers,
+    Grep,
 }
 
 pub struct PickerState {
@@ -24,6 +26,7 @@ pub struct PickerState {
 pub enum PickerPayload {
     Path(PathBuf),
     BufferIdx(usize),
+    Location { path: PathBuf, line: usize, col: usize },
 }
 
 impl PickerState {
@@ -113,6 +116,65 @@ fn fuzzy_match(query: &str, item: &str) -> Option<i64> {
     } else {
         None
     }
+}
+
+/// Replace a picker's items with fresh results — used for Grep, where the candidate
+/// set comes from outside (a ripgrep child process) rather than client-side filtering.
+pub fn replace_items(picker: &mut PickerState, items: Vec<(String, PickerPayload)>) {
+    let (display, payloads): (Vec<_>, Vec<_>) = items.into_iter().unzip();
+    picker.items = display;
+    picker.payloads = payloads;
+    picker.filtered = (0..picker.items.len()).collect();
+    picker.selected = 0;
+}
+
+/// Run ripgrep with the given query in `cwd`. Empty query returns no results so the
+/// picker shows nothing until the user has typed something to search for.
+pub fn run_ripgrep(query: &str, cwd: &Path, max: usize) -> Vec<(String, PickerPayload)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let output = Command::new("rg")
+        .arg("--vimgrep")
+        .arg("--no-heading")
+        .arg("--color=never")
+        .arg("--smart-case")
+        .arg(format!("--max-count={}", 200))
+        .arg("--")
+        .arg(query)
+        .arg(".")
+        .current_dir(cwd)
+        .output();
+    let Ok(out) = output else { return Vec::new(); };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut results = Vec::new();
+    for line in stdout.lines() {
+        if results.len() >= max {
+            break;
+        }
+        // Format: path:line:col:text
+        let parts: Vec<&str> = line.splitn(4, ':').collect();
+        if parts.len() != 4 {
+            continue;
+        }
+        let rel = parts[0];
+        let line_no: usize = match parts[1].parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let col_no: usize = match parts[2].parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let text = parts[3].trim_start();
+        let display = format!("{}:{}: {}", rel, line_no, text);
+        let path = cwd.join(rel);
+        results.push((
+            display,
+            PickerPayload::Location { path, line: line_no, col: col_no },
+        ));
+    }
+    results
 }
 
 pub fn enumerate_files(root: &std::path::Path, max: usize) -> Vec<(String, PickerPayload)> {

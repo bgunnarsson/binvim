@@ -1841,6 +1841,9 @@ impl App {
                 }
                 PickerState::new(PickerKind::Files, "Files".into(), items)
             }
+            PickerLeader::Grep => {
+                PickerState::new(PickerKind::Grep, "Grep".into(), Vec::new())
+            }
             PickerLeader::Buffers => {
                 let mut items: Vec<(String, PickerPayload)> = Vec::new();
                 for (i, stash) in self.buffers.iter().enumerate() {
@@ -1893,12 +1896,23 @@ impl App {
                                 self.status_msg = format!("error: {e}");
                             }
                         }
+                        PickerPayload::Location { path, line, col } => {
+                            if let Err(e) = self.open_buffer(path) {
+                                self.status_msg = format!("error: {e}");
+                            } else {
+                                self.push_jump();
+                                self.cursor.line = line.saturating_sub(1);
+                                self.cursor.col = col.saturating_sub(1);
+                                self.cursor.want_col = self.cursor.col;
+                                self.clamp_cursor_normal();
+                            }
+                        }
                     }
                 }
             }
             KeyCode::Backspace => {
                 picker.input.pop();
-                picker.refilter();
+                self.refilter_picker();
             }
             KeyCode::Up => picker.move_up(),
             KeyCode::Down => picker.move_down(),
@@ -1909,9 +1923,26 @@ impl App {
             },
             KeyCode::Char(c) => {
                 picker.input.push(c);
-                picker.refilter();
+                self.refilter_picker();
             }
             _ => {}
+        }
+    }
+
+    fn refilter_picker(&mut self) {
+        let Some(picker) = self.picker.as_mut() else { return; };
+        match picker.kind {
+            PickerKind::Files | PickerKind::Buffers => picker.refilter(),
+            PickerKind::Grep => {
+                if picker.input.len() < 2 {
+                    picker::replace_items(picker, Vec::new());
+                    return;
+                }
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let query = picker.input.clone();
+                let results = picker::run_ripgrep(&query, &cwd, 500);
+                picker::replace_items(picker, results);
+            }
         }
     }
 

@@ -60,6 +60,7 @@ pub enum MarkAction {
 pub enum PickerLeader {
     Files,
     Buffers,
+    Grep,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -383,6 +384,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             let kind = match ch {
                 'f' => Some(PickerLeader::Files),
                 'b' => Some(PickerLeader::Buffers),
+                'g' => Some(PickerLeader::Grep),
                 _ => None,
             };
             if let Some(k) = kind {
