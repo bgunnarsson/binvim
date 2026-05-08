@@ -40,16 +40,29 @@ impl Config {
 
     /// Resolve a colour for a tree-sitter capture name. User values from `[colors]`
     /// override the baked-in defaults.
+    ///
+    /// Capture names use `.` as a specificity separator — `@variable.parameter`
+    /// is "a parameter that's also a variable". User-config lookup walks
+    /// longest → shortest (drop the rightmost segment each step) so an
+    /// override on `variable` covers `variable.parameter` automatically.
+    /// The default palette walks the other way: rightmost segment first so
+    /// `string.escape` picks up PINK from "escape" rather than GREEN from
+    /// "string", and `variable.parameter` picks up MAROON from "parameter"
+    /// rather than `variable`'s deliberate None.
     pub fn color_for_capture(&self, name: &str) -> Option<Color> {
-        let head = name.split('.').next().unwrap_or(name);
-        // Try the most-specific first (e.g. "keyword.return") then the head.
-        if let Some(c) = self.colors.get(name).and_then(|s| parse_color(s)) {
-            return Some(c);
+        let segments: Vec<&str> = name.split('.').collect();
+        for n in (1..=segments.len()).rev() {
+            let candidate = segments[..n].join(".");
+            if let Some(c) = self.colors.get(&candidate).and_then(|s| parse_color(s)) {
+                return Some(c);
+            }
         }
-        if let Some(c) = self.colors.get(head).and_then(|s| parse_color(s)) {
-            return Some(c);
+        for seg in segments.iter().rev() {
+            if let Some(c) = default_capture_color(seg) {
+                return Some(c);
+            }
         }
-        default_capture_color(head)
+        None
     }
 }
 
