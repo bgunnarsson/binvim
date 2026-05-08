@@ -51,7 +51,7 @@ pub struct App {
     pub mode: Mode,
     pub pending: PendingCmd,
     pub history: History,
-    pub register: Option<Register>,
+    pub registers: HashMap<char, Register>,
     pub cmdline: String,
     pub status_msg: String,
     pub view_top: usize,
@@ -64,6 +64,11 @@ pub struct App {
     pub last_search: Option<(String, bool)>,
     pub last_edit: Option<LastEdit>,
     pub marks: HashMap<char, (usize, usize)>,
+    pub macros: HashMap<char, Vec<KeyEvent>>,
+    pub recording_macro: Option<char>,
+    pub macro_buffer: Vec<KeyEvent>,
+    pub last_replayed_macro: Option<char>,
+    replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
 }
@@ -81,7 +86,7 @@ impl App {
             mode: Mode::Normal,
             pending: PendingCmd::default(),
             history: History::new(),
-            register: None,
+            registers: HashMap::new(),
             cmdline: String::new(),
             status_msg: String::new(),
             view_top: 0,
@@ -93,6 +98,11 @@ impl App {
             last_search: None,
             last_edit: None,
             marks: HashMap::new(),
+            macros: HashMap::new(),
+            recording_macro: None,
+            macro_buffer: Vec::new(),
+            last_replayed_macro: None,
+            replaying_macro: false,
             recording: None,
             replaying: false,
         })
@@ -117,6 +127,20 @@ impl App {
             {
                 if !matches!(self.mode, Mode::Command) {
                     self.status_msg.clear();
+                }
+                // Macro recording: stop on `q` in normal, otherwise capture every key.
+                if !self.replaying_macro && self.recording_macro.is_some() {
+                    let stop = matches!(self.mode, Mode::Normal)
+                        && matches!(k.code, KeyCode::Char('q'))
+                        && !k.modifiers.contains(KeyModifiers::CONTROL);
+                    if stop {
+                        let name = self.recording_macro.take().unwrap();
+                        let keys = std::mem::take(&mut self.macro_buffer);
+                        self.status_msg = format!("recorded @{} ({} keys)", name, keys.len());
+                        self.macros.insert(name, keys);
+                        return Ok(());
+                    }
+                    self.macro_buffer.push(k);
                 }
                 match self.mode {
                     Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
@@ -298,23 +322,23 @@ impl App {
                 self.cursor = m.target;
                 self.clamp_cursor_normal();
             }
-            Action::Operate { op, motion, count } => {
+            Action::Operate { op, motion, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
                 let m = self.run_motion(motion, count);
-                self.apply_op_with_motion(op, m);
+                self.apply_op_with_motion(op, m, register);
             }
-            Action::OperateLine { op, count } => {
+            Action::OperateLine { op, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.apply_op_linewise(op, count);
+                self.apply_op_linewise(op, count, register);
             }
-            Action::OperateTextObject { op, obj, count } => {
+            Action::OperateTextObject { op, obj, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.apply_text_object(op, obj, count);
+                self.apply_text_object(op, obj, count, register);
             }
             Action::EnterInsert(w) => self.enter_insert(w),
-            Action::DeleteCharForward { count } => {
+            Action::DeleteCharForward { count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.delete_char_forward(count);
+                self.delete_char_forward(count, register);
             }
             Action::ReplaceChar { ch, count } => {
                 self.history.record(&self.buffer.rope, self.cursor);
@@ -330,9 +354,9 @@ impl App {
             }
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
-            Action::Put { before, count } => {
+            Action::Put { before, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.put(before, count);
+                self.put(before, count, register);
             }
             Action::EnterCommand => {
                 self.cmdline.clear();
@@ -349,13 +373,15 @@ impl App {
                 self.marks.insert(name, (self.cursor.line, self.cursor.col));
             }
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
+            Action::StartMacro { name } => self.start_macro_recording(name),
+            Action::ReplayMacro { name } => self.replay_macro(name),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
                 self.visual_anchor = Some(self.cursor);
             }
-            Action::VisualOperate { op } => {
+            Action::VisualOperate { op, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.apply_visual_operate(op);
+                self.apply_visual_operate(op, register);
             }
             Action::VisualSelectTextObject { obj } => {
                 self.apply_visual_select_textobj(obj);
@@ -376,6 +402,78 @@ impl App {
     fn exit_visual(&mut self) {
         self.mode = Mode::Normal;
         self.visual_anchor = None;
+    }
+
+    fn write_register(&mut self, target: Option<char>, text: String, linewise: bool) {
+        if matches!(target, Some('_')) {
+            return;
+        }
+        let r = Register { text, linewise };
+        self.registers.insert('"', r.clone());
+        if let Some(name) = target {
+            if name != '"' {
+                self.registers.insert(name, r);
+            }
+        }
+    }
+
+    fn write_yank_register(&mut self, target: Option<char>, text: String, linewise: bool) {
+        if matches!(target, Some('_')) {
+            return;
+        }
+        let r = Register { text, linewise };
+        self.registers.insert('"', r.clone());
+        self.registers.insert('0', r.clone());
+        if let Some(name) = target {
+            if name != '"' && name != '0' {
+                self.registers.insert(name, r);
+            }
+        }
+    }
+
+    fn read_register(&self, name: Option<char>) -> Option<Register> {
+        let key = name.unwrap_or('"');
+        if key == '_' {
+            return None;
+        }
+        self.registers.get(&key).cloned()
+    }
+
+    fn start_macro_recording(&mut self, name: char) {
+        if self.recording_macro.is_some() {
+            return;
+        }
+        self.recording_macro = Some(name);
+        self.macro_buffer.clear();
+        self.status_msg = format!("recording @{}", name);
+    }
+
+    fn replay_macro(&mut self, name: char) {
+        let target = if name == '@' {
+            self.last_replayed_macro
+        } else {
+            Some(name)
+        };
+        let Some(name) = target else {
+            self.status_msg = "No previous macro".into();
+            return;
+        };
+        let Some(keys) = self.macros.get(&name).cloned() else {
+            self.status_msg = format!("Empty register: {}", name);
+            return;
+        };
+        self.last_replayed_macro = Some(name);
+        self.replaying_macro = true;
+        for k in keys {
+            match self.mode {
+                Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
+                Mode::Insert => self.handle_insert_key(k),
+                Mode::Command => self.handle_command_key(k),
+                Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
+                Mode::Search { .. } => self.handle_search_key(k),
+            }
+        }
+        self.replaying_macro = false;
     }
 
     /// Decide whether an about-to-fire action should set up a recording for `.` repeat.
@@ -454,7 +552,7 @@ impl App {
         }
     }
 
-    fn apply_visual_operate(&mut self, op: Operator) {
+    fn apply_visual_operate(&mut self, op: Operator, target: Option<char>) {
         let kind = match self.mode {
             Mode::Visual(k) => k,
             _ => return,
@@ -467,21 +565,20 @@ impl App {
         let removed = self.buffer.rope.slice(start..end).to_string();
         match op {
             Operator::Yank => {
-                self.register = Some(Register { text: removed, linewise });
-                // Vim convention: yank in visual returns cursor to selection start.
+                self.write_yank_register(target, removed, linewise);
                 self.cursor_to_idx(start);
                 self.clamp_cursor_normal();
                 self.exit_visual();
             }
             Operator::Delete => {
-                self.register = Some(Register { text: removed, linewise });
+                self.write_register(target, removed, linewise);
                 self.buffer.delete_range(start, end);
                 self.cursor_to_idx(start);
                 self.clamp_cursor_normal();
                 self.exit_visual();
             }
             Operator::Change => {
-                self.register = Some(Register { text: removed, linewise });
+                self.write_register(target, removed, linewise);
                 self.buffer.delete_range(start, end);
                 if linewise {
                     self.buffer.insert_at_idx(start, "\n");
@@ -493,32 +590,38 @@ impl App {
         }
     }
 
-    fn apply_text_object(&mut self, op: Operator, obj: TextObjectVerb, _count: usize) {
+    fn apply_text_object(
+        &mut self,
+        op: Operator,
+        obj: TextObjectVerb,
+        _count: usize,
+        target: Option<char>,
+    ) {
         // TODO: count > 1 should expand the object (e.g. d2aw = delete 2 around-words).
         let range = match text_object::compute(&self.buffer, self.cursor, obj) {
             Some(r) => r,
             None => return,
         };
-        self.apply_op_to_range(op, range);
+        self.apply_op_to_range(op, range, target);
     }
 
-    fn apply_op_to_range(&mut self, op: Operator, range: TextRange) {
+    fn apply_op_to_range(&mut self, op: Operator, range: TextRange, target: Option<char>) {
         if range.end <= range.start {
             return;
         }
         let removed = self.buffer.rope.slice(range.start..range.end).to_string();
         match op {
             Operator::Yank => {
-                self.register = Some(Register { text: removed, linewise: range.linewise });
+                self.write_yank_register(target, removed, range.linewise);
             }
             Operator::Delete => {
-                self.register = Some(Register { text: removed, linewise: range.linewise });
+                self.write_register(target, removed, range.linewise);
                 self.buffer.delete_range(range.start, range.end);
                 self.cursor_to_idx(range.start);
                 self.clamp_cursor_normal();
             }
             Operator::Change => {
-                self.register = Some(Register { text: removed, linewise: range.linewise });
+                self.write_register(target, removed, range.linewise);
                 self.buffer.delete_range(range.start, range.end);
                 self.cursor_to_idx(range.start);
                 self.mode = Mode::Insert;
@@ -848,7 +951,7 @@ impl App {
         }
     }
 
-    fn apply_op_with_motion(&mut self, op: Operator, m: MotionResult) {
+    fn apply_op_with_motion(&mut self, op: Operator, m: MotionResult, target: Option<char>) {
         let (start, end) = self.range_from_motion(m);
         if end <= start {
             return;
@@ -858,16 +961,16 @@ impl App {
 
         match op {
             Operator::Yank => {
-                self.register = Some(Register { text: removed, linewise });
+                self.write_yank_register(target, removed, linewise);
             }
             Operator::Delete => {
-                self.register = Some(Register { text: removed, linewise });
+                self.write_register(target, removed, linewise);
                 self.buffer.delete_range(start, end);
                 self.cursor_to_idx(start);
                 self.clamp_cursor_normal();
             }
             Operator::Change => {
-                self.register = Some(Register { text: removed, linewise });
+                self.write_register(target, removed, linewise);
                 self.buffer.delete_range(start, end);
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;
@@ -875,7 +978,7 @@ impl App {
         }
     }
 
-    fn apply_op_linewise(&mut self, op: Operator, count: usize) {
+    fn apply_op_linewise(&mut self, op: Operator, count: usize, target: Option<char>) {
         let last_line = self.buffer.line_count().saturating_sub(1);
         let l1 = self.cursor.line;
         let l2 = (l1 + count - 1).min(last_line);
@@ -903,10 +1006,10 @@ impl App {
 
         match op {
             Operator::Yank => {
-                self.register = Some(Register { text: reg_text, linewise: true });
+                self.write_yank_register(target, reg_text, true);
             }
             Operator::Delete => {
-                self.register = Some(Register { text: reg_text, linewise: true });
+                self.write_register(target, reg_text, true);
                 self.buffer.delete_range(effective_start, end);
                 let new_last = self.buffer.line_count().saturating_sub(1);
                 self.cursor.line = l1.min(new_last);
@@ -914,7 +1017,7 @@ impl App {
                 self.cursor.want_col = 0;
             }
             Operator::Change => {
-                self.register = Some(Register { text: reg_text, linewise: true });
+                self.write_register(target, reg_text, true);
                 self.buffer.delete_range(effective_start, end);
                 self.buffer.insert_at_idx(effective_start, "\n");
                 self.cursor.line = l1;
@@ -1093,7 +1196,7 @@ impl App {
         self.clamp_cursor_normal();
     }
 
-    fn delete_char_forward(&mut self, count: usize) {
+    fn delete_char_forward(&mut self, count: usize, target: Option<char>) {
         let line_len = self.buffer.line_len(self.cursor.line);
         if line_len == 0 {
             return;
@@ -1103,13 +1206,13 @@ impl App {
         let end = (start + count).min(max_end);
         let removed = self.buffer.delete_range(start, end);
         if !removed.is_empty() {
-            self.register = Some(Register { text: removed, linewise: false });
+            self.write_register(target, removed, false);
         }
         self.clamp_cursor_normal();
     }
 
-    fn put(&mut self, before: bool, count: usize) {
-        let Some(reg) = self.register.clone() else {
+    fn put(&mut self, before: bool, count: usize, target: Option<char>) {
+        let Some(reg) = self.read_register(target) else {
             return;
         };
         if reg.text.is_empty() {

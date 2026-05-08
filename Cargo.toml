@@ -1,8 +1,8 @@
 [package]
-name = "bined"
+name = "binvim"
 version = "0.1.0"
 edition = "2024"
-description = "Vim-grammar TUI editor with batteries included (placeholder name)"
+description = "Vim-grammar TUI editor with batteries included"
 
 [dependencies]
 ropey = "1.6"

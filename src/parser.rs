@@ -73,17 +73,17 @@ pub enum InsertWhere {
 #[derive(Debug, Clone)]
 pub enum Action {
     Move { motion: MotionVerb, count: usize },
-    Operate { op: Operator, motion: MotionVerb, count: usize },
-    OperateLine { op: Operator, count: usize },
-    OperateTextObject { op: Operator, obj: TextObjectVerb, count: usize },
+    Operate { op: Operator, motion: MotionVerb, count: usize, register: Option<char> },
+    OperateLine { op: Operator, count: usize, register: Option<char> },
+    OperateTextObject { op: Operator, obj: TextObjectVerb, count: usize, register: Option<char> },
     EnterInsert(InsertWhere),
-    DeleteCharForward { count: usize },
+    DeleteCharForward { count: usize, register: Option<char> },
     ReplaceChar { ch: char, count: usize },
     JoinLines { count: usize },
     ToggleCase { count: usize },
     Undo,
     Redo,
-    Put { before: bool, count: usize },
+    Put { before: bool, count: usize, register: Option<char> },
     EnterCommand,
     EnterSearch { backward: bool },
     EnterVisual(VisualKind),
@@ -92,10 +92,12 @@ pub enum Action {
     AdjustViewport(ViewportAdjust),
     SetMark { name: char },
     SearchWord { backward: bool },
-    VisualOperate { op: Operator },
+    VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
     VisualSwap,
     VisualSwitch(VisualKind),
+    StartMacro { name: char },
+    ReplayMacro { name: char },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -112,11 +114,23 @@ pub struct PendingCmd {
     /// Set after `r` — next char is the replacement.
     pub awaiting_replace: bool,
     pub awaiting_mark: Option<MarkAction>,
+    /// Set after `"` — next char is the register name.
+    pub awaiting_register: bool,
+    /// Selected register, applied to the next register-using action.
+    pub register: Option<char>,
+    /// Set after `q` (start macro) — next char is the register name.
+    pub awaiting_macro_record: bool,
+    /// Set after `@` — next char is the macro register to replay.
+    pub awaiting_macro_play: bool,
 }
 
 impl PendingCmd {
     fn reset(&mut self) {
         *self = PendingCmd::default();
+    }
+
+    fn take_register(&mut self) -> Option<char> {
+        self.register.take()
     }
 
     fn total_count(&self) -> usize {
@@ -199,6 +213,41 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         };
     }
 
+    // Resolve register selection — `"x` selects register x for the next op.
+    if state.awaiting_register {
+        state.awaiting_register = false;
+        if !is_valid_register(ch) {
+            state.reset();
+            return ParseResult::Cancelled;
+        }
+        state.register = Some(ch);
+        return ParseResult::Pending;
+    }
+
+    // Resolve macro-record register: after `q`, next char is the macro name.
+    if state.awaiting_macro_record {
+        state.awaiting_macro_record = false;
+        if !ch.is_ascii_alphabetic() && !ch.is_ascii_digit() {
+            state.reset();
+            return ParseResult::Cancelled;
+        }
+        let name = ch;
+        state.reset();
+        return ParseResult::Action(Action::StartMacro { name });
+    }
+
+    // Resolve macro-play register: after `@`, next char is the macro to replay.
+    if state.awaiting_macro_play {
+        state.awaiting_macro_play = false;
+        if !ch.is_ascii_alphabetic() && !ch.is_ascii_digit() && ch != '@' {
+            state.reset();
+            return ParseResult::Cancelled;
+        }
+        let name = ch;
+        state.reset();
+        return ParseResult::Action(Action::ReplayMacro { name });
+    }
+
     // Resolve a pending `r` — the next key is the replacement.
     if state.awaiting_replace {
         state.awaiting_replace = false;
@@ -248,8 +297,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let count = state.total_count();
         let motion = MotionVerb::FindChar { ch, forward: spec.forward, before: spec.before };
         if let Some(op) = state.operator.take() {
+            let register = state.take_register();
             state.reset();
-            return ParseResult::Action(Action::Operate { op, motion, count });
+            return ParseResult::Action(Action::Operate { op, motion, count, register });
         }
         state.reset();
         return ParseResult::Action(Action::Move { motion, count });
@@ -269,9 +319,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         };
         let count = state.total_count();
         let op = state.operator.take();
+        let register = state.take_register();
         state.reset();
         return match (obj, op, ctx) {
-            (Some(o), Some(op), _) => ParseResult::Action(Action::OperateTextObject { op, obj: o, count }),
+            (Some(o), Some(op), _) => ParseResult::Action(Action::OperateTextObject { op, obj: o, count, register }),
             (Some(o), None, ParseCtx::Visual) => ParseResult::Action(Action::VisualSelectTextObject { obj: o }),
             _ => ParseResult::Cancelled,
         };
@@ -289,8 +340,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if let Some(motion) = mv {
             let count = state.total_count();
             if let Some(op) = state.operator.take() {
+                let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::Operate { op, motion, count });
+                return ParseResult::Action(Action::Operate { op, motion, count, register });
             }
             state.reset();
             return ParseResult::Action(Action::Move { motion, count });
@@ -322,16 +374,19 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 return ParseResult::Action(Action::VisualSwap);
             }
             'd' | 'D' | 'x' => {
+                let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Delete });
+                return ParseResult::Action(Action::VisualOperate { op: Operator::Delete, register });
             }
             'y' => {
+                let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Yank });
+                return ParseResult::Action(Action::VisualOperate { op: Operator::Yank, register });
             }
             'c' | 'C' | 's' => {
+                let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Change });
+                return ParseResult::Action(Action::VisualOperate { op: Operator::Change, register });
             }
             'i' | 'a' => {
                 state.awaiting_textobj = Some(ch == 'i');
@@ -365,8 +420,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if let Some(existing) = state.operator {
             if existing == op {
                 let count = state.count1.unwrap_or(1);
+                let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::OperateLine { op, count });
+                return ParseResult::Action(Action::OperateLine { op, count, register });
             }
             state.reset();
             return ParseResult::Cancelled;
@@ -458,8 +514,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             _ => state.total_count(),
         };
         if let Some(op) = state.operator.take() {
+            let register = state.take_register();
             state.reset();
-            return ParseResult::Action(Action::Operate { op, motion: m, count });
+            return ParseResult::Action(Action::Operate { op, motion: m, count, register });
         }
         state.reset();
         return ParseResult::Action(Action::Move { motion: m, count });
@@ -472,30 +529,34 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'a' => Some(Action::EnterInsert(InsertWhere::AfterCursor)),
             'o' => Some(Action::EnterInsert(InsertWhere::LineBelow)),
             'O' => Some(Action::EnterInsert(InsertWhere::LineAbove)),
-            'x' => Some(Action::DeleteCharForward { count: state.total_count() }),
+            'x' => Some(Action::DeleteCharForward { count: state.total_count(), register: state.register }),
             'u' => Some(Action::Undo),
-            'p' => Some(Action::Put { before: false, count: state.total_count() }),
-            'P' => Some(Action::Put { before: true, count: state.total_count() }),
+            'p' => Some(Action::Put { before: false, count: state.total_count(), register: state.register }),
+            'P' => Some(Action::Put { before: true, count: state.total_count(), register: state.register }),
             ':' => Some(Action::EnterCommand),
             '.' => Some(Action::Repeat),
             'D' => Some(Action::Operate {
                 op: Operator::Delete,
                 motion: MotionVerb::LineEnd,
                 count: state.total_count(),
+                register: state.register,
             }),
             'C' => Some(Action::Operate {
                 op: Operator::Change,
                 motion: MotionVerb::LineEnd,
                 count: state.total_count(),
+                register: state.register,
             }),
             'Y' => Some(Action::Operate {
                 op: Operator::Yank,
                 motion: MotionVerb::LineEnd,
                 count: state.total_count(),
+                register: state.register,
             }),
             'S' => Some(Action::OperateLine {
                 op: Operator::Change,
                 count: state.total_count(),
+                register: state.register,
             }),
             'J' => Some(Action::JoinLines { count: state.total_count() }),
             '~' => Some(Action::ToggleCase { count: state.total_count() }),
@@ -511,6 +572,18 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_replace = true;
             return ParseResult::Pending;
         }
+        if ch == '"' {
+            state.awaiting_register = true;
+            return ParseResult::Pending;
+        }
+        if ch == 'q' {
+            state.awaiting_macro_record = true;
+            return ParseResult::Pending;
+        }
+        if ch == '@' {
+            state.awaiting_macro_play = true;
+            return ParseResult::Pending;
+        }
     }
 
     if state.operator.is_some() {
@@ -518,4 +591,8 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Cancelled;
     }
     ParseResult::Pending
+}
+
+fn is_valid_register(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '"' | '_' | '+' | '*' | '0'..='9')
 }

@@ -107,8 +107,12 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let dirty = if app.buffer.dirty { " [+]" } else { "" };
     let mode = app.mode.label();
     let pos = format!("{}:{}", app.cursor.line + 1, app.cursor.col + 1);
+    let recording_tag = match app.recording_macro {
+        Some(c) => format!("rec @{}  ", c),
+        None => String::new(),
+    };
     let left = format!(" {} | {}{}", mode, name, dirty);
-    let right = format!("{} ", pos);
+    let right = format!("{}{} ", recording_tag, pos);
     let total = app.width as usize;
     let left_count = left.chars().count();
     let right_count = right.chars().count();
