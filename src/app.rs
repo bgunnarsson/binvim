@@ -3,11 +3,13 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
 use crate::config::Config;
 use crate::lang::{self, HighlightCache};
+use crate::lsp::{Diagnostic, LspManager, Severity};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
@@ -95,6 +97,9 @@ pub struct App {
     pub highlight_cache: Option<HighlightCache>,
     pub picker: Option<PickerState>,
     pub config: Config,
+    pub lsp: LspManager,
+    /// Last buffer version we shipped to the LSP, keyed by path.
+    pub last_sent_version: HashMap<PathBuf, u64>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -137,6 +142,8 @@ impl App {
             highlight_cache: None,
             picker: None,
             config: Config::load(),
+            lsp: LspManager::new(),
+            last_sent_version: HashMap::new(),
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -146,14 +153,79 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         let _guard = TerminalGuard::enable()?;
         let mut stdout = io::stdout();
+        // Bootstrap LSP for the file we were started with.
+        self.lsp_attach_active();
         while !self.should_quit {
             self.adjust_viewport();
             self.ensure_highlights();
+            self.lsp.drain();
+            self.lsp_sync_active();
             render::draw(&mut stdout, self)?;
             stdout.flush()?;
-            self.handle_event()?;
+            if crossterm::event::poll(Duration::from_millis(100))? {
+                self.handle_event()?;
+            }
         }
         Ok(())
+    }
+
+    fn lsp_attach_active(&mut self) {
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if let Some(client) = self.lsp.ensure_for_path(&path, &cwd) {
+            let text = self.buffer.rope.to_string();
+            let _ = client.did_open(&path, "rust", &text);
+            self.last_sent_version
+                .insert(path.clone(), self.buffer.version);
+        }
+    }
+
+    fn lsp_sync_active(&mut self) {
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let last = self.last_sent_version.get(&path).copied().unwrap_or(u64::MAX);
+        if last == self.buffer.version {
+            return;
+        }
+        // Make sure a client exists for this path (handles late attach on first edit).
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if self.lsp.ensure_for_path(&path, &cwd).is_none() {
+            return;
+        }
+        let text = self.buffer.rope.to_string();
+        if last == u64::MAX {
+            // First sync — emit didOpen.
+            if let Some(client) = self.lsp.ensure_for_path(&path, &cwd) {
+                let _ = client.did_open(&path, "rust", &text);
+            }
+        } else {
+            self.lsp.did_change_all(&path, self.buffer.version, &text);
+        }
+        self.last_sent_version
+            .insert(path, self.buffer.version);
+    }
+
+    pub fn line_diagnostics(&self, line: usize) -> Vec<&Diagnostic> {
+        let Some(path) = self.buffer.path.as_ref() else { return Vec::new(); };
+        let Some(diags) = self.lsp.diagnostics_for(path) else { return Vec::new(); };
+        diags
+            .iter()
+            .filter(|d| d.line == line)
+            .collect()
+    }
+
+    pub fn worst_diagnostic(&self, line: usize) -> Option<Severity> {
+        let mut worst: Option<Severity> = None;
+        for d in self.line_diagnostics(line) {
+            worst = match (worst, d.severity) {
+                (None, s) => Some(s),
+                (Some(Severity::Error), _) => Some(Severity::Error),
+                (_, Severity::Error) => Some(Severity::Error),
+                (Some(Severity::Warning), _) => Some(Severity::Warning),
+                (_, Severity::Warning) => Some(Severity::Warning),
+                (Some(s), _) => Some(s),
+            };
+        }
+        worst
     }
 
     fn handle_event(&mut self) -> Result<()> {
@@ -1499,7 +1571,8 @@ impl App {
     pub fn gutter_width(&self) -> usize {
         let n = self.buffer.line_count();
         let digits = format!("{n}").len();
-        digits + 1
+        // 1 sign column + digits + 1 trailing space.
+        digits + 2
     }
 
     /// Char-column ranges of search-highlight matches on `line`.
@@ -1635,7 +1708,9 @@ impl App {
         };
         self.buffers.push(stash);
         let new_idx = self.buffers.len() - 1;
-        self.switch_to(new_idx)
+        self.switch_to(new_idx)?;
+        self.lsp_attach_active();
+        Ok(())
     }
 
     fn cycle_buffer(&mut self, step: i64) {

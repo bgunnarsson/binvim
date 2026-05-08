@@ -8,6 +8,7 @@ mod command;
 mod config;
 mod cursor;
 mod lang;
+mod lsp;
 mod mode;
 mod motion;
 mod parser;

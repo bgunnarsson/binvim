@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::lsp::Severity;
 use crate::mode::Mode;
 use anyhow::Result;
 use crossterm::{
@@ -113,10 +114,27 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
         let line_idx = app.view_top + row;
         queue!(out, MoveTo(0, row as u16))?;
         if line_idx < app.buffer.line_count() {
+            // Diagnostic sign column.
+            let sign = app.worst_diagnostic(line_idx).map(|s| match s {
+                Severity::Error => ('!', Color::Red),
+                Severity::Warning => ('?', Color::Yellow),
+                Severity::Info => ('i', Color::Blue),
+                Severity::Hint => ('h', Color::DarkBlue),
+            });
+            if let Some((ch, color)) = sign {
+                queue!(
+                    out,
+                    SetForegroundColor(color),
+                    Print(ch.to_string()),
+                    ResetColor
+                )?;
+            } else {
+                queue!(out, Print(" "))?;
+            }
             queue!(
                 out,
                 SetForegroundColor(Color::DarkGrey),
-                Print(format!("{:>width$} ", line_idx + 1, width = gutter - 1)),
+                Print(format!("{:>width$} ", line_idx + 1, width = gutter - 2)),
                 ResetColor
             )?;
             draw_line_with_selection(out, app, line_idx, avail)?;
