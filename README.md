@@ -6,7 +6,7 @@ A Vim-grammar TUI editor written in Rust, with tree-sitter highlighting, LSP, an
 
 - **Modal editing** — normal/insert/visual (charwise, linewise, blockwise) with operators, text objects, marks, registers, dot-repeat, undo/redo, and macros.
 - **Tree-sitter highlighting** — Rust, TypeScript/TSX, JavaScript, JSON, Go, HTML, CSS, Markdown.
-- **LSP client** — diagnostics, hover, completion, and goto-definition over per-language servers, with `initializationOptions` and project-root detection.
+- **LSP client** — diagnostics, hover, completion, and goto-definition over per-language servers, with `initializationOptions` and project-root detection. CSS/SCSS/Less get IntelliSense via `vscode-css-language-server`, and Tailwind class-name completions are layered on top via `tailwindcss-language-server` whenever a `tailwind.config.*` file is reachable from the buffer's directory.
 - **Pickers** — fuzzy file picker, buffer switcher, and live grep, opened from the leader (`space`).
 - **Catppuccin Mocha defaults** — colours overridable via `~/.config/binvim/config.toml`.
 

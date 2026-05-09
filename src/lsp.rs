@@ -113,12 +113,33 @@ pub struct ServerSpec {
     pub initialization_options: Value,
 }
 
-/// Pick the LSP server config for a path's extension. `None` if we don't know the extension.
+/// All LSP server specs that should attach to `path`. The first entry is the
+/// "primary" server (used for hover and goto-def); any extra entries are
+/// auxiliary — they receive didOpen/didChange and contribute to completions
+/// but don't take over hover or definition.
+///
+/// The Tailwind LSP is added on top of the primary server when a
+/// `tailwind.config.*` file is reachable from the buffer's directory and the
+/// file's extension is one Tailwind cares about (CSS family + every web
+/// framework Tailwind supports out of the box).
+pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
+    let mut specs = Vec::new();
+    if let Some(primary) = primary_spec_for_path(path) {
+        specs.push(primary);
+    }
+    if let Some(tw) = tailwind_spec_for_path(path) {
+        specs.push(tw);
+    }
+    specs
+}
+
+/// Pick the primary LSP server config for a path's extension. `None` if we
+/// don't know the extension.
 ///
 /// Command candidates are bare names — `resolve_command` then walks `$PATH` to find them.
 /// We only special-case `~/.cargo/bin` for rust-analyzer because that's the Rust toolchain
 /// convention (and not tied to any other tool's package manager).
-pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
+fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
     let ext = path.extension().and_then(|s| s.to_str())?;
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
     let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
@@ -316,6 +337,103 @@ pub fn spec_for_path(path: &Path) -> Option<ServerSpec> {
             initialization_options: Value::Null,
         }),
         _ => None,
+    }
+}
+
+/// Tailwind augments completions and diagnostics on top of the primary
+/// server. We only attach it when a `tailwind.config.*` file exists in the
+/// workspace tree — otherwise the server starts and offers nothing useful.
+///
+/// languageId mirrors what tailwindcss-language-server expects (it has a
+/// short whitelist; using the right id is what unlocks classname completion).
+fn tailwind_spec_for_path(path: &Path) -> Option<ServerSpec> {
+    let ext = path.extension().and_then(|s| s.to_str())?.to_ascii_lowercase();
+    let language_id = match ext.as_str() {
+        "html" | "htm" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "less" => "less",
+        "postcss" | "pcss" => "postcss",
+        "js" | "mjs" | "cjs" => "javascript",
+        "jsx" => "javascriptreact",
+        "ts" => "typescript",
+        "tsx" => "typescriptreact",
+        "vue" => "vue",
+        "svelte" => "svelte",
+        "astro" => "astro",
+        "razor" | "cshtml" => "razor",
+        _ => return None,
+    };
+    let start = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let config = find_tailwind_config(&start)?;
+    let workspace = config
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or(config.clone());
+    let local_bin = find_node_modules_bin(&start, "tailwindcss-language-server");
+    let mut cmd_candidates = Vec::new();
+    if let Some(p) = local_bin {
+        cmd_candidates.push(p);
+    }
+    cmd_candidates.push("tailwindcss-language-server".into());
+
+    Some(ServerSpec {
+        key: "tailwindcss".into(),
+        language_id: language_id.into(),
+        cmd_candidates,
+        args: vec!["--stdio".into()],
+        // Anchor the server at the directory containing the tailwind config —
+        // that's how tailwindcss-language-server discovers the config and the
+        // project's class catalogue.
+        root_markers: vec![
+            workspace
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| ".".into()),
+        ],
+        initialization_options: json!({
+            "userLanguages": {},
+            "configuration": {
+                "editor": { "tabSize": 2 },
+                "tailwindCSS": {
+                    "validate": true,
+                    "emmetCompletions": false,
+                    "classAttributes": ["class", "className", "ngClass", "class:list"],
+                    "includeLanguages": {}
+                }
+            }
+        }),
+    })
+}
+
+/// Walk up from `start` looking for a Tailwind config file. Tailwind v3
+/// supports js/ts/cjs/mjs; v4 may use just CSS imports but still ships a
+/// config in many projects, so we accept that too.
+pub fn find_tailwind_config(start: &Path) -> Option<PathBuf> {
+    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut dir: &Path = canon.as_path();
+    let names = [
+        "tailwind.config.js",
+        "tailwind.config.ts",
+        "tailwind.config.cjs",
+        "tailwind.config.mjs",
+        "tailwind.config.cts",
+        "tailwind.config.mts",
+    ];
+    loop {
+        for name in &names {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => return None,
+        }
     }
 }
 
@@ -824,7 +942,9 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
 pub struct LspManager {
     clients: HashMap<String, LspClient>,
     pub diagnostics: HashMap<PathBuf, Vec<Diagnostic>>,
-    pending: HashMap<u64, PendingRequest>,
+    /// Each client allocates IDs from its own counter, so the global key is
+    /// `(client_key, id)` rather than just `id` to avoid cross-server clashes.
+    pending: HashMap<(String, u64), PendingRequest>,
 }
 
 impl LspManager {
@@ -836,24 +956,42 @@ impl LspManager {
         }
     }
 
+    /// Spawn every spec that applies to `path` (primary + auxiliary) and
+    /// return the primary client. The primary is the first entry from
+    /// `specs_for_path`; auxiliaries (like Tailwind) are kept inside the
+    /// manager so they receive didOpen/didChange and contribute to
+    /// completions, but they don't take over hover/goto-def.
     pub fn ensure_for_path(&mut self, path: &Path, fallback_root: &Path) -> Option<&LspClient> {
-        let spec = spec_for_path(path)?;
-        if !self.clients.contains_key(&spec.key) {
-            // Walk up from the buffer's parent dir for the actual project root.
+        let specs = specs_for_path(path);
+        let primary_key = specs.first().map(|s| s.key.clone())?;
+        for spec in &specs {
+            if self.clients.contains_key(&spec.key) {
+                continue;
+            }
             let start = path
                 .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| fallback_root.to_path_buf());
             let root = find_workspace_root(&start, &spec.root_markers);
-            let client = LspClient::spawn_spec(&spec, &root)?;
-            self.clients.insert(spec.key.clone(), client);
+            if let Some(client) = LspClient::spawn_spec(spec, &root) {
+                self.clients.insert(spec.key.clone(), client);
+            }
         }
-        self.clients.get(&spec.key)
+        self.clients.get(&primary_key)
+    }
+
+    /// All running clients that match the path's spec list, primary first.
+    /// Used to fan out didOpen/didChange and completion requests across the
+    /// primary server and any attached auxiliaries.
+    pub fn clients_for_path(&self, path: &Path) -> Vec<&LspClient> {
+        specs_for_path(path)
+            .into_iter()
+            .filter_map(|spec| self.clients.get(&spec.key))
+            .collect()
     }
 
     pub fn client_for_path(&self, path: &Path) -> Option<&LspClient> {
-        let spec = spec_for_path(path)?;
-        self.clients.get(&spec.key)
+        self.clients_for_path(path).into_iter().next()
     }
 
     /// Drain pending LSP messages, bounded per call. Returns `(events, more)`
@@ -869,7 +1007,7 @@ impl LspManager {
         let mut diagnostics_changed = false;
         let mut processed = 0usize;
         let mut more = false;
-        for client in self.clients.values() {
+        for (client_key, client) in self.clients.iter() {
             while processed < MAX_PER_CALL {
                 let Ok(msg) = client.incoming_rx.try_recv() else {
                     break;
@@ -883,14 +1021,14 @@ impl LspManager {
                         }
                     }
                     LspIncoming::Response { id, result } => {
-                        if let Some(req) = self.pending.remove(&id) {
+                        if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
                             if let Some(ev) = handle_response(req, &result) {
                                 events.push(ev);
                             }
                         }
                     }
                     LspIncoming::ErrorReply { id, .. } => {
-                        self.pending.remove(&id);
+                        self.pending.remove(&(client_key.clone(), id));
                     }
                 }
             }
@@ -932,7 +1070,7 @@ impl LspManager {
                 "position": { "line": line, "character": col }
             }),
         );
-        self.pending.insert(id, PendingRequest::GotoDef);
+        self.pending.insert((client.name.clone(), id), PendingRequest::GotoDef);
         true
     }
 
@@ -947,10 +1085,13 @@ impl LspManager {
                 "position": { "line": line, "character": col }
             }),
         );
-        self.pending.insert(id, PendingRequest::Hover);
+        self.pending.insert((client.name.clone(), id), PendingRequest::Hover);
         true
     }
 
+    /// Fan out a completion request to every server attached to this path.
+    /// Each server's reply arrives as its own `LspEvent::Completion`; the
+    /// caller is responsible for merging them into the in-flight popup.
     pub fn request_completion(
         &mut self,
         path: &Path,
@@ -958,8 +1099,6 @@ impl LspManager {
         col: usize,
         trigger_char: Option<char>,
     ) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
-        let id = client.alloc_id();
         // LSP CompletionTriggerKind: 1=Invoked, 2=TriggerCharacter.
         // Servers use this to decide whether to return member-access
         // completions (after `.`, `:`, etc.) versus general scope items.
@@ -967,17 +1106,25 @@ impl LspManager {
             Some(c) => json!({ "triggerKind": 2, "triggerCharacter": c.to_string() }),
             None => json!({ "triggerKind": 1 }),
         };
-        let _ = client.send_request(
-            id,
-            "textDocument/completion",
-            json!({
-                "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col },
-                "context": context,
-            }),
-        );
-        self.pending.insert(id, PendingRequest::Completion);
-        true
+        let mut sent = Vec::new();
+        for client in self.clients_for_path(path) {
+            let id = client.alloc_id();
+            let _ = client.send_request(
+                id,
+                "textDocument/completion",
+                json!({
+                    "textDocument": { "uri": path_to_uri(path) },
+                    "position": { "line": line, "character": col },
+                    "context": context,
+                }),
+            );
+            sent.push((client.name.clone(), id));
+        }
+        let any = !sent.is_empty();
+        for k in sent {
+            self.pending.insert(k, PendingRequest::Completion);
+        }
+        any
     }
 }
 

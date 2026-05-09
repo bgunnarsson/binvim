@@ -422,10 +422,12 @@ impl App {
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
-                        // Auto-trigger fires on every keystroke; silently dismiss
-                        // when the server has nothing to offer instead of spamming
-                        // the status line.
-                        self.completion = None;
+                        // Auto-trigger fires on every keystroke; silently
+                        // ignore an empty reply. With multi-server fan-out
+                        // (e.g. Tailwind alongside tsserver) one server can
+                        // return nothing while another still has matches —
+                        // the next Completion event will replace or merge,
+                        // so leaving the popup alone is correct.
                     } else {
                         self.status_msg = format!("LSP: no {kind} found");
                     }
@@ -445,7 +447,26 @@ impl App {
                     } else {
                         String::new()
                     };
-                    let filtered = filter_completion_items(items, &prefix);
+                    // Multi-server fan-out: when a popup is already open at
+                    // the same anchor (i.e. another server already replied
+                    // for this same request burst), merge new items with the
+                    // existing list and re-filter together. Otherwise this
+                    // is a fresh request — replace.
+                    let mut merged_items = items;
+                    let preserve = match self.completion.as_ref() {
+                        Some(c) if c.anchor_line == anchor_line && c.anchor_col == anchor_col => {
+                            true
+                        }
+                        _ => false,
+                    };
+                    if preserve {
+                        if let Some(existing) = self.completion.take() {
+                            merged_items.extend(existing.items);
+                        }
+                        let mut seen = std::collections::HashSet::new();
+                        merged_items.retain(|item| seen.insert(item.label.clone()));
+                    }
+                    let filtered = filter_completion_items(merged_items, &prefix);
                     if filtered.is_empty() {
                         self.completion = None;
                     } else {
@@ -463,6 +484,8 @@ impl App {
 
     /// Walk back from the cursor through identifier-class chars to find where the
     /// in-progress word started — that's the chunk we'll replace on completion accept.
+    /// `-` is included so CSS property names (`border-color`) and Tailwind class
+    /// names (`bg-blue-500`) are treated as one continuous token.
     fn word_prefix_start(&self) -> (usize, usize) {
         let line = self.cursor.line;
         let mut col = self.cursor.col;
@@ -471,7 +494,7 @@ impl App {
                 .buffer
                 .char_at(line, col - 1)
                 .unwrap_or(' ');
-            if prev.is_alphanumeric() || prev == '_' {
+            if prev.is_alphanumeric() || prev == '_' || prev == '-' {
                 col -= 1;
             } else {
                 break;
@@ -529,12 +552,17 @@ impl App {
     fn lsp_attach_active(&mut self) {
         let Some(path) = self.buffer.path.clone() else { return; };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        if let Some(client) = self.lsp.ensure_for_path(&path, &cwd) {
-            let text = self.buffer.rope.to_string();
-            let _ = client.did_open(&path, &text);
-            self.last_sent_version
-                .insert(path.clone(), self.buffer.version);
+        if self.lsp.ensure_for_path(&path, &cwd).is_none() {
+            return;
         }
+        let text = self.buffer.rope.to_string();
+        // Every attached server (primary + auxiliaries like Tailwind) needs
+        // its own didOpen — each carries its own languageId.
+        for client in self.lsp.clients_for_path(&path) {
+            let _ = client.did_open(&path, &text);
+        }
+        self.last_sent_version
+            .insert(path, self.buffer.version);
     }
 
     fn lsp_sync_active(&mut self) {
@@ -549,7 +577,7 @@ impl App {
         }
         let text = self.buffer.rope.to_string();
         if last == u64::MAX {
-            if let Some(client) = self.lsp.ensure_for_path(&path, &cwd) {
+            for client in self.lsp.clients_for_path(&path) {
                 let _ = client.did_open(&path, &text);
             }
         } else {
@@ -3252,9 +3280,10 @@ fn is_close_char(c: char) -> bool {
 /// Characters that should re-fire `textDocument/completion` after being inserted.
 /// Identifier chars catch the typing-a-name case; the symbol set covers the
 /// trigger characters servers care about most: member access (`.`), Rust paths
-/// (`:`), Razor/decorator anchors (`@`), and JSX/HTML opens (`<`).
+/// and Tailwind variants (`:`), Razor/decorator anchors (`@`), JSX/HTML opens
+/// (`<`), and CSS property/utility separators (`-`).
 fn is_completion_trigger(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<')
+    c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<' | '-')
 }
 
 /// Narrow a server-returned completion list to entries that match what the
