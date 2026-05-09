@@ -17,6 +17,7 @@ pub enum ExCommand {
     YankRange { range: ExRange },
     NoHighlight,
     Format,
+    Health,
     Unknown(String),
 }
 
@@ -88,6 +89,7 @@ pub fn parse(line: &str) -> ExCommand {
         "b" | "buffer" => ExCommand::BufferSwitch(rest.to_string()),
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
         "fmt" | "format" => ExCommand::Format,
+        "health" | "checkhealth" => ExCommand::Health,
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

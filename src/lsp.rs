@@ -938,6 +938,14 @@ pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     Some(PathBuf::from(stripped))
 }
 
+#[derive(Debug, Clone)]
+pub struct LspHealth {
+    pub key: String,
+    pub language_id: String,
+    pub root_uri: String,
+    pub pending_requests: usize,
+}
+
 /// Container for per-language LSP clients keyed by `ServerSpec.key`.
 pub struct LspManager {
     clients: HashMap<String, LspClient>,
@@ -978,6 +986,30 @@ impl LspManager {
             }
         }
         self.clients.get(&primary_key)
+    }
+
+    /// Snapshot of every running LSP client for the `:health` view. Sorted by
+    /// key so the report order is stable across calls.
+    pub fn health_summary(&self) -> Vec<LspHealth> {
+        let mut out: Vec<LspHealth> = self
+            .clients
+            .iter()
+            .map(|(key, client)| {
+                let pending = self
+                    .pending
+                    .keys()
+                    .filter(|(k, _)| k == key)
+                    .count();
+                LspHealth {
+                    key: key.clone(),
+                    language_id: client.language_id.clone(),
+                    root_uri: client.root_uri.clone(),
+                    pending_requests: pending,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| a.key.cmp(&b.key));
+        out
     }
 
     /// All running clients that match the path's spec list, primary first.

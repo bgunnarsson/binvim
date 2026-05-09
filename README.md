@@ -34,6 +34,15 @@ If `path` is omitted, binvim opens on a start page showing a centered `binvim` l
 | `<space>b`| Buffer picker     |
 | `<space>g`| Live grep         |
 
+## Ex commands
+
+Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
+
+| Command           | Description                                          |
+|-------------------|------------------------------------------------------|
+| `:health`         | Open a scratch buffer summarising version, RSS, CPU, attached LSPs, buffers, and Tailwind config detection. `:checkhealth` works too. |
+| `:fmt` / `:format`| Run the configured formatter on the active buffer.   |
+
 ## Configuration
 
 Optional config file at `~/.config/binvim/config.toml`:
