@@ -18,7 +18,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     draw_buffer(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
-    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
+    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
         draw_floating_cmdline(out, app)?;
     }
     if app.mode == Mode::Picker {
@@ -409,7 +409,7 @@ const NOTIFICATION_MAX_ROWS: usize = 6;
 
 fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     // Cmdline and search modes get the centred box; their floating widget covers any notification.
-    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
+    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
         return Ok(());
     }
     if app.status_msg.is_empty() {
@@ -534,6 +534,7 @@ fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
         Mode::Command => ("binvim", '>'),
         Mode::Search { backward: false } => ("Search", '/'),
         Mode::Search { backward: true } => ("Search", '?'),
+        Mode::Prompt(crate::mode::PromptKind::Rename) => ("Rename", ' '),
         _ => ("", ' '),
     }
 }
@@ -1165,6 +1166,7 @@ fn mode_color(mode: Mode) -> Color {
         Mode::Command => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::Search { .. } => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
+        Mode::Prompt(_) => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
     }
 }
 
@@ -1375,7 +1377,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         _ => SetCursorStyle::SteadyBlock,
     };
     queue!(out, style, Show)?;
-    if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
+    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
         let (left, top, _) = cmdline_box_layout(app);
         // Box layout:  │ <prompt> <input>   │  → cursor at left + 4 + len(input)
         let col = left + 4 + app.cmdline.chars().count();

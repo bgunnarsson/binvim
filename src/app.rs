@@ -134,6 +134,7 @@ fn leader_entries() -> Vec<(String, String)> {
         ("o".into(), "Doc symbols".into()),
         ("S".into(), "Workspace symbols".into()),
         ("a".into(), "Code actions".into()),
+        ("r".into(), "Rename".into()),
     ]
 }
 
@@ -324,6 +325,10 @@ pub struct App {
     /// Pending code actions waiting for the user to pick from the picker.
     /// Indexed by `PickerPayload::CodeActionIdx`.
     pub pending_code_actions: Vec<CodeActionItem>,
+    /// Symbol position captured when a rename prompt opened — the LSP
+    /// rename request needs the original `(line, col)` even after the
+    /// prompt has stolen focus and the user has moved focus around.
+    pub rename_anchor: Option<(PathBuf, usize, usize, String)>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -381,6 +386,7 @@ impl App {
             show_start_page,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
+            rename_anchor: None,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -514,6 +520,17 @@ impl App {
                 LspEvent::CodeActions { items } => {
                     self.open_code_actions_picker(items);
                 }
+                LspEvent::Rename { edit } => match self.apply_workspace_edit(&edit) {
+                    Ok((edits, files)) if edits > 0 => {
+                        self.status_msg = format!(
+                            "renamed {edits} occurrence{} across {files} file{}",
+                            if edits == 1 { "" } else { "s" },
+                            if files == 1 { "" } else { "s" },
+                        );
+                    }
+                    Ok(_) => self.status_msg = "rename: no edits returned".into(),
+                    Err(e) => self.status_msg = format!("rename error: {e}"),
+                },
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
@@ -654,6 +671,76 @@ impl App {
             entries,
         ));
         self.mode = Mode::Picker;
+    }
+
+    /// Open the rename prompt — captures the symbol under the cursor for
+    /// the eventual LSP request. The user types the new name; Enter fires
+    /// `textDocument/rename`, Esc cancels.
+    fn start_rename_prompt(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "Save the buffer to rename".into();
+            return;
+        };
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        // Pre-fill with the current word so common renames are a few-char edit.
+        let current = self.word_under_cursor().unwrap_or_default();
+        self.rename_anchor = Some((path, line, col, current.clone()));
+        self.cmdline = current;
+        self.mode = Mode::Prompt(crate::mode::PromptKind::Rename);
+    }
+
+    fn handle_prompt_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.cancel_prompt();
+            }
+            KeyCode::Enter => {
+                let kind = match self.mode {
+                    Mode::Prompt(k) => k,
+                    _ => return,
+                };
+                let input = std::mem::take(&mut self.cmdline);
+                match kind {
+                    crate::mode::PromptKind::Rename => self.finish_rename(input),
+                }
+                self.mode = Mode::Normal;
+                self.rename_anchor = None;
+            }
+            KeyCode::Backspace => {
+                self.cmdline.pop();
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cmdline.push(c);
+            }
+            _ => {}
+        }
+    }
+
+    fn cancel_prompt(&mut self) {
+        self.cmdline.clear();
+        self.mode = Mode::Normal;
+        self.rename_anchor = None;
+    }
+
+    fn finish_rename(&mut self, new_name: String) {
+        let trimmed = new_name.trim();
+        if trimmed.is_empty() {
+            self.status_msg = "rename cancelled (empty name)".into();
+            return;
+        }
+        let Some((path, line, col, original)) = self.rename_anchor.clone() else {
+            self.status_msg = "rename: lost anchor".into();
+            return;
+        };
+        if trimmed == original {
+            self.status_msg = "rename: name unchanged".into();
+            return;
+        }
+        self.lsp_sync_active();
+        if !self.lsp.request_rename(&path, line, col, trimmed) {
+            self.status_msg = "LSP: not active for this buffer".into();
+        }
     }
 
     fn lsp_request_references(&mut self) {
@@ -949,6 +1036,7 @@ impl App {
                     Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
                     Mode::Search { .. } => self.handle_search_key(k),
                     Mode::Picker => self.handle_picker_key(k),
+                    Mode::Prompt(_) => self.handle_prompt_key(k),
                 }
             }
             Event::Mouse(me) => {
@@ -1600,6 +1688,7 @@ impl App {
             Action::OpenYazi => self.open_yazi(),
             Action::LspGotoDefinition => self.lsp_request_goto(),
             Action::LspFindReferences => self.lsp_request_references(),
+            Action::LspRename => self.start_rename_prompt(),
             Action::LspHover => self.lsp_request_hover(),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
@@ -1806,6 +1895,7 @@ impl App {
                 Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
                 Mode::Search { .. } => self.handle_search_key(k),
                 Mode::Picker => self.handle_picker_key(k),
+                Mode::Prompt(_) => self.handle_prompt_key(k),
             }
         }
         self.replaying_macro = false;
@@ -3026,7 +3116,10 @@ impl App {
     pub fn has_modal_overlay(&self) -> bool {
         // Completion is intentionally absent — it's an inline assist that
         // shouldn't dim the buffer or capture mouse input while you type.
-        matches!(self.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
+        matches!(
+            self.mode,
+            Mode::Command | Mode::Search { .. } | Mode::Picker | Mode::Prompt(_)
+        )
             || self.hover.is_some()
             || self.picker.is_some()
             || self.whichkey.is_some()

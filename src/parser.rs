@@ -117,6 +117,7 @@ pub enum Action {
     OpenYazi,
     LspGotoDefinition,
     LspFindReferences,
+    LspRename,
     LspHover,
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
@@ -429,6 +430,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),
                 'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
                 'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
+                'r' => Some(Action::LspRename),
                 _ => None,
             };
             if let Some(a) = action {

@@ -55,6 +55,9 @@ pub enum LspEvent {
     References { items: Vec<LocationItem> },
     Symbols { items: Vec<SymbolItem>, workspace: bool },
     CodeActions { items: Vec<CodeActionItem> },
+    /// `WorkspaceEdit` returned from `textDocument/rename`. The applier in
+    /// app.rs consumes this directly via `apply_workspace_edit`.
+    Rename { edit: Value },
     DiagnosticsUpdated,
     NotFound(&'static str),
 }
@@ -130,6 +133,7 @@ pub enum PendingRequest {
     DocumentSymbols,
     WorkspaceSymbols,
     CodeActions,
+    Rename,
 }
 
 /// State of a client's outgoing pipe. Until the server has answered the
@@ -1341,6 +1345,30 @@ impl LspManager {
         any
     }
 
+    /// Request `textDocument/rename` with the user's chosen new name.
+    pub fn request_rename(
+        &mut self,
+        path: &Path,
+        line: usize,
+        col: usize,
+        new_name: &str,
+    ) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/rename",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": col },
+                "newName": new_name,
+            }),
+        );
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::Rename);
+        true
+    }
+
     /// Request `textDocument/codeAction` for the cursor position. The
     /// caller passes the diagnostics overlapping that position (only those
     /// — passing the full file's worth made tsserver hang on big projects).
@@ -1487,6 +1515,13 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
                 Some(LspEvent::NotFound("code actions"))
             } else {
                 Some(LspEvent::CodeActions { items })
+            }
+        }
+        PendingRequest::Rename => {
+            if result.is_null() {
+                Some(LspEvent::NotFound("rename target"))
+            } else {
+                Some(LspEvent::Rename { edit: result.clone() })
             }
         }
     }

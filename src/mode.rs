@@ -6,6 +6,17 @@ pub enum Mode {
     Visual(VisualKind),
     Search { backward: bool },
     Picker,
+    /// Free-form prompt — used by LSP rename and any future single-string
+    /// input flow. The associated kind tells the dispatcher what to do
+    /// with the typed string on Enter.
+    Prompt(PromptKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PromptKind {
+    /// `<leader>r` — typed string is the new name for the symbol under
+    /// the cursor at the time the prompt was opened.
+    Rename,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +35,7 @@ impl Mode {
             Mode::Visual(VisualKind::Line) => "V-LINE",
             Mode::Search { .. } => "SEARCH",
             Mode::Picker => "PICK",
+            Mode::Prompt(_) => "PROMPT",
         }
     }
 }
