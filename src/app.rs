@@ -2702,7 +2702,7 @@ impl App {
         out.push_str("================\n\n");
 
         let pid = std::process::id();
-        let (rss, cpu) = read_process_stats(pid);
+        let (cpu, mem) = read_process_stats(pid);
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".into());
@@ -2714,20 +2714,25 @@ impl App {
 
         out.push_str(&format!("  version            {}\n", env!("CARGO_PKG_VERSION")));
         out.push_str(&format!("  pid                {pid}\n"));
-        out.push_str(&format!(
-            "  rss                {}\n",
-            rss.map(format_kb).unwrap_or_else(|| "—".into())
-        ));
-        out.push_str(&format!(
-            "  cpu                {}\n",
-            cpu.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into())
-        ));
         out.push_str(&format!("  cwd                {cwd}\n"));
         out.push_str(&format!("  git branch         {branch}\n"));
         out.push_str(&format!(
             "  config             {} ({})\n",
             if cfg_path.is_empty() { "—".into() } else { cfg_path.clone() },
             if cfg_loaded { "loaded" } else { "missing" }
+        ));
+        out.push('\n');
+
+        // Resources — share of host CPU/RAM as reported by `ps`. RAM is a
+        // percentage of total physical memory; CPU is a recent average.
+        out.push_str("Resources\n");
+        out.push_str(&format!(
+            "  CPU: {}\n",
+            cpu.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into())
+        ));
+        out.push_str(&format!(
+            "  RAM: {}\n",
+            mem.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into())
         ));
         out.push('\n');
 
@@ -3361,12 +3366,12 @@ fn detect_git_branch(start: &std::path::Path) -> Option<String> {
 
 /// Map an opening pair character to its closing counterpart, or `None` for chars
 /// that don't auto-pair.
-/// Shell out to `ps` for a snapshot of the process's RSS (KB) and CPU%.
+/// Shell out to `ps` for a snapshot of the process's CPU% and memory share.
 /// Both fields are best-effort — a failure just shows up as `—` in the
 /// `:health` report rather than crashing the editor.
-fn read_process_stats(pid: u32) -> (Option<u64>, Option<f64>) {
+fn read_process_stats(pid: u32) -> (Option<f64>, Option<f64>) {
     let out = std::process::Command::new("ps")
-        .args(["-o", "rss=,%cpu=", "-p", &pid.to_string()])
+        .args(["-o", "%cpu=,%mem=", "-p", &pid.to_string()])
         .output();
     let Ok(out) = out else { return (None, None) };
     if !out.status.success() {
@@ -3375,18 +3380,9 @@ fn read_process_stats(pid: u32) -> (Option<u64>, Option<f64>) {
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.trim();
     let mut it = line.split_whitespace();
-    let rss = it.next().and_then(|s| s.parse::<u64>().ok());
     let cpu = it.next().and_then(|s| s.parse::<f64>().ok());
-    (rss, cpu)
-}
-
-fn format_kb(kb: u64) -> String {
-    let mb = kb as f64 / 1024.0;
-    if mb >= 1024.0 {
-        format!("{:.2} GB", mb / 1024.0)
-    } else {
-        format!("{mb:.1} MB")
-    }
+    let mem = it.next().and_then(|s| s.parse::<f64>().ok());
+    (cpu, mem)
 }
 
 /// Keys that survive the start-page guard while in Normal mode: the cmdline
