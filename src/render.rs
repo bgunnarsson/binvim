@@ -1206,6 +1206,7 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Css => '\u{e749}',
         Lang::Markdown => '\u{e609}',
         Lang::CSharp => '\u{f81a}',
+        Lang::Bash => '\u{f489}',
     }
 }
 
@@ -1221,6 +1222,7 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::Css => "css",
         Lang::Markdown => "markdown",
         Lang::CSharp => "csharp",
+        Lang::Bash => "bash",
     }
 }
 
@@ -1231,6 +1233,17 @@ fn lang_label(path: Option<&std::path::Path>, lang: Lang) -> (char, &'static str
     if let Some(ext) = path.and_then(|p| p.extension()).and_then(|e| e.to_str()) {
         match ext {
             "cshtml" | "razor" => return ('\u{f81a}', "razor"),
+            "zsh" => return (lang_icon(lang), "zsh"),
+            "ksh" => return (lang_icon(lang), "ksh"),
+            _ => {}
+        }
+    }
+    if let Some(name) = path.and_then(|p| p.file_name()).and_then(|n| n.to_str()) {
+        match name {
+            ".zshrc" | ".zprofile" | ".zshenv" | ".zlogin" | ".zlogout" => {
+                return (lang_icon(lang), "zsh");
+            }
+            ".kshrc" => return (lang_icon(lang), "ksh"),
             _ => {}
         }
     }

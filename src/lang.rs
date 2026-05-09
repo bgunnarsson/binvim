@@ -17,22 +17,35 @@ pub enum Lang {
     Css,
     Markdown,
     CSharp,
+    Bash,
 }
 
 impl Lang {
     pub fn detect(path: &Path) -> Option<Self> {
-        let ext = path.extension()?.to_str()?;
-        match ext {
-            "rs" => Some(Lang::Rust),
-            "ts" => Some(Lang::TypeScript),
-            "tsx" => Some(Lang::Tsx),
-            "jsx" | "js" | "mjs" | "cjs" => Some(Lang::JavaScript),
-            "json" | "jsonc" => Some(Lang::Json),
-            "go" => Some(Lang::Go),
-            "html" | "htm" | "cshtml" | "razor" => Some(Lang::Html),
-            "css" | "scss" | "less" => Some(Lang::Css),
-            "md" | "markdown" => Some(Lang::Markdown),
-            "cs" => Some(Lang::CSharp),
+        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+            match ext {
+                "rs" => return Some(Lang::Rust),
+                "ts" => return Some(Lang::TypeScript),
+                "tsx" => return Some(Lang::Tsx),
+                "jsx" | "js" | "mjs" | "cjs" => return Some(Lang::JavaScript),
+                "json" | "jsonc" => return Some(Lang::Json),
+                "go" => return Some(Lang::Go),
+                "html" | "htm" | "cshtml" | "razor" => return Some(Lang::Html),
+                "css" | "scss" | "less" => return Some(Lang::Css),
+                "md" | "markdown" => return Some(Lang::Markdown),
+                "cs" => return Some(Lang::CSharp),
+                "sh" | "bash" | "zsh" | "ksh" => return Some(Lang::Bash),
+                _ => {}
+            }
+        }
+        // Shell rc/profile files have no extension — Path::extension returns
+        // None for names like `.zshrc` because there's only a leading dot.
+        // tree-sitter-bash handles zsh/ksh syntax well enough as a fallback.
+        let name = path.file_name().and_then(|s| s.to_str())?;
+        match name {
+            ".zshrc" | ".zprofile" | ".zshenv" | ".zlogin" | ".zlogout"
+            | ".bashrc" | ".bash_profile" | ".bash_login" | ".bash_logout"
+            | ".profile" | ".kshrc" => Some(Lang::Bash),
             _ => None,
         }
     }
@@ -49,6 +62,7 @@ impl Lang {
             Lang::Css => tree_sitter_css::LANGUAGE.into(),
             Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
             Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Lang::Bash => tree_sitter_bash::LANGUAGE.into(),
         }
     }
 
@@ -69,6 +83,7 @@ impl Lang {
             Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY.into(),
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
             Lang::CSharp => tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(),
+            Lang::Bash => tree_sitter_bash::HIGHLIGHT_QUERY.into(),
         }
     }
 }
