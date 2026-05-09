@@ -12,6 +12,8 @@ pub struct Config {
     pub colors: HashMap<String, String>,
     #[serde(default)]
     pub start_page: StartPageConfig,
+    #[serde(default)]
+    pub whitespace: WhitespaceConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -21,6 +23,24 @@ pub struct StartPageConfig {
     /// centered vertically. An empty / missing value falls back to the logo.
     #[serde(default)]
     pub lines: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct WhitespaceConfig {
+    /// Render visual markers for tabs and trailing whitespace. On by default
+    /// — set `show = false` in the config to turn it off.
+    #[serde(default = "default_whitespace_show")]
+    pub show: bool,
+}
+
+fn default_whitespace_show() -> bool {
+    true
+}
+
+impl Default for WhitespaceConfig {
+    fn default() -> Self {
+        Self { show: true }
+    }
 }
 
 fn default_schema() -> u32 {
@@ -33,6 +53,7 @@ impl Default for Config {
             schema_version: 1,
             colors: HashMap::new(),
             start_page: StartPageConfig::default(),
+            whitespace: WhitespaceConfig::default(),
         }
     }
 }

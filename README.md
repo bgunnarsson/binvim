@@ -60,6 +60,9 @@ lines = [
     "  hello, world  ",
     "  press : to start ",
 ]
+
+[whitespace]
+show = true   # render tabs as `→ ` and trailing whitespace as `·`. On by default.
 ```
 
 Values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head.
