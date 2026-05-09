@@ -16,6 +16,9 @@ pub struct Buffer {
     /// the auto-reload watcher — if the file's current mtime is newer and
     /// the buffer isn't dirty, the watcher reloads from disk.
     pub disk_mtime: Option<SystemTime>,
+    /// Synthetic label for path-less internal buffers (e.g. `[Health]`). Lets
+    /// the buffer list show something meaningful instead of `[No Name]`.
+    pub display_name: Option<String>,
 }
 
 impl Default for Buffer {
@@ -32,6 +35,7 @@ impl Buffer {
             dirty: false,
             version: 0,
             disk_mtime: None,
+            display_name: None,
         }
     }
 
@@ -48,6 +52,7 @@ impl Buffer {
                 dirty: false,
                 version: 0,
                 disk_mtime: mtime,
+                display_name: None,
             })
         } else {
             Ok(Self {
@@ -56,6 +61,7 @@ impl Buffer {
                 dirty: false,
                 version: 0,
                 disk_mtime: None,
+                display_name: None,
             })
         }
     }

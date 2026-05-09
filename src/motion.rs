@@ -502,6 +502,7 @@ mod tests {
             dirty: false,
             version: 0,
             disk_mtime: None,
+            display_name: None,
         }
     }
 

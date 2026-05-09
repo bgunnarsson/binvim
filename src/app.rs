@@ -3714,11 +3714,12 @@ impl App {
     /// buffer has no path so `:w` won't write it back to disk; the user can
     /// `:bd` to dismiss it.
     fn cmd_health(&mut self) {
-        let report = self.build_health_report();
+        // Push an empty buffer first, switch to it, then write the report into
+        // the live `self.buffer`. Building the report afterwards means the
+        // buffer list reflects the post-switch state — the new `[Health]`
+        // buffer shows up as active rather than the previous buffer.
         let mut buf = Buffer::empty();
-        buf.insert_at_idx(0, &report);
-        buf.dirty = false;
-        buf.version = 0;
+        buf.display_name = Some("[Health]".into());
         let stash = BufferStash {
             buffer: buf,
             ..Default::default()
@@ -3729,6 +3730,10 @@ impl App {
             self.status_msg = format!("error: {e}");
             return;
         }
+        let report = self.build_health_report();
+        self.buffer.insert_at_idx(0, &report);
+        self.buffer.dirty = false;
+        self.buffer.version = 0;
         self.show_start_page = false;
         self.cursor = Cursor::default();
         self.view_top = 0;
@@ -3741,7 +3746,7 @@ impl App {
         out.push_str("================\n\n");
 
         let pid = std::process::id();
-        let (cpu, mem) = read_process_stats(pid);
+        let (cpu, mem, rss_mb) = read_process_stats(pid);
         let cwd = std::env::current_dir()
             .map(|p| p.display().to_string())
             .unwrap_or_else(|_| ".".into());
@@ -3771,24 +3776,37 @@ impl App {
         ));
         out.push_str(&format!(
             "  RAM: {}\n",
-            mem.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into())
+            match (mem, rss_mb) {
+                (Some(pct), Some(mb)) => format!("{pct:.1}% - {mb:.0}MB"),
+                (Some(pct), None) => format!("{pct:.1}%"),
+                (None, Some(mb)) => format!("{mb:.0}MB"),
+                (None, None) => "—".into(),
+            }
         ));
         out.push('\n');
 
-        // Buffers
+        // Buffers. The active slot in `self.buffers` is taken (its real
+        // contents live in `self.buffer`/`self.cursor`/etc.), so reading
+        // `stash.buffer.path` for that index would always show `[No Name]`.
+        // Pull the live buffer for the active slot instead.
         out.push_str(&format!("Buffers ({})\n", self.buffers.len()));
-        for (i, stash) in self.buffers.iter().enumerate() {
-            let name = stash
-                .buffer
+        for i in 0..self.buffers.len() {
+            let buf = if i == self.active {
+                &self.buffer
+            } else {
+                &self.buffers[i].buffer
+            };
+            let name = buf
                 .path
                 .as_ref()
                 .map(|p| p.display().to_string())
+                .or_else(|| buf.display_name.clone())
                 .unwrap_or_else(|| "[No Name]".into());
             let mut tags = Vec::new();
             if i == self.active {
                 tags.push("active");
             }
-            if stash.buffer.dirty {
+            if buf.dirty {
                 tags.push("dirty");
             }
             let tag_str = if tags.is_empty() {
@@ -4821,20 +4839,25 @@ fn set_system_clipboard(text: &str) {
 /// Shell out to `ps` for a snapshot of the process's CPU% and memory share.
 /// Both fields are best-effort — a failure just shows up as `—` in the
 /// `:health` report rather than crashing the editor.
-fn read_process_stats(pid: u32) -> (Option<f64>, Option<f64>) {
+fn read_process_stats(pid: u32) -> (Option<f64>, Option<f64>, Option<f64>) {
     let out = std::process::Command::new("ps")
-        .args(["-o", "%cpu=,%mem=", "-p", &pid.to_string()])
+        .args(["-o", "%cpu=,%mem=,rss=", "-p", &pid.to_string()])
         .output();
-    let Ok(out) = out else { return (None, None) };
+    let Ok(out) = out else { return (None, None, None) };
     if !out.status.success() {
-        return (None, None);
+        return (None, None, None);
     }
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.trim();
     let mut it = line.split_whitespace();
     let cpu = it.next().and_then(|s| s.parse::<f64>().ok());
     let mem = it.next().and_then(|s| s.parse::<f64>().ok());
-    (cpu, mem)
+    // `rss` is reported in KB on macOS/Linux; convert to MB for the report.
+    let rss_mb = it
+        .next()
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|kb| kb / 1024.0);
+    (cpu, mem, rss_mb)
 }
 
 /// Keys that survive the start-page guard while in Normal mode: the cmdline
