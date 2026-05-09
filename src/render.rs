@@ -11,7 +11,7 @@ use crossterm::{
 };
 use std::io::Write;
 
-const TAB_WIDTH: usize = 4;
+pub const TAB_WIDTH: usize = 4;
 
 pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, BeginSynchronizedUpdate, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
@@ -753,6 +753,12 @@ fn draw_line_with_selection(
     let search_matches = app.line_search_matches(line_idx);
     let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
+    let view_left = app.view_left;
+    // Visual column from the start of the line — tracks where each char
+    // would land if `view_left == 0`. Subtract `view_left` to get the
+    // on-screen column.
+    let mut line_visual_pos = 0usize;
+    // Visual columns actually written to the terminal in this pass.
     let mut visual_used = 0usize;
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
@@ -780,9 +786,28 @@ fn draw_line_with_selection(
             *slot = Some(merge_severity(*slot, d.severity));
         }
     }
+    let mut clipped_right = false;
     for (col, c) in chars.iter().enumerate() {
         let display_w = if *c == '\t' { TAB_WIDTH } else { 1 };
-        if visual_used + display_w > avail {
+        let char_visual_end = line_visual_pos + display_w;
+        // Entirely off the left edge — advance trackers, render nothing.
+        if char_visual_end <= view_left {
+            line_visual_pos = char_visual_end;
+            byte_off += c.len_utf8();
+            continue;
+        }
+        // Visible window for this char. `visible_left == line_visual_pos`
+        // when the char isn't clipped on the left; otherwise it's the
+        // viewport edge mid-tab.
+        let visible_left = line_visual_pos.max(view_left);
+        let visible_right = char_visual_end.min(view_left + avail);
+        if visible_right <= visible_left {
+            clipped_right = true;
+            break;
+        }
+        let visible_w = visible_right - visible_left;
+        if visual_used + visible_w > avail {
+            clipped_right = true;
             break;
         }
         let in_sel = sel.map(|(s, e)| col >= s && col < e).unwrap_or(false);
@@ -826,10 +851,14 @@ fn draw_line_with_selection(
             )?;
         }
         if *c == '\t' {
-            if show_hidden {
-                queue!(out, Print('→'), Print(" ".repeat(TAB_WIDTH - 1)))?;
+            // For tabs that straddle `view_left`, the leading `→` glyph
+            // gets clipped — only render space-fill for the visible width.
+            let arrow_visible = show_hidden && line_visual_pos >= view_left;
+            if arrow_visible {
+                let fill = visible_w.saturating_sub(1);
+                queue!(out, Print('→'), Print(" ".repeat(fill)))?;
             } else {
-                queue!(out, Print(" ".repeat(TAB_WIDTH)))?;
+                queue!(out, Print(" ".repeat(visible_w)))?;
             }
         } else if *c == ' ' && show_hidden {
             queue!(out, Print('·'))?;
@@ -846,7 +875,8 @@ fn draw_line_with_selection(
         } else if in_search || syntax_color.is_some() || dim || render_hidden {
             queue!(out, ResetColor)?;
         }
-        visual_used += display_w;
+        visual_used += visible_w;
+        line_visual_pos = char_visual_end;
         byte_off += c.len_utf8();
     }
     if chars.is_empty() {
@@ -863,9 +893,10 @@ fn draw_line_with_selection(
     }
 
     // EOL marker — sits at the column right after the last char so the user
-    // can see where lines actually end (vs. trailing whitespace). One column
-    // of slack so the row can't wrap onto the next line.
-    if show_hidden && visual_used + 1 <= avail {
+    // can see where lines actually end (vs. trailing whitespace). Only when
+    // the entire line content fit; if we clipped right we're already at the
+    // edge, and the marker wouldn't be at the line's actual end anyway.
+    if show_hidden && !clipped_right && visual_used + 1 <= avail {
         queue!(
             out,
             SetForegroundColor(dim_color),
@@ -1206,7 +1237,10 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
             visual += 1;
         }
     }
-    let col = (gutter + visual) as u16;
+    // Account for horizontal scroll. `adjust_viewport` keeps the cursor
+    // within `[view_left, view_left + buffer_cols)`, so subtraction is safe.
+    let on_screen = visual.saturating_sub(app.view_left);
+    let col = (gutter + on_screen) as u16;
     queue!(out, MoveTo(col, row))?;
     Ok(())
 }

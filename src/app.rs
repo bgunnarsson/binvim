@@ -46,6 +46,9 @@ pub struct BufferStash {
     pub buffer: Buffer,
     pub cursor: Cursor,
     pub view_top: usize,
+    /// Visual columns hidden off the left edge — drives horizontal scrolling
+    /// for long lines. Counted in display columns (tabs count as TAB_WIDTH).
+    pub view_left: usize,
     pub history: History,
     pub visual_anchor: Option<Cursor>,
     pub marks: HashMap<char, (usize, usize)>,
@@ -247,6 +250,8 @@ pub struct App {
     pub cmdline: String,
     pub status_msg: String,
     pub view_top: usize,
+    /// Visual columns hidden off the left edge of the buffer area.
+    pub view_left: usize,
     pub width: u16,
     pub height: u16,
     pub should_quit: bool,
@@ -305,6 +310,7 @@ impl App {
             cmdline: String::new(),
             status_msg: String::new(),
             view_top: 0,
+            view_left: 0,
             width: w,
             height: h,
             should_quit: false,
@@ -811,7 +817,11 @@ impl App {
             return;
         }
         let line_len = self.buffer.line_len(buf_line);
-        let raw_col = col.saturating_sub(gutter);
+        // `raw_col` is what was clicked relative to the gutter; add the
+        // horizontal scroll offset to get the column inside the line. The
+        // existing tab-handling caveat (each char treated as 1 col) carries
+        // over — fixing that is orthogonal to scrolling support.
+        let raw_col = col.saturating_sub(gutter) + self.view_left;
         let max_col = if line_len == 0 { 0 } else { line_len - 1 };
         let buf_col = raw_col.min(max_col);
 
@@ -2458,18 +2468,56 @@ impl App {
 
     fn adjust_viewport(&mut self) {
         let buffer_rows = self.buffer_rows();
-        if buffer_rows == 0 {
+        if buffer_rows > 0 {
+            let scrolloff = 3.min(buffer_rows / 2);
+            let cur = self.cursor.line;
+            if cur < self.view_top + scrolloff {
+                self.view_top = cur.saturating_sub(scrolloff);
+            }
+            if cur >= self.view_top + buffer_rows.saturating_sub(scrolloff) {
+                let want = cur + scrolloff + 1;
+                self.view_top = want.saturating_sub(buffer_rows);
+            }
+        }
+
+        // Horizontal — track the cursor's visual column instead of the char
+        // index so tabs (TAB_WIDTH columns) don't make the viewport jump.
+        let buffer_cols = (self.width as usize).saturating_sub(self.gutter_width());
+        if buffer_cols == 0 {
             return;
         }
-        let scrolloff = 3.min(buffer_rows / 2);
-        let cur = self.cursor.line;
-        if cur < self.view_top + scrolloff {
-            self.view_top = cur.saturating_sub(scrolloff);
+        let scrolloff_h = 5.min(buffer_cols / 4);
+        let cur_vis = self.cursor_visual_col();
+        if cur_vis < self.view_left + scrolloff_h {
+            self.view_left = cur_vis.saturating_sub(scrolloff_h);
         }
-        if cur >= self.view_top + buffer_rows.saturating_sub(scrolloff) {
-            let want = cur + scrolloff + 1;
-            self.view_top = want.saturating_sub(buffer_rows);
+        let right_edge = self.view_left + buffer_cols.saturating_sub(scrolloff_h);
+        if cur_vis >= right_edge {
+            let want = cur_vis + scrolloff_h + 1;
+            self.view_left = want.saturating_sub(buffer_cols);
         }
+    }
+
+    /// Visual column of the cursor on its own line, treating tabs as
+    /// `TAB_WIDTH` columns. Used by horizontal viewport tracking and cursor
+    /// placement.
+    pub fn cursor_visual_col(&self) -> usize {
+        if self.cursor.line >= self.buffer.line_count() {
+            return 0;
+        }
+        let line = self.buffer.rope.line(self.cursor.line);
+        let mut v = 0usize;
+        for (i, c) in line.chars().enumerate() {
+            if i >= self.cursor.col {
+                break;
+            }
+            if c == '\t' {
+                v += crate::render::TAB_WIDTH;
+            } else {
+                v += 1;
+            }
+        }
+        v
     }
 
     pub fn buffer_rows(&self) -> usize {
@@ -2573,6 +2621,7 @@ impl App {
             buffer: std::mem::take(&mut self.buffer),
             cursor: std::mem::take(&mut self.cursor),
             view_top: std::mem::take(&mut self.view_top),
+            view_left: std::mem::take(&mut self.view_left),
             history: std::mem::take(&mut self.history),
             visual_anchor: self.visual_anchor.take(),
             marks: std::mem::take(&mut self.marks),
@@ -2586,6 +2635,7 @@ impl App {
         self.buffer = stash.buffer;
         self.cursor = stash.cursor;
         self.view_top = stash.view_top;
+        self.view_left = stash.view_left;
         self.history = stash.history;
         self.visual_anchor = stash.visual_anchor;
         self.marks = stash.marks;
@@ -2694,6 +2744,7 @@ impl App {
         self.show_start_page = false;
         self.cursor = Cursor::default();
         self.view_top = 0;
+        self.view_left = 0;
     }
 
     fn build_health_report(&self) -> String {
@@ -2974,6 +3025,7 @@ impl App {
             self.buffer = Buffer::empty();
             self.cursor = Cursor::default();
             self.view_top = 0;
+            self.view_left = 0;
             self.history = History::default();
             self.visual_anchor = None;
             self.marks.clear();
