@@ -636,7 +636,49 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
+const START_LOGO: &[&str] = &[
+    "██████╗ ██╗███╗   ██╗██╗   ██╗██╗███╗   ███╗",
+    "██╔══██╗██║████╗  ██║██║   ██║██║████╗ ████║",
+    "██████╔╝██║██╔██╗ ██║██║   ██║██║██╔████╔██║",
+    "██╔══██╗██║██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║",
+    "██████╔╝██║██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║",
+    "╚═════╝ ╚═╝╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝",
+];
+
+fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
+    let rows = app.buffer_rows();
+    let total_w = app.width as usize;
+    // Blank every row so leftover content from a prior frame can't bleed through.
+    for row in 0..rows {
+        queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+    }
+    let logo_w = START_LOGO.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    if logo_w == 0 || logo_w + 2 > total_w {
+        return Ok(());
+    }
+    let logo_h = START_LOGO.len();
+    if logo_h > rows {
+        return Ok(());
+    }
+    let top = (rows.saturating_sub(logo_h)) / 2;
+    let left = (total_w.saturating_sub(logo_w)) / 2;
+    let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+    for (i, line) in START_LOGO.iter().enumerate() {
+        queue!(
+            out,
+            MoveTo(left as u16, (top + i) as u16),
+            SetForegroundColor(mauve),
+            Print(line),
+            ResetColor,
+        )?;
+    }
+    Ok(())
+}
+
 fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
+    if app.show_start_page {
+        return draw_start_page(out, app);
+    }
     let rows = app.buffer_rows();
     let gutter = app.gutter_width();
     let avail = (app.width as usize).saturating_sub(gutter);
@@ -1072,6 +1114,14 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
 
 
 fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
+    // On the start page, no buffer cursor — only the cmdline/picker overlays
+    // ever steal focus from the logo.
+    if app.show_start_page
+        && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
+    {
+        queue!(out, Hide)?;
+        return Ok(());
+    }
     let style = match app.mode {
         Mode::Insert => SetCursorStyle::SteadyBar,
         _ => SetCursorStyle::SteadyBlock,

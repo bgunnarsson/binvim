@@ -279,6 +279,9 @@ pub struct App {
     pub whichkey: Option<WhichKeyState>,
     pub leader_pressed_at: Option<Instant>,
     pub git_branch: Option<String>,
+    /// True when binvim was launched with no path — render the start page in
+    /// place of the empty buffer until the user opens something.
+    pub show_start_page: bool,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -286,6 +289,7 @@ pub struct App {
 
 impl App {
     pub fn new(path: Option<PathBuf>) -> Result<Self> {
+        let show_start_page = path.is_none();
         let buffer = match path {
             Some(p) => Buffer::from_path(p)?,
             None => Buffer::empty(),
@@ -329,6 +333,7 @@ impl App {
             whichkey: None,
             leader_pressed_at: None,
             git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+            show_start_page,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -679,6 +684,14 @@ impl App {
                         return Ok(());
                     }
                     self.macro_buffer.push(k);
+                }
+                // While the start page is visible the buffer is read-only —
+                // only the cmdline (`:e`, `:q`) and the leader pickers can
+                // navigate away from it.
+                if self.show_start_page && matches!(self.mode, Mode::Normal)
+                    && !is_start_page_passthrough(&k)
+                {
+                    return Ok(());
                 }
                 match self.mode {
                     Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
@@ -2565,6 +2578,7 @@ impl App {
     pub fn open_buffer(&mut self, path: PathBuf) -> Result<()> {
         // Switch to existing buffer if this path is already open.
         if self.buffer.path.as_deref() == Some(path.as_path()) {
+            self.show_start_page = false;
             return Ok(());
         }
         for (i, stash) in self.buffers.iter().enumerate() {
@@ -2586,6 +2600,7 @@ impl App {
         self.lsp_attach_active();
         self.refresh_git_branch();
         self.refresh_editorconfig();
+        self.show_start_page = false;
         Ok(())
     }
 
@@ -2762,7 +2777,7 @@ impl App {
             anyhow::bail!("E89: No write since last change (use :bd!)");
         }
         if self.buffers.len() == 1 {
-            // Last buffer — replace with an empty one.
+            // Last buffer — replace with an empty one and resurface the start page.
             self.buffer = Buffer::empty();
             self.cursor = Cursor::default();
             self.view_top = 0;
@@ -2772,6 +2787,7 @@ impl App {
             self.jumplist.clear();
             self.jump_idx = 0;
             self.buffers[0] = BufferStash::default();
+            self.show_start_page = true;
             self.status_msg = "Buffer closed".into();
             return Ok(());
         }
@@ -3195,6 +3211,21 @@ fn detect_git_branch(start: &std::path::Path) -> Option<String> {
 
 /// Map an opening pair character to its closing counterpart, or `None` for chars
 /// that don't auto-pair.
+/// Keys that survive the start-page guard while in Normal mode: the cmdline
+/// (`:`) and the leader (`<space>`) are the only routes off the start page,
+/// plus the usual cancel/interrupt no-ops.
+fn is_start_page_passthrough(k: &KeyEvent) -> bool {
+    let no_mods = !k.modifiers.contains(KeyModifiers::CONTROL)
+        && !k.modifiers.contains(KeyModifiers::ALT);
+    match k.code {
+        KeyCode::Char(':') if no_mods => true,
+        KeyCode::Char(' ') if no_mods => true,
+        KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => true,
+        KeyCode::Esc => true,
+        _ => false,
+    }
+}
+
 fn open_pair_for(c: char) -> Option<char> {
     match c {
         '(' => Some(')'),
