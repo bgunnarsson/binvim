@@ -194,10 +194,10 @@ pub struct ServerSpec {
 /// framework Tailwind supports out of the box).
 ///
 /// For Razor (.cshtml/.razor) files, csharp-ls is layered on as an
-/// auxiliary so the user gets at least C# identifier completions inside
-/// `@{}` and `@code{}` blocks even when no Razor-specialised server
-/// (rzls/OmniSharp) is installed. The primary remains the html LSP in
-/// that case so markup completions still work.
+/// auxiliary so the user gets C# identifier completions inside `@{}`
+/// and `@code{}` blocks even when OmniSharp isn't installed. The
+/// primary is OmniSharp when present, falling back to the html LSP
+/// for markup-only completions.
 pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
     let mut specs = Vec::new();
     if let Some(primary) = primary_spec_for_path(path) {
@@ -320,23 +320,10 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             initialization_options: Value::Null,
         }),
         "cshtml" | "razor" => {
-            // Razor IntelliSense is best with rzls (Razor Language Server) but
-            // it isn't packaged in mason or as a NuGet/dotnet tool today. Try
-            // it anyway in case the user installed it manually — and otherwise
-            // fall back to OmniSharp, which handles .cshtml as a C# document
-            // and gives real IntelliSense for the embedded code blocks (@{},
-            // @Model.X, etc.). Better than html-LSP-only.
-            let rzls = ServerSpec {
-                key: "rzls".into(),
-                language_id: "razor".into(),
-                cmd_candidates: vec!["rzls".into(), local_bin("rzls", "rzls")],
-                args: vec![],
-                root_markers: vec!["*.csproj".into(), "*.sln".into(), ".git".into()],
-                initialization_options: Value::Null,
-            };
-            if resolve_command(&rzls.cmd_candidates).is_some() {
-                return Some(rzls);
-            }
+            // OmniSharp handles .cshtml as a C# document and gives real
+            // IntelliSense for the embedded code blocks (@{}, @Model.X, etc.).
+            // If OmniSharp isn't installed, fall back to the html LSP so at
+            // least markup completion still works.
             let omnisharp = ServerSpec {
                 key: "omnisharp".into(),
                 language_id: "razor".into(),
@@ -448,11 +435,11 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
     }
 }
 
-/// csharp-ls layered on top of the html LSP for Razor files so users get
-/// some C# completion in `@{}` / `@code{}` blocks until they install a
-/// dedicated Razor server (rzls / OmniSharp). Skipped for plain .cs since
-/// csharp-ls is already the primary there — `specs_for_path` deduplicates
-/// by key in that case.
+/// csharp-ls layered on top of the primary Razor server (OmniSharp or
+/// html LSP) so users get C# completion in `@{}` / `@code{}` blocks even
+/// when OmniSharp isn't installed. Skipped for plain .cs since csharp-ls
+/// is already the primary there — `specs_for_path` deduplicates by key
+/// in that case.
 fn csharp_aux_spec_for_path(path: &Path) -> Option<ServerSpec> {
     let ext = path.extension().and_then(|s| s.to_str())?.to_ascii_lowercase();
     if ext != "cshtml" && ext != "razor" {

@@ -107,7 +107,6 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `astro-ls`                      | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
 | `csharp-ls`                     | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
 | `OmniSharp`                     | Razor / `.cshtml` IntelliSense (full)    | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
-| `rzls`                          | Razor language server                    | community tool — install if you have it; binvim auto-detects             |
 | `biome` (project-local)         | JSON LSP + JS / TS / JSON formatter      | `npm i -D @biomejs/biome` in the project                                  |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |
