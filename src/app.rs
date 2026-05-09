@@ -104,6 +104,17 @@ pub struct WhichKeyState {
 
 pub const WHICHKEY_DELAY: Duration = Duration::from_millis(250);
 
+/// How long the yank flash stays painted before it fades.
+pub const YANK_FLASH_DURATION: Duration = Duration::from_millis(200);
+
+/// A char-index range that's currently flashing in the buffer to confirm a
+/// yank. Cleared automatically once `expires_at` passes.
+pub struct YankHighlight {
+    pub start: usize,
+    pub end: usize,
+    pub expires_at: Instant,
+}
+
 fn leader_entries() -> Vec<(String, String)> {
     vec![
         ("<space>".into(), "Files".into()),
@@ -287,6 +298,9 @@ pub struct App {
     /// True when binvim was launched with no path — render the start page in
     /// place of the empty buffer until the user opens something.
     pub show_start_page: bool,
+    /// Active yank flash, if any. Drained automatically by the main loop
+    /// once its `expires_at` deadline passes.
+    pub yank_highlight: Option<YankHighlight>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -340,6 +354,7 @@ impl App {
             leader_pressed_at: None,
             git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
             show_start_page,
+            yank_highlight: None,
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -365,7 +380,7 @@ impl App {
             // which-key popup appears promptly when the user pauses. The poll
             // wakes early on any input event, so a 100ms ceiling is fine even
             // when the LSP backlog is being drained in chunks.
-            let poll_dur = match self.leader_pressed_at {
+            let mut poll_dur = match self.leader_pressed_at {
                 Some(t) => {
                     let target = t + WHICHKEY_DELAY;
                     target
@@ -375,6 +390,15 @@ impl App {
                 }
                 None => Duration::from_millis(100),
             };
+            // A live yank flash needs us to wake up at its deadline so the
+            // highlight clears on time.
+            if let Some(h) = self.yank_highlight.as_ref() {
+                let until = h
+                    .expires_at
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                poll_dur = poll_dur.min(until);
+            }
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
@@ -400,6 +424,14 @@ impl App {
             if !events.is_empty() {
                 self.handle_lsp_events(events);
                 needs_render = true;
+            }
+            // Drop the yank flash once its deadline has passed so the next
+            // render paints the buffer cleanly.
+            if let Some(h) = self.yank_highlight.as_ref() {
+                if Instant::now() >= h.expires_at {
+                    self.yank_highlight = None;
+                    needs_render = true;
+                }
             }
         }
         Ok(())
@@ -1323,6 +1355,39 @@ impl App {
         self.visual_anchor = None;
     }
 
+    /// Set up a yank flash over the given char-index range. The renderer
+    /// paints the range in a Peach background until the deadline passes.
+    fn flash_yank(&mut self, start: usize, end: usize) {
+        if end <= start {
+            return;
+        }
+        self.yank_highlight = Some(YankHighlight {
+            start,
+            end,
+            expires_at: Instant::now() + YANK_FLASH_DURATION,
+        });
+    }
+
+    /// Per-line view of the active yank flash, returned as a char-column
+    /// range on `line`. Returns `None` when the line is outside the range
+    /// or the flash has expired.
+    pub fn line_yank_highlight(&self, line: usize) -> Option<(usize, usize)> {
+        let h = self.yank_highlight.as_ref()?;
+        if Instant::now() >= h.expires_at {
+            return None;
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        let line_len = self.buffer.line_len(line);
+        let line_content_end = line_start + line_len;
+        let s = h.start.saturating_sub(line_start);
+        let e_global = h.end.min(line_content_end);
+        let e = e_global.saturating_sub(line_start);
+        if e <= s {
+            return None;
+        }
+        Some((s, e.min(line_len)))
+    }
+
     fn write_register(&mut self, target: Option<char>, text: String, linewise: bool) {
         if matches!(target, Some('_')) {
             return;
@@ -1525,6 +1590,7 @@ impl App {
         match op {
             Operator::Yank => {
                 self.write_yank_register(target, removed, linewise);
+                self.flash_yank(start, end);
                 self.cursor_to_idx(start);
                 self.clamp_cursor_normal();
                 self.exit_visual();
@@ -1585,6 +1651,7 @@ impl App {
         match op {
             Operator::Yank => {
                 self.write_yank_register(target, removed, range.linewise);
+                self.flash_yank(range.start, range.end);
             }
             Operator::Delete => {
                 self.write_register(target, removed, range.linewise);
@@ -2014,6 +2081,7 @@ impl App {
         match op {
             Operator::Yank => {
                 self.write_yank_register(target, removed, linewise);
+                self.flash_yank(start, end);
             }
             Operator::Delete => {
                 self.write_register(target, removed, linewise);
@@ -2141,6 +2209,7 @@ impl App {
             Operator::Yank => {
                 let n = l2 - l1 + 1;
                 self.write_yank_register(target, reg_text, true);
+                self.flash_yank(start, end);
                 self.status_msg = if n == 1 {
                     "1 line yanked".into()
                 } else {
@@ -3209,6 +3278,7 @@ impl App {
             raw
         };
         self.write_yank_register(None, reg_text, true);
+        self.flash_yank(start, end);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
     }
 

@@ -751,6 +751,7 @@ fn draw_line_with_selection(
     }
     let sel = app.line_selection(line_idx);
     let search_matches = app.line_search_matches(line_idx);
+    let yank_flash = app.line_yank_highlight(line_idx);
     let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
     let view_left = app.view_left;
@@ -812,6 +813,9 @@ fn draw_line_with_selection(
         }
         let in_sel = sel.map(|(s, e)| col >= s && col < e).unwrap_or(false);
         let in_search = !in_sel && search_matches.iter().any(|(s, e)| col >= *s && col < *e);
+        let in_yank_flash = !in_sel
+            && !in_search
+            && yank_flash.map(|(s, e)| col >= s && col < e).unwrap_or(false);
         let syntax_color = app
             .highlight_cache
             .as_ref()
@@ -829,6 +833,14 @@ fn draw_line_with_selection(
             queue!(
                 out,
                 SetBackgroundColor(Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
+                SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
+            )?;
+        } else if in_yank_flash {
+            // Distinct Peach flash — different from search Yellow so the two
+            // never visually collide on shared text.
+            queue!(
+                out,
+                SetBackgroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
                 SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
             )?;
         } else if render_hidden {
@@ -872,7 +884,7 @@ fn draw_line_with_selection(
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
-        } else if in_search || syntax_color.is_some() || dim || render_hidden {
+        } else if in_search || in_yank_flash || syntax_color.is_some() || dim || render_hidden {
             queue!(out, ResetColor)?;
         }
         visual_used += visible_w;
