@@ -6,6 +6,7 @@
 # Optional environment overrides:
 #   BINVIM_VERSION=v0.1.0       pin to a specific tag (default: latest release)
 #   BINVIM_INSTALL_DIR=/opt/bin override install directory (default: $HOME/.local/bin)
+#   BINVIM_NO_ALIAS=1           skip adding 'alias bim=binvim' to your shell profile
 #
 # macOS users: use Homebrew instead — `brew install bgunnarsson/binvim/binvim`.
 
@@ -19,6 +20,41 @@ info() { printf '==> %s\n' "$1"; }
 
 need() {
     command -v "$1" >/dev/null 2>&1 || err "missing required tool: $1"
+}
+
+configure_alias() {
+    if [ "${BINVIM_NO_ALIAS:-}" = "1" ]; then
+        return
+    fi
+
+    rc=""
+    line='alias bim=binvim'
+    case "${SHELL:-}" in
+        */zsh)  rc="$HOME/.zshrc" ;;
+        */bash) rc="$HOME/.bashrc" ;;
+        */fish)
+            rc="$HOME/.config/fish/config.fish"
+            line='alias bim binvim'
+            ;;
+        *)
+            printf '\n'
+            printf 'note: shell %s not recognised — add this to your shell profile manually:\n\n' "${SHELL:-unknown}"
+            printf '          alias bim=binvim\n\n'
+            return
+            ;;
+    esac
+
+    if [ -f "$rc" ] && grep -qE '^[[:space:]]*alias[[:space:]]+bim([[:space:]]|=)' "$rc"; then
+        info "'bim' alias already present in $rc"
+        return
+    fi
+
+    mkdir -p "$(dirname "$rc")"
+    {
+        printf '\n# binvim alias (added by install.sh)\n'
+        printf '%s\n' "$line"
+    } >> "$rc"
+    info "added '$line' to $rc — start a new shell or 'source $rc' to use it"
 }
 
 need curl
@@ -81,9 +117,7 @@ chmod +x "$INSTALL_DIR/binvim"
 info "installed binvim ${BINVIM_VERSION} → $INSTALL_DIR/binvim"
 
 case ":$PATH:" in
-    *":$INSTALL_DIR:"*)
-        info "ready — run 'binvim'"
-        ;;
+    *":$INSTALL_DIR:"*) ;;
     *)
         printf '\n'
         printf 'note: %s is not on your PATH.\n' "$INSTALL_DIR"
@@ -91,3 +125,5 @@ case ":$PATH:" in
         printf '          export PATH="%s:$PATH"\n\n' "$INSTALL_DIR"
         ;;
 esac
+
+configure_alias

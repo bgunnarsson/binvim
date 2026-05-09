@@ -11,6 +11,18 @@ class Binvim < Formula
     system "cargo", "install", *std_cargo_args
   end
 
+  def caveats
+    <<~EOS
+      To use the `bim` shortcut, add an alias to your shell profile:
+
+        # bash / zsh (~/.bashrc, ~/.zshrc)
+        alias bim=binvim
+
+        # fish (~/.config/fish/config.fish)
+        alias bim binvim
+    EOS
+  end
+
   test do
     assert_predicate bin/"binvim", :executable?
   end
