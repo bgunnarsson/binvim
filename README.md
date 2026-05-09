@@ -24,7 +24,7 @@ The binary lands at `target/release/binvim`.
 binvim [path]
 ```
 
-If `path` is omitted, binvim opens with an empty buffer.
+If `path` is omitted, binvim opens on a start page showing a centered `binvim` logo. The logo is read-only; press `:` to enter a command (`:e <path>`, `:q`) or `<space>` to open the file picker.
 
 ## Leader bindings
 
@@ -45,9 +45,17 @@ schema_version = 1
 keyword = "#cba6f7"
 "keyword.return" = "Magenta"
 string = "#a6e3a1"
+
+[start_page]
+lines = [
+    "  hello, world  ",
+    "  press : to start ",
+]
 ```
 
 Values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head.
+
+`start_page.lines` overrides the baked-in ASCII logo shown when binvim is launched with no path. Each entry renders on its own row, horizontally centered; the block as a whole is vertically centered. Omit it (or leave it empty) to keep the default logo.
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 

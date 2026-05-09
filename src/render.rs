@@ -652,18 +652,32 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     for row in 0..rows {
         queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
     }
-    let logo_w = START_LOGO.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    if logo_w == 0 || logo_w + 2 > total_w {
+    // User config wins; fall back to the baked-in logo when no override is set.
+    let configured: Vec<&str> = app
+        .config
+        .start_page
+        .lines
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+    let lines: &[&str] = if configured.is_empty() {
+        START_LOGO
+    } else {
+        &configured
+    };
+    let block_w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+    if block_w == 0 || block_w > total_w {
         return Ok(());
     }
-    let logo_h = START_LOGO.len();
-    if logo_h > rows {
+    let block_h = lines.len();
+    if block_h > rows {
         return Ok(());
     }
-    let top = (rows.saturating_sub(logo_h)) / 2;
-    let left = (total_w.saturating_sub(logo_w)) / 2;
+    let top = (rows.saturating_sub(block_h)) / 2;
     let blue = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
-    for (i, line) in START_LOGO.iter().enumerate() {
+    for (i, line) in lines.iter().enumerate() {
+        let line_w = line.chars().count();
+        let left = (total_w.saturating_sub(line_w)) / 2;
         queue!(
             out,
             MoveTo(left as u16, (top + i) as u16),

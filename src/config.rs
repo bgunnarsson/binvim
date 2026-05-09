@@ -10,6 +10,17 @@ pub struct Config {
     pub schema_version: u32,
     #[serde(default)]
     pub colors: HashMap<String, String>,
+    #[serde(default)]
+    pub start_page: StartPageConfig,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct StartPageConfig {
+    /// Lines to render in place of the baked-in `binvim` logo. Each entry is
+    /// drawn on its own row, centered horizontally; the block as a whole is
+    /// centered vertically. An empty / missing value falls back to the logo.
+    #[serde(default)]
+    pub lines: Vec<String>,
 }
 
 fn default_schema() -> u32 {
@@ -21,6 +32,7 @@ impl Default for Config {
         Self {
             schema_version: 1,
             colors: HashMap::new(),
+            start_page: StartPageConfig::default(),
         }
     }
 }
