@@ -2139,7 +2139,13 @@ impl App {
 
         match op {
             Operator::Yank => {
+                let n = l2 - l1 + 1;
                 self.write_yank_register(target, reg_text, true);
+                self.status_msg = if n == 1 {
+                    "1 line yanked".into()
+                } else {
+                    format!("{n} lines yanked")
+                };
             }
             Operator::Delete => {
                 self.write_register(target, reg_text, true);

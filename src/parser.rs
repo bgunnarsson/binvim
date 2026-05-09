@@ -731,3 +731,50 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 fn is_valid_register(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '"' | '_' | '+' | '*' | '0'..='9')
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn yy_emits_operate_line_yank() {
+        let mut state = PendingCmd::default();
+        match parse(&mut state, key('y'), ParseCtx::Normal) {
+            ParseResult::Pending => {}
+            other => panic!("first y produced {:?}", std::mem::discriminant(&other)),
+        }
+        match parse(&mut state, key('y'), ParseCtx::Normal) {
+            ParseResult::Action(Action::OperateLine { op: Operator::Yank, count, register }) => {
+                assert_eq!(count, 1);
+                assert_eq!(register, None);
+            }
+            _ => panic!("second y did not produce OperateLine{{Yank}}"),
+        }
+    }
+
+    #[test]
+    fn count_prefixed_yy() {
+        let mut state = PendingCmd::default();
+        for k in ['3', 'y', 'y'] {
+            let r = parse(&mut state, key(k), ParseCtx::Normal);
+            if k == 'y' && matches!(r, ParseResult::Action(_)) {
+                if let ParseResult::Action(Action::OperateLine {
+                    op: Operator::Yank,
+                    count,
+                    register: None,
+                }) = r
+                {
+                    assert_eq!(count, 3);
+                    return;
+                }
+                panic!("3yy did not yank 3 lines");
+            }
+        }
+        panic!("3yy never produced an action");
+    }
+}
