@@ -43,6 +43,15 @@ pub enum PageScrollKind {
 }
 
 #[derive(Debug, Clone, Copy)]
+pub enum FoldOp {
+    Toggle,
+    Open,
+    Close,
+    OpenAll,
+    CloseAll,
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum ViewportAdjust {
     Center,
     Top,
@@ -124,6 +133,7 @@ pub enum Action {
     SurroundChange { from: char, to: char },
     /// Visual `S{char}` — wrap the visual selection in the pair for `char`.
     SurroundVisual { ch: char },
+    Fold(FoldOp),
     LspHover,
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
@@ -385,9 +395,22 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'L' => Some(ViewportAdjust::HalfRight),
             _ => None,
         };
+        if let Some(k) = kind {
+            state.reset();
+            return ParseResult::Action(Action::AdjustViewport(k));
+        }
+        // Fold commands — z + a/o/c/M/R.
+        let fold = match ch {
+            'a' => Some(FoldOp::Toggle),
+            'o' => Some(FoldOp::Open),
+            'c' => Some(FoldOp::Close),
+            'M' => Some(FoldOp::CloseAll),
+            'R' => Some(FoldOp::OpenAll),
+            _ => None,
+        };
         state.reset();
-        return match kind {
-            Some(k) => ParseResult::Action(Action::AdjustViewport(k)),
+        return match fold {
+            Some(op) => ParseResult::Action(Action::Fold(op)),
             None => ParseResult::Cancelled,
         };
     }

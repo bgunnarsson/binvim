@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::buffer::Buffer;
 use crate::command::{self, ExCommand, ExRange};
+use crate::parser::FoldOp;
 use crate::config::Config;
 use crate::editorconfig::{EditorConfig, IndentStyle};
 use crate::lang::{self, HighlightCache};
@@ -54,6 +55,13 @@ pub struct BufferStash {
     /// for long lines. Counted in display columns (tabs count as TAB_WIDTH).
     pub view_left: usize,
     pub history: History,
+    /// Cached fold ranges + the buffer version they were computed against.
+    /// Recomputed lazily when buffer.version drifts.
+    pub folds: Vec<FoldRange>,
+    pub folds_version: u64,
+    /// Start lines of currently-closed folds. We key by start line so
+    /// closed-state survives small edits that don't shift line numbers.
+    pub closed_folds: std::collections::HashSet<usize>,
     pub visual_anchor: Option<Cursor>,
     pub marks: HashMap<char, (usize, usize)>,
     pub jumplist: Vec<(usize, usize)>,
@@ -116,6 +124,15 @@ pub const LSP_SYNC_DEBOUNCE: Duration = Duration::from_millis(50);
 
 /// How long the yank flash stays painted before it fades.
 pub const YANK_FLASH_DURATION: Duration = Duration::from_millis(200);
+
+/// One foldable range in a buffer. `start_line` is the row that becomes
+/// the placeholder when the fold closes; `end_line` is inclusive (so the
+/// range covers `start_line..=end_line`).
+#[derive(Debug, Clone)]
+pub struct FoldRange {
+    pub start_line: usize,
+    pub end_line: usize,
+}
 
 /// A char-index range that's currently flashing in the buffer to confirm a
 /// yank. Cleared automatically once `expires_at` passes.
@@ -329,6 +346,10 @@ pub struct App {
     /// rename request needs the original `(line, col)` even after the
     /// prompt has stolen focus and the user has moved focus around.
     pub rename_anchor: Option<(PathBuf, usize, usize, String)>,
+    /// Computed fold ranges for the active buffer (cached against `folds_version`).
+    pub folds: Vec<FoldRange>,
+    pub folds_version: u64,
+    pub closed_folds: std::collections::HashSet<usize>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -387,6 +408,9 @@ impl App {
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             rename_anchor: None,
+            folds: Vec::new(),
+            folds_version: u64::MAX,
+            closed_folds: std::collections::HashSet::new(),
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -403,6 +427,7 @@ impl App {
             if needs_render {
                 self.adjust_viewport();
                 self.ensure_highlights();
+                self.ensure_folds();
                 self.lsp_sync_active_debounced();
                 render::draw(&mut stdout, self)?;
                 stdout.flush()?;
@@ -1701,6 +1726,7 @@ impl App {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.surround_visual(ch);
             }
+            Action::Fold(op) => self.apply_fold_op(op),
             Action::LspHover => self.lsp_request_hover(),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
@@ -2832,6 +2858,128 @@ impl App {
         self.clamp_cursor_normal();
     }
 
+    /// Recompute fold ranges if the buffer's version moved past the
+    /// cached snapshot. Cheap on small buffers (single linear pass).
+    fn ensure_folds(&mut self) {
+        if self.folds_version == self.buffer.version {
+            return;
+        }
+        self.folds = compute_indent_folds(&self.buffer);
+        self.folds_version = self.buffer.version;
+        // Drop closed-fold entries that are no longer real fold starts.
+        let starts: std::collections::HashSet<usize> =
+            self.folds.iter().map(|f| f.start_line).collect();
+        self.closed_folds.retain(|s| starts.contains(s));
+    }
+
+    fn apply_fold_op(&mut self, op: FoldOp) {
+        self.ensure_folds();
+        match op {
+            FoldOp::OpenAll => {
+                self.closed_folds.clear();
+            }
+            FoldOp::CloseAll => {
+                // Close every fold whose range covers >1 line so the user
+                // sees a meaningful collapse rather than a million `…`s.
+                self.closed_folds = self
+                    .folds
+                    .iter()
+                    .filter(|f| f.end_line > f.start_line)
+                    .map(|f| f.start_line)
+                    .collect();
+            }
+            FoldOp::Open => {
+                if let Some(f) = self.innermost_closed_fold_at(self.cursor.line) {
+                    self.closed_folds.remove(&f.start_line);
+                }
+            }
+            FoldOp::Close => {
+                if let Some(f) = self.innermost_open_fold_at(self.cursor.line) {
+                    self.closed_folds.insert(f.start_line);
+                    // Snap cursor to the fold's start so it's never on a
+                    // hidden row.
+                    if self.cursor.line > f.start_line && self.cursor.line <= f.end_line {
+                        self.cursor.line = f.start_line;
+                        self.clamp_cursor_normal();
+                    }
+                }
+            }
+            FoldOp::Toggle => {
+                if let Some(f) = self.innermost_closed_fold_at(self.cursor.line) {
+                    self.closed_folds.remove(&f.start_line);
+                } else if let Some(f) = self.innermost_open_fold_at(self.cursor.line) {
+                    self.closed_folds.insert(f.start_line);
+                    if self.cursor.line > f.start_line && self.cursor.line <= f.end_line {
+                        self.cursor.line = f.start_line;
+                        self.clamp_cursor_normal();
+                    }
+                }
+            }
+        }
+    }
+
+    /// True when `line` is hidden inside a closed fold (i.e. not the start
+    /// of one — the start renders as a placeholder).
+    pub fn line_is_folded(&self, line: usize) -> bool {
+        for f in &self.folds {
+            if self.closed_folds.contains(&f.start_line)
+                && line > f.start_line
+                && line <= f.end_line
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// True if `line` is the start of a closed fold (rendered as the
+    /// `… N lines` placeholder).
+    pub fn line_is_fold_start(&self, line: usize) -> bool {
+        self.closed_folds.contains(&line)
+            && self.folds.iter().any(|f| f.start_line == line)
+    }
+
+    /// Return the innermost fold (smallest range) containing `line`.
+    #[allow(dead_code)]
+    fn innermost_fold_at(&self, line: usize) -> Option<&FoldRange> {
+        self.folds
+            .iter()
+            .filter(|f| f.start_line <= line && line <= f.end_line)
+            .min_by_key(|f| f.end_line - f.start_line)
+    }
+
+    fn innermost_closed_fold_at(&self, line: usize) -> Option<FoldRange> {
+        self.folds
+            .iter()
+            .filter(|f| f.start_line <= line && line <= f.end_line)
+            .filter(|f| self.closed_folds.contains(&f.start_line))
+            .min_by_key(|f| f.end_line - f.start_line)
+            .cloned()
+    }
+
+    fn innermost_open_fold_at(&self, line: usize) -> Option<FoldRange> {
+        self.folds
+            .iter()
+            .filter(|f| f.start_line <= line && line <= f.end_line)
+            .filter(|f| !self.closed_folds.contains(&f.start_line))
+            .min_by_key(|f| f.end_line - f.start_line)
+            .cloned()
+    }
+
+    /// Number of lines `line` represents on screen — 1 normally, the full
+    /// fold span when this is the start of a closed fold.
+    pub fn folded_line_span(&self, line: usize) -> usize {
+        if let Some(f) = self
+            .folds
+            .iter()
+            .find(|f| f.start_line == line && self.closed_folds.contains(&f.start_line))
+        {
+            f.end_line - f.start_line + 1
+        } else {
+            1
+        }
+    }
+
     /// `ds{char}` — strip the surrounding pair around the cursor. Reuses
     /// the text-object pair walker so nested pairs balance correctly.
     fn surround_delete(&mut self, ch: char) {
@@ -3370,6 +3518,9 @@ impl App {
             jumplist: std::mem::take(&mut self.jumplist),
             jump_idx: std::mem::take(&mut self.jump_idx),
             highlight_cache: self.highlight_cache.take(),
+            folds: std::mem::take(&mut self.folds),
+            folds_version: std::mem::replace(&mut self.folds_version, u64::MAX),
+            closed_folds: std::mem::take(&mut self.closed_folds),
         }
     }
 
@@ -3384,6 +3535,9 @@ impl App {
         self.jumplist = stash.jumplist;
         self.jump_idx = stash.jump_idx;
         self.highlight_cache = stash.highlight_cache;
+        self.folds = stash.folds;
+        self.folds_version = stash.folds_version;
+        self.closed_folds = stash.closed_folds;
     }
 
     fn switch_to(&mut self, idx: usize) -> Result<()> {
@@ -4658,6 +4812,66 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 /// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
+/// Indent-based fold computation. Builds a fold range starting at every
+/// line whose indent level is *strictly less than* the next non-blank
+/// line's. Blank lines belong to whichever fold they fall inside (they
+/// don't break a range).
+pub fn compute_indent_folds(buf: &Buffer) -> Vec<FoldRange> {
+    let count = buf.line_count();
+    if count == 0 {
+        return Vec::new();
+    }
+    let levels: Vec<i32> = (0..count)
+        .map(|i| {
+            let line = buf.rope.line(i);
+            let mut n = 0i32;
+            for c in line.chars() {
+                match c {
+                    ' ' => n += 1,
+                    '\t' => n += crate::render::TAB_WIDTH as i32,
+                    '\n' | '\r' => return -1,
+                    _ => return n,
+                }
+            }
+            -1
+        })
+        .collect();
+    let mut folds = Vec::new();
+    for i in 0..count {
+        if levels[i] < 0 {
+            continue;
+        }
+        // Find next non-blank line.
+        let mut next = i + 1;
+        while next < count && levels[next] < 0 {
+            next += 1;
+        }
+        if next >= count {
+            continue;
+        }
+        if levels[next] <= levels[i] {
+            continue;
+        }
+        // Walk forward until indent drops back to <= levels[i].
+        let mut end = i + 1;
+        while end < count {
+            if levels[end] >= 0 && levels[end] <= levels[i] {
+                break;
+            }
+            end += 1;
+        }
+        // `end` now points one past the last folded line.
+        let last = end.saturating_sub(1);
+        if last > i {
+            folds.push(FoldRange {
+                start_line: i,
+                end_line: last,
+            });
+        }
+    }
+    folds
+}
+
 /// Map a Vim-surround pair-id char to its open/close strings. `b`/`B`
 /// match Vim's shorthand for parens/braces.
 fn surround_open_close(ch: char) -> (&'static str, &'static str) {

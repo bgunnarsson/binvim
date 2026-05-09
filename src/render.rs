@@ -841,12 +841,18 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     let rows = app.buffer_rows();
     let gutter = app.gutter_width();
     let avail = (app.width as usize).saturating_sub(gutter);
+    let total_lines = app.buffer.line_count();
+    let mut line_idx = app.view_top;
+    // Skip any lines that are hidden by a closed fold from the start of
+    // the viewport so the first visible row isn't mid-fold.
+    while line_idx < total_lines && app.line_is_folded(line_idx) {
+        line_idx += 1;
+    }
     for row in 0..rows {
-        let line_idx = app.view_top + row;
         // Clear the row before drawing — guards against terminal-side wrap
         // from the previous row's render leaking onto this one.
         queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
-        if line_idx < app.buffer.line_count() {
+        if line_idx < total_lines {
             // Diagnostic sign column.
             let sign = app.worst_diagnostic(line_idx).map(|s| match s {
                 Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }), // Red
@@ -871,6 +877,25 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
                 ResetColor
             )?;
             draw_line_with_selection(out, app, line_idx, avail)?;
+            // Fold-start placeholder: append `… N lines` after the line's
+            // own content so the user sees what's collapsed.
+            if app.line_is_fold_start(line_idx) {
+                let span = app.folded_line_span(line_idx);
+                let folded = format!("  ⏷ {} lines", span);
+                queue!(
+                    out,
+                    SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
+                    Print(folded),
+                    ResetColor
+                )?;
+            }
+            // Advance to the next visible line — past the fold's hidden
+            // body if this row was a fold start, otherwise just by one.
+            let span = app.folded_line_span(line_idx);
+            line_idx += span.max(1);
+            while line_idx < total_lines && app.line_is_folded(line_idx) {
+                line_idx += 1;
+            }
         } else {
             queue!(
                 out,
