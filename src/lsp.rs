@@ -52,8 +52,18 @@ pub enum LspEvent {
     Hover { text: String },
     Completion { items: Vec<CompletionItem> },
     SignatureHelp(SignatureHelp),
+    References { items: Vec<LocationItem> },
     DiagnosticsUpdated,
     NotFound(&'static str),
+}
+
+/// One result from a `textDocument/references` (or similar) call. `path`
+/// is on disk, line/col are 0-indexed.
+#[derive(Debug, Clone)]
+pub struct LocationItem {
+    pub path: PathBuf,
+    pub line: usize,
+    pub col: usize,
 }
 
 /// Parsed `SignatureHelp` response. We render the active signature only —
@@ -87,6 +97,7 @@ pub enum PendingRequest {
     Hover,
     Completion,
     SignatureHelp,
+    References,
 }
 
 /// State of a client's outgoing pipe. Until the server has answered the
@@ -1298,6 +1309,25 @@ impl LspManager {
         any
     }
 
+    /// Request `textDocument/references` from the primary server with
+    /// `includeDeclaration: true` so the user sees the definition site too.
+    pub fn request_references(&mut self, path: &Path, line: usize, col: usize) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/references",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": col },
+                "context": { "includeDeclaration": true },
+            }),
+        );
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::References);
+        true
+    }
+
     /// Request `textDocument/signatureHelp` from the primary server. Goes
     /// to one server only — multi-server fan-out wouldn't help here, the
     /// primary is the source of truth for the language's call syntax.
@@ -1340,7 +1370,49 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
             Some(sig) => Some(LspEvent::SignatureHelp(sig)),
             None => Some(LspEvent::NotFound("signature")),
         },
+        PendingRequest::References => {
+            let items = parse_locations_response(result);
+            if items.is_empty() {
+                Some(LspEvent::NotFound("references"))
+            } else {
+                Some(LspEvent::References { items })
+            }
+        }
     }
+}
+
+/// Parse a `Location[]` (or `LocationLink[]`) response into our internal
+/// shape. Used by `references` and reusable for any future symbol query
+/// that returns the same shape.
+fn parse_locations_response(result: &Value) -> Vec<LocationItem> {
+    let arr = match result.as_array() {
+        Some(a) => a.clone(),
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        // Either { uri, range: { start: {line, character} } } (Location) or
+        // { targetUri, targetSelectionRange: { start: ... } } (LocationLink).
+        let uri = entry
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .or_else(|| entry.get("targetUri").and_then(|v| v.as_str()));
+        let range = entry
+            .get("range")
+            .or_else(|| entry.get("targetSelectionRange"))
+            .or_else(|| entry.get("targetRange"));
+        let (Some(uri), Some(range)) = (uri, range) else { continue };
+        let Some(path) = uri_to_path(uri) else { continue };
+        let Some(start) = range.get("start") else { continue };
+        let Some(line) = start.get("line").and_then(|v| v.as_u64()) else { continue };
+        let Some(col) = start.get("character").and_then(|v| v.as_u64()) else { continue };
+        out.push(LocationItem {
+            path,
+            line: line as usize,
+            col: col as usize,
+        });
+    }
+    out
 }
 
 /// Picks the active signature out of the response and resolves the active

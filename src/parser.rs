@@ -113,6 +113,7 @@ pub enum Action {
     OpenPicker { kind: PickerLeader },
     OpenYazi,
     LspGotoDefinition,
+    LspFindReferences,
     LspHover,
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
@@ -458,6 +459,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if ch == 'd' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
             return ParseResult::Action(Action::LspGotoDefinition);
+        }
+        // gr — find references via LSP. Opens a picker.
+        if ch == 'r' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::LspFindReferences);
         }
         let mv = match ch {
             'g' => Some(MotionVerb::FirstLine),

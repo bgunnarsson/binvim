@@ -490,6 +490,9 @@ impl App {
                 LspEvent::SignatureHelp(sig) => {
                     self.signature_help = Some(sig);
                 }
+                LspEvent::References { items } => {
+                    self.open_locations_picker("References", items);
+                }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
@@ -591,6 +594,57 @@ impl App {
         let col = self.cursor.col;
         if !self.lsp.request_completion(&path, line, col, trigger_char) {
             // No LSP — silently ignore so editing isn't disrupted.
+        }
+    }
+
+    /// Open a picker showing a list of LSP locations (used by `gr` find-
+    /// references and any other future location-list query). Each row is
+    /// `relpath:line:col` so the user can disambiguate before pressing
+    /// Enter to jump.
+    fn open_locations_picker(&mut self, title: &str, items: Vec<crate::lsp::LocationItem>) {
+        if items.is_empty() {
+            self.status_msg = format!("LSP: no {} found", title.to_lowercase());
+            return;
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let entries: Vec<(String, PickerPayload)> = items
+            .into_iter()
+            .map(|it| {
+                let rel = it
+                    .path
+                    .strip_prefix(&cwd)
+                    .ok()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| it.path.display().to_string());
+                let display = format!("{}:{}:{}", rel, it.line + 1, it.col + 1);
+                (
+                    display,
+                    PickerPayload::Location {
+                        path: it.path,
+                        line: it.line + 1,
+                        col: it.col + 1,
+                    },
+                )
+            })
+            .collect();
+        self.picker = Some(PickerState::new(
+            PickerKind::References,
+            title.into(),
+            entries,
+        ));
+        self.mode = Mode::Picker;
+    }
+
+    fn lsp_request_references(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "LSP: buffer has no file".into();
+            return;
+        };
+        self.lsp_sync_active();
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        if !self.lsp.request_references(&path, line, col) {
+            self.status_msg = "LSP: not active for this buffer".into();
         }
     }
 
@@ -1524,6 +1578,7 @@ impl App {
             Action::OpenPicker { kind } => self.open_picker(kind),
             Action::OpenYazi => self.open_yazi(),
             Action::LspGotoDefinition => self.lsp_request_goto(),
+            Action::LspFindReferences => self.lsp_request_references(),
             Action::LspHover => self.lsp_request_hover(),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
@@ -3724,6 +3779,10 @@ impl App {
                                 self.clamp_cursor_normal();
                             }
                         }
+                        PickerPayload::CodeActionIdx(_idx) => {
+                            // Wired in commit 7 (code actions). No-op for
+                            // now to keep the match exhaustive.
+                        }
                     }
                 }
             }
@@ -3749,7 +3808,11 @@ impl App {
     fn refilter_picker(&mut self) {
         let Some(picker) = self.picker.as_mut() else { return; };
         match picker.kind {
-            PickerKind::Files | PickerKind::Buffers => picker.refilter(),
+            PickerKind::Files
+            | PickerKind::Buffers
+            | PickerKind::References
+            | PickerKind::DocumentSymbols
+            | PickerKind::CodeActions => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());
@@ -3759,6 +3822,11 @@ impl App {
                 let query = picker.input.clone();
                 let results = picker::run_ripgrep(&query, &cwd, 500);
                 picker::replace_items(picker, results);
+            }
+            PickerKind::WorkspaceSymbols => {
+                // Live server-side filter — the workspace symbol provider
+                // does its own ranking. Wired in commit 6 once we have the
+                // request plumbing; no-op for now.
             }
         }
     }

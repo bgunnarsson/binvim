@@ -2,10 +2,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // DocumentSymbols / WorkspaceSymbols / CodeActions are wired in upcoming commits
 pub enum PickerKind {
     Files,
     Buffers,
     Grep,
+    References,
+    DocumentSymbols,
+    WorkspaceSymbols,
+    CodeActions,
 }
 
 pub struct PickerState {
@@ -23,10 +28,14 @@ pub struct PickerState {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // CodeActionIdx is wired up in commit 7 (code actions)
 pub enum PickerPayload {
     Path(PathBuf),
     BufferIdx(usize),
     Location { path: PathBuf, line: usize, col: usize },
+    /// Index into a separately-stored vector of pending code actions on the
+    /// app — the actual `WorkspaceEdit` is too heavy to carry around.
+    CodeActionIdx(usize),
 }
 
 impl PickerState {
