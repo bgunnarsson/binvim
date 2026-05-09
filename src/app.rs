@@ -658,18 +658,34 @@ impl App {
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             return false;
         }
-        // Mirror `draw_notification`'s width cap so the click hit-test
-        // matches what's actually painted (max half the terminal width).
+        // Mirror `draw_notification`'s wrap so the click hit-test matches
+        // what's actually painted (max half the terminal width, multiple
+        // rows when the message wraps).
+        const MAX_ROWS: usize = 6;
         let total_w = self.width as usize;
         let half_inner = (total_w / 2).saturating_sub(4);
         let term_inner = total_w.saturating_sub(8);
         let max_inner = half_inner.min(term_inner).max(20);
-        let msg_chars = self.status_msg.lines().next().unwrap_or("").chars().count();
-        let displayed_chars = msg_chars.min(max_inner);
-        let inner_w = displayed_chars + 2;
+        let mut rows = 0usize;
+        let mut widest = 0usize;
+        for raw in self.status_msg.lines() {
+            if raw.is_empty() {
+                rows += 1;
+                continue;
+            }
+            let len = raw.chars().count();
+            let segs = (len + max_inner - 1) / max_inner;
+            rows += segs;
+            widest = widest.max(len.min(max_inner));
+        }
+        if rows == 0 {
+            return false;
+        }
+        let visible_rows = rows.min(MAX_ROWS);
+        let inner_w = widest + 2;
         let box_w = inner_w + 2;
         let left = total_w.saturating_sub(box_w + 1);
-        row < 3 && col >= left && col < left + box_w
+        row < visible_rows + 2 && col >= left && col < left + box_w
     }
 
     /// Returns `true` if the key was consumed to scroll the hover popup. Otherwise

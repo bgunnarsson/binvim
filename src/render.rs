@@ -311,6 +311,11 @@ fn notification_color(msg: &str) -> Color {
     Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa } // Blue — info default
 }
 
+/// Maximum content rows in a notification box before extra wrapped lines
+/// get truncated with an ellipsis. Six is enough to read a typical path or
+/// error message without letting a stack trace eat the whole screen.
+const NOTIFICATION_MAX_ROWS: usize = 6;
+
 fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     // Cmdline and search modes get the centred box; their floating widget covers any notification.
     if matches!(app.mode, Mode::Command | Mode::Search { .. }) {
@@ -319,11 +324,7 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     if app.status_msg.is_empty() {
         return Ok(());
     }
-    let msg = truncate_oneline(&app.status_msg);
-    if msg.is_empty() {
-        return Ok(());
-    }
-    let level = notification_color(&msg);
+    let level = notification_color(&app.status_msg);
 
     // Cap the notification at half the terminal width so long messages
     // (file paths, stack traces) don't span the whole screen. The box adds
@@ -332,14 +333,33 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     let half_inner = (total_w / 2).saturating_sub(4);
     let term_inner = total_w.saturating_sub(8);
     let max_inner = half_inner.min(term_inner).max(20);
-    let inner: String = msg.chars().take(max_inner).collect();
-    let inner_w = inner.chars().count() + 2; // padding inside borders
+
+    let mut wrapped = wrap_notification(&app.status_msg, max_inner);
+    if wrapped.is_empty() {
+        return Ok(());
+    }
+    if wrapped.len() > NOTIFICATION_MAX_ROWS {
+        wrapped.truncate(NOTIFICATION_MAX_ROWS);
+        let last = wrapped.last_mut().unwrap();
+        let kept = last.chars().count().saturating_sub(1);
+        let mut s: String = last.chars().take(kept).collect();
+        s.push('…');
+        *last = s;
+    }
+    let inner_w = wrapped
+        .iter()
+        .map(|l| l.chars().count())
+        .max()
+        .unwrap_or(0)
+        + 2; // padding inside borders
     let box_w = inner_w + 2;
     let left = total_w.saturating_sub(box_w + 1);
     let top = 0usize;
 
     let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Catppuccin Text
 
+    // Top border
     queue!(
         out,
         MoveTo(left as u16, top as u16),
@@ -349,21 +369,29 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
         Print("─".repeat(inner_w)),
         Print('╮'),
     )?;
-    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Catppuccin Text
+
+    // Content rows
+    for (i, line) in wrapped.iter().enumerate() {
+        let line_chars = line.chars().count();
+        let pad = (inner_w.saturating_sub(2)).saturating_sub(line_chars);
+        queue!(
+            out,
+            MoveTo(left as u16, (top + 1 + i) as u16),
+            SetBackgroundColor(bg),
+            SetForegroundColor(level),
+            Print('│'),
+            SetForegroundColor(text_fg),
+            Print(format!(" {} ", line)),
+            Print(" ".repeat(pad)),
+            SetForegroundColor(level),
+            Print('│'),
+        )?;
+    }
+
+    // Bottom border
     queue!(
         out,
-        MoveTo(left as u16, (top + 1) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(level),
-        Print('│'),
-        SetForegroundColor(text_fg),
-        Print(format!(" {} ", inner)),
-        SetForegroundColor(level),
-        Print('│'),
-    )?;
-    queue!(
-        out,
-        MoveTo(left as u16, (top + 2) as u16),
+        MoveTo(left as u16, (top + 1 + wrapped.len()) as u16),
         SetBackgroundColor(bg),
         SetForegroundColor(level),
         Print('╰'),
@@ -374,9 +402,29 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-fn truncate_oneline(s: &str) -> String {
-    let one = s.lines().next().unwrap_or("").to_string();
-    one
+/// Break `msg` into rows of at most `width` chars. Honours embedded newlines
+/// — each `\n`-separated segment wraps independently. Wrapping is purely
+/// character-based: paths and stack traces have few spaces to break on, and
+/// preserving structure visually matters more than typographic word wrap.
+fn wrap_notification(msg: &str, width: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    if width == 0 {
+        return out;
+    }
+    for raw in msg.lines() {
+        if raw.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        let chars: Vec<char> = raw.chars().collect();
+        let mut idx = 0;
+        while idx < chars.len() {
+            let end = (idx + width).min(chars.len());
+            out.push(chars[idx..end].iter().collect());
+            idx = end;
+        }
+    }
+    out
 }
 
 /// Layout for the floating command line — returns (left_col, top_row, width).
