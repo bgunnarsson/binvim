@@ -662,12 +662,12 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     }
     let top = (rows.saturating_sub(logo_h)) / 2;
     let left = (total_w.saturating_sub(logo_w)) / 2;
-    let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+    let blue = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
     for (i, line) in START_LOGO.iter().enumerate() {
         queue!(
             out,
             MoveTo(left as u16, (top + i) as u16),
-            SetForegroundColor(mauve),
+            SetForegroundColor(blue),
             Print(line),
             ResetColor,
         )?;
