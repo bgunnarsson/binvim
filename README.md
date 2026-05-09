@@ -1,18 +1,57 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust, with tree-sitter highlighting, LSPs, and fuzzy pickers built in.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting, multi-server LSP fan-out with rename / code-actions / signature-help / find-references / document & workspace symbols, fuzzy pickers, persistent undo, code folding, surround operations, smart-indent, system-clipboard yank, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 ## Features
 
+### Editor
+
 - **Modal editing** — normal / insert / visual (charwise, linewise, blockwise) with operators, text objects, marks, registers, dot-repeat, undo/redo, and macros.
-- **Tree-sitter highlighting** — Rust, TypeScript/TSX, JavaScript, JSON, Go, HTML, CSS, Markdown, C#.
-- **LSP client** — diagnostics, hover, completion, and goto-definition over per-language servers, with `initializationOptions` and project-root detection.
-- **Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`).
-- **Pickers** — fuzzy file picker, buffer switcher, and live grep, opened from the leader (`space`).
-- **Format on save** — biome for JS/TS/JSX/TSX/JSON/JSONC; `.editorconfig` directives applied on save (final newline, trailing whitespace).
-- **Whitespace markers** — every space, tab, non-breaking space, and end-of-line surfaces as a muted glyph (`·`, `→`, `⎵`, `¬`) so layout-affecting characters are visible at a glance.
-- **Start page** — when launched with no path, binvim opens on a centered `binvim` logo (configurable). The page is read-only; press `:` for a command or `<space>` for the file picker.
-- **Catppuccin Mocha defaults** — colours overridable via `~/.config/binvim/config.toml`.
+- **Surround operations** — `ds<char>` strips the surrounding pair, `cs<old><new>` swaps it, visual `S<char>` wraps the selection. Pair chars: `(/)/b`, `[/]`, `{/}/B`, `<`, `"`, `'`, `` ` ``.
+- **Numeric `Ctrl-A` / `Ctrl-X`** — increment / decrement the next number on the current line. Recognises decimal, `0x…`, `0b…`, `0o…`, with optional leading `-`. Preserves leading zeros.
+- **Smart indent on Enter** — copies the current line's leading whitespace and adds one indent unit after `{ [ ( :` `=>` `->`. Pressing Enter inside an auto-paired `{|}` splits the pair into three lines with the cursor on the indented middle.
+- **HTML tag auto-completion** — typing `>` after `<div` writes `<div>|</div>`. Self-closing tags, void elements, generics (`Array<T>`), comments and declarations all skipped. Active in `.html`, `.cshtml`, `.razor`, `.jsx`, `.tsx`, `.vue`, `.svelte`, `.astro`, `.xml`, `.md`.
+- **Bracket and HTML-tag matching** — when the cursor is on (or just past) a bracket or anywhere inside an HTML tag, the matching partner highlights with a Surface2 background + bold. Works through arbitrary nesting.
+- **Code folding** — indent-based folds, toggled with `za`/`zo`/`zc`, with `zR`/`zM` to open/close all. Folded blocks render as `⏷ N lines`.
+- **Persistent undo** — undo history is serialised per file under `~/.cache/binvim/undo/<hash>.json` on save and reloaded on the next session, keyed by content hash so external edits invalidate stale history.
+- **System-clipboard yank** — `y`, `yy`, `Y`, `:y`, visual yank, and the implicit yank on `d`/`c`/`x` mirror to the OS clipboard via `arboard` whenever they target the unnamed register. Named registers (`"ay`) stay local.
+- **Yank flash** — yanked range flashes a Catppuccin Peach background for 200ms so you see what's been picked up.
+- **Horizontal scrolling** — long lines scroll automatically as the cursor moves past the edge; trackpad / mouse-wheel horizontal events scroll without moving the cursor; Vim-style `zh` / `zl` (1 col) and `zH` / `zL` (half-width) work too.
+- **Whitespace markers** — every space, tab, non-breaking space, and end-of-line surface as a muted glyph (`·`, `→`, `⎵`, `¬`). Configurable.
+- **Format on save** — biome for JS / TS / JSX / TSX / JSON / JSONC. `.editorconfig` directives applied on save (final newline, trailing whitespace).
+- **Auto-reload on disk change** — when an open file changes externally and the buffer isn't dirty, binvim notices via mtime poll and reloads with a status note.
+- **Recents in the file picker** — most-recently-opened files surface at the top of the file picker on an empty query, persisted at `~/.cache/binvim/recents`.
+
+### Tree-sitter highlighting
+
+Rust, TypeScript / TSX, JavaScript, JSON, Go, HTML, CSS, Markdown, C#. Pattern-priority resolution so `(method_declaration name: (identifier) @function)` deterministically beats the catch-all `(identifier) @variable`.
+
+### LSP
+
+Per-language servers with `initializationOptions`, project-root detection, and a debounced `didChange` (50ms burst window) so rapid typing doesn't flood the server.
+
+| Capability                  | Binding              | Notes                                                                                                                                  |
+|-----------------------------|----------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| Completion                  | auto + `Ctrl-N`/`Ctrl-P` | Multi-server fan-out — completion items from primary plus auxiliary servers (e.g. Tailwind alongside tsserver) are merged in the popup. |
+| Hover                       | `K`                  |                                                                                                                                        |
+| Goto-definition             | `gd`                 |                                                                                                                                        |
+| Find references             | `gr`                 | Results open in a fuzzy picker; Enter jumps.                                                                                           |
+| Document symbols            | `<space>o`           | File outline. Hierarchy preserved with `›` separators.                                                                                  |
+| Workspace symbols           | `<space>S`           | Live server-side filter as you type.                                                                                                   |
+| Signature help              | auto on `(` / `,`    | Parameter being typed gets a Catppuccin Yellow highlight inside the popup.                                                             |
+| Code actions                | `<leader>a`          | Picks render with kind tag. Supports both `WorkspaceEdit` and command-shaped actions; round-trips `workspace/applyEdit` from the server. |
+| Rename                      | `<leader>r`          | Prompt pre-fills the current word; submission applies the `WorkspaceEdit` across every affected file.                                   |
+| Diagnostics                 | inline + sign column | Undercurl on the offending range, severity glyph in the gutter.                                                                        |
+
+**Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, OmniSharp, csharp-ls, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`). csharp-ls is layered onto Razor files so `@code{}` blocks get C# completion even without a dedicated Razor server.
+
+### Pickers
+
+Fuzzy file picker, buffer switcher, and live grep — all opened from leader (`space`).
+
+### Catppuccin Mocha defaults
+
+Colours overridable via `~/.config/binvim/config.toml`.
 
 ## Build
 
@@ -37,6 +76,11 @@ If `path` is omitted, binvim opens on the start page. Press `:` for a command (`
 | `<space>`  | File picker       |
 | `<space>b` | Buffer picker     |
 | `<space>g` | Live grep         |
+| `<space>e` | Yazi file manager |
+| `<space>o` | Document symbols  |
+| `<space>S` | Workspace symbols |
+| `<space>a` | Code actions      |
+| `<space>r` | Rename            |
 
 ## Ex commands
 
@@ -44,7 +88,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 
 | Command            | Description                                                                                                   |
 |--------------------|---------------------------------------------------------------------------------------------------------------|
-| `:health`          | Open a scratch buffer summarising version, CPU/RAM share, buffers, attached LSPs, per-buffer LSP status (binary path + running flag), and Tailwind config detection. `:checkhealth` works too. |
+| `:health`          | Open a scratch buffer summarising version, CPU / RAM share, buffers, attached LSPs (with binary path + running flag), and Tailwind config detection. `:checkhealth` works too. |
 | `:fmt` / `:format` | Run the configured formatter on the active buffer.                                                            |
 | `:noh`             | Clear the search highlight.                                                                                   |
 
@@ -52,19 +96,21 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 
 binvim spawns these on demand. Each is optional — when a binary isn't on `$PATH` (or in a relevant `node_modules/.bin/`) the editor just skips that capability.
 
-| Tool                                | Purpose                                  | Install                                                                  |
-|-------------------------------------|------------------------------------------|--------------------------------------------------------------------------|
-| `rust-analyzer`                     | Rust LSP                                 | `rustup component add rust-analyzer`                                     |
-| `typescript-language-server`        | JS/TS/JSX/TSX LSP                        | `npm i -g typescript-language-server typescript`                         |
-| `gopls`                             | Go LSP                                   | `go install golang.org/x/tools/gopls@latest`                             |
-| `vscode-css-language-server`        | CSS/SCSS/Less LSP                        | `npm i -g vscode-langservers-extracted`                                  |
-| `vscode-html-language-server`       | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
-| `tailwindcss-language-server`       | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (note: scoped — the unscoped `tailwindcss-language-server` on npm is an empty stub) |
-| `astro-ls`                          | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
-| `csharp-ls`                         | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
-| `OmniSharp`                         | Razor / .cshtml IntelliSense (full)      | `dotnet tool install --global omnisharp` or `brew install omnisharp`     |
-| `rzls`                              | Razor language server (full)             | community tool — install if you have it; binvim auto-detects             |
-| `biome` (project-local)             | JSON LSP + JS/TS/JSON formatter on save  | `npm i -D @biomejs/biome` in the project                                  |
+| Tool                            | Purpose                                  | Install                                                                  |
+|---------------------------------|------------------------------------------|--------------------------------------------------------------------------|
+| `rust-analyzer`                 | Rust LSP                                 | `rustup component add rust-analyzer`                                     |
+| `typescript-language-server`    | JS / TS / JSX / TSX LSP                  | `npm i -g typescript-language-server typescript`                         |
+| `gopls`                         | Go LSP                                   | `go install golang.org/x/tools/gopls@latest`                             |
+| `vscode-css-language-server`    | CSS / SCSS / Less LSP                    | `npm i -g vscode-langservers-extracted`                                  |
+| `vscode-html-language-server`   | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
+| `tailwindcss-language-server`   | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (the unscoped npm package is an empty stub — use the scoped one) |
+| `astro-ls`                      | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
+| `csharp-ls`                     | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
+| `OmniSharp`                     | Razor / `.cshtml` IntelliSense (full)    | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
+| `rzls`                          | Razor language server                    | community tool — install if you have it; binvim auto-detects             |
+| `biome` (project-local)         | JSON LSP + JS / TS / JSON formatter      | `npm i -D @biomejs/biome` in the project                                  |
+| `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
+| `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |
 
 binvim auto-discovers project-local binaries by walking up to the closest `node_modules/.bin/`, so a `devDependency` in your project takes precedence over a global install.
 
@@ -100,7 +146,7 @@ A missing or malformed config is ignored — the baked-in Catppuccin Mocha palet
 
 ## Licence
 
-Source-available, not open source. Copyright (c) 2026 B. Gunnarsson — see [LICENSE](LICENSE) for the full text. In short: you may read the source, run it locally, modify your own copy, and submit pull requests upstream. You may not redistribute, publicly fork, or run it as a hosted service. For anything outside that scope, contact the licensor.
+Source-available, not open source. Copyright (c) 2026 B. Gunnarsson — see [LICENSE](LICENSE) for the full text. In short: you may read the source, run it locally, modify your own copy, and submit pull requests upstream. You may not redistribute, publicly fork, or run it as a hosted service. For anything outside that scope, contact the licensor on Twitter/X at [@bgunnarssonis](https://twitter.com/bgunnarssonis).
 
 ## Project layout
 
@@ -121,5 +167,5 @@ src/
   picker.rs        fuzzy pickers
   render.rs        terminal rendering
   text_object.rs   text objects (`iw`, `i"`, `ap`, …)
-  undo.rs          undo/redo history
+  undo.rs          undo/redo history (in-memory + on-disk persistence)
 ```
