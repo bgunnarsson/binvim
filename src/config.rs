@@ -176,7 +176,7 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "attribute" => Some(CATP_YELLOW),
         "tag" => Some(CATP_MAUVE),
         "label" => Some(CATP_SAPPHIRE),
-        "property" => Some(CATP_LAVENDER),
+        "property" | "key" => Some(CATP_LAVENDER),
         "parameter" => Some(CATP_MAROON),
         "variable" => None, // default text colour
         "punctuation" => Some(CATP_OVERLAY2),
