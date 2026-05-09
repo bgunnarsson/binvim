@@ -118,6 +118,12 @@ pub enum Action {
     LspGotoDefinition,
     LspFindReferences,
     LspRename,
+    /// `ds{char}` — strip the surrounding pair around the cursor.
+    SurroundDelete { ch: char },
+    /// `cs{old}{new}` — swap the surrounding pair from `old` to `new`.
+    SurroundChange { from: char, to: char },
+    /// Visual `S{char}` — wrap the visual selection in the pair for `char`.
+    SurroundVisual { ch: char },
     LspHover,
     VisualOperate { op: Operator, register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
@@ -156,6 +162,14 @@ pub struct PendingCmd {
     pub awaiting_macro_play: bool,
     /// Set after `<leader>b` — next char picks a buffer-related action.
     pub awaiting_buffer_leader: bool,
+    /// `ds{char}` — next char names the surround pair to delete.
+    pub awaiting_ds: bool,
+    /// `cs{old}{new}` — first the old char, then the new char.
+    pub awaiting_cs_old: bool,
+    /// Captured `old` from `cs` while waiting for the replacement char.
+    pub cs_old: Option<char>,
+    /// Visual `S{char}` — next char names the surround pair to wrap with.
+    pub awaiting_visual_surround: bool,
 }
 
 impl PendingCmd {
@@ -531,6 +545,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate { op: Operator::Change, register });
             }
+            'S' => {
+                state.awaiting_visual_surround = true;
+                return ParseResult::Pending;
+            }
             '>' => {
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate { op: Operator::Indent, register: None });
@@ -558,6 +576,48 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }
             _ => {}
         }
+    }
+
+    // Surround pivots: `ds`, `cs` — when an operator (Delete or Change) is
+    // already pending and the user types `s`, redirect to the surround
+    // state machine instead of cancelling. `ys` (yank surround) is not
+    // wired in this version.
+    if ctx == ParseCtx::Normal && ch == 's' {
+        if matches!(state.operator, Some(Operator::Delete)) {
+            state.operator = None;
+            state.awaiting_ds = true;
+            return ParseResult::Pending;
+        }
+        if matches!(state.operator, Some(Operator::Change)) {
+            state.operator = None;
+            state.awaiting_cs_old = true;
+            return ParseResult::Pending;
+        }
+    }
+
+    // Resolve `ds{char}` / `cs{old}{new}` — first arg is always the next
+    // printable char.
+    if state.awaiting_ds {
+        state.awaiting_ds = false;
+        let target = ch;
+        state.reset();
+        return ParseResult::Action(Action::SurroundDelete { ch: target });
+    }
+    if state.awaiting_cs_old {
+        state.awaiting_cs_old = false;
+        state.cs_old = Some(ch);
+        return ParseResult::Pending;
+    }
+    if let Some(old) = state.cs_old.take() {
+        let new = ch;
+        state.reset();
+        return ParseResult::Action(Action::SurroundChange { from: old, to: new });
+    }
+    if state.awaiting_visual_surround {
+        state.awaiting_visual_surround = false;
+        let target = ch;
+        state.reset();
+        return ParseResult::Action(Action::SurroundVisual { ch: target });
     }
 
     // Operators (only in normal mode — visual handles d/c/y/>/< above).

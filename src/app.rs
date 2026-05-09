@@ -1689,6 +1689,18 @@ impl App {
             Action::LspGotoDefinition => self.lsp_request_goto(),
             Action::LspFindReferences => self.lsp_request_references(),
             Action::LspRename => self.start_rename_prompt(),
+            Action::SurroundDelete { ch } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.surround_delete(ch);
+            }
+            Action::SurroundChange { from, to } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.surround_change(from, to);
+            }
+            Action::SurroundVisual { ch } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.surround_visual(ch);
+            }
             Action::LspHover => self.lsp_request_hover(),
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
@@ -2818,6 +2830,147 @@ impl App {
             self.cursor.want_col = self.cursor.col;
         }
         self.clamp_cursor_normal();
+    }
+
+    /// `ds{char}` — strip the surrounding pair around the cursor. Reuses
+    /// the text-object pair walker so nested pairs balance correctly.
+    fn surround_delete(&mut self, ch: char) {
+        let Some((open_idx, close_idx, _open_str, _close_str)) =
+            self.find_surround_around_cursor(ch)
+        else {
+            self.status_msg = format!("no surrounding {ch}");
+            return;
+        };
+        // Delete the close first so the open's index doesn't shift.
+        self.buffer.delete_range(close_idx, close_idx + 1);
+        self.buffer.delete_range(open_idx, open_idx + 1);
+        // Cursor lands where the opening delimiter was, biased to the
+        // first content char if any remains.
+        let total = self.buffer.total_chars();
+        let new_pos = open_idx.min(total);
+        self.cursor_to_idx(new_pos);
+        self.clamp_cursor_normal();
+    }
+
+    /// `cs{old}{new}` — swap the surrounding pair.
+    fn surround_change(&mut self, from: char, to: char) {
+        let Some((open_idx, close_idx, _, _)) = self.find_surround_around_cursor(from) else {
+            self.status_msg = format!("no surrounding {from}");
+            return;
+        };
+        let (new_open, new_close) = surround_open_close(to);
+        // Replace close first to keep open's index stable.
+        self.buffer.delete_range(close_idx, close_idx + 1);
+        self.buffer.insert_at_idx(close_idx, new_close);
+        self.buffer.delete_range(open_idx, open_idx + 1);
+        self.buffer.insert_at_idx(open_idx, new_open);
+        self.clamp_cursor_normal();
+    }
+
+    /// Visual `S{char}` — wrap the visual selection in the pair for `ch`.
+    fn surround_visual(&mut self, ch: char) {
+        let kind = match self.mode {
+            Mode::Visual(k) => k,
+            _ => return,
+        };
+        let (start, end, _linewise) = self.visual_range_chars(kind);
+        if end <= start {
+            self.exit_visual();
+            return;
+        }
+        let (open, close) = surround_open_close(ch);
+        // Insert close at end first so start doesn't shift.
+        self.buffer.insert_at_idx(end, close);
+        self.buffer.insert_at_idx(start, open);
+        self.cursor_to_idx(start);
+        self.clamp_cursor_normal();
+        self.exit_visual();
+    }
+
+    /// Walk back / forward to find the pair surrounding the cursor for the
+    /// given pair-id char. Returns `(open_idx, close_idx, open_str, close_str)`.
+    fn find_surround_around_cursor(
+        &self,
+        ch: char,
+    ) -> Option<(usize, usize, &'static str, &'static str)> {
+        let (open, close) = surround_open_close(ch);
+        // For brackets we use balanced walking; for quotes / backticks we
+        // can't balance, so just find the nearest enclosing pair on the
+        // line by scanning out from the cursor.
+        if is_paired_bracket(ch) {
+            let here = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+            let open_c = open.chars().next().unwrap();
+            let close_c = close.chars().next().unwrap();
+            let mut depth = 1usize;
+            let mut i = here;
+            let mut o_idx = None;
+            // If the cursor is on the opener itself, that's our left edge.
+            if self.buffer.rope.get_char(here) == Some(open_c) {
+                o_idx = Some(here);
+            }
+            while o_idx.is_none() && i > 0 {
+                i -= 1;
+                let c = self.buffer.rope.char(i);
+                if c == close_c {
+                    depth += 1;
+                } else if c == open_c {
+                    depth -= 1;
+                    if depth == 0 {
+                        o_idx = Some(i);
+                        break;
+                    }
+                }
+            }
+            let o_idx = o_idx?;
+            let mut depth = 1usize;
+            let mut j = o_idx + 1;
+            let total = self.buffer.total_chars();
+            while j < total {
+                let c = self.buffer.rope.char(j);
+                if c == open_c {
+                    depth += 1;
+                } else if c == close_c {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some((o_idx, j, open, close));
+                    }
+                }
+                j += 1;
+            }
+            return None;
+        }
+        // Quote-style: nearest enclosing same-char on the same line.
+        let line = self.cursor.line;
+        let line_len = self.buffer.line_len(line);
+        if line_len == 0 {
+            return None;
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        let here_col = self.cursor.col.min(line_len);
+        let chars: Vec<char> = self
+            .buffer
+            .rope
+            .slice(line_start..line_start + line_len)
+            .to_string()
+            .chars()
+            .collect();
+        let target = ch;
+        let mut left = None;
+        let mut right = None;
+        for i in (0..here_col).rev() {
+            if chars[i] == target {
+                left = Some(i);
+                break;
+            }
+        }
+        for i in here_col..chars.len() {
+            if chars[i] == target {
+                right = Some(i);
+                break;
+            }
+        }
+        let (l, r) = (left?, right?);
+        Some((line_start + l, line_start + r, open, close))
     }
 
     /// Vim-style `Ctrl-A` / `Ctrl-X`. Walks the current line from the
@@ -4505,6 +4658,25 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 /// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
+/// Map a Vim-surround pair-id char to its open/close strings. `b`/`B`
+/// match Vim's shorthand for parens/braces.
+fn surround_open_close(ch: char) -> (&'static str, &'static str) {
+    match ch {
+        '(' | ')' | 'b' => ("(", ")"),
+        '[' | ']' => ("[", "]"),
+        '{' | '}' | 'B' => ("{", "}"),
+        '<' | '>' => ("<", ">"),
+        '"' => ("\"", "\""),
+        '\'' => ("'", "'"),
+        '`' => ("`", "`"),
+        _ => (" ", " "),
+    }
+}
+
+fn is_paired_bracket(ch: char) -> bool {
+    matches!(ch, '(' | ')' | 'b' | '[' | ']' | '{' | '}' | 'B' | '<' | '>')
+}
+
 /// A number parsed out of a buffer line. `start_col` and `end_col` are
 /// char-column positions on the line (half-open). `negative` is true when
 /// the parsed digits had a leading `-`. `min_width` is the digit count
