@@ -10,7 +10,7 @@ A Vim-grammar TUI editor written in Rust, with tree-sitter highlighting, LSPs, a
 - **Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`).
 - **Pickers** — fuzzy file picker, buffer switcher, and live grep, opened from the leader (`space`).
 - **Format on save** — biome for JS/TS/JSX/TSX/JSON/JSONC; `.editorconfig` directives applied on save (final newline, trailing whitespace).
-- **Whitespace markers** — tabs and trailing whitespace surface as muted glyphs (`→`, `·`) so layout-affecting characters are visible at a glance.
+- **Whitespace markers** — every space and tab surfaces as a muted glyph (`·`, `→`) so indentation and column alignment are visible at a glance.
 - **Start page** — when launched with no path, binvim opens on a centered `binvim` logo (configurable). The page is read-only; press `:` for a command or `<space>` for the file picker.
 - **Catppuccin Mocha defaults** — colours overridable via `~/.config/binvim/config.toml`.
 
@@ -85,14 +85,14 @@ lines = [
 ]
 
 [whitespace]
-show = true   # render tabs as `→ ` and trailing whitespace as `·`. On by default.
+show = true   # render every space as `·` and every tab as `→ `. On by default.
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head (`keyword.return` overrides `keyword`).
 
 **`[start_page]`** — `lines` overrides the baked-in ASCII logo shown when binvim is launched with no path. Each entry renders on its own row, horizontally centered; the block as a whole is vertically centered. Omit it (or leave it empty) to keep the default logo.
 
-**`[whitespace]`** — `show = true` (the default) renders tabs as `→` followed by space-fill to the tab width, and trailing whitespace as `·`. Interior spaces are deliberately left alone so column-aligned text stays readable. Set `show = false` to disable.
+**`[whitespace]`** — `show = true` (the default) renders every space as `·` and every tab as `→` followed by space-fill to the tab width, in the muted overlay colour. Set `show = false` to disable.
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 

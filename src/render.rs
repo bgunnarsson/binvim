@@ -738,22 +738,6 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-/// Index of the first char in the run of trailing whitespace. Returns
-/// `chars.len()` when the line has no trailing whitespace, and `0` when the
-/// whole line is whitespace (every char gets the trailing-marker treatment).
-fn trailing_whitespace_start(chars: &[char]) -> usize {
-    let mut idx = chars.len();
-    while idx > 0 {
-        let c = chars[idx - 1];
-        if c == ' ' || c == '\t' {
-            idx -= 1;
-        } else {
-            break;
-        }
-    }
-    idx
-}
-
 fn draw_line_with_selection(
     out: &mut impl Write,
     app: &App,
@@ -773,11 +757,10 @@ fn draw_line_with_selection(
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
     let dim_color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
-    // `:set list` equivalent — render tabs as `→` + filler and trailing
-    // whitespace as `·`, both in the muted overlay colour. Configurable via
+    // `:set list` equivalent — render every space as `·` and every tab as
+    // `→` + filler, both in the muted overlay colour. Configurable via
     // `[whitespace]` in config.toml; on by default.
     let show_hidden = app.config.whitespace.show;
-    let trail_start = trailing_whitespace_start(&chars);
     // Precompute per-column severity from the LSP's diagnostic ranges so we
     // can paint an undercurl directly under the offending tokens.
     let line_diags = app.line_diagnostics(line_idx);
@@ -813,8 +796,7 @@ fn draw_line_with_selection(
         } else {
             None
         };
-        let is_trailing_space = *c == ' ' && col >= trail_start;
-        let render_hidden = show_hidden && (*c == '\t' || is_trailing_space);
+        let render_hidden = show_hidden && (*c == '\t' || *c == ' ');
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
@@ -848,7 +830,7 @@ fn draw_line_with_selection(
             } else {
                 queue!(out, Print(" ".repeat(TAB_WIDTH)))?;
             }
-        } else if is_trailing_space && show_hidden {
+        } else if *c == ' ' && show_hidden {
             queue!(out, Print('·'))?;
         } else {
             queue!(out, Print(c.to_string()))?;
