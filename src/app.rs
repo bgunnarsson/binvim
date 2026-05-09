@@ -565,6 +565,13 @@ impl App {
                     Ok(_) => self.status_msg = "rename: no edits returned".into(),
                     Err(e) => self.status_msg = format!("rename error: {e}"),
                 },
+                LspEvent::ApplyEditRequest { client_key, id, edit } => {
+                    let applied = match self.apply_workspace_edit(&edit) {
+                        Ok((edits, _)) => edits > 0,
+                        Err(_) => false,
+                    };
+                    self.lsp.send_apply_edit_response(&client_key, id, applied);
+                }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
@@ -4406,13 +4413,22 @@ impl App {
                 }
             }
         }
-        // We don't yet round-trip server-side `command` execution — that
-        // requires `workspace/executeCommand` plus `workspace/applyEdit`
-        // server-to-client request handling on the main thread. Surface a
-        // hint so the user knows why nothing happened.
-        if !applied && action.command.is_some() {
-            self.status_msg = format!("command-only action '{}' isn't supported yet", action.title);
-        } else if !applied {
+        // Some servers ship code actions as a `Command` rather than a
+        // `WorkspaceEdit`. Fire `workspace/executeCommand`; the server
+        // typically pushes the effect back through a follow-up
+        // `workspace/applyEdit` request, which the main loop handles via
+        // `LspEvent::ApplyEditRequest`.
+        if let Some(cmd) = action.command.as_ref() {
+            if let Some(path) = self.buffer.path.clone() {
+                if self.lsp.execute_command(&path, cmd) {
+                    if !applied {
+                        self.status_msg = format!("running '{}'…", action.title);
+                    }
+                    return;
+                }
+            }
+        }
+        if !applied {
             self.status_msg = format!("'{}' had no edits", action.title);
         }
     }

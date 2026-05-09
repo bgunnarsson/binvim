@@ -44,6 +44,9 @@ pub enum LspIncoming {
     /// Request that the editor needs to react to (e.g. goto-def jump, hover popup).
     #[allow(dead_code)]
     ErrorReply { id: u64, message: String },
+    /// Server-to-client `workspace/applyEdit` — the main thread applies the
+    /// edit and replies with `{ applied: true }` (or false on failure).
+    ApplyEditRequest { id: u64, edit: Value },
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +61,14 @@ pub enum LspEvent {
     /// `WorkspaceEdit` returned from `textDocument/rename`. The applier in
     /// app.rs consumes this directly via `apply_workspace_edit`.
     Rename { edit: Value },
+    /// Server asked us to apply a `WorkspaceEdit`. App applies it then
+    /// uses `LspManager::send_apply_edit_response` to ack the originating
+    /// request.
+    ApplyEditRequest {
+        client_key: String,
+        id: u64,
+        edit: Value,
+    },
     DiagnosticsUpdated,
     NotFound(&'static str),
 }
@@ -873,6 +884,16 @@ impl LspClient {
         }))
     }
 
+    /// Reply to a server-initiated request the client received earlier
+    /// (e.g. `workspace/applyEdit`).
+    pub fn send_response(&self, id: u64, result: Value) -> Result<()> {
+        self.send_raw(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": result,
+        }))
+    }
+
     pub fn did_open(&self, path: &Path, text: &str) -> Result<()> {
         self.send_notification(
             "textDocument/didOpen",
@@ -944,6 +965,18 @@ fn dispatch(
     let id = msg.get("id").and_then(|v| v.as_u64());
     let method = msg.get("method").and_then(|v| v.as_str()).map(|s| s.to_string());
     if let (Some(id), Some(method)) = (id, method.clone()) {
+        // workspace/applyEdit needs the main thread to actually mutate
+        // buffers — bounce it through the channel and have the main loop
+        // reply via `LspManager::send_response`.
+        if method == "workspace/applyEdit" {
+            let edit = msg
+                .get("params")
+                .and_then(|p| p.get("edit"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let _ = tx.send(LspIncoming::ApplyEditRequest { id, edit });
+            return;
+        }
         auto_respond(stdin, id, &method, msg.get("params"));
         return;
     }
@@ -1024,7 +1057,9 @@ fn auto_respond(
                 .unwrap_or(0);
             json!(vec![Value::Null; n])
         }
-        // workspace/applyEdit → claim we applied (we don't yet).
+        // workspace/applyEdit is handled out-of-band by the main thread —
+        // see `dispatch`. Default arm here just to keep this match
+        // exhaustive on future adds.
         "workspace/applyEdit" => json!({ "applied": false }),
         // Various capability registrations / progress windows → null is fine.
         _ => Value::Null,
@@ -1248,6 +1283,13 @@ impl LspManager {
                     LspIncoming::ErrorReply { id, .. } => {
                         self.pending.remove(&(client_key.clone(), id));
                     }
+                    LspIncoming::ApplyEditRequest { id, edit } => {
+                        events.push(LspEvent::ApplyEditRequest {
+                            client_key: client_key.clone(),
+                            id,
+                            edit,
+                        });
+                    }
                 }
             }
             // If we hit the per-call cap, peek the rest of the clients to know
@@ -1275,6 +1317,39 @@ impl LspManager {
         for client in self.clients.values() {
             let _ = client.did_change(path, version, text);
         }
+    }
+
+    /// Reply to a server's `workspace/applyEdit` request after the main
+    /// thread has applied (or failed to apply) the edit.
+    pub fn send_apply_edit_response(&self, client_key: &str, id: u64, applied: bool) {
+        if let Some(client) = self.clients.get(client_key) {
+            let _ = client.send_response(id, json!({ "applied": applied }));
+        }
+    }
+
+    /// Fire `workspace/executeCommand` against the path's primary server.
+    /// `command_obj` must be the LSP `Command` shape (`{ title, command,
+    /// arguments? }`). The server's response is fire-and-forget — most
+    /// servers respond null and instead push their effect through a
+    /// follow-up `workspace/applyEdit` request.
+    pub fn execute_command(&mut self, path: &Path, command_obj: &Value) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let cmd = command_obj
+            .get("command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        if cmd.is_empty() {
+            return false;
+        }
+        let mut params = json!({ "command": cmd });
+        if let Some(args) = command_obj.get("arguments").cloned() {
+            params["arguments"] = args;
+        }
+        let _ = client.send_request(id, "workspace/executeCommand", params);
+        // No PendingRequest variant — we don't surface the response, the
+        // server delivers the effect via follow-up applyEdit requests.
+        true
     }
 
     pub fn request_definition(&mut self, path: &Path, line: usize, col: usize) -> bool {
