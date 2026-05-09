@@ -3,6 +3,7 @@ use ropey::Rope;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 #[derive(Clone)]
 pub struct Buffer {
@@ -11,6 +12,10 @@ pub struct Buffer {
     pub dirty: bool,
     /// Bumped on every mutation; used to invalidate the syntax-highlight cache.
     pub version: u64,
+    /// File mtime captured at the most-recent on-disk load or save. Drives
+    /// the auto-reload watcher — if the file's current mtime is newer and
+    /// the buffer isn't dirty, the watcher reloads from disk.
+    pub disk_mtime: Option<SystemTime>,
 }
 
 impl Default for Buffer {
@@ -21,18 +26,37 @@ impl Default for Buffer {
 
 impl Buffer {
     pub fn empty() -> Self {
-        Self { rope: Rope::new(), path: None, dirty: false, version: 0 }
+        Self {
+            rope: Rope::new(),
+            path: None,
+            dirty: false,
+            version: 0,
+            disk_mtime: None,
+        }
     }
 
     pub fn from_path(path: PathBuf) -> Result<Self> {
         if path.exists() {
             let file = File::open(&path)
                 .with_context(|| format!("opening {}", path.display()))?;
+            let mtime = file.metadata().ok().and_then(|m| m.modified().ok());
             let rope = Rope::from_reader(BufReader::new(file))
                 .with_context(|| format!("reading {}", path.display()))?;
-            Ok(Self { rope, path: Some(path), dirty: false, version: 0 })
+            Ok(Self {
+                rope,
+                path: Some(path),
+                dirty: false,
+                version: 0,
+                disk_mtime: mtime,
+            })
         } else {
-            Ok(Self { rope: Rope::new(), path: Some(path), dirty: false, version: 0 })
+            Ok(Self {
+                rope: Rope::new(),
+                path: Some(path),
+                dirty: false,
+                version: 0,
+                disk_mtime: None,
+            })
         }
     }
 
@@ -44,6 +68,11 @@ impl Buffer {
             .write_to(BufWriter::new(file))
             .with_context(|| format!("writing {}", path.display()))?;
         self.dirty = false;
+        // Refresh mtime so the watcher doesn't immediately think the file
+        // changed under us.
+        if let Ok(meta) = std::fs::metadata(path) {
+            self.disk_mtime = meta.modified().ok();
+        }
         Ok(())
     }
 

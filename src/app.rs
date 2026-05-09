@@ -350,6 +350,12 @@ pub struct App {
     pub folds: Vec<FoldRange>,
     pub folds_version: u64,
     pub closed_folds: std::collections::HashSet<usize>,
+    /// Most-recently-used files for the file picker. Persisted to
+    /// `~/.cache/binvim/recents`.
+    pub recents: Vec<PathBuf>,
+    /// Wall clock of the last disk-mtime probe — drives the watch-and-reload
+    /// loop without spamming syscalls.
+    pub last_disk_check: Instant,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -411,6 +417,8 @@ impl App {
             folds: Vec::new(),
             folds_version: u64::MAX,
             closed_folds: std::collections::HashSet::new(),
+            recents: load_recents(),
+            last_disk_check: Instant::now(),
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -425,6 +433,7 @@ impl App {
         let mut needs_render = true;
         while !self.should_quit {
             if needs_render {
+                self.maybe_reload_from_disk();
                 self.adjust_viewport();
                 self.ensure_highlights();
                 self.ensure_folds();
@@ -3595,7 +3604,64 @@ impl App {
         self.refresh_git_branch();
         self.refresh_editorconfig();
         self.show_start_page = false;
+        self.touch_recent();
         Ok(())
+    }
+
+    /// Watcher: if the active buffer's file has been modified on disk
+    /// while we weren't editing it (`!buffer.dirty`), reload from disk so
+    /// the user sees the latest version. Throttled to once per second so
+    /// the syscall cost is negligible.
+    fn maybe_reload_from_disk(&mut self) {
+        if self.buffer.dirty {
+            return;
+        }
+        let now = Instant::now();
+        if now.duration_since(self.last_disk_check) < DISK_CHECK_INTERVAL {
+            return;
+        }
+        self.last_disk_check = now;
+        let Some(path) = self.buffer.path.clone() else { return };
+        let Ok(meta) = std::fs::metadata(&path) else { return };
+        let Ok(disk_mtime) = meta.modified() else { return };
+        match self.buffer.disk_mtime {
+            Some(prev) if disk_mtime <= prev => return,
+            _ => {}
+        }
+        // Reload.
+        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        let new_rope = ropey::Rope::from_str(&text);
+        let total = self.buffer.total_chars();
+        self.buffer.delete_range(0, total);
+        self.buffer.insert_at_idx(0, &text);
+        self.buffer.disk_mtime = Some(disk_mtime);
+        self.buffer.dirty = false;
+        // Cursor may have ended up past the new EOL — clamp.
+        let last = self.buffer.line_count().saturating_sub(1);
+        if self.cursor.line > last {
+            self.cursor.line = last;
+        }
+        self.clamp_cursor_normal();
+        // Touch the version so caches invalidate.
+        let _ = new_rope; // kept just to make the read explicit.
+        self.status_msg = format!(
+            "reloaded {} (changed on disk)",
+            path.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.display().to_string()),
+        );
+    }
+
+    /// Move the active buffer's path to the front of the recents list and
+    /// persist. Caps at `RECENTS_CAP` to keep the file from growing
+    /// without bound.
+    fn touch_recent(&mut self) {
+        let Some(path) = self.buffer.path.clone() else { return };
+        let canon = path.canonicalize().unwrap_or(path);
+        self.recents.retain(|p| *p != canon);
+        self.recents.insert(0, canon);
+        self.recents.truncate(RECENTS_CAP);
+        save_recents(&self.recents);
     }
 
     /// Pipe the active buffer through the configured formatter for its
@@ -4147,12 +4213,31 @@ impl App {
         let state = match kind {
             PickerLeader::Files => {
                 let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let items = picker::enumerate_files(&cwd, 5000);
+                let mut items = picker::enumerate_files(&cwd, 5000);
                 if items.is_empty() {
                     self.status_msg = "No files found".into();
                     return;
                 }
-                PickerState::new(PickerKind::Files, "Files".into(), items)
+                // Promote MRU recents that exist on disk to the top of
+                // the list so an empty query already shows them first.
+                let mut promoted: Vec<(String, PickerPayload)> = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for r in &self.recents {
+                    if !r.is_file() {
+                        continue;
+                    }
+                    let display = r
+                        .strip_prefix(&cwd)
+                        .ok()
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_else(|| r.display().to_string());
+                    if seen.insert(display.clone()) {
+                        promoted.push((display, PickerPayload::Path(r.clone())));
+                    }
+                }
+                items.retain(|(d, _)| !seen.contains(d));
+                promoted.extend(items);
+                PickerState::new(PickerKind::Files, "Files".into(), promoted)
             }
             PickerLeader::Grep => {
                 PickerState::new(PickerKind::Grep, "Grep".into(), Vec::new())
@@ -4832,6 +4917,38 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 /// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
+const RECENTS_CAP: usize = 100;
+const DISK_CHECK_INTERVAL: Duration = Duration::from_millis(1000);
+
+fn recents_path() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok()?;
+    let mut p = PathBuf::from(home);
+    p.push(".cache/binvim/recents");
+    Some(p)
+}
+
+fn load_recents() -> Vec<PathBuf> {
+    let Some(p) = recents_path() else { return Vec::new() };
+    let Ok(text) = std::fs::read_to_string(&p) else { return Vec::new() };
+    text.lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(PathBuf::from)
+        .collect()
+}
+
+fn save_recents(list: &[PathBuf]) {
+    let Some(p) = recents_path() else { return };
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let text = list
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let _ = std::fs::write(&p, text);
+}
+
 /// Indent-based fold computation. Builds a fold range starting at every
 /// line whose indent level is *strictly less than* the next non-blank
 /// line's. Blank lines belong to whichever fold they fall inside (they
