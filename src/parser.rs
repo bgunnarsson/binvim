@@ -65,6 +65,8 @@ pub enum PickerLeader {
     Files,
     Buffers,
     Grep,
+    DocumentSymbols,
+    WorkspaceSymbols,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -423,6 +425,8 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
                 'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
                 'e' => Some(Action::OpenYazi),
+                'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),
+                'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
                 _ => None,
             };
             if let Some(a) = action {

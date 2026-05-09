@@ -53,8 +53,21 @@ pub enum LspEvent {
     Completion { items: Vec<CompletionItem> },
     SignatureHelp(SignatureHelp),
     References { items: Vec<LocationItem> },
+    Symbols { items: Vec<SymbolItem>, workspace: bool },
     DiagnosticsUpdated,
     NotFound(&'static str),
+}
+
+#[derive(Debug, Clone)]
+pub struct SymbolItem {
+    pub name: String,
+    /// Container path for nested symbols, e.g. `App > render > draw`. Empty
+    /// for top-level symbols.
+    pub container: String,
+    pub kind: String,
+    pub path: PathBuf,
+    pub line: usize,
+    pub col: usize,
 }
 
 /// One result from a `textDocument/references` (or similar) call. `path`
@@ -98,6 +111,8 @@ pub enum PendingRequest {
     Completion,
     SignatureHelp,
     References,
+    DocumentSymbols,
+    WorkspaceSymbols,
 }
 
 /// State of a client's outgoing pipe. Until the server has answered the
@@ -1309,6 +1324,31 @@ impl LspManager {
         any
     }
 
+    /// Request `textDocument/documentSymbol` to populate the outline picker.
+    pub fn request_document_symbols(&mut self, path: &Path) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/documentSymbol",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+        );
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::DocumentSymbols);
+        true
+    }
+
+    /// Request `workspace/symbol`. The server-side fuzzy matcher does the
+    /// ranking; we just relay results to the picker. `query` may be empty.
+    pub fn request_workspace_symbols(&mut self, path: &Path, query: &str) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(id, "workspace/symbol", json!({ "query": query }));
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::WorkspaceSymbols);
+        true
+    }
+
     /// Request `textDocument/references` from the primary server with
     /// `includeDeclaration: true` so the user sees the definition site too.
     pub fn request_references(&mut self, path: &Path, line: usize, col: usize) -> bool {
@@ -1378,7 +1418,136 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
                 Some(LspEvent::References { items })
             }
         }
+        PendingRequest::DocumentSymbols => {
+            let items = parse_symbols_response(result);
+            if items.is_empty() {
+                Some(LspEvent::NotFound("symbols"))
+            } else {
+                Some(LspEvent::Symbols { items, workspace: false })
+            }
+        }
+        PendingRequest::WorkspaceSymbols => {
+            let items = parse_symbols_response(result);
+            // Empty results during live filtering shouldn't toast — the
+            // caller distinguishes by the `workspace: true` flag.
+            Some(LspEvent::Symbols { items, workspace: true })
+        }
     }
+}
+
+/// Parse `DocumentSymbol[]` (hierarchical), `SymbolInformation[]` (flat),
+/// or `WorkspaceSymbol[]` into our internal shape. Hierarchical entries
+/// flatten with their container path joined by `›`.
+fn parse_symbols_response(result: &Value) -> Vec<SymbolItem> {
+    let arr = match result.as_array() {
+        Some(a) => a.clone(),
+        None => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for entry in arr {
+        flatten_symbol(&entry, "", &mut out);
+    }
+    out
+}
+
+fn flatten_symbol(entry: &Value, container: &str, out: &mut Vec<SymbolItem>) {
+    let name = entry
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if name.is_empty() {
+        return;
+    }
+    let kind = entry
+        .get("kind")
+        .and_then(|v| v.as_u64())
+        .map(symbol_kind_label)
+        .unwrap_or_else(|| "?".into());
+    // DocumentSymbol uses `selectionRange`; SymbolInformation/WorkspaceSymbol
+    // uses `location.range`. WorkspaceSymbol may also use `location.uri`
+    // without a range.
+    let (uri, range) = if let Some(loc) = entry.get("location") {
+        let uri = loc.get("uri").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let range = loc.get("range").or_else(|| loc.get("targetRange")).cloned();
+        (uri, range)
+    } else {
+        (None, entry.get("selectionRange").or_else(|| entry.get("range")).cloned())
+    };
+    let start = range
+        .as_ref()
+        .and_then(|r| r.get("start"))
+        .map(|s| {
+            (
+                s.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+                s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            )
+        });
+    let path = uri.and_then(|u| uri_to_path(&u));
+    if let (Some(path), Some((line, col))) = (path, start) {
+        out.push(SymbolItem {
+            name: name.clone(),
+            container: container.to_string(),
+            kind,
+            path,
+            line,
+            col,
+        });
+    } else if let Some((line, col)) = start {
+        // DocumentSymbol with no embedded URI — leave path empty; the
+        // caller knows the active buffer's path.
+        out.push(SymbolItem {
+            name: name.clone(),
+            container: container.to_string(),
+            kind,
+            path: PathBuf::new(),
+            line,
+            col,
+        });
+    }
+    if let Some(children) = entry.get("children").and_then(|v| v.as_array()) {
+        let next_container = if container.is_empty() {
+            name.clone()
+        } else {
+            format!("{container} › {name}")
+        };
+        for child in children {
+            flatten_symbol(child, &next_container, out);
+        }
+    }
+}
+
+fn symbol_kind_label(k: u64) -> String {
+    match k {
+        1 => "file",
+        2 => "module",
+        3 => "namespace",
+        4 => "package",
+        5 => "class",
+        6 => "method",
+        7 => "property",
+        8 => "field",
+        9 => "constructor",
+        10 => "enum",
+        11 => "interface",
+        12 => "function",
+        13 => "variable",
+        14 => "constant",
+        15 => "string",
+        16 => "number",
+        17 => "bool",
+        18 => "array",
+        19 => "object",
+        20 => "key",
+        21 => "null",
+        22 => "enum-member",
+        23 => "struct",
+        24 => "event",
+        25 => "operator",
+        26 => "type-param",
+        _ => "?",
+    }
+    .into()
 }
 
 /// Parse a `Location[]` (or `LocationLink[]`) response into our internal

@@ -13,7 +13,9 @@ use crate::command::{self, ExCommand, ExRange};
 use crate::config::Config;
 use crate::editorconfig::{EditorConfig, IndentStyle};
 use crate::lang::{self, HighlightCache};
-use crate::lsp::{CompletionItem, Diagnostic, LspEvent, LspManager, Severity, SignatureHelp};
+use crate::lsp::{
+    CompletionItem, Diagnostic, LspEvent, LspManager, Severity, SignatureHelp, SymbolItem,
+};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
@@ -127,6 +129,8 @@ fn leader_entries() -> Vec<(String, String)> {
         ("b".into(), "+Buffer".into()),
         ("g".into(), "Grep".into()),
         ("e".into(), "Yazi".into()),
+        ("o".into(), "Doc symbols".into()),
+        ("S".into(), "Workspace symbols".into()),
     ]
 }
 
@@ -492,6 +496,13 @@ impl App {
                 }
                 LspEvent::References { items } => {
                     self.open_locations_picker("References", items);
+                }
+                LspEvent::Symbols { items, workspace } => {
+                    if workspace {
+                        self.update_workspace_symbols_picker(items);
+                    } else {
+                        self.open_symbols_picker(items);
+                    }
                 }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
@@ -3737,9 +3748,117 @@ impl App {
                 }
                 PickerState::new(PickerKind::Buffers, "Buffers".into(), items)
             }
+            PickerLeader::DocumentSymbols => {
+                if let Some(path) = self.buffer.path.clone() {
+                    self.lsp_sync_active();
+                    if !self.lsp.request_document_symbols(&path) {
+                        self.status_msg = "LSP: not active for this buffer".into();
+                    }
+                } else {
+                    self.status_msg = "Save the buffer to query symbols".into();
+                }
+                return;
+            }
+            PickerLeader::WorkspaceSymbols => {
+                // Open an empty picker immediately so the user can start
+                // typing; queries fire as they go via `refilter_picker`.
+                let state = PickerState::new(
+                    PickerKind::WorkspaceSymbols,
+                    "Workspace symbols".into(),
+                    Vec::new(),
+                );
+                self.picker = Some(state);
+                self.mode = Mode::Picker;
+                if let Some(path) = self.buffer.path.clone() {
+                    self.lsp_sync_active();
+                    let _ = self.lsp.request_workspace_symbols(&path, "");
+                }
+                return;
+            }
         };
         self.picker = Some(state);
         self.mode = Mode::Picker;
+    }
+
+    /// Build a picker out of `textDocument/documentSymbol` results.
+    fn open_symbols_picker(&mut self, items: Vec<SymbolItem>) {
+        if items.is_empty() {
+            self.status_msg = "LSP: no symbols".into();
+            return;
+        }
+        let active_path = self.buffer.path.clone();
+        let entries: Vec<(String, PickerPayload)> = items
+            .into_iter()
+            .map(|s| {
+                let display = if s.container.is_empty() {
+                    format!("{} {} :{}", s.kind, s.name, s.line + 1)
+                } else {
+                    format!("{} {} › {} :{}", s.kind, s.container, s.name, s.line + 1)
+                };
+                let path = if s.path.as_os_str().is_empty() {
+                    active_path.clone().unwrap_or_default()
+                } else {
+                    s.path
+                };
+                (
+                    display,
+                    PickerPayload::Location {
+                        path,
+                        line: s.line + 1,
+                        col: s.col + 1,
+                    },
+                )
+            })
+            .collect();
+        let mut state = PickerState::new(
+            PickerKind::DocumentSymbols,
+            "Doc symbols".into(),
+            entries,
+        );
+        state.refilter();
+        self.picker = Some(state);
+        self.mode = Mode::Picker;
+    }
+
+    /// Replace the current workspace-symbols picker's items with fresh
+    /// server-side results. No-op if the user already closed it.
+    fn update_workspace_symbols_picker(&mut self, items: Vec<SymbolItem>) {
+        let Some(picker) = self.picker.as_mut() else { return; };
+        if !matches!(picker.kind, PickerKind::WorkspaceSymbols) {
+            return;
+        }
+        let entries: Vec<(String, PickerPayload)> = items
+            .into_iter()
+            .map(|s| {
+                let display = if s.container.is_empty() {
+                    format!(
+                        "{} {} :{} {}",
+                        s.kind,
+                        s.name,
+                        s.line + 1,
+                        s.path.display()
+                    )
+                } else {
+                    format!(
+                        "{} {} › {} :{} {}",
+                        s.kind,
+                        s.container,
+                        s.name,
+                        s.line + 1,
+                        s.path.display()
+                    )
+                };
+                (
+                    display,
+                    PickerPayload::Location {
+                        path: s.path,
+                        line: s.line + 1,
+                        col: s.col + 1,
+                    },
+                )
+            })
+            .collect();
+        picker::replace_items(picker, entries);
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) {
@@ -3824,9 +3943,10 @@ impl App {
                 picker::replace_items(picker, results);
             }
             PickerKind::WorkspaceSymbols => {
-                // Live server-side filter — the workspace symbol provider
-                // does its own ranking. Wired in commit 6 once we have the
-                // request plumbing; no-op for now.
+                let query = picker.input.clone();
+                if let Some(path) = self.buffer.path.clone() {
+                    let _ = self.lsp.request_workspace_symbols(&path, &query);
+                }
             }
         }
     }
