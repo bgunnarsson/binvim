@@ -658,12 +658,16 @@ impl App {
         if matches!(self.mode, Mode::Command | Mode::Search { .. }) {
             return false;
         }
-        let max_inner = (self.width as usize).saturating_sub(8).max(20);
+        // Mirror `draw_notification`'s width cap so the click hit-test
+        // matches what's actually painted (max half the terminal width).
+        let total_w = self.width as usize;
+        let half_inner = (total_w / 2).saturating_sub(4);
+        let term_inner = total_w.saturating_sub(8);
+        let max_inner = half_inner.min(term_inner).max(20);
         let msg_chars = self.status_msg.lines().next().unwrap_or("").chars().count();
         let displayed_chars = msg_chars.min(max_inner);
         let inner_w = displayed_chars + 2;
         let box_w = inner_w + 2;
-        let total_w = self.width as usize;
         let left = total_w.saturating_sub(box_w + 1);
         row < 3 && col >= left && col < left + box_w
     }

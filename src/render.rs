@@ -325,11 +325,16 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     }
     let level = notification_color(&msg);
 
-    let max_inner = (app.width as usize).saturating_sub(8).max(20);
+    // Cap the notification at half the terminal width so long messages
+    // (file paths, stack traces) don't span the whole screen. The box adds
+    // 4 chrome columns: 2 borders + 2 padding spaces.
+    let total_w = app.width as usize;
+    let half_inner = (total_w / 2).saturating_sub(4);
+    let term_inner = total_w.saturating_sub(8);
+    let max_inner = half_inner.min(term_inner).max(20);
     let inner: String = msg.chars().take(max_inner).collect();
     let inner_w = inner.chars().count() + 2; // padding inside borders
     let box_w = inner_w + 2;
-    let total_w = app.width as usize;
     let left = total_w.saturating_sub(box_w + 1);
     let top = 0usize;
 
