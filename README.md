@@ -53,13 +53,31 @@ Fuzzy file picker, buffer switcher, and live grep — all opened from leader (`s
 
 Colours overridable via `~/.config/binvim/config.toml`.
 
-## Build
+## Install
+
+### macOS — Homebrew
+
+```sh
+brew install bgunnarsson/binvim/binvim
+```
+
+The tap lives at [github.com/bgunnarsson/homebrew-binvim](https://github.com/bgunnarsson/homebrew-binvim) and ships pre-built bottles for Apple Silicon and Intel.
+
+### Linux — install script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/bgunnarsson/binvim/main/install.sh | sh
+```
+
+Pulls the matching musl-static tarball (`x86_64` or `aarch64`) from the latest GitHub Release, verifies its SHA-256, and drops the binary at `~/.local/bin/binvim`. Override with `BINVIM_VERSION=v0.1.0` or `BINVIM_INSTALL_DIR=/opt/bin` if needed.
+
+### From source
 
 ```sh
 cargo build --release
 ```
 
-The binary lands at `target/release/binvim`.
+The binary lands at `target/release/binvim`. Requires a stable Rust toolchain.
 
 ## Run
 
