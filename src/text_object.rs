@@ -235,7 +235,7 @@ mod tests {
     use ropey::Rope;
 
     fn buf(s: &str) -> Buffer {
-        Buffer { rope: Rope::from_str(s), path: None, dirty: false, version: 0 }
+        Buffer { rope: Rope::from_str(s), path: None, dirty: false, version: 0, disk_mtime: None }
     }
     fn cur(l: usize, c: usize) -> Cursor {
         Cursor { line: l, col: c, want_col: c }

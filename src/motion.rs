@@ -501,6 +501,7 @@ mod tests {
             path: None,
             dirty: false,
             version: 0,
+            disk_mtime: None,
         }
     }
 
