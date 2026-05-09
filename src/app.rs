@@ -104,6 +104,12 @@ pub struct WhichKeyState {
 
 pub const WHICHKEY_DELAY: Duration = Duration::from_millis(250);
 
+/// Maximum keystroke-burst window before binvim flushes accumulated text
+/// changes to attached LSP servers. Per-keystroke didChange floods slow
+/// servers (typescript-language-server in particular) and chews CPU; 50ms
+/// is fast enough that it feels live but coalesces typical bursts.
+pub const LSP_SYNC_DEBOUNCE: Duration = Duration::from_millis(50);
+
 /// How long the yank flash stays painted before it fades.
 pub const YANK_FLASH_DURATION: Duration = Duration::from_millis(200);
 
@@ -290,6 +296,10 @@ pub struct App {
     pub lsp: LspManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
+    /// Wall-clock of the last `did_change` flush. Drives the keystroke
+    /// debounce so rapid typing doesn't flood the server with one update
+    /// per character.
+    pub last_lsp_sync_at: Instant,
     pub completion: Option<CompletionState>,
     pub hover: Option<HoverState>,
     pub whichkey: Option<WhichKeyState>,
@@ -348,6 +358,7 @@ impl App {
             editorconfig: EditorConfig::default(),
             lsp: LspManager::new(),
             last_sent_version: HashMap::new(),
+            last_lsp_sync_at: Instant::now(),
             completion: None,
             hover: None,
             whichkey: None,
@@ -371,7 +382,7 @@ impl App {
             if needs_render {
                 self.adjust_viewport();
                 self.ensure_highlights();
-                self.lsp_sync_active();
+                self.lsp_sync_active_debounced();
                 render::draw(&mut stdout, self)?;
                 stdout.flush()?;
                 needs_render = false;
@@ -395,6 +406,15 @@ impl App {
             if let Some(h) = self.yank_highlight.as_ref() {
                 let until = h
                     .expires_at
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                poll_dur = poll_dur.min(until);
+            }
+            // Pending debounced LSP sync — wake at the deadline so the
+            // server sees the user's pause-burst flush even if no further
+            // key arrives.
+            if let Some(due) = self.lsp_sync_due_at() {
+                let until = due
                     .checked_duration_since(Instant::now())
                     .unwrap_or(Duration::from_millis(0));
                 poll_dur = poll_dur.min(until);
@@ -430,6 +450,12 @@ impl App {
             if let Some(h) = self.yank_highlight.as_ref() {
                 if Instant::now() >= h.expires_at {
                     self.yank_highlight = None;
+                    needs_render = true;
+                }
+            }
+            // Debounced LSP sync due — request a render so it fires.
+            if let Some(due) = self.lsp_sync_due_at() {
+                if Instant::now() >= due {
                     needs_render = true;
                 }
             }
@@ -603,6 +629,9 @@ impl App {
             .insert(path, self.buffer.version);
     }
 
+    /// Force-flush the active buffer to every attached LSP. Used right
+    /// before a request that needs fresh text (completion / hover / goto)
+    /// and from `lsp_sync_active_debounced` once the burst window expires.
     fn lsp_sync_active(&mut self) {
         let Some(path) = self.buffer.path.clone() else { return; };
         let last = self.last_sent_version.get(&path).copied().unwrap_or(u64::MAX);
@@ -623,6 +652,37 @@ impl App {
         }
         self.last_sent_version
             .insert(path, self.buffer.version);
+        self.last_lsp_sync_at = Instant::now();
+    }
+
+    /// Render-loop sync: only flush when the last successful flush is more
+    /// than `LSP_SYNC_DEBOUNCE` ago. The main loop wakes early at the
+    /// deadline (see `lsp_sync_due_at`) so a short burst still flushes
+    /// promptly after the user pauses.
+    fn lsp_sync_active_debounced(&mut self) {
+        let Some(path) = self.buffer.path.as_ref() else { return; };
+        let last = self.last_sent_version.get(path).copied().unwrap_or(u64::MAX);
+        if last == self.buffer.version {
+            return;
+        }
+        // First-ever sync (e.g. didOpen on attach) shouldn't be delayed.
+        if last != u64::MAX
+            && Instant::now().duration_since(self.last_lsp_sync_at) < LSP_SYNC_DEBOUNCE
+        {
+            return;
+        }
+        self.lsp_sync_active();
+    }
+
+    /// Earliest wall-clock at which a debounced sync would fire if no key
+    /// arrived first. `None` when the buffer is already fully shipped.
+    fn lsp_sync_due_at(&self) -> Option<Instant> {
+        let path = self.buffer.path.as_ref()?;
+        let last = self.last_sent_version.get(path).copied().unwrap_or(u64::MAX);
+        if last == self.buffer.version {
+            return None;
+        }
+        Some(self.last_lsp_sync_at + LSP_SYNC_DEBOUNCE)
     }
 
     fn lsp_request_goto(&mut self) {
