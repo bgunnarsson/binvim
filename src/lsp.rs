@@ -54,8 +54,24 @@ pub enum LspEvent {
     SignatureHelp(SignatureHelp),
     References { items: Vec<LocationItem> },
     Symbols { items: Vec<SymbolItem>, workspace: bool },
+    CodeActions { items: Vec<CodeActionItem> },
     DiagnosticsUpdated,
     NotFound(&'static str),
+}
+
+/// A code action the user can pick from `<leader>a`. We keep the raw
+/// `command` and `edit` JSON values so the applier can match against
+/// either shape (LSP returns `Command` or `CodeAction` interchangeably).
+#[derive(Debug, Clone)]
+pub struct CodeActionItem {
+    pub title: String,
+    pub kind: Option<String>,
+    pub edit: Option<Value>,
+    pub command: Option<Value>,
+    /// Set when the action is published as `disabled` — we still surface it
+    /// so the user can see why the server thinks it doesn't apply, but the
+    /// apply path will reject it.
+    pub disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +129,7 @@ pub enum PendingRequest {
     References,
     DocumentSymbols,
     WorkspaceSymbols,
+    CodeActions,
 }
 
 /// State of a client's outgoing pipe. Until the server has answered the
@@ -1324,6 +1341,38 @@ impl LspManager {
         any
     }
 
+    /// Request `textDocument/codeAction` for the cursor position. The
+    /// caller passes the diagnostics overlapping that position (only those
+    /// — passing the full file's worth made tsserver hang on big projects).
+    pub fn request_code_actions(
+        &mut self,
+        path: &Path,
+        line: usize,
+        col: usize,
+        diagnostics: Vec<Value>,
+    ) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/codeAction",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "range": {
+                    "start": { "line": line, "character": col },
+                    "end":   { "line": line, "character": col },
+                },
+                "context": {
+                    "diagnostics": diagnostics,
+                    "triggerKind": 1,
+                },
+            }),
+        );
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::CodeActions);
+        true
+    }
+
     /// Request `textDocument/documentSymbol` to populate the outline picker.
     pub fn request_document_symbols(&mut self, path: &Path) -> bool {
         let Some(client) = self.client_for_path(path) else { return false; };
@@ -1432,7 +1481,60 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
             // caller distinguishes by the `workspace: true` flag.
             Some(LspEvent::Symbols { items, workspace: true })
         }
+        PendingRequest::CodeActions => {
+            let items = parse_code_actions_response(result);
+            if items.is_empty() {
+                Some(LspEvent::NotFound("code actions"))
+            } else {
+                Some(LspEvent::CodeActions { items })
+            }
+        }
     }
+}
+
+fn parse_code_actions_response(result: &Value) -> Vec<CodeActionItem> {
+    let arr = match result.as_array() {
+        Some(a) => a.clone(),
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        // `Command` shape: { title, command, arguments? }
+        // `CodeAction` shape: { title, kind?, edit?, command?, disabled? }
+        let title = match entry.get("title").and_then(|v| v.as_str()) {
+            Some(t) => t.to_string(),
+            None => continue,
+        };
+        let kind = entry
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let edit = entry.get("edit").cloned();
+        let command_field = entry.get("command");
+        // CodeAction's `command` is a Command object; bare Command-shaped
+        // entries place the command at the top level — both reduce to the
+        // same JSON we'll execute later.
+        let command = if command_field.map(|v| v.is_object()).unwrap_or(false) {
+            command_field.cloned()
+        } else if entry.get("command").map(|v| v.is_string()).unwrap_or(false) {
+            Some(entry.clone())
+        } else {
+            None
+        };
+        let disabled_reason = entry
+            .get("disabled")
+            .and_then(|v| v.get("reason"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        out.push(CodeActionItem {
+            title,
+            kind,
+            edit,
+            command,
+            disabled_reason,
+        });
+    }
+    out
 }
 
 /// Parse `DocumentSymbol[]` (hierarchical), `SymbolInformation[]` (flat),

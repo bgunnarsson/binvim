@@ -14,8 +14,10 @@ use crate::config::Config;
 use crate::editorconfig::{EditorConfig, IndentStyle};
 use crate::lang::{self, HighlightCache};
 use crate::lsp::{
-    CompletionItem, Diagnostic, LspEvent, LspManager, Severity, SignatureHelp, SymbolItem,
+    CodeActionItem, CompletionItem, Diagnostic, LspEvent, LspManager, Severity, SignatureHelp,
+    SymbolItem,
 };
+use serde_json::Value as JsonValue;
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
@@ -131,6 +133,7 @@ fn leader_entries() -> Vec<(String, String)> {
         ("e".into(), "Yazi".into()),
         ("o".into(), "Doc symbols".into()),
         ("S".into(), "Workspace symbols".into()),
+        ("a".into(), "Code actions".into()),
     ]
 }
 
@@ -318,6 +321,9 @@ pub struct App {
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
+    /// Pending code actions waiting for the user to pick from the picker.
+    /// Indexed by `PickerPayload::CodeActionIdx`.
+    pub pending_code_actions: Vec<CodeActionItem>,
     replaying_macro: bool,
     recording: Option<RecordingState>,
     replaying: bool,
@@ -374,6 +380,7 @@ impl App {
             git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
             show_start_page,
             yank_highlight: None,
+            pending_code_actions: Vec::new(),
             replaying_macro: false,
             recording: None,
             replaying: false,
@@ -503,6 +510,9 @@ impl App {
                     } else {
                         self.open_symbols_picker(items);
                     }
+                }
+                LspEvent::CodeActions { items } => {
+                    self.open_code_actions_picker(items);
                 }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
@@ -3759,6 +3769,20 @@ impl App {
                 }
                 return;
             }
+            PickerLeader::CodeActions => {
+                if let Some(path) = self.buffer.path.clone() {
+                    self.lsp_sync_active();
+                    let line = self.cursor.line;
+                    let col = self.cursor.col;
+                    let diags = self.diagnostics_at_cursor_for_lsp();
+                    if !self.lsp.request_code_actions(&path, line, col, diags) {
+                        self.status_msg = "LSP: not active for this buffer".into();
+                    }
+                } else {
+                    self.status_msg = "Save the buffer to query code actions".into();
+                }
+                return;
+            }
             PickerLeader::WorkspaceSymbols => {
                 // Open an empty picker immediately so the user can start
                 // typing; queries fire as they go via `refilter_picker`.
@@ -3778,6 +3802,190 @@ impl App {
         };
         self.picker = Some(state);
         self.mode = Mode::Picker;
+    }
+
+    /// Diagnostics overlapping the cursor position, serialised in the LSP
+    /// JSON shape so we can pass them straight to `textDocument/codeAction`'s
+    /// `context.diagnostics` field. Empty when nothing's there.
+    fn diagnostics_at_cursor_for_lsp(&self) -> Vec<JsonValue> {
+        let Some(path) = self.buffer.path.as_deref() else { return Vec::new(); };
+        let Some(diags) = self.lsp.diagnostics_for(path) else { return Vec::new(); };
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        diags
+            .iter()
+            .filter(|d| {
+                let on_line = d.line <= line && line <= d.end_line;
+                if !on_line {
+                    return false;
+                }
+                if d.line == d.end_line {
+                    col >= d.col && col <= d.end_col
+                } else {
+                    true
+                }
+            })
+            .map(|d| {
+                let severity = match d.severity {
+                    Severity::Error => 1,
+                    Severity::Warning => 2,
+                    Severity::Info => 3,
+                    Severity::Hint => 4,
+                };
+                serde_json::json!({
+                    "range": {
+                        "start": { "line": d.line, "character": d.col },
+                        "end": { "line": d.end_line, "character": d.end_col },
+                    },
+                    "severity": severity,
+                    "message": d.message,
+                })
+            })
+            .collect()
+    }
+
+    fn open_code_actions_picker(&mut self, items: Vec<CodeActionItem>) {
+        if items.is_empty() {
+            self.status_msg = "LSP: no code actions".into();
+            return;
+        }
+        let entries: Vec<(String, PickerPayload)> = items
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                let mut display = match &a.kind {
+                    Some(k) if !k.is_empty() => format!("[{}] {}", k, a.title),
+                    _ => a.title.clone(),
+                };
+                if let Some(reason) = &a.disabled_reason {
+                    display.push_str(&format!(" — disabled: {reason}"));
+                }
+                (display, PickerPayload::CodeActionIdx(i))
+            })
+            .collect();
+        self.pending_code_actions = items;
+        let mut state = PickerState::new(
+            PickerKind::CodeActions,
+            "Code actions".into(),
+            entries,
+        );
+        state.refilter();
+        self.picker = Some(state);
+        self.mode = Mode::Picker;
+    }
+
+    /// Apply a chosen code action — runs its embedded `WorkspaceEdit` (if
+    /// any) then surfaces a status note. Multi-file edits are supported by
+    /// switching buffers, applying, saving, and restoring.
+    fn run_code_action(&mut self, idx: usize) {
+        let Some(action) = self.pending_code_actions.get(idx).cloned() else { return; };
+        if let Some(reason) = action.disabled_reason {
+            self.status_msg = format!("disabled: {reason}");
+            return;
+        }
+        let mut applied = false;
+        if let Some(edit) = action.edit.as_ref() {
+            match self.apply_workspace_edit(edit) {
+                Ok((edits, files)) if edits > 0 => {
+                    self.status_msg = format!(
+                        "applied {edits} edit{} across {files} file{}",
+                        if edits == 1 { "" } else { "s" },
+                        if files == 1 { "" } else { "s" },
+                    );
+                    applied = true;
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    self.status_msg = format!("error: {e}");
+                    return;
+                }
+            }
+        }
+        // We don't yet round-trip server-side `command` execution — that
+        // requires `workspace/executeCommand` plus `workspace/applyEdit`
+        // server-to-client request handling on the main thread. Surface a
+        // hint so the user knows why nothing happened.
+        if !applied && action.command.is_some() {
+            self.status_msg = format!("command-only action '{}' isn't supported yet", action.title);
+        } else if !applied {
+            self.status_msg = format!("'{}' had no edits", action.title);
+        }
+    }
+
+    /// Apply a `WorkspaceEdit` JSON value to disk and to any open buffers.
+    /// Returns (total edits, distinct files affected). Saves each modified
+    /// buffer so the LSP server sees the result on its next didChange.
+    fn apply_workspace_edit(&mut self, edit: &JsonValue) -> Result<(usize, usize)> {
+        let mut grouped: Vec<(PathBuf, Vec<JsonValue>)> = Vec::new();
+        let mut push = |path: PathBuf, edits: Vec<JsonValue>| {
+            if let Some(slot) = grouped.iter_mut().find(|(p, _)| *p == path) {
+                slot.1.extend(edits);
+            } else {
+                grouped.push((path, edits));
+            }
+        };
+        if let Some(doc_changes) = edit.get("documentChanges").and_then(|v| v.as_array()) {
+            for ch in doc_changes {
+                let Some(uri) = ch
+                    .get("textDocument")
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|v| v.as_str())
+                else { continue };
+                let Some(path) = crate::lsp::uri_to_path(uri) else { continue };
+                let Some(edits) = ch.get("edits").and_then(|v| v.as_array()) else { continue };
+                push(path, edits.clone());
+            }
+        } else if let Some(changes) = edit.get("changes").and_then(|v| v.as_object()) {
+            for (uri, v) in changes {
+                let Some(path) = crate::lsp::uri_to_path(uri) else { continue };
+                let Some(edits) = v.as_array() else { continue };
+                push(path, edits.clone());
+            }
+        }
+        if grouped.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let original_active = self.active;
+        let mut total_edits = 0usize;
+        let files = grouped.len();
+        for (path, edits) in grouped {
+            self.open_buffer(path.clone())?;
+            self.history.record(&self.buffer.rope, self.cursor);
+            let mut concrete: Vec<(usize, usize, String)> = Vec::with_capacity(edits.len());
+            for e in &edits {
+                let Some(range) = e.get("range") else { continue };
+                let s = range.get("start");
+                let n = range.get("end");
+                let (Some(s), Some(n)) = (s, n) else { continue };
+                let s_line = s.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let s_col = s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let e_line = n.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let e_col = n.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let new_text = e.get("newText").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let s_idx = self.buffer.pos_to_char(s_line, s_col);
+                let e_idx = self.buffer.pos_to_char(e_line, e_col);
+                concrete.push((s_idx, e_idx, new_text));
+            }
+            // Apply in reverse position order so earlier edits don't shift later offsets.
+            concrete.sort_by(|a, b| b.0.cmp(&a.0));
+            for (s, e, text) in &concrete {
+                if *e > *s {
+                    self.buffer.delete_range(*s, *e);
+                }
+                self.buffer.insert_at_idx(*s, text);
+            }
+            total_edits += concrete.len();
+            self.clamp_cursor_normal();
+            // Save so the LSP picks up the new contents.
+            let _ = self.buffer.save();
+        }
+        // Restore the original active buffer so the user lands back where
+        // they were when they invoked the action.
+        if original_active < self.buffers.len() && self.active != original_active {
+            let _ = self.switch_to(original_active);
+        }
+        Ok((total_edits, files))
     }
 
     /// Build a picker out of `textDocument/documentSymbol` results.
@@ -3898,9 +4106,8 @@ impl App {
                                 self.clamp_cursor_normal();
                             }
                         }
-                        PickerPayload::CodeActionIdx(_idx) => {
-                            // Wired in commit 7 (code actions). No-op for
-                            // now to keep the match exhaustive.
+                        PickerPayload::CodeActionIdx(idx) => {
+                            self.run_code_action(idx);
                         }
                     }
                 }
