@@ -409,13 +409,19 @@ fn tailwind_spec_for_path(path: &Path) -> Option<ServerSpec> {
     })
 }
 
-/// Walk up from `start` looking for a Tailwind config file. Tailwind v3
-/// supports js/ts/cjs/mjs; v4 may use just CSS imports but still ships a
-/// config in many projects, so we accept that too.
+/// Walk up from `start` looking for a marker that says "this project uses
+/// Tailwind." Returns the path of the marker so `:health` can show the user
+/// what we matched on.
+///
+/// v3 markers: `tailwind.config.{js,ts,cjs,mjs,cts,mts}`.
+/// v4 marker:  `package.json` declaring `tailwindcss` in (dev)dependencies —
+///             v4's CSS-first config (`@import "tailwindcss"` in a CSS file)
+///             leaves no JS config to walk for, so we fall back to the
+///             dependency declaration to know Tailwind is present.
 pub fn find_tailwind_config(start: &Path) -> Option<PathBuf> {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     let mut dir: &Path = canon.as_path();
-    let names = [
+    let cfg_names = [
         "tailwind.config.js",
         "tailwind.config.ts",
         "tailwind.config.cjs",
@@ -424,17 +430,35 @@ pub fn find_tailwind_config(start: &Path) -> Option<PathBuf> {
         "tailwind.config.mts",
     ];
     loop {
-        for name in &names {
+        for name in &cfg_names {
             let candidate = dir.join(name);
             if candidate.is_file() {
                 return Some(candidate);
             }
+        }
+        let pkg = dir.join("package.json");
+        if pkg.is_file() && package_has_tailwind(&pkg) {
+            return Some(pkg);
         }
         match dir.parent() {
             Some(p) if p != dir => dir = p,
             _ => return None,
         }
     }
+}
+
+/// True if `package.json` lists `tailwindcss` (or `@tailwindcss/*`) under
+/// `dependencies`, `devDependencies`, or `peerDependencies`. Cheap text
+/// scan — robust enough that we don't pull a JSON parser into the hot path.
+fn package_has_tailwind(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else { return false; };
+    let needles = [
+        "\"tailwindcss\"",
+        "\"@tailwindcss/postcss\"",
+        "\"@tailwindcss/vite\"",
+        "\"@tailwindcss/cli\"",
+    ];
+    needles.iter().any(|n| text.contains(n))
 }
 
 /// Walk up from `start` looking for any of the marker filenames. Markers
@@ -946,6 +970,16 @@ pub struct LspHealth {
     pub pending_requests: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct ActiveBufferLspStatus {
+    pub key: String,
+    pub language_id: String,
+    /// Resolved path on disk (from `$PATH` or absolute) — `None` means no
+    /// candidate command exists on the system.
+    pub resolved_binary: Option<String>,
+    pub running: bool,
+}
+
 /// Container for per-language LSP clients keyed by `ServerSpec.key`.
 pub struct LspManager {
     clients: HashMap<String, LspClient>,
@@ -986,6 +1020,23 @@ impl LspManager {
             }
         }
         self.clients.get(&primary_key)
+    }
+
+    /// What `:health` should say about the active buffer's LSP attachments.
+    /// Walks every spec that *would* apply to the path and reports whether
+    /// the binary resolves on PATH and whether the client is currently
+    /// running. Lets the user see "Tailwind matched but binary missing"
+    /// without having to grep their PATH manually.
+    pub fn active_buffer_status(&self, path: &Path) -> Vec<ActiveBufferLspStatus> {
+        specs_for_path(path)
+            .into_iter()
+            .map(|spec| ActiveBufferLspStatus {
+                resolved_binary: resolve_command(&spec.cmd_candidates).map(|(p, _)| p),
+                running: self.clients.contains_key(&spec.key),
+                key: spec.key,
+                language_id: spec.language_id,
+            })
+            .collect()
     }
 
     /// Snapshot of every running LSP client for the `:health` view. Sorted by

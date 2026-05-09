@@ -2763,7 +2763,7 @@ impl App {
 
         // LSP
         let lsps = self.lsp.health_summary();
-        out.push_str(&format!("LSP servers ({})\n", lsps.len()));
+        out.push_str(&format!("LSP servers ({} running)\n", lsps.len()));
         if lsps.is_empty() {
             out.push_str("  (none attached)\n");
         }
@@ -2779,12 +2779,50 @@ impl App {
         }
         out.push('\n');
 
+        // Active buffer — which servers should attach, whether they did,
+        // and whether their binaries even exist on PATH. This is the panel
+        // that explains "why isn't completion firing here?" without making
+        // the user grep their PATH.
+        out.push_str("Active buffer\n");
+        match self.buffer.path.as_ref() {
+            Some(p) => {
+                out.push_str(&format!("  path:    {}\n", p.display()));
+                let statuses = self.lsp.active_buffer_status(p);
+                if statuses.is_empty() {
+                    out.push_str("  matched: (no server specs match this extension)\n");
+                } else {
+                    for s in statuses {
+                        let bin_note = match &s.resolved_binary {
+                            Some(path) => format!("binary={path}"),
+                            None => "binary=NOT INSTALLED".into(),
+                        };
+                        let run = if s.running { "running" } else { "not running" };
+                        out.push_str(&format!(
+                            "  • {:<14} ({run}) lang={:<18} {bin_note}\n",
+                            s.key, s.language_id
+                        ));
+                    }
+                }
+            }
+            None => out.push_str("  path:    [No Name] — save the buffer to attach an LSP\n"),
+        }
+        out.push('\n');
+
         // Tailwind config
         out.push_str("Tailwind\n");
         let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         match crate::lsp::find_tailwind_config(&start) {
-            Some(p) => out.push_str(&format!("  config  {}\n", p.display())),
-            None => out.push_str("  config  (not found — Tailwind LSP will not attach)\n"),
+            Some(p) => {
+                let label = if p.file_name().and_then(|s| s.to_str()) == Some("package.json") {
+                    "package.json (v4 — tailwindcss in dependencies)"
+                } else {
+                    "tailwind.config.*"
+                };
+                out.push_str(&format!("  config:  {} — {label}\n", p.display()));
+            }
+            None => out.push_str(
+                "  config:  (not found — Tailwind LSP will not attach. Add tailwind.config.* or list `tailwindcss` in package.json.)\n",
+            ),
         }
         out.push('\n');
 
