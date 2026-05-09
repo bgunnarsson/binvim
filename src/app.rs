@@ -1327,6 +1327,12 @@ impl App {
         if matches!(target, Some('_')) {
             return;
         }
+        // Mirror writes to the unnamed register into the OS clipboard so
+        // y/d/c land in other apps. Explicit named registers (`"ay`) stay
+        // local — that's what users reach for when they want a side stash.
+        if mirrors_to_system_clipboard(target) {
+            set_system_clipboard(&text);
+        }
         let r = Register { text, linewise };
         self.registers.insert('"', r.clone());
         if let Some(name) = target {
@@ -1339,6 +1345,9 @@ impl App {
     fn write_yank_register(&mut self, target: Option<char>, text: String, linewise: bool) {
         if matches!(target, Some('_')) {
             return;
+        }
+        if mirrors_to_system_clipboard(target) {
+            set_system_clipboard(&text);
         }
         let r = Register { text, linewise };
         self.registers.insert('"', r.clone());
@@ -3488,6 +3497,25 @@ fn detect_git_branch(start: &std::path::Path) -> Option<String> {
 
 /// Map an opening pair character to its closing counterpart, or `None` for chars
 /// that don't auto-pair.
+/// True when a register write should also sync into the OS clipboard. Maps
+/// to: the unnamed register (no explicit target), the explicit unnamed
+/// (`""`), and the X11-flavour `+`/`*` clipboard registers.
+fn mirrors_to_system_clipboard(target: Option<char>) -> bool {
+    match target {
+        None => true,
+        Some(c) => matches!(c, '"' | '+' | '*'),
+    }
+}
+
+/// Best-effort write of `text` to the OS clipboard. A failure (no display
+/// server, no clipboard access on the platform) is swallowed — the editor
+/// still has the text in its in-memory unnamed register.
+fn set_system_clipboard(text: &str) {
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        let _ = cb.set_text(text.to_string());
+    }
+}
+
 /// Shell out to `ps` for a snapshot of the process's CPU% and memory share.
 /// Both fields are best-effort — a failure just shows up as `—` in the
 /// `:health` report rather than crashing the editor.
