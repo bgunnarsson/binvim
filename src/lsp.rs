@@ -51,8 +51,19 @@ pub enum LspEvent {
     GotoDef { path: PathBuf, line: usize, col: usize },
     Hover { text: String },
     Completion { items: Vec<CompletionItem> },
+    SignatureHelp(SignatureHelp),
     DiagnosticsUpdated,
     NotFound(&'static str),
+}
+
+/// Parsed `SignatureHelp` response. We render the active signature only —
+/// most servers return one anyway, and overload menus are rarely useful in
+/// a TUI.
+#[derive(Debug, Clone)]
+pub struct SignatureHelp {
+    pub label: String,
+    /// Char range in `label` covering the active parameter, if known.
+    pub active_param: Option<(usize, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +86,7 @@ pub enum PendingRequest {
     GotoDef,
     Hover,
     Completion,
+    SignatureHelp,
 }
 
 /// State of a client's outgoing pipe. Until the server has answered the
@@ -712,7 +724,15 @@ impl LspClient {
                             },
                             "contextSupport": true
                         },
-                        "signatureHelp": { "dynamicRegistration": false },
+                        "signatureHelp": {
+                            "dynamicRegistration": false,
+                            "signatureInformation": {
+                                "documentationFormat": ["markdown", "plaintext"],
+                                "parameterInformation": { "labelOffsetSupport": true },
+                                "activeParameterSupport": true
+                            },
+                            "contextSupport": true
+                        },
                         "codeAction": {
                             "dynamicRegistration": false,
                             "codeActionLiteralSupport": {
@@ -1277,6 +1297,25 @@ impl LspManager {
         }
         any
     }
+
+    /// Request `textDocument/signatureHelp` from the primary server. Goes
+    /// to one server only — multi-server fan-out wouldn't help here, the
+    /// primary is the source of truth for the language's call syntax.
+    pub fn request_signature_help(&mut self, path: &Path, line: usize, col: usize) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/signatureHelp",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": col }
+            }),
+        );
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::SignatureHelp);
+        true
+    }
 }
 
 fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
@@ -1297,7 +1336,65 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
                 Some(LspEvent::Completion { items })
             }
         }
+        PendingRequest::SignatureHelp => match parse_signature_help_response(result) {
+            Some(sig) => Some(LspEvent::SignatureHelp(sig)),
+            None => Some(LspEvent::NotFound("signature")),
+        },
     }
+}
+
+/// Picks the active signature out of the response and resolves the active
+/// parameter range. Servers commonly return a `parameters` array of either
+/// `{ label: string }` (a substring of `signature.label`) or
+/// `{ label: [start, end] }` (char indices into `signature.label`). Both
+/// shapes are handled here.
+fn parse_signature_help_response(result: &Value) -> Option<SignatureHelp> {
+    if result.is_null() {
+        return None;
+    }
+    let sigs = result.get("signatures")?.as_array()?;
+    if sigs.is_empty() {
+        return None;
+    }
+    let active_sig = result
+        .get("activeSignature")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let sig = sigs.get(active_sig).or_else(|| sigs.first())?;
+    let label = sig.get("label")?.as_str()?.to_string();
+    let active_param_idx = sig
+        .get("activeParameter")
+        .and_then(|v| v.as_u64())
+        .or_else(|| result.get("activeParameter").and_then(|v| v.as_u64()))
+        .map(|n| n as usize);
+    let active_param = (|| -> Option<(usize, usize)> {
+        let params = sig.get("parameters")?.as_array()?;
+        let idx = active_param_idx?;
+        let p = params.get(idx)?;
+        let plabel = p.get("label")?;
+        if let Some(arr) = plabel.as_array() {
+            // [start, end] in chars (UTF-16 per spec but we treat chars
+            // approximately — close enough for ASCII signatures).
+            let start = arr.first()?.as_u64()? as usize;
+            let end = arr.get(1)?.as_u64()? as usize;
+            return Some((start, end));
+        }
+        if let Some(needle) = plabel.as_str() {
+            // Substring form — find first occurrence inside the label.
+            let bytes = label.as_bytes();
+            let needle_bytes = needle.as_bytes();
+            let pos = bytes
+                .windows(needle_bytes.len())
+                .position(|w| w == needle_bytes)?;
+            // Convert byte pos → char pos.
+            let prefix = &label[..pos];
+            let cstart = prefix.chars().count();
+            let cend = cstart + needle.chars().count();
+            return Some((cstart, cend));
+        }
+        None
+    })();
+    Some(SignatureHelp { label, active_param })
 }
 
 fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {

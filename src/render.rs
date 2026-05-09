@@ -30,6 +30,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if app.hover.is_some() {
         draw_hover_popup(out, app)?;
     }
+    if app.signature_help.is_some() {
+        draw_signature_popup(out, app)?;
+    }
     if app.whichkey.is_some() {
         draw_whichkey(out, app)?;
     }
@@ -156,6 +159,94 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
         SetForegroundColor(border),
         Print('╰'),
         Print("─".repeat(content_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(sig) = app.signature_help.as_ref() else { return Ok(()); };
+    if sig.label.is_empty() {
+        return Ok(());
+    }
+    let chars: Vec<char> = sig.label.chars().collect();
+    let label_w = chars.len();
+    let total_w = app.width as usize;
+    let max_inner = total_w.saturating_sub(8).max(20);
+    let inner_w = label_w.min(max_inner);
+    if inner_w == 0 {
+        return Ok(());
+    }
+    let popup_w = inner_w + 2;
+    let popup_h = 3usize; // top + label + bottom
+
+    let buffer_rows = app.buffer_rows();
+    let cursor_row = app.cursor.line.saturating_sub(app.view_top);
+    // Prefer above the cursor — call sites have the popup above so it
+    // doesn't cover the line you're typing into.
+    let mut top_row = cursor_row.saturating_sub(popup_h);
+    if cursor_row < popup_h {
+        top_row = (cursor_row + 1).min(buffer_rows.saturating_sub(popup_h));
+    }
+    let gutter = app.gutter_width();
+    let cursor_visual = app.cursor_visual_col().saturating_sub(app.view_left);
+    let mut left_col = gutter + cursor_visual;
+    if left_col + popup_w > total_w {
+        left_col = total_w.saturating_sub(popup_w);
+    }
+
+    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let active_fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
+    let active_bg = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }; // Yellow
+
+    queue!(
+        out,
+        MoveTo(left_col as u16, top_row as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print("─".repeat(inner_w)),
+        Print('╮'),
+        MoveTo(left_col as u16, (top_row + 1) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+
+    // Render the label, highlighting the active parameter range if known.
+    // Truncate to inner_w characters.
+    let visible = chars.iter().take(inner_w).copied().collect::<Vec<_>>();
+    let active = sig.active_param;
+    for (i, ch) in visible.iter().enumerate() {
+        let in_active = active.map(|(s, e)| i >= s && i < e).unwrap_or(false);
+        if in_active {
+            queue!(
+                out,
+                SetBackgroundColor(active_bg),
+                SetForegroundColor(active_fg),
+                Print(ch.to_string()),
+                SetBackgroundColor(bg),
+            )?;
+        } else {
+            queue!(out, SetForegroundColor(text_fg), Print(ch.to_string()))?;
+        }
+    }
+    let pad = inner_w.saturating_sub(visible.len());
+    if pad > 0 {
+        queue!(out, Print(" ".repeat(pad)))?;
+    }
+    queue!(
+        out,
+        SetForegroundColor(border),
+        Print('│'),
+        MoveTo(left_col as u16, (top_row + 2) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w)),
         Print('╯'),
         ResetColor,
     )?;

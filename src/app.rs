@@ -13,7 +13,7 @@ use crate::command::{self, ExCommand, ExRange};
 use crate::config::Config;
 use crate::editorconfig::{EditorConfig, IndentStyle};
 use crate::lang::{self, HighlightCache};
-use crate::lsp::{CompletionItem, Diagnostic, LspEvent, LspManager, Severity};
+use crate::lsp::{CompletionItem, Diagnostic, LspEvent, LspManager, Severity, SignatureHelp};
 use crate::picker::{self, PickerKind, PickerPayload, PickerState};
 use crate::cursor::Cursor;
 use crate::mode::{Mode, Operator, VisualKind};
@@ -302,6 +302,9 @@ pub struct App {
     pub last_lsp_sync_at: Instant,
     pub completion: Option<CompletionState>,
     pub hover: Option<HoverState>,
+    /// Active signature-help popup, if the cursor is currently inside a
+    /// function call the LSP knows about. Auto-dismisses on Esc / `)`.
+    pub signature_help: Option<SignatureHelp>,
     pub whichkey: Option<WhichKeyState>,
     pub leader_pressed_at: Option<Instant>,
     pub git_branch: Option<String>,
@@ -361,6 +364,7 @@ impl App {
             last_lsp_sync_at: Instant::now(),
             completion: None,
             hover: None,
+            signature_help: None,
             whichkey: None,
             leader_pressed_at: None,
             git_branch: detect_git_branch(&std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
@@ -483,6 +487,9 @@ impl App {
                         self.status_msg = "LSP: empty hover".into();
                     }
                 }
+                LspEvent::SignatureHelp(sig) => {
+                    self.signature_help = Some(sig);
+                }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
@@ -492,6 +499,11 @@ impl App {
                         // return nothing while another still has matches —
                         // the next Completion event will replace or merge,
                         // so leaving the popup alone is correct.
+                    } else if kind == "signature" {
+                        // Server has nothing to say at this position —
+                        // dismiss the popup so it doesn't linger after the
+                        // cursor leaves the function call.
+                        self.signature_help = None;
                     } else {
                         self.status_msg = format!("LSP: no {kind} found");
                     }
@@ -580,6 +592,16 @@ impl App {
         if !self.lsp.request_completion(&path, line, col, trigger_char) {
             // No LSP — silently ignore so editing isn't disrupted.
         }
+    }
+
+    fn lsp_request_signature_help(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
+        self.lsp_sync_active();
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        let _ = self.lsp.request_signature_help(&path, line, col);
     }
 
     fn completion_cycle(&mut self, delta: i64) {
@@ -1015,6 +1037,7 @@ impl App {
                     self.cursor.want_col = self.cursor.col;
                 }
                 self.mode = Mode::Normal;
+                self.signature_help = None;
                 if !self.replaying {
                     if let Some(rec) = self.recording.take() {
                         self.last_edit = Some(LastEdit::InsertSession {
@@ -1067,6 +1090,16 @@ impl App {
                         let closer = format!("</{tag}>");
                         self.buffer
                             .insert_str(self.cursor.line, self.cursor.col, &closer);
+                    }
+                }
+                // Signature help: opening `(` starts the popup, `,` advances
+                // the active parameter. Closers dismiss it. Skipped during
+                // macro replay so playback doesn't spam LSP requests.
+                if !self.replaying {
+                    match c {
+                        '(' | ',' => self.lsp_request_signature_help(),
+                        ')' | '}' | ']' => self.signature_help = None,
+                        _ => {}
                     }
                 }
                 // Auto-trigger completion on identifier and member-access chars.
