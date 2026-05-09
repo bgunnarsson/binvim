@@ -757,8 +757,9 @@ fn draw_line_with_selection(
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
     let dim_color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
-    // `:set list` equivalent — render every space as `·` and every tab as
-    // `→` + filler, both in the muted overlay colour. Configurable via
+    // `:set list` equivalent — render every space as `·`, every tab as
+    // `→` + filler, every non-breaking space as `⎵`, and the end-of-line
+    // as `¬`. All in the muted overlay colour. Configurable via
     // `[whitespace]` in config.toml; on by default.
     let show_hidden = app.config.whitespace.show;
     // Precompute per-column severity from the LSP's diagnostic ranges so we
@@ -796,7 +797,7 @@ fn draw_line_with_selection(
         } else {
             None
         };
-        let render_hidden = show_hidden && (*c == '\t' || *c == ' ');
+        let render_hidden = show_hidden && (*c == '\t' || *c == ' ' || *c == '\u{00A0}');
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
@@ -832,6 +833,8 @@ fn draw_line_with_selection(
             }
         } else if *c == ' ' && show_hidden {
             queue!(out, Print('·'))?;
+        } else if *c == '\u{00A0}' && show_hidden {
+            queue!(out, Print('⎵'))?;
         } else {
             queue!(out, Print(c.to_string()))?;
         }
@@ -857,6 +860,18 @@ fn draw_line_with_selection(
                 )?;
             }
         }
+    }
+
+    // EOL marker — sits at the column right after the last char so the user
+    // can see where lines actually end (vs. trailing whitespace). One column
+    // of slack so the row can't wrap onto the next line.
+    if show_hidden && visual_used + 1 <= avail {
+        queue!(
+            out,
+            SetForegroundColor(dim_color),
+            Print('¬'),
+            ResetColor
+        )?;
     }
 
     // Error Lens-style inline diagnostic at the end of the line. We carefully
