@@ -1403,6 +1403,72 @@ impl App {
         });
     }
 
+    /// Char-index ranges of the current matched bracket pair / HTML tag pair
+    /// based on cursor position. Empty when the cursor isn't on a recognised
+    /// pair or no match exists. Each returned range is `(start, end)` in
+    /// global char indices, half-open. For brackets each range is one char;
+    /// for HTML tags it spans the entire `<…>` of the open and close tag.
+    pub fn matched_pair_ranges(&self) -> Vec<(usize, usize)> {
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        // HTML tag matching takes precedence so cursor on `<` of `<div>`
+        // shows the whole-tag highlight rather than a single `<` char match.
+        if is_html_like_buffer(&self.buffer) {
+            if let Some(pair) = html_tag_pair_at(&self.buffer, line, col) {
+                return vec![pair.0, pair.1];
+            }
+        }
+        // Brackets — check char under cursor (Normal mode), then char before
+        // (Insert mode just past an opener).
+        let here = self.buffer.char_at(line, col);
+        let prev = if col > 0 {
+            self.buffer.char_at(line, col - 1)
+        } else {
+            None
+        };
+        let (bracket_idx, bracket_char) = match (here, prev) {
+            (Some(c), _) if is_bracket(c) => (self.buffer.pos_to_char(line, col), c),
+            (_, Some(c)) if is_bracket(c) => {
+                (self.buffer.pos_to_char(line, col).saturating_sub(1), c)
+            }
+            _ => return Vec::new(),
+        };
+        let (open, close, forward) = bracket_pair(bracket_char);
+        let other = if forward {
+            find_match_close(&self.buffer, bracket_idx, open, close)
+        } else {
+            find_match_open(&self.buffer, bracket_idx, open, close)
+        };
+        let Some(other) = other else { return Vec::new() };
+        vec![(bracket_idx, bracket_idx + 1), (other, other + 1)]
+    }
+
+    /// Char-column ranges on `line` covered by the matched-pair highlight.
+    /// Multiple ranges are possible when both halves of an HTML tag pair
+    /// land on the same row.
+    pub fn line_match_pair(&self, line: usize) -> Vec<(usize, usize)> {
+        let ranges = self.matched_pair_ranges();
+        if ranges.is_empty() {
+            return Vec::new();
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        let line_len = self.buffer.line_len(line);
+        let line_end = line_start + line_len;
+        let mut out = Vec::new();
+        for (s, e) in ranges {
+            if e <= line_start || s >= line_end {
+                continue;
+            }
+            let cs = s.saturating_sub(line_start);
+            let ce_global = e.min(line_end);
+            let ce = ce_global.saturating_sub(line_start);
+            if ce > cs {
+                out.push((cs, ce));
+            }
+        }
+        out
+    }
+
     /// Per-line view of the active yank flash, returned as a char-column
     /// range on `line`. Returns `None` when the line is outside the range
     /// or the flash has expired.
@@ -3748,6 +3814,252 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 /// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
+fn is_bracket(c: char) -> bool {
+    matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
+}
+
+/// `(open, close, forward_search)` — `forward_search=true` means the cursor
+/// is on the opener and we walk forward to find the closer.
+fn bracket_pair(c: char) -> (char, char, bool) {
+    match c {
+        '(' => ('(', ')', true),
+        '[' => ('[', ']', true),
+        '{' => ('{', '}', true),
+        ')' => ('(', ')', false),
+        ']' => ('[', ']', false),
+        '}' => ('{', '}', false),
+        _ => (c, c, true),
+    }
+}
+
+fn find_match_close(buf: &Buffer, open_idx: usize, open: char, close: char) -> Option<usize> {
+    let total = buf.total_chars();
+    let mut depth = 1usize;
+    let mut i = open_idx + 1;
+    while i < total {
+        let c = buf.rope.char(i);
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+fn find_match_open(buf: &Buffer, close_idx: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = close_idx;
+    while i > 0 {
+        i -= 1;
+        let c = buf.rope.char(i);
+        if c == close {
+            depth += 1;
+        } else if c == open {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// Find the matching pair for an HTML tag the cursor sits inside. Returns
+/// `(open_range, close_range)` where each range is `(start_char_idx,
+/// end_char_idx)` covering the full `<…>` of the open and close tag.
+///
+/// Bails on:
+///   - cursor not inside a `<…>` span,
+///   - self-closing tag (`<br/>`),
+///   - void HTML elements,
+///   - declarations / comments / processing instructions (`<!`, `<?`),
+///   - unmatched / malformed input,
+///   - tag name that contains chars we don't accept.
+fn html_tag_pair_at(
+    buf: &Buffer,
+    line: usize,
+    col: usize,
+) -> Option<((usize, usize), (usize, usize))> {
+    let total = buf.total_chars();
+    let here = buf.pos_to_char(line, col).min(total);
+    let info = enclosing_tag(buf, here)?;
+    if info.kind == TagKind::Other {
+        return None;
+    }
+    if is_void_html_element(&info.name) {
+        return None;
+    }
+    let pair = match info.kind {
+        TagKind::Open => find_close_tag(buf, info.range.1, &info.name)?,
+        TagKind::Close => find_open_tag(buf, info.range.0, &info.name)?,
+        TagKind::Other => return None,
+    };
+    let (open_range, close_range) = match info.kind {
+        TagKind::Open => (info.range, pair),
+        TagKind::Close => (pair, info.range),
+        TagKind::Other => unreachable!(),
+    };
+    Some((open_range, close_range))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TagKind {
+    Open,
+    Close,
+    Other,
+}
+
+struct TagInfo {
+    range: (usize, usize),
+    name: String,
+    kind: TagKind,
+}
+
+/// Find the `<…>` span (if any) that contains `here`, parse the tag name
+/// and direction, and return all of it. The cursor can be anywhere inside
+/// the angle brackets (inclusive).
+fn enclosing_tag(buf: &Buffer, here: usize) -> Option<TagInfo> {
+    let total = buf.total_chars();
+    if total == 0 {
+        return None;
+    }
+    // Walk back to a `<`, bailing if we hit a `>` (we're outside any tag)
+    // or a newline (don't cross lines for the simple matcher).
+    let here = here.min(total.saturating_sub(1));
+    let mut start = here;
+    loop {
+        let c = buf.rope.char(start);
+        if c == '<' {
+            break;
+        }
+        if c == '>' || c == '\n' {
+            return None;
+        }
+        if start == 0 {
+            return None;
+        }
+        start -= 1;
+    }
+    // Walk forward to the matching `>` on the same line.
+    let mut end = start;
+    while end < total {
+        let c = buf.rope.char(end);
+        if c == '>' {
+            break;
+        }
+        if c == '\n' {
+            return None;
+        }
+        end += 1;
+    }
+    if end >= total || buf.rope.char(end) != '>' {
+        return None;
+    }
+    // Self-closing — char before `>` is `/`.
+    if end > start && buf.rope.char(end - 1) == '/' {
+        return Some(TagInfo {
+            range: (start, end + 1),
+            name: String::new(),
+            kind: TagKind::Other,
+        });
+    }
+    let inner: String = buf.rope.slice((start + 1)..end).to_string();
+    let trimmed = inner.trim_start();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let first = trimmed.chars().next().unwrap();
+    let kind = match first {
+        '!' | '?' => TagKind::Other,
+        '/' => TagKind::Close,
+        c if c.is_alphabetic() || c == '_' => TagKind::Open,
+        _ => TagKind::Other,
+    };
+    let after_slash = if matches!(kind, TagKind::Close) {
+        &trimmed[1..]
+    } else {
+        trimmed
+    };
+    let name: String = after_slash
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+        .collect();
+    if name.is_empty() {
+        return Some(TagInfo {
+            range: (start, end + 1),
+            name,
+            kind: TagKind::Other,
+        });
+    }
+    Some(TagInfo {
+        range: (start, end + 1),
+        name,
+        kind,
+    })
+}
+
+/// Walk forward from `start` to find the matching `</name>` for an open
+/// tag, accounting for nested same-name openers.
+fn find_close_tag(buf: &Buffer, start: usize, name: &str) -> Option<(usize, usize)> {
+    let total = buf.total_chars();
+    let mut depth = 1usize;
+    let mut i = start;
+    while i < total {
+        if buf.rope.char(i) != '<' {
+            i += 1;
+            continue;
+        }
+        let info = enclosing_tag(buf, i)?;
+        match info.kind {
+            TagKind::Open if info.name == name => depth += 1,
+            TagKind::Close if info.name == name => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(info.range);
+                }
+            }
+            _ => {}
+        }
+        // Advance past this tag.
+        i = info.range.1.max(i + 1);
+    }
+    None
+}
+
+/// Walk backward from `end` to find the matching `<name…>` for a close
+/// tag, accounting for nested same-name closers.
+fn find_open_tag(buf: &Buffer, end: usize, name: &str) -> Option<(usize, usize)> {
+    let mut depth = 1usize;
+    let mut i = end;
+    while i > 0 {
+        i -= 1;
+        if buf.rope.char(i) != '<' {
+            continue;
+        }
+        let Some(info) = enclosing_tag(buf, i) else {
+            continue;
+        };
+        match info.kind {
+            TagKind::Close if info.name == name => depth += 1,
+            TagKind::Open if info.name == name => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(info.range);
+                }
+            }
+            _ => {}
+        }
+        // No advance past a nested `<` is needed — we already moved one step
+        // back per iteration and the inner matches use their own ranges.
+    }
+    None
+}
+
 /// True when this buffer is the kind of file where `<div>` should auto-close
 /// to `<div></div>`. Markdown is in here because GitHub-flavoured markdown
 /// embeds raw HTML; XML follows the same tag-pair rules; framework formats

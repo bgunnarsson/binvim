@@ -805,6 +805,7 @@ fn draw_line_with_selection(
     let sel = app.line_selection(line_idx);
     let search_matches = app.line_search_matches(line_idx);
     let yank_flash = app.line_yank_highlight(line_idx);
+    let match_pair = app.line_match_pair(line_idx);
     let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
     let view_left = app.view_left;
@@ -869,6 +870,10 @@ fn draw_line_with_selection(
         let in_yank_flash = !in_sel
             && !in_search
             && yank_flash.map(|(s, e)| col >= s && col < e).unwrap_or(false);
+        let in_match_pair = !in_sel
+            && !in_search
+            && !in_yank_flash
+            && match_pair.iter().any(|(s, e)| col >= *s && col < *e);
         let syntax_color = app
             .highlight_cache
             .as_ref()
@@ -895,6 +900,14 @@ fn draw_line_with_selection(
                 out,
                 SetBackgroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
                 SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
+            )?;
+        } else if in_match_pair {
+            // Subtle Surface2 background so the syntax-coloured foreground
+            // still shows through, plus Bold so the bracket/tag pops.
+            queue!(
+                out,
+                SetBackgroundColor(Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }), // Surface2
+                SetAttribute(Attribute::Bold)
             )?;
         } else if render_hidden {
             // Whitespace marker overrides whatever syntax colour the
@@ -937,6 +950,9 @@ fn draw_line_with_selection(
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
+        } else if in_match_pair {
+            // Tear down the bold + bg in one shot.
+            queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
         } else if in_search || in_yank_flash || syntax_color.is_some() || dim || render_hidden {
             queue!(out, ResetColor)?;
         }
