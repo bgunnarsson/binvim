@@ -799,6 +799,18 @@ impl App {
                 self.scroll_view(3);
                 return;
             }
+            MouseEventKind::ScrollLeft => {
+                self.hover = None;
+                self.whichkey = None;
+                self.scroll_horizontal(-3);
+                return;
+            }
+            MouseEventKind::ScrollRight => {
+                self.hover = None;
+                self.whichkey = None;
+                self.scroll_horizontal(3);
+                return;
+            }
             _ => {}
         }
 
@@ -1719,15 +1731,35 @@ impl App {
 
     fn adjust_viewport_to(&mut self, kind: ViewportAdjust) {
         let rows = self.buffer_rows();
-        if rows == 0 {
-            return;
-        }
         let cur = self.cursor.line;
-        self.view_top = match kind {
-            ViewportAdjust::Top => cur,
-            ViewportAdjust::Center => cur.saturating_sub(rows / 2),
-            ViewportAdjust::Bottom => cur.saturating_sub(rows.saturating_sub(1)),
-        };
+        let buffer_cols = (self.width as usize).saturating_sub(self.gutter_width());
+        match kind {
+            ViewportAdjust::Top if rows > 0 => self.view_top = cur,
+            ViewportAdjust::Center if rows > 0 => self.view_top = cur.saturating_sub(rows / 2),
+            ViewportAdjust::Bottom if rows > 0 => {
+                self.view_top = cur.saturating_sub(rows.saturating_sub(1))
+            }
+            ViewportAdjust::Left => self.scroll_horizontal(-1),
+            ViewportAdjust::Right => self.scroll_horizontal(1),
+            ViewportAdjust::HalfLeft => {
+                let step = (buffer_cols / 2).max(1) as i64;
+                self.scroll_horizontal(-step);
+            }
+            ViewportAdjust::HalfRight => {
+                let step = (buffer_cols / 2).max(1) as i64;
+                self.scroll_horizontal(step);
+            }
+            _ => {}
+        }
+    }
+
+    /// Nudge the horizontal viewport without moving the cursor. The cursor's
+    /// visual column may end up off-screen; that's intentional — `zh`/`zl`
+    /// in Vim does the same. The next motion will pull the viewport back
+    /// via `adjust_viewport`.
+    pub fn scroll_horizontal(&mut self, delta: i64) {
+        let new_left = (self.view_left as i64 + delta).max(0) as usize;
+        self.view_left = new_left;
     }
 
     fn search_word_under_cursor(&mut self, backward: bool) {

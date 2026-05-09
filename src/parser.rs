@@ -47,6 +47,10 @@ pub enum ViewportAdjust {
     Center,
     Top,
     Bottom,
+    Left,
+    Right,
+    HalfLeft,
+    HalfRight,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -343,6 +347,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'z' | '.' => Some(ViewportAdjust::Center),
             't' => Some(ViewportAdjust::Top),
             'b' | '-' => Some(ViewportAdjust::Bottom),
+            'h' => Some(ViewportAdjust::Left),
+            'l' => Some(ViewportAdjust::Right),
+            'H' => Some(ViewportAdjust::HalfLeft),
+            'L' => Some(ViewportAdjust::HalfRight),
             _ => None,
         };
         state.reset();
