@@ -1116,13 +1116,7 @@ impl App {
                     self.lsp_request_completion(trigger);
                 }
             }
-            KeyCode::Enter => {
-                self.buffer
-                    .insert_char(self.cursor.line, self.cursor.col, '\n');
-                self.cursor.line += 1;
-                self.cursor.col = 0;
-                self.cursor.want_col = 0;
-            }
+            KeyCode::Enter => self.handle_insert_newline(),
             KeyCode::Backspace => {
                 let popup_was_open = self.completion.is_some();
                 if self.cursor.col > 0 {
@@ -1208,6 +1202,79 @@ impl App {
     /// Otherwise let the normal insert handler process the key — and for typing or
     /// backspace inside an identifier, leave the popup open so it refreshes after
     /// the edit (the auto-trigger in `handle_insert_key` re-fires the request).
+    /// Smart Enter — copies the current line's leading whitespace onto the
+    /// new line, adds one indent unit when the previous non-whitespace char
+    /// is an opener (`{`/`[`/`(`/`:`/`=>`/`->`), and splits paired
+    /// openers/closers (`{|}`) onto three lines so the cursor lands on a
+    /// double-indented middle row ready for the body.
+    fn handle_insert_newline(&mut self) {
+        let line = self.cursor.line;
+        let col = self.cursor.col;
+        let line_len = self.buffer.line_len(line);
+        let line_start = self.buffer.line_start_idx(line);
+        let line_text: String = self
+            .buffer
+            .rope
+            .slice(line_start..line_start + line_len)
+            .to_string();
+        let chars: Vec<char> = line_text.chars().collect();
+
+        let lead: String = chars
+            .iter()
+            .take_while(|c| matches!(**c, ' ' | '\t'))
+            .copied()
+            .collect();
+        let unit = self.editorconfig.indent_string();
+
+        // What's the last non-whitespace char before the cursor on this line?
+        let prev_non_ws = chars[..col.min(chars.len())]
+            .iter()
+            .rev()
+            .find(|c| !c.is_whitespace())
+            .copied();
+        let prev_two: String = chars[..col.min(chars.len())]
+            .iter()
+            .rev()
+            .take_while(|c| !c.is_whitespace())
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        // What's the first non-whitespace char at/after the cursor?
+        let next_non_ws = chars.get(col).copied();
+        let opener_after = matches!(
+            prev_non_ws,
+            Some('{') | Some('[') | Some('(') | Some(':')
+        ) || prev_two.ends_with("=>")
+            || prev_two.ends_with("->");
+        let split_pair = matches!(
+            (prev_non_ws, next_non_ws),
+            (Some('{'), Some('}')) | (Some('['), Some(']')) | (Some('('), Some(')'))
+        );
+
+        if split_pair {
+            // `{|}` → three lines, cursor double-indented in the middle.
+            let body_indent = format!("{lead}{unit}");
+            let payload = format!("\n{body_indent}\n{lead}");
+            self.buffer.insert_str(line, col, &payload);
+            self.cursor.line = line + 1;
+            self.cursor.col = body_indent.chars().count();
+            self.cursor.want_col = self.cursor.col;
+            return;
+        }
+
+        let next_indent = if opener_after {
+            format!("{lead}{unit}")
+        } else {
+            lead
+        };
+        let payload = format!("\n{next_indent}");
+        self.buffer.insert_str(line, col, &payload);
+        self.cursor.line = line + 1;
+        self.cursor.col = next_indent.chars().count();
+        self.cursor.want_col = self.cursor.col;
+    }
+
     fn handle_insert_key_with_completion(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Esc => {
