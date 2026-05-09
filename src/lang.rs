@@ -77,15 +77,32 @@ impl Lang {
                 tree_sitter_typescript::HIGHLIGHTS_QUERY
             ),
             Lang::JavaScript => tree_sitter_javascript::HIGHLIGHT_QUERY.into(),
-            // The bundled tree-sitter-json query tags strings, numbers,
-            // and constants but not punctuation, leaving braces/brackets
-            // /colons/commas the same colour as text. Append rules so
-            // the structural characters render in the muted-overlay
-            // colour like every other language's punctuation.
-            Lang::Json => format!(
-                "{}\n{}",
-                tree_sitter_json::HIGHLIGHTS_QUERY,
-                r#"
+            // Replace the bundled tree-sitter-json query — its pattern
+            // order (specific @string.special.key BEFORE general
+            // @string) is incompatible with how compute_highlights
+            // priorities work (later pattern wins), so keys ended up
+            // recoloured by the @string rule. This rewrite puts the
+            // general string rule first and adds punctuation captures
+            // so braces/brackets/colons/commas render in the muted
+            // overlay tone like every other language.
+            Lang::Json => r#"
+(string) @string
+
+(pair
+  key: (_) @string.special.key)
+
+(number) @number
+
+[
+  (null)
+  (true)
+  (false)
+] @constant.builtin
+
+(escape_sequence) @escape
+
+(comment) @comment
+
 [
   "{"
   "}"
@@ -97,8 +114,8 @@ impl Lang {
   ":"
   ","
 ] @punctuation.delimiter
-"#,
-            ),
+"#
+            .into(),
             Lang::Go => tree_sitter_go::HIGHLIGHTS_QUERY.into(),
             Lang::Html => tree_sitter_html::HIGHLIGHTS_QUERY.into(),
             Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY.into(),
