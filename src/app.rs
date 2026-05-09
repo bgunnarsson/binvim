@@ -687,8 +687,14 @@ impl App {
                 }
                 // While the start page is visible the buffer is read-only —
                 // only the cmdline (`:e`, `:q`) and the leader pickers can
-                // navigate away from it.
-                if self.show_start_page && matches!(self.mode, Mode::Normal)
+                // navigate away from it. A pending leader chord (e.g. the
+                // `e` after `<space>`) is also allowed so multi-key shortcuts
+                // resolve normally.
+                let leader_pending = self.pending.awaiting_leader
+                    || self.pending.awaiting_buffer_leader;
+                if self.show_start_page
+                    && matches!(self.mode, Mode::Normal)
+                    && !leader_pending
                     && !is_start_page_passthrough(&k)
                 {
                     return Ok(());
