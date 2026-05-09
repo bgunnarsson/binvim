@@ -196,8 +196,13 @@ pub fn enumerate_files(root: &std::path::Path, max: usize) -> Vec<(String, Picke
         .git_global(false)
         .git_exclude(true)
         // Show dotfiles (.env.example, .github/, .gitignore) but never
-        // descend into .git/ — that floods the picker with object/refs.
-        .filter_entry(|e| e.file_name() != ".git")
+        // descend into .git/ or node_modules/ — both flood the picker
+        // (refs/pack objects, transitive deps) regardless of whether
+        // the surrounding repo has them gitignored.
+        .filter_entry(|e| {
+            let name = e.file_name();
+            name != ".git" && name != "node_modules"
+        })
         .build()
         .flatten()
     {
