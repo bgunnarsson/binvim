@@ -3295,6 +3295,11 @@ impl App {
             self.buffer.rope = snap.rope;
             self.cursor = snap.cursor;
             self.buffer.dirty = true;
+            // Bump version so the highlight cache and LSP didChange know
+            // to recompute — replacing the rope wholesale is still a
+            // mutation, even if it goes through `buffer.rope = …` rather
+            // than the per-edit helpers.
+            self.buffer.version = self.buffer.version.wrapping_add(1);
             self.clamp_cursor_normal();
         } else {
             self.status_msg = "Already at oldest change".into();
@@ -3306,6 +3311,7 @@ impl App {
             self.buffer.rope = snap.rope;
             self.cursor = snap.cursor;
             self.buffer.dirty = true;
+            self.buffer.version = self.buffer.version.wrapping_add(1);
             self.clamp_cursor_normal();
         } else {
             self.status_msg = "Already at newest change".into();
