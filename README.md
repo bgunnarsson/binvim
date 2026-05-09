@@ -61,7 +61,7 @@ Colours overridable via `~/.config/binvim/config.toml`.
 brew install bgunnarsson/binvim/binvim
 ```
 
-The tap lives at [github.com/bgunnarsson/homebrew-binvim](https://github.com/bgunnarsson/homebrew-binvim) and ships pre-built bottles for Apple Silicon and Intel.
+The tap lives at [github.com/bgunnarsson/homebrew-binvim](https://github.com/bgunnarsson/homebrew-binvim). The formula compiles from source (`depends_on "rust" => :build`) — first install takes a minute or two while the tree-sitter grammars compile.
 
 ### Linux — install script
 
