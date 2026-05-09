@@ -1409,6 +1409,10 @@ impl App {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.join_lines(count);
             }
+            Action::AdjustNumber { delta, count } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.adjust_number(delta, count);
+            }
             Action::ToggleCase { count } => {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.toggle_case(count);
@@ -1689,6 +1693,7 @@ impl App {
             | Action::Put { .. }
             | Action::ReplaceChar { .. }
             | Action::JoinLines { .. }
+            | Action::AdjustNumber { .. }
             | Action::ToggleCase { .. } => true,
             _ => false,
         };
@@ -2580,6 +2585,44 @@ impl App {
             self.cursor.want_col = self.cursor.col;
         }
         self.clamp_cursor_normal();
+    }
+
+    /// Vim-style `Ctrl-A` / `Ctrl-X`. Walks the current line from the
+    /// cursor forward to the next parsable number (decimal, `0x…`, `0b…`,
+    /// `0o…`), parses it (with optional leading `-`), adds `delta * count`,
+    /// and re-renders it preserving the original prefix and minimum width
+    /// (so `007` + 1 stays `008`). Cursor lands on the last char of the
+    /// new number, matching Vim's behaviour.
+    fn adjust_number(&mut self, delta: i64, count: usize) {
+        let count = count.max(1) as i64;
+        let line = self.cursor.line;
+        let line_len = self.buffer.line_len(line);
+        if line_len == 0 {
+            self.status_msg = "no numbers found".into();
+            return;
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        let line_text: String = self
+            .buffer
+            .rope
+            .slice(line_start..line_start + line_len)
+            .to_string();
+        let chars: Vec<char> = line_text.chars().collect();
+        let from_col = self.cursor.col.min(chars.len());
+        let Some(num) = find_number_on_line(&chars, from_col) else {
+            self.status_msg = "no numbers found".into();
+            return;
+        };
+        let new_value = num.value.saturating_add(delta.saturating_mul(count));
+        let formatted = format_number(&num, new_value);
+        let abs_start = line_start + num.start_col;
+        let abs_end = line_start + num.end_col;
+        self.buffer.delete_range(abs_start, abs_end);
+        self.buffer.insert_at_idx(abs_start, &formatted);
+        // Cursor on the last char of the new number.
+        let new_end_col = num.start_col + formatted.chars().count().saturating_sub(1);
+        self.cursor.col = new_end_col;
+        self.cursor.want_col = new_end_col;
     }
 
     fn toggle_case(&mut self, count: usize) {
@@ -3907,6 +3950,138 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 /// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
+/// A number parsed out of a buffer line. `start_col` and `end_col` are
+/// char-column positions on the line (half-open). `negative` is true when
+/// the parsed digits had a leading `-`. `min_width` is the digit count
+/// (excluding prefix and sign) so leading zeros are preserved on re-render.
+#[derive(Debug, Clone)]
+struct ParsedNumber {
+    start_col: usize,
+    end_col: usize,
+    value: i64,
+    base: NumberBase,
+    negative: bool,
+    min_width: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum NumberBase {
+    Dec,
+    Hex,
+    Oct,
+    Bin,
+}
+
+/// Vim-compatible number scan: walk from `from_col` to the end of `chars`
+/// and return the first number we can parse. Recognises `0x…`, `0b…`,
+/// `0o…`, plain decimals, and a leading `-` that's not the right operand
+/// of an identifier (so `x-1` stays positive).
+fn find_number_on_line(chars: &[char], from_col: usize) -> Option<ParsedNumber> {
+    let n = chars.len();
+    let mut i = from_col.min(n);
+    while i < n {
+        // Try to start a number at i.
+        let (digits_start, base, prefix_chars) = if chars[i] == '0' && i + 1 < n {
+            match chars[i + 1].to_ascii_lowercase() {
+                'x' => (i + 2, NumberBase::Hex, 2),
+                'b' => (i + 2, NumberBase::Bin, 2),
+                'o' => (i + 2, NumberBase::Oct, 2),
+                _ if chars[i].is_ascii_digit() => (i, NumberBase::Dec, 0),
+                _ => (i, NumberBase::Dec, 0),
+            }
+        } else if chars[i].is_ascii_digit() {
+            (i, NumberBase::Dec, 0)
+        } else {
+            i += 1;
+            continue;
+        };
+        // Read digits.
+        let valid = |c: char| match base {
+            NumberBase::Dec => c.is_ascii_digit(),
+            NumberBase::Hex => c.is_ascii_hexdigit(),
+            NumberBase::Oct => ('0'..='7').contains(&c),
+            NumberBase::Bin => c == '0' || c == '1',
+        };
+        let mut end = digits_start;
+        while end < n && valid(chars[end]) {
+            end += 1;
+        }
+        if end == digits_start {
+            i += 1;
+            continue;
+        }
+        // Optional leading `-` only when it's standalone (start of line or
+        // following whitespace / opening punctuation) so identifiers like
+        // `x-1` don't get re-interpreted.
+        let mut start = i;
+        let mut negative = false;
+        if prefix_chars == 0 && start > 0 && chars[start - 1] == '-' {
+            let two_back = if start >= 2 { Some(chars[start - 2]) } else { None };
+            let standalone = match two_back {
+                None => true,
+                Some(c) => !(c.is_alphanumeric() || c == '_' || c == ')' || c == ']'),
+            };
+            if standalone {
+                start -= 1;
+                negative = true;
+            }
+        }
+        let digits: String = chars[digits_start..end].iter().collect();
+        let parsed = match base {
+            NumberBase::Dec => i64::from_str_radix(&digits, 10).ok(),
+            NumberBase::Hex => i64::from_str_radix(&digits, 16).ok(),
+            NumberBase::Oct => i64::from_str_radix(&digits, 8).ok(),
+            NumberBase::Bin => i64::from_str_radix(&digits, 2).ok(),
+        }?;
+        let value = if negative { -parsed } else { parsed };
+        return Some(ParsedNumber {
+            start_col: start,
+            end_col: end,
+            value,
+            base,
+            negative,
+            min_width: digits.len(),
+        });
+    }
+    None
+}
+
+/// Render `new_value` in the same shape as the original number — same
+/// base, same prefix, same minimum digit width (so `007` + 1 stays `008`).
+fn format_number(orig: &ParsedNumber, new_value: i64) -> String {
+    let abs = new_value.unsigned_abs();
+    let body = match orig.base {
+        NumberBase::Dec => format!("{}", abs),
+        NumberBase::Hex => format!("{:x}", abs),
+        NumberBase::Oct => format!("{:o}", abs),
+        NumberBase::Bin => format!("{:b}", abs),
+    };
+    // Pad with leading zeros up to the original width if the original
+    // explicitly used leading zeros (i.e. it was wider than the natural
+    // representation of its value).
+    let padded = if body.len() < orig.min_width && orig.min_width > 1 {
+        let pad = orig.min_width - body.len();
+        format!("{}{}", "0".repeat(pad), body)
+    } else {
+        body
+    };
+    let prefix = match orig.base {
+        NumberBase::Hex => "0x",
+        NumberBase::Oct => "0o",
+        NumberBase::Bin => "0b",
+        NumberBase::Dec => "",
+    };
+    let sign = if new_value < 0 {
+        "-"
+    } else if orig.negative && new_value == 0 {
+        // Was negative, now zero — drop the sign.
+        ""
+    } else {
+        ""
+    };
+    format!("{sign}{prefix}{padded}")
+}
+
 fn is_bracket(c: char) -> bool {
     matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
 }

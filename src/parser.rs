@@ -107,6 +107,9 @@ pub enum Action {
     SearchWord { backward: bool },
     JumpBack,
     JumpForward,
+    /// `Ctrl-A` (delta = +1) / `Ctrl-X` (delta = -1) — adjust the next number
+    /// at or after the cursor on the current line. Multiplied by `count`.
+    AdjustNumber { delta: i64, count: usize },
     OpenPicker { kind: PickerLeader },
     OpenYazi,
     LspGotoDefinition,
@@ -272,6 +275,16 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'i' | 'I' => {
                 state.reset();
                 ParseResult::Action(Action::JumpForward)
+            }
+            'a' | 'A' => {
+                let count = state.total_count();
+                state.reset();
+                ParseResult::Action(Action::AdjustNumber { delta: 1, count })
+            }
+            'x' | 'X' => {
+                let count = state.total_count();
+                state.reset();
+                ParseResult::Action(Action::AdjustNumber { delta: -1, count })
             }
             _ => ParseResult::Pending,
         };
@@ -754,6 +767,41 @@ mod tests {
                 assert_eq!(register, None);
             }
             _ => panic!("second y did not produce OperateLine{{Yank}}"),
+        }
+    }
+
+    #[test]
+    fn ctrl_a_emits_adjust_number_plus_one() {
+        let mut state = PendingCmd::default();
+        let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+        match parse(&mut state, key, ParseCtx::Normal) {
+            ParseResult::Action(Action::AdjustNumber { delta, count }) => {
+                assert_eq!(delta, 1);
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Ctrl-A did not emit AdjustNumber"),
+        }
+    }
+
+    #[test]
+    fn ctrl_x_with_count() {
+        let mut state = PendingCmd::default();
+        // 5<Ctrl-X> — should produce delta=-1 count=5.
+        let _ = parse(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('5'), KeyModifiers::NONE),
+            ParseCtx::Normal,
+        );
+        match parse(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL),
+            ParseCtx::Normal,
+        ) {
+            ParseResult::Action(Action::AdjustNumber { delta, count }) => {
+                assert_eq!(delta, -1);
+                assert_eq!(count, 5);
+            }
+            _ => panic!("5 Ctrl-X did not emit AdjustNumber"),
         }
     }
 
