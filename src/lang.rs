@@ -93,18 +93,30 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<H
 
     let total_bytes = source.len();
     let mut colors: Vec<Option<Color>> = vec![None; total_bytes];
+    // Per-byte priority. Tree-sitter highlight queries follow a well-known
+    // convention: general patterns come first (e.g. `(identifier) @variable`)
+    // and specific ones override them later (`(method_declaration name:
+    // (identifier) @function)`). We treat `pattern_index` as the priority
+    // — later patterns win for any byte they touch. Without this the result
+    // depended on iterator ordering, which left method names and types
+    // sometimes coloured as plain identifiers in C# and other languages.
+    let mut byte_priority: Vec<u16> = vec![0; total_bytes];
 
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
     while let Some(m) = matches.next() {
+        let priority = (m.pattern_index as u16).saturating_add(1);
         for capture in m.captures {
             let name = capture_names[capture.index as usize];
             if let Some(color) = config.color_for_capture(name) {
                 let node = capture.node;
                 let s = node.start_byte().min(total_bytes);
                 let e = node.end_byte().min(total_bytes);
-                for slot in &mut colors[s..e] {
-                    *slot = Some(color);
+                for i in s..e {
+                    if priority >= byte_priority[i] {
+                        colors[i] = Some(color);
+                        byte_priority[i] = priority;
+                    }
                 }
             }
         }

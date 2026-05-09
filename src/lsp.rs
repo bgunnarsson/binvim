@@ -310,32 +310,58 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             root_markers: vec!["astro.config.mjs".into(), "astro.config.ts".into(), "package.json".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
-        "cs" | "vb" => Some(ServerSpec {
-            key: "omnisharp".into(),
-            language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
-            cmd_candidates: vec![
-                "OmniSharp".into(),
-                "omnisharp".into(),
-                local_bin("omnisharp", "OmniSharp"),
-            ],
-            args: vec![
-                "-z".into(),
-                "--hostPID".into(),
-                std::process::id().to_string(),
-                "DotNet:enablePackageRestore=false".into(),
-                "--encoding".into(),
-                "utf-8".into(),
-                "--languageserver".into(),
-            ],
-            root_markers: vec![
-                "*.sln".into(),
-                "*.csproj".into(),
-                "*.fsproj".into(),
-                "*.vbproj".into(),
-                ".git".into(),
-            ],
-            initialization_options: Value::Null,
-        }),
+        "cs" | "vb" => {
+            // Roslyn-based `csharp-ls` is preferred — it returns local
+            // variables and parameters in completion immediately, where
+            // OmniSharp falls back to bare top-level type matches until its
+            // workspace finishes loading (often 30-60s on real solutions).
+            // OmniSharp stays as a fallback for environments without
+            // csharp-ls installed.
+            let dotnet_tools = format!("{}/.dotnet/tools/csharp-ls", home);
+            let csharp_ls = ServerSpec {
+                key: "csharp-ls".into(),
+                language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
+                cmd_candidates: vec!["csharp-ls".into(), dotnet_tools],
+                args: vec![],
+                root_markers: vec![
+                    "*.sln".into(),
+                    "*.csproj".into(),
+                    "*.fsproj".into(),
+                    "*.vbproj".into(),
+                    ".git".into(),
+                ],
+                initialization_options: Value::Null,
+            };
+            if resolve_command(&csharp_ls.cmd_candidates).is_some() {
+                return Some(csharp_ls);
+            }
+            Some(ServerSpec {
+                key: "omnisharp".into(),
+                language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
+                cmd_candidates: vec![
+                    "OmniSharp".into(),
+                    "omnisharp".into(),
+                    local_bin("omnisharp", "OmniSharp"),
+                ],
+                args: vec![
+                    "-z".into(),
+                    "--hostPID".into(),
+                    std::process::id().to_string(),
+                    "DotNet:enablePackageRestore=false".into(),
+                    "--encoding".into(),
+                    "utf-8".into(),
+                    "--languageserver".into(),
+                ],
+                root_markers: vec![
+                    "*.sln".into(),
+                    "*.csproj".into(),
+                    "*.fsproj".into(),
+                    "*.vbproj".into(),
+                    ".git".into(),
+                ],
+                initialization_options: Value::Null,
+            })
+        }
         _ => None,
     }
 }
