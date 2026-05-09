@@ -94,13 +94,32 @@ otherwise have the right to grant the licence above for it.
 
 This licence terminates automatically and without notice if you breach any
 of its terms. On termination, you must destroy all copies of the Software in
-your possession or control. Sections 4, 6, 7, and 8 survive termination.
+your possession or control. Sections 4, 6, 7, 8, and 9 survive termination.
 
 The Licensor may also revoke this licence at any time, in writing, in which
 case the same destruction obligation applies.
 
 ================================================================================
-6. No Warranty
+6. Third-Party Components
+================================================================================
+
+The Software may incorporate, link against, or otherwise depend on third-party
+software, libraries, plugins, fonts, icons, or other materials ("Third-Party
+Components"). Third-Party Components are not covered by this License and
+remain subject to their own respective licences and terms.
+
+Nothing in this License grants you any rights in or to any Third-Party
+Component beyond what their own licences provide, and nothing in this License
+restricts rights granted to you by those licences. You are responsible for
+reviewing and complying with the licence terms of each Third-Party Component
+you use, redistribute, or otherwise interact with.
+
+If there is any conflict between this License and the licence of a Third-Party
+Component as applied to that component, the Third-Party Component's licence
+governs that component.
+
+================================================================================
+7. No Warranty
 ================================================================================
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
@@ -108,7 +127,7 @@ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
 
 ================================================================================
-7. Limitation of Liability
+8. Limitation of Liability
 ================================================================================
 
 IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
@@ -117,7 +136,7 @@ FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-8. Miscellaneous
+9. Miscellaneous
 ================================================================================
 
 This License is the entire agreement between you and the Licensor regarding
