@@ -6,7 +6,7 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, SetCursorStyle, Show},
     queue,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor},
+    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor, SetUnderlineColor},
     terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
 };
 use std::io::Write;
@@ -701,6 +701,24 @@ fn draw_line_with_selection(
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
     let dim_color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
+    // Precompute per-column severity from the LSP's diagnostic ranges so we
+    // can paint an undercurl directly under the offending tokens.
+    let line_diags = app.line_diagnostics(line_idx);
+    let mut diag_at: Vec<Option<Severity>> = vec![None; chars.len()];
+    for d in &line_diags {
+        let start = d.col.min(chars.len());
+        let end = if d.end_line == d.line {
+            d.end_col.min(chars.len())
+        } else {
+            chars.len()
+        };
+        // Empty ranges (start == end) come from LSPs as a hint that the error
+        // sits at one position; mark a single column so the undercurl shows.
+        let span = if end > start { end } else { (start + 1).min(chars.len()) };
+        for slot in &mut diag_at[start..span] {
+            *slot = Some(merge_severity(*slot, d.severity));
+        }
+    }
     for (col, c) in chars.iter().enumerate() {
         let display_w = if *c == '\t' { TAB_WIDTH } else { 1 };
         if visual_used + display_w > avail {
@@ -713,6 +731,11 @@ fn draw_line_with_selection(
             .as_ref()
             .and_then(|cache| cache.byte_colors.get(byte_off).copied())
             .flatten();
+        let diag_severity = if !in_sel && !in_search && !dim {
+            diag_at.get(col).copied().flatten()
+        } else {
+            None
+        };
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
@@ -727,10 +750,21 @@ fn draw_line_with_selection(
         } else if let Some(fg) = syntax_color {
             queue!(out, SetForegroundColor(fg))?;
         }
+        if let Some(sev) = diag_severity {
+            let underline = severity_color(sev);
+            queue!(
+                out,
+                SetUnderlineColor(underline),
+                SetAttribute(Attribute::Undercurled)
+            )?;
+        }
         if *c == '\t' {
             queue!(out, Print(" ".repeat(TAB_WIDTH)))?;
         } else {
             queue!(out, Print(c.to_string()))?;
+        }
+        if diag_severity.is_some() {
+            queue!(out, SetAttribute(Attribute::NoUnderline))?;
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
@@ -762,12 +796,11 @@ fn draw_line_with_selection(
         if let Some(diag) = app.line_diagnostics(line_idx).first() {
             use unicode_width::UnicodeWidthChar;
             let remaining = avail.saturating_sub(visual_used);
-            let (icon, color) = match diag.severity {
-                Severity::Error => ('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }),
-                Severity::Warning => ('▲', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }),
-                Severity::Info => ('●', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }),
-                Severity::Hint => ('●', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }),
+            let icon = match diag.severity {
+                Severity::Warning => '▲',
+                _ => '●',
             };
+            let color = severity_color(diag.severity);
             // "  <icon> " — leading 2 spaces, icon (1 or 2 cols), trailing space.
             let icon_w = UnicodeWidthChar::width(icon).unwrap_or(1);
             let prefix_w = 2 + icon_w + 1;
@@ -797,6 +830,33 @@ fn draw_line_with_selection(
         }
     }
     Ok(())
+}
+
+/// Catppuccin Mocha colour assignment per LSP severity. Used for both the
+/// undercurl on the offending range and the inline Error Lens icon so the
+/// two visuals match on the same line.
+fn severity_color(sev: Severity) -> Color {
+    match sev {
+        Severity::Error => Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 },   // Red
+        Severity::Warning => Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
+        Severity::Info => Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },    // Blue
+        Severity::Hint => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb },    // Sky
+    }
+}
+
+/// Pick the more important of two severities for ranges that overlap on the
+/// same column — Error > Warning > Info > Hint.
+fn merge_severity(prior: Option<Severity>, new: Severity) -> Severity {
+    let rank = |s: Severity| match s {
+        Severity::Error => 4,
+        Severity::Warning => 3,
+        Severity::Info => 2,
+        Severity::Hint => 1,
+    };
+    match prior {
+        Some(p) if rank(p) >= rank(new) => p,
+        _ => new,
+    }
 }
 
 // Powerline-style status line: mode block | branch | path | …filler… | language tag.
