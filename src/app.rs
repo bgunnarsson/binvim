@@ -994,6 +994,21 @@ impl App {
                     self.cursor.col += 1;
                     self.cursor.want_col = self.cursor.col;
                 }
+                // Tag auto-completion: typing `>` at the end of an opening
+                // HTML tag inserts the matching closer after the cursor so
+                // `<div>` becomes `<div>|</div>`. Triggered after the `>`
+                // has been written and the cursor advanced past it.
+                if c == '>' && is_html_like_buffer(&self.buffer) {
+                    if let Some(tag) = detect_open_tag_to_close(
+                        &self.buffer,
+                        self.cursor.line,
+                        self.cursor.col,
+                    ) {
+                        let closer = format!("</{tag}>");
+                        self.buffer
+                            .insert_str(self.cursor.line, self.cursor.col, &closer);
+                    }
+                }
                 // Auto-trigger completion on identifier and member-access chars.
                 // Skipped during macro replay so playback doesn't spam LSP requests.
                 if !self.replaying && is_completion_trigger(c) {
@@ -3733,6 +3748,133 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 /// trailing apostrophes don't pair surprisingly). `<` skips pairing when both
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
+/// True when this buffer is the kind of file where `<div>` should auto-close
+/// to `<div></div>`. Markdown is in here because GitHub-flavoured markdown
+/// embeds raw HTML; XML follows the same tag-pair rules; framework formats
+/// (jsx/tsx/vue/svelte/astro) are HTML-shaped at the markup layer.
+fn is_html_like_buffer(buffer: &Buffer) -> bool {
+    let Some(ext) = buffer
+        .path
+        .as_ref()
+        .and_then(|p| p.extension())
+        .and_then(|e| e.to_str())
+    else {
+        return false;
+    };
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "html"
+            | "htm"
+            | "xhtml"
+            | "xml"
+            | "cshtml"
+            | "razor"
+            | "jsx"
+            | "tsx"
+            | "vue"
+            | "svelte"
+            | "astro"
+            | "md"
+            | "markdown"
+    )
+}
+
+/// HTML void elements — these never carry a separate closing tag, so the
+/// auto-completion must skip them. Comparison is ASCII-case-insensitive
+/// because HTML attributes/tag names are case-insensitive.
+fn is_void_html_element(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "area"
+            | "base"
+            | "br"
+            | "col"
+            | "embed"
+            | "hr"
+            | "img"
+            | "input"
+            | "link"
+            | "meta"
+            | "param"
+            | "source"
+            | "track"
+            | "wbr"
+    )
+}
+
+/// Walk back from the cursor (which sits immediately after a freshly-typed
+/// `>`) to find the corresponding `<` and extract the tag name. Returns
+/// `None` if the prefix doesn't look like a real opening tag — closing tags
+/// (`</…>`), comments (`<!--…>`), declarations (`<!DOCTYPE>`), processing
+/// instructions (`<?xml…>`), self-closing tags (`<… />`), JSX fragments
+/// (`<>`), and HTML void elements all yield no auto-close.
+fn detect_open_tag_to_close(buffer: &Buffer, line: usize, col_after: usize) -> Option<String> {
+    if col_after == 0 {
+        return None;
+    }
+    // The `>` we just typed sits at col_after - 1. Walk back across the line
+    // to find the matching `<`.
+    let line_str = buffer.rope.line(line).to_string();
+    let chars: Vec<char> = line_str.chars().collect();
+    let gt_idx = col_after.checked_sub(1)?;
+    if chars.get(gt_idx).copied() != Some('>') {
+        return None;
+    }
+    // Self-closing `… />` — preceding char is `/`.
+    if gt_idx > 0 && chars[gt_idx - 1] == '/' {
+        return None;
+    }
+
+    let mut lt_idx: Option<usize> = None;
+    let mut i = gt_idx;
+    while i > 0 {
+        i -= 1;
+        match chars[i] {
+            '>' => return None, // unbalanced — earlier `>` between
+            '<' => {
+                lt_idx = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let lt_idx = lt_idx?;
+    // Heuristic for TSX/Razor/etc.: if the `<` follows an identifier
+    // character (or `.`), this is almost certainly a generic parameter —
+    // `Array<string>`, `Foo.Bar<T>`. Don't try to auto-close in that case.
+    if lt_idx > 0 {
+        let prev = chars[lt_idx - 1];
+        if prev.is_alphanumeric() || prev == '_' || prev == '.' {
+            return None;
+        }
+    }
+    let inner: String = chars[lt_idx + 1..gt_idx].iter().collect();
+    let inner_trimmed = inner.trim_start();
+    if inner_trimmed.is_empty() {
+        return None;
+    }
+    let first = inner_trimmed.chars().next().unwrap();
+    // Closing tag, declaration, comment, processing instruction.
+    if matches!(first, '/' | '!' | '?') {
+        return None;
+    }
+    // Tag name is the leading run of name-class chars.
+    let name: String = inner_trimmed
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
+        .collect();
+    if name.is_empty() {
+        return None;
+    }
+    if !name.chars().next().unwrap().is_alphabetic() {
+        return None;
+    }
+    if is_void_html_element(&name) {
+        return None;
+    }
+    Some(name)
+}
+
 fn should_auto_pair(c: char, buffer: &Buffer, line: usize, col: usize) -> bool {
     let prev = if col > 0 { buffer.char_at(line, col - 1) } else { None };
     let next = buffer.char_at(line, col);
