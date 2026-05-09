@@ -191,10 +191,13 @@ pub fn enumerate_files(root: &std::path::Path, max: usize) -> Vec<(String, Picke
     use ignore::WalkBuilder;
     let mut out = Vec::new();
     for entry in WalkBuilder::new(root)
-        .hidden(true)
+        .hidden(false)
         .git_ignore(true)
         .git_global(false)
         .git_exclude(true)
+        // Show dotfiles (.env.example, .github/, .gitignore) but never
+        // descend into .git/ — that floods the picker with object/refs.
+        .filter_entry(|e| e.file_name() != ".git")
         .build()
         .flatten()
     {
