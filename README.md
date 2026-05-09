@@ -66,7 +66,7 @@ The tap lives at [github.com/bgunnarsson/homebrew-binvim](https://github.com/bgu
 ### Linux — install script
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/bgunnarsson/binvim/main/install.sh | sh
+curl -fsSL https://binvim.dev/install.sh | sh
 ```
 
 Pulls the matching musl-static tarball (`x86_64` or `aarch64`) from the latest GitHub Release, verifies its SHA-256, and drops the binary at `~/.local/bin/binvim`. Override with `BINVIM_VERSION=v0.1.0` or `BINVIM_INSTALL_DIR=/opt/bin` if needed.

@@ -25,4 +25,8 @@ echo "===> Step 2: Update Homebrew tap"
 "${SCRIPT_DIR}/pkg-homebrew.sh" "$VERSION"
 
 echo
+echo "===> Step 3: Mirror install.sh to binvim-web"
+"${SCRIPT_DIR}/pkg-web.sh"
+
+echo
 echo "===> Release ${VERSION#v} complete."

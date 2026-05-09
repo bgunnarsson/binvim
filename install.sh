@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # binvim Linux installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/bgunnarsson/binvim/main/install.sh | sh
+#   curl -fsSL https://binvim.dev/install.sh | sh
 #
 # Optional environment overrides:
 #   BINVIM_VERSION=v0.1.0       pin to a specific tag (default: latest release)
