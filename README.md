@@ -62,7 +62,8 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `tailwindcss-language-server`       | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (note: scoped — the unscoped `tailwindcss-language-server` on npm is an empty stub) |
 | `astro-ls`                          | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
 | `csharp-ls`                         | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
-| `OmniSharp` / `rzls`                | C# / Razor LSP fallback                  | OmniSharp via your dotnet tooling; rzls if you have it on `$PATH`        |
+| `OmniSharp`                         | Razor / .cshtml IntelliSense (full)      | `dotnet tool install --global omnisharp` or `brew install omnisharp`     |
+| `rzls`                              | Razor language server (full)             | community tool — install if you have it; binvim auto-detects             |
 | `biome` (project-local)             | JSON LSP + JS/TS/JSON formatter on save  | `npm i -D @biomejs/biome` in the project                                  |
 
 binvim auto-discovers project-local binaries by walking up to the closest `node_modules/.bin/`, so a `devDependency` in your project takes precedence over a global install.
