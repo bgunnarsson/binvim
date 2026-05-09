@@ -4244,15 +4244,16 @@ impl App {
         let state = match kind {
             PickerLeader::Files => {
                 let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let mut items = picker::enumerate_files(&cwd, 5000);
+                let items = picker::enumerate_files(&cwd, 5000);
                 if items.is_empty() {
                     self.status_msg = "No files found".into();
                     return;
                 }
-                // Promote MRU recents that exist on disk to the top of
-                // the list so an empty query already shows them first.
-                let mut promoted: Vec<(String, PickerPayload)> = Vec::new();
-                let mut seen = std::collections::HashSet::new();
+                PickerState::new(PickerKind::Files, "Files".into(), items)
+            }
+            PickerLeader::Recents => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                let mut items: Vec<(String, PickerPayload)> = Vec::new();
                 for r in &self.recents {
                     if !r.is_file() {
                         continue;
@@ -4262,13 +4263,13 @@ impl App {
                         .ok()
                         .map(|p| p.display().to_string())
                         .unwrap_or_else(|| r.display().to_string());
-                    if seen.insert(display.clone()) {
-                        promoted.push((display, PickerPayload::Path(r.clone())));
-                    }
+                    items.push((display, PickerPayload::Path(r.clone())));
                 }
-                items.retain(|(d, _)| !seen.contains(d));
-                promoted.extend(items);
-                PickerState::new(PickerKind::Files, "Files".into(), promoted)
+                if items.is_empty() {
+                    self.status_msg = "No recent files".into();
+                    return;
+                }
+                PickerState::new(PickerKind::Recents, "Recents".into(), items)
             }
             PickerLeader::Grep => {
                 PickerState::new(PickerKind::Grep, "Grep".into(), Vec::new())
@@ -4680,6 +4681,7 @@ impl App {
         let Some(picker) = self.picker.as_mut() else { return; };
         match picker.kind {
             PickerKind::Files
+            | PickerKind::Recents
             | PickerKind::Buffers
             | PickerKind::References
             | PickerKind::DocumentSymbols

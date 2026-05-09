@@ -74,6 +74,7 @@ If `path` is omitted, binvim opens on the start page. Press `:` for a command (`
 | Keys       | Action            |
 |------------|-------------------|
 | `<space>`  | File picker       |
+| `<space>?` | Recent files      |
 | `<space>b` | Buffer picker     |
 | `<space>g` | Live grep         |
 | `<space>e` | Yazi file manager |

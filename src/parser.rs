@@ -72,6 +72,7 @@ pub enum MarkAction {
 #[derive(Debug, Clone, Copy)]
 pub enum PickerLeader {
     Files,
+    Recents,
     Buffers,
     Grep,
     DocumentSymbols,
@@ -462,6 +463,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }
             let action = match ch {
                 ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
+                '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
                 'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
                 'e' => Some(Action::OpenYazi),
                 'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),

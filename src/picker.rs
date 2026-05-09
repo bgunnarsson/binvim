@@ -5,6 +5,7 @@ use std::process::Command;
 #[allow(dead_code)] // DocumentSymbols / WorkspaceSymbols / CodeActions are wired in upcoming commits
 pub enum PickerKind {
     Files,
+    Recents,
     Buffers,
     Grep,
     References,
