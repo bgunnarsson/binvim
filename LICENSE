@@ -1,0 +1,129 @@
+binvim Source-Available License (BSAL) v1.0
+
+Copyright (c) 2026 B. Gunnarsson. All rights reserved.
+
+This software is source-available, not open source as defined by the Open
+Source Initiative. The source is published so that you may read it, run it
+locally, and contribute improvements back to the canonical project. It is
+not licensed for redistribution, forking, or any form of public republication.
+
+================================================================================
+1. Definitions
+================================================================================
+
+"Software" means the binvim source code and any files in this repository,
+including any modifications you make to it locally.
+
+"Licensor" means B. Gunnarsson, the sole copyright holder of the Software.
+
+"Canonical Project" means the official binvim repository owned and operated
+by the Licensor (currently at github.com/bgunnarsson/binvim).
+
+"Contribution" means any modification, addition, bug fix, or other change to
+the Software that you submit to the Canonical Project — for example via a
+pull request, patch, or issue attachment.
+
+"You" means the individual or legal entity exercising rights under this
+License.
+
+================================================================================
+2. Permitted Use
+================================================================================
+
+Subject to the restrictions in Section 3, the Licensor grants you a
+non-exclusive, non-transferable, royalty-free, revocable licence to:
+
+  (a) clone or download the Software for the purpose of reading the source,
+      running it on hardware you personally control, or evaluating it;
+
+  (b) build the Software from source for your own personal use;
+
+  (c) modify your local copy of the Software, provided those modifications
+      remain on hardware you personally control or are submitted as
+      Contributions under Section 4;
+
+  (d) submit Contributions to the Canonical Project.
+
+================================================================================
+3. Restrictions
+================================================================================
+
+You may NOT, without the Licensor's prior written permission:
+
+  (a) redistribute the Software, in source or binary form, in whole or in
+      part, to any third party;
+
+  (b) publish, host, mirror, or otherwise make the Software (modified or
+      unmodified) publicly available, including by creating a public fork
+      on a code-hosting platform, publishing a binary release, or making
+      it available through a package registry;
+
+  (c) sublicense, sell, lease, rent, or commercially distribute the
+      Software or any work derived from it;
+
+  (d) use the Software to provide a hosted or managed service to third
+      parties;
+
+  (e) remove or alter any copyright, trademark, or other proprietary
+      notices contained in the Software;
+
+  (f) use the names "binvim" or "B. Gunnarsson" to endorse or promote
+      products derived from the Software without prior written permission.
+
+For clarity: a private fork on a code-hosting platform that exists solely to
+prepare a Contribution is permitted, provided it is deleted or kept private
+once the Contribution has been merged or abandoned. A public fork is not
+permitted under any circumstances.
+
+================================================================================
+4. Contributions
+================================================================================
+
+By submitting a Contribution to the Canonical Project, you grant the
+Licensor a perpetual, worldwide, non-exclusive, royalty-free, irrevocable
+licence to use, reproduce, modify, sublicense, and distribute that
+Contribution as part of the Software, including under different licence
+terms in the future.
+
+You represent that each Contribution is your original work, or that you
+otherwise have the right to grant the licence above for it.
+
+================================================================================
+5. Termination
+================================================================================
+
+This licence terminates automatically and without notice if you breach any
+of its terms. On termination, you must destroy all copies of the Software in
+your possession or control. Sections 4, 6, 7, and 8 survive termination.
+
+The Licensor may also revoke this licence at any time, in writing, in which
+case the same destruction obligation applies.
+
+================================================================================
+6. No Warranty
+================================================================================
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+================================================================================
+7. Limitation of Liability
+================================================================================
+
+IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING
+FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+================================================================================
+8. Miscellaneous
+================================================================================
+
+This License is the entire agreement between you and the Licensor regarding
+the Software. If any provision is found unenforceable, the remaining
+provisions remain in effect.
+
+For licensing arrangements outside the scope of this License — including
+redistribution, commercial use, or hosted-service provision — contact the
+Licensor at dentadesign@gmail.com.

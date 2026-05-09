@@ -3,6 +3,9 @@ name = "binvim"
 version = "0.1.0"
 edition = "2024"
 description = "Vim-grammar TUI editor with batteries included"
+authors = ["B. Gunnarsson <dentadesign@gmail.com>"]
+license-file = "LICENSE"
+publish = false
 
 [dependencies]
 ropey = "1.6"

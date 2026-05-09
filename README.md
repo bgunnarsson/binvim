@@ -96,6 +96,10 @@ show = true   # space=`·`, tab=`→ `, nbsp=`⎵`, eol=`¬`. On by default.
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 
+## Licence
+
+Source-available, not open source. Copyright (c) 2026 B. Gunnarsson — see [LICENSE](LICENSE) for the full text. In short: you may read the source, run it locally, modify your own copy, and submit pull requests upstream. You may not redistribute, publicly fork, or run it as a hosted service. For anything outside that scope, contact the licensor.
+
 ## Project layout
 
 ```
