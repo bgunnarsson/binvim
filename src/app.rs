@@ -3571,8 +3571,21 @@ impl App {
             }
         }
         let buf = Buffer::from_path(path)?;
+        // Restore persisted undo if the cached snapshot matches the file
+        // content on disk — no point reusing history recorded against a
+        // different version.
+        let history = buf
+            .path
+            .as_deref()
+            .and_then(crate::undo::cache_path_for)
+            .and_then(|p| {
+                let hash = crate::undo::hash_text(&buf.rope.to_string());
+                crate::undo::History::load_from_path(&p, hash)
+            })
+            .unwrap_or_default();
         let stash = BufferStash {
             buffer: buf,
+            history,
             ..Default::default()
         };
         self.buffers.push(stash);
@@ -3810,6 +3823,13 @@ impl App {
             self.ensure_final_newline();
         }
         self.buffer.save()?;
+        // Persist undo so the next session can keep walking history.
+        if let Some(path) = self.buffer.path.as_deref() {
+            if let Some(cache) = crate::undo::cache_path_for(path) {
+                let hash = crate::undo::hash_text(&self.buffer.rope.to_string());
+                let _ = self.history.save_to_path(&cache, hash);
+            }
+        }
         Ok(format_note)
     }
 
