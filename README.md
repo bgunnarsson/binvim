@@ -1,13 +1,17 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust, with tree-sitter highlighting, LSP, and fuzzy pickers built in.
+A Vim-grammar TUI editor written in Rust, with tree-sitter highlighting, LSPs, and fuzzy pickers built in.
 
 ## Features
 
-- **Modal editing** — normal/insert/visual (charwise, linewise, blockwise) with operators, text objects, marks, registers, dot-repeat, undo/redo, and macros.
-- **Tree-sitter highlighting** — Rust, TypeScript/TSX, JavaScript, JSON, Go, HTML, CSS, Markdown.
-- **LSP client** — diagnostics, hover, completion, and goto-definition over per-language servers, with `initializationOptions` and project-root detection. CSS/SCSS/Less get IntelliSense via `vscode-css-language-server`, and Tailwind class-name completions are layered on top via `tailwindcss-language-server` whenever a `tailwind.config.*` file is reachable from the buffer's directory.
+- **Modal editing** — normal / insert / visual (charwise, linewise, blockwise) with operators, text objects, marks, registers, dot-repeat, undo/redo, and macros.
+- **Tree-sitter highlighting** — Rust, TypeScript/TSX, JavaScript, JSON, Go, HTML, CSS, Markdown, C#.
+- **LSP client** — diagnostics, hover, completion, and goto-definition over per-language servers, with `initializationOptions` and project-root detection.
+- **Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`).
 - **Pickers** — fuzzy file picker, buffer switcher, and live grep, opened from the leader (`space`).
+- **Format on save** — biome for JS/TS/JSX/TSX/JSON/JSONC; `.editorconfig` directives applied on save (final newline, trailing whitespace).
+- **Whitespace markers** — tabs and trailing whitespace surface as muted glyphs (`→`, `·`) so layout-affecting characters are visible at a glance.
+- **Start page** — when launched with no path, binvim opens on a centered `binvim` logo (configurable). The page is read-only; press `:` for a command or `<space>` for the file picker.
 - **Catppuccin Mocha defaults** — colours overridable via `~/.config/binvim/config.toml`.
 
 ## Build
@@ -24,24 +28,43 @@ The binary lands at `target/release/binvim`.
 binvim [path]
 ```
 
-If `path` is omitted, binvim opens on a start page showing a centered `binvim` logo. The logo is read-only; press `:` to enter a command (`:e <path>`, `:q`) or `<space>` to open the file picker.
+If `path` is omitted, binvim opens on the start page. Press `:` for a command (`:e <path>`, `:q`) or `<space>` to open the file picker.
 
 ## Leader bindings
 
-| Keys      | Action            |
-|-----------|-------------------|
-| `<space>` | File picker       |
-| `<space>b`| Buffer picker     |
-| `<space>g`| Live grep         |
+| Keys       | Action            |
+|------------|-------------------|
+| `<space>`  | File picker       |
+| `<space>b` | Buffer picker     |
+| `<space>g` | Live grep         |
 
 ## Ex commands
 
 Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 
-| Command           | Description                                          |
-|-------------------|------------------------------------------------------|
-| `:health`         | Open a scratch buffer summarising version, RSS, CPU, attached LSPs, buffers, and Tailwind config detection. `:checkhealth` works too. |
-| `:fmt` / `:format`| Run the configured formatter on the active buffer.   |
+| Command            | Description                                                                                                   |
+|--------------------|---------------------------------------------------------------------------------------------------------------|
+| `:health`          | Open a scratch buffer summarising version, CPU/RAM share, buffers, attached LSPs, per-buffer LSP status (binary path + running flag), and Tailwind config detection. `:checkhealth` works too. |
+| `:fmt` / `:format` | Run the configured formatter on the active buffer.                                                            |
+| `:noh`             | Clear the search highlight.                                                                                   |
+
+## External tools
+
+binvim spawns these on demand. Each is optional — when a binary isn't on `$PATH` (or in a relevant `node_modules/.bin/`) the editor just skips that capability.
+
+| Tool                                | Purpose                                  | Install                                                                  |
+|-------------------------------------|------------------------------------------|--------------------------------------------------------------------------|
+| `rust-analyzer`                     | Rust LSP                                 | `rustup component add rust-analyzer`                                     |
+| `typescript-language-server`        | JS/TS/JSX/TSX LSP                        | `npm i -g typescript-language-server typescript`                         |
+| `gopls`                             | Go LSP                                   | `go install golang.org/x/tools/gopls@latest`                             |
+| `vscode-css-language-server`        | CSS/SCSS/Less LSP                        | `npm i -g vscode-langservers-extracted`                                  |
+| `vscode-html-language-server`       | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
+| `tailwindcss-language-server`       | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (note: scoped — the unscoped `tailwindcss-language-server` on npm is an empty stub) |
+| `astro-ls`                          | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
+| `OmniSharp` / `rzls`                | C# / Razor LSP                           | OmniSharp via your dotnet tooling; rzls if you have it on `$PATH`        |
+| `biome` (project-local)             | JSON LSP + JS/TS/JSON formatter on save  | `npm i -D @biomejs/biome` in the project                                  |
+
+binvim auto-discovers project-local binaries by walking up to the closest `node_modules/.bin/`, so a `devDependency` in your project takes precedence over a global install.
 
 ## Configuration
 
@@ -65,9 +88,11 @@ lines = [
 show = true   # render tabs as `→ ` and trailing whitespace as `·`. On by default.
 ```
 
-Values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head.
+**`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head (`keyword.return` overrides `keyword`).
 
-`start_page.lines` overrides the baked-in ASCII logo shown when binvim is launched with no path. Each entry renders on its own row, horizontally centered; the block as a whole is vertically centered. Omit it (or leave it empty) to keep the default logo.
+**`[start_page]`** — `lines` overrides the baked-in ASCII logo shown when binvim is launched with no path. Each entry renders on its own row, horizontally centered; the block as a whole is vertically centered. Omit it (or leave it empty) to keep the default logo.
+
+**`[whitespace]`** — `show = true` (the default) renders tabs as `→` followed by space-fill to the tab width, and trailing whitespace as `·`. Interior spaces are deliberately left alone so column-aligned text stays readable. Set `show = false` to disable.
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 
@@ -75,18 +100,20 @@ A missing or malformed config is ignored — the baked-in Catppuccin Mocha palet
 
 ```
 src/
-  app.rs          event loop, buffer/state management
-  buffer.rs       rope-backed text buffer
-  command.rs      ex-command (`:`) parser and dispatch
-  config.rs       config loader and colour resolution
-  cursor.rs       cursor + visual selection model
-  lang.rs         tree-sitter language detection and highlight cache
-  lsp.rs          LSP client (diagnostics, hover, completion, goto)
-  mode.rs         modes and operators
-  motion.rs       motions
-  parser.rs       keystroke → action parser
-  picker.rs       fuzzy pickers
-  render.rs       terminal rendering
-  text_object.rs  text objects (`iw`, `i"`, `ap`, …)
-  undo.rs         undo/redo history
+  app.rs           event loop, buffer/state management, ex-command dispatch
+  buffer.rs        rope-backed text buffer
+  command.rs       ex-command (`:`) parser
+  config.rs        config loader and colour resolution
+  cursor.rs        cursor + visual selection model
+  editorconfig.rs  .editorconfig parser + on-save transforms
+  format.rs        formatter dispatch (biome integration)
+  lang.rs          tree-sitter language detection and highlight cache
+  lsp.rs           LSP client (diagnostics, hover, completion, goto, multi-server fan-out)
+  mode.rs          modes and operators
+  motion.rs        motions
+  parser.rs        keystroke → action parser
+  picker.rs        fuzzy pickers
+  render.rs        terminal rendering
+  text_object.rs   text objects (`iw`, `i"`, `ap`, …)
+  undo.rs          undo/redo history
 ```
