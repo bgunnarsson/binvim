@@ -1233,10 +1233,12 @@ const START_LOGO: &[&str] = &[
 
 fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     let rows = app.buffer_rows();
+    let top = app.buffer_top();
     let total_w = app.width as usize;
-    // Blank every row so leftover content from a prior frame can't bleed through.
+    // Blank every row so leftover content from a prior frame can't bleed
+    // through. Don't touch the tab-bar row when it's painted above us.
     for row in 0..rows {
-        queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
     }
     // User config wins; fall back to the baked-in logo when no override is set.
     let configured: Vec<&str> = app
@@ -1266,7 +1268,7 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
         let left = (total_w.saturating_sub(line_w)) / 2;
         queue!(
             out,
-            MoveTo(left as u16, (top + i) as u16),
+            MoveTo(left as u16, (top + i + app.buffer_top()) as u16),
             SetForegroundColor(blue),
             Print(line),
             ResetColor,
@@ -1364,7 +1366,10 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
             close_col,
             label: label.clone(),
             dirty: *dirty,
-            active: *idx == app.active,
+            // No tab is the "active" one while the start page is up —
+            // we're not actually rendering any buffer. Highlighting one
+            // would be misleading.
+            active: *idx == app.active && !app.show_start_page,
         });
         col += w;
     }

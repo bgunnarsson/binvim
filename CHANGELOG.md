@@ -30,9 +30,11 @@ follows [Semantic Versioning](https://semver.org/).
 - **Restored sessions land on the start page.** The saved buffers are
   loaded in the background; the welcome screen is on top until the
   user reaches for one (`H`/`L` cycle, `:bn`/`:bp`, `:b<n>`, `:e`,
-  `<leader>e`). Solo-buffer sessions: `H`/`L` still dismiss the start
-  page and surface the one buffer (with the usual "Only one buffer"
-  hint).
+  `<leader>e`, or clicking any tab). Solo-buffer sessions: `H`/`L`
+  still dismiss the start page and surface the one buffer (with the
+  usual "Only one buffer" hint). The tab bar IS shown above the start
+  page so the user can see what was restored — no tab is highlighted
+  as active until you actually pick one.
 
 ### Fixed
 - **Snippet / completion accept honours `textEdit.range`.** Servers

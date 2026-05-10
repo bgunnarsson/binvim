@@ -245,11 +245,11 @@ impl super::App {
             .saturating_sub(self.buffer_top())
     }
 
-    /// True when the tab bar should be painted — multi-buffer sessions
-    /// outside the start page. Single-buffer sessions don't need tabs;
-    /// the start page would only show one `[No Name]` tab anyway.
+    /// True when the tab bar should be painted — any time there's more
+    /// than one buffer. Single-buffer sessions (or a fresh launch with
+    /// just the `[No Name]` seed) don't show tabs.
     pub fn show_tabs(&self) -> bool {
-        self.buffers.len() > 1 && !self.show_start_page
+        self.buffers.len() > 1
     }
 
     /// Y of the topmost buffer row. Equal to the tab-bar height —

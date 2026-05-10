@@ -175,6 +175,10 @@ impl super::App {
             if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
                 for slot in crate::render::tab_layout(self) {
                     if col >= slot.start_col && col < slot.end_col {
+                        // Any tab interaction dismisses the start page —
+                        // restored sessions show tabs above the welcome
+                        // screen and clicking one is the obvious way in.
+                        self.show_start_page = false;
                         if slot.close_col == Some(col) {
                             // Match :bd behaviour: refuse to drop a
                             // dirty buffer. The user can :bd! force or
