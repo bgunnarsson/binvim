@@ -316,6 +316,17 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 ParseResult::Action(Action::AdjustNumber { delta: -1, count })
             }
+            'v' | 'V' => {
+                state.reset();
+                match ctx {
+                    ParseCtx::Visual => {
+                        ParseResult::Action(Action::VisualSwitch(VisualKind::Block))
+                    }
+                    ParseCtx::Normal => {
+                        ParseResult::Action(Action::EnterVisual(VisualKind::Block))
+                    }
+                }
+            }
             _ => ParseResult::Pending,
         };
     }

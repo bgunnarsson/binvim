@@ -23,6 +23,9 @@ pub enum PromptKind {
 pub enum VisualKind {
     Char,
     Line,
+    /// Rectangular selection — `Ctrl-V`. Anchor and cursor define opposite
+    /// corners of the rectangle; operators apply column-wise per line.
+    Block,
 }
 
 impl Mode {
@@ -33,6 +36,7 @@ impl Mode {
             Mode::Command => "COMMAND",
             Mode::Visual(VisualKind::Char) => "VISUAL",
             Mode::Visual(VisualKind::Line) => "V-LINE",
+            Mode::Visual(VisualKind::Block) => "V-BLOCK",
             Mode::Search { .. } => "SEARCH",
             Mode::Picker => "PICK",
             Mode::Prompt(_) => "PROMPT",

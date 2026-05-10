@@ -359,7 +359,8 @@ impl super::App {
     }
 
     /// For visual mode rendering: return the half-open `[start_col, end_col)` of selected
-    /// chars on this line, or `None` if none. For V-line, returns full line range.
+    /// chars on this line, or `None` if none. For V-line, returns full line range; for
+    /// V-block, returns the column-rectangle slice for this row.
     pub fn line_selection(&self, line: usize) -> Option<(usize, usize)> {
         let kind = match self.mode {
             Mode::Visual(k) => k,
@@ -367,21 +368,26 @@ impl super::App {
         };
         let anchor = self.visual_anchor?;
         let cursor = self.cursor;
-        let (lo, hi) = if (anchor.line, anchor.col) <= (cursor.line, cursor.col) {
-            (anchor, cursor)
-        } else {
-            (cursor, anchor)
-        };
-        if line < lo.line || line > hi.line {
-            return None;
-        }
         let line_len = self.buffer.line_len(line);
         match kind {
             VisualKind::Line => {
+                let l1 = anchor.line.min(cursor.line);
+                let l2 = anchor.line.max(cursor.line);
+                if line < l1 || line > l2 {
+                    return None;
+                }
                 let end = if line_len == 0 { 1 } else { line_len };
                 Some((0, end))
             }
             VisualKind::Char => {
+                let (lo, hi) = if (anchor.line, anchor.col) <= (cursor.line, cursor.col) {
+                    (anchor, cursor)
+                } else {
+                    (cursor, anchor)
+                };
+                if line < lo.line || line > hi.line {
+                    return None;
+                }
                 let start_col = if line == lo.line { lo.col } else { 0 };
                 let end_col = if line == hi.line {
                     (hi.col + 1).min(line_len.max(1))
@@ -389,6 +395,21 @@ impl super::App {
                     line_len.max(1)
                 };
                 Some((start_col, end_col))
+            }
+            VisualKind::Block => {
+                let l1 = anchor.line.min(cursor.line);
+                let l2 = anchor.line.max(cursor.line);
+                if line < l1 || line > l2 {
+                    return None;
+                }
+                let c1 = anchor.col.min(cursor.col);
+                let c2 = anchor.col.max(cursor.col);
+                // Skip rows that don't reach the block's left edge.
+                if line_len <= c1 {
+                    return None;
+                }
+                let end = (c2 + 1).min(line_len);
+                Some((c1, end))
             }
         }
     }

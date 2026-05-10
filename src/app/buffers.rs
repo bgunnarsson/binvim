@@ -271,6 +271,81 @@ impl super::App {
         Ok(())
     }
 
+    /// Open every buffer recorded in the session, restore each one's
+    /// cursor + viewport, and land on the previously active buffer.
+    /// Buffers that no longer exist on disk are silently dropped.
+    pub(super) fn hydrate_from_session(&mut self, session: crate::session::Session) {
+        let mut last_opened_idx: Option<usize> = None;
+        for sb in &session.buffers {
+            let path = PathBuf::from(&sb.path);
+            if !path.exists() {
+                continue;
+            }
+            if self.open_buffer(path.clone()).is_err() {
+                continue;
+            }
+            // After open_buffer the active buffer is the one we just
+            // opened — restore its cursor + viewport.
+            let last = self.buffer.line_count().saturating_sub(1);
+            self.cursor.line = sb.line.min(last);
+            let line_len = self.buffer.line_len(self.cursor.line);
+            self.cursor.col = sb.col.min(line_len.saturating_sub(1).max(0));
+            self.cursor.want_col = self.cursor.col;
+            self.view_top = sb.view_top.min(last);
+            last_opened_idx = Some(self.active);
+        }
+        // Honour the session's `active` index — but only if it points at
+        // one of the buffers we actually managed to open.
+        if !self.buffers.is_empty() {
+            let target = session.active.min(self.buffers.len() - 1);
+            if let Some(open_idx) = last_opened_idx {
+                let _ = self.switch_to(target.min(open_idx).max(0));
+            }
+        }
+    }
+
+    /// Snapshot the current buffer set into a `Session`. Buffers without a
+    /// path (start page, `[Health]` scratch) are skipped — we can't reopen
+    /// them on the next launch.
+    pub(super) fn build_session(&self) -> crate::session::Session {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let canon = cwd.canonicalize().unwrap_or(cwd);
+        let mut buffers: Vec<crate::session::SessionBuffer> = Vec::new();
+        let mut active_in_session: usize = 0;
+        for (i, stash) in self.buffers.iter().enumerate() {
+            let (path, line, col, view_top) = if i == self.active {
+                (
+                    self.buffer.path.as_ref(),
+                    self.cursor.line,
+                    self.cursor.col,
+                    self.view_top,
+                )
+            } else {
+                (
+                    stash.buffer.path.as_ref(),
+                    stash.cursor.line,
+                    stash.cursor.col,
+                    stash.view_top,
+                )
+            };
+            let Some(path) = path else { continue };
+            if i == self.active {
+                active_in_session = buffers.len();
+            }
+            buffers.push(crate::session::SessionBuffer {
+                path: path.display().to_string(),
+                line,
+                col,
+                view_top,
+            });
+        }
+        crate::session::Session {
+            cwd: canon.to_string_lossy().to_string(),
+            buffers,
+            active: active_in_session,
+        }
+    }
+
     pub(super) fn list_buffers(&self) -> String {
         let mut out = String::new();
         for (i, stash) in self.buffers.iter().enumerate() {

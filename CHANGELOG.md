@@ -12,6 +12,22 @@ follows [Semantic Versioning](https://semver.org/).
   (new LSP, new tree-sitter grammar, motion/text-object).
 
 ### Added
+- **Double-click to select word.** A second left-click at the same buffer
+  position within 350ms expands to the inner word under the cursor and
+  enters Visual-char mode.
+- **Visual-block mode (`Ctrl-V`).** Third visual kind alongside char and
+  line. Rectangular column selection across a line span; `d`/`c`/`y`
+  apply column-wise per row. `>`/`<` fall back to indent/outdent over
+  the line range. Selection survives drag, mode label reads `V-BLOCK`.
+- **Sessions.** Open buffer set + per-buffer cursor + viewport are
+  persisted to `~/.cache/binvim/sessions/<cwd-hash>.json` on clean
+  shutdown and restored on launch when no file argument is passed. A
+  buffer whose path no longer exists is silently dropped.
+- **Better completion popup.** Each row renders a colour-coded kind chip
+  (`fn`, `var`, `cls`, `if`, `fld`, `mod`, `snp`, `kw`, `K`, …) on the
+  left and the server-supplied `detail` (e.g. the function signature)
+  right-aligned in Overlay2 grey. Popup width caps at 80 cols; detail
+  trims first when space is tight.
 - **Picker scrolling.** Mouse wheel inside the picker moves the selection
   by ±3 (instead of scrolling the buffer behind it); PageUp/PageDown jump
   by a full visible page; Ctrl-U/Ctrl-D jump by half a page; Ctrl-G /

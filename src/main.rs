@@ -16,6 +16,7 @@ mod motion;
 mod parser;
 mod picker;
 mod render;
+mod session;
 mod text_object;
 mod undo;
 

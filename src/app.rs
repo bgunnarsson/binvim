@@ -137,20 +137,37 @@ pub struct App {
     /// Wall clock of the last disk-mtime probe — drives the watch-and-reload
     /// loop without spamming syscalls.
     pub last_disk_check: Instant,
+    /// Wall-clock + buffer position of the most recent left-click. A second
+    /// click at the same `(line, col)` within `DOUBLE_CLICK_WINDOW` is
+    /// treated as a double-click and selects the word under the cursor.
+    pub last_click: Option<(Instant, usize, usize)>,
     pub(crate) replaying_macro: bool,
     pub(crate) recording: Option<RecordingState>,
     pub(crate) replaying: bool,
 }
 
+/// How quickly a second left-click must arrive at the same buffer position
+/// to register as a double-click. Tuned to typical OS double-click defaults.
+pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
+
 impl App {
     pub fn new(path: Option<PathBuf>) -> Result<Self> {
-        let show_start_page = path.is_none();
-        let buffer = match path {
-            Some(p) => Buffer::from_path(p)?,
+        // No path arg + a saved session for this cwd → restore the session
+        // instead of opening the empty start page. The session module does
+        // its own existence checks for each tracked buffer.
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let restored_session = if path.is_none() {
+            crate::session::load_for_cwd(&cwd)
+        } else {
+            None
+        };
+        let show_start_page = path.is_none() && restored_session.is_none();
+        let buffer = match path.as_ref() {
+            Some(p) => Buffer::from_path(p.clone())?,
             None => Buffer::empty(),
         };
         let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
-        Ok(Self {
+        let mut this = Self {
             buffer,
             cursor: Cursor::default(),
             mode: Mode::Normal,
@@ -202,10 +219,18 @@ impl App {
             closed_folds: std::collections::HashSet::new(),
             recents: buffers::load_recents(),
             last_disk_check: Instant::now(),
+            last_click: None,
             replaying_macro: false,
             recording: None,
             replaying: false,
-        })
+        };
+        // Hydrate from the saved session — open every still-extant buffer,
+        // restore each one's cursor + viewport, and land on the previously
+        // active buffer.
+        if let Some(s) = restored_session {
+            this.hydrate_from_session(s);
+        }
+        Ok(this)
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -303,6 +328,12 @@ impl App {
                     needs_render = true;
                 }
             }
+        }
+        // Clean shutdown — persist the session so the next launch in this
+        // cwd can restore it. Best-effort: errors don't block exit.
+        let session = self.build_session();
+        if !session.buffers.is_empty() {
+            let _ = crate::session::save(&session);
         }
         Ok(())
     }

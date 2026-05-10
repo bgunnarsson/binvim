@@ -719,33 +719,53 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
     if popup_h == 0 {
         return Ok(());
     }
-    // Compute popup width from labels (cap at 60).
+
+    // Row layout: ` chip  label                  detail `
+    //              ^^^^   ^^^^^                  ^^^^^^
+    //               4ch   left-aligned           right-aligned, dim
+    // Fixed chrome: 1 (left pad) + 3 (chip) + 2 (gap) + 2 (gap) + 1 (right pad) = 9
+    const CHIP_W: usize = 3;
+    const CHROME: usize = 9; // pads + chip + gaps
     let max_label = c
         .items
         .iter()
         .map(|i| i.label.chars().count())
         .max()
         .unwrap_or(8);
-    let max_kind = c
+    let max_detail = c
         .items
         .iter()
-        .filter_map(|i| i.kind.as_ref().map(|k| k.chars().count()))
+        .filter_map(|i| i.detail.as_ref().map(|d| d.chars().count()))
         .max()
         .unwrap_or(0);
-    let popup_w = (max_label + max_kind + 4).min(60).min((app.width as usize).saturating_sub(4));
+    // Cap label and detail so the popup doesn't blow past 80 chars.
+    let label_w = max_label.min(40);
+    let detail_w = max_detail.min(35);
+    let mut popup_w = CHROME + label_w + detail_w;
+    let max_popup_w = (app.width as usize).saturating_sub(4).min(80);
+    if popup_w > max_popup_w {
+        // Trim detail first; only trim the label if there's no detail.
+        let over = popup_w - max_popup_w;
+        let detail_trim = over.min(detail_w);
+        let new_detail = detail_w - detail_trim;
+        let label_trim = (over - detail_trim).min(label_w);
+        let new_label = label_w - label_trim;
+        popup_w = CHROME + new_label + new_detail;
+    }
+    let body_w = popup_w.saturating_sub(CHROME);
+    // Re-derive label/detail widths from the final popup_w (we may have trimmed).
+    let final_detail_w = body_w.saturating_sub(label_w).min(detail_w);
+    let final_label_w = body_w.saturating_sub(final_detail_w);
 
-    // Scroll window so the selected item is visible.
     let start = if c.selected >= popup_h {
         c.selected + 1 - popup_h
     } else {
         0
     };
 
-    // Anchor at cursor position in the buffer area.
     let gutter = app.gutter_width();
     let cursor_row = app.cursor.line.saturating_sub(app.view_top);
     let cursor_col = gutter + app.cursor.col;
-    // Below the cursor unless that would overflow; otherwise above.
     let buffer_rows = app.buffer_rows();
     let mut top_row = cursor_row + 1;
     if top_row + popup_h > buffer_rows {
@@ -756,6 +776,12 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
         left_col = (app.width as usize).saturating_sub(popup_w);
     }
 
+    let bg_unsel = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }; // Surface0
+    let bg_sel = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a };   // Surface1
+    let label_unsel = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let label_sel = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };   // Lavender
+    let detail_fg = Color::Rgb { r: 0x9a, g: 0xa0, b: 0xb0 };   // Overlay2
+
     for row in 0..popup_h {
         let pos = start + row;
         if pos >= c.items.len() {
@@ -764,37 +790,86 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
         let item = &c.items[pos];
         let selected = pos == c.selected;
         let y = (top_row + row) as u16;
-        queue!(out, MoveTo(left_col as u16, y))?;
-        if selected {
-            queue!(
-                out,
-                SetBackgroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
-                SetForegroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })  // Lavender
-            )?;
+        let row_bg = if selected { bg_sel } else { bg_unsel };
+        let label_fg = if selected { label_sel } else { label_unsel };
+
+        let (chip_text, chip_color) = completion_kind_chip(item.kind.as_deref());
+        let chip_pad = CHIP_W.saturating_sub(chip_text.chars().count());
+
+        let label: String = item
+            .label
+            .chars()
+            .take(final_label_w)
+            .collect();
+        let label_pad = final_label_w.saturating_sub(label.chars().count());
+        let detail_raw = item.detail.as_deref().unwrap_or("");
+        let detail: String = if final_detail_w == 0 {
+            String::new()
         } else {
-            queue!(
-                out,
-                SetBackgroundColor(Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }), // Surface0
-                SetForegroundColor(Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 })  // Text
-            )?;
-        }
-        let kind = item.kind.as_deref().unwrap_or("");
-        let label_max = popup_w.saturating_sub(kind.chars().count() + 3);
-        let label_trunc: String = item.label.chars().take(label_max).collect();
-        let pad = popup_w
-            .saturating_sub(label_trunc.chars().count() + kind.chars().count() + 3);
+            detail_raw.chars().take(final_detail_w).collect()
+        };
+        let detail_pad = final_detail_w.saturating_sub(detail.chars().count());
+
         queue!(
             out,
-            Print(format!(
-                " {}{} {} ",
-                label_trunc,
-                " ".repeat(pad),
-                kind
-            ))
+            MoveTo(left_col as u16, y),
+            SetBackgroundColor(row_bg),
+            Print(' '),
+            SetForegroundColor(chip_color),
+            Print(&*chip_text),
+            Print(" ".repeat(chip_pad)),
+            Print("  "),
+            SetForegroundColor(label_fg),
+            Print(&label),
+            Print(" ".repeat(label_pad)),
+            Print("  "),
+            SetForegroundColor(detail_fg),
+            // Right-align detail by padding before it.
+            Print(" ".repeat(detail_pad)),
+            Print(&detail),
+            Print(' '),
+            ResetColor,
         )?;
-        queue!(out, ResetColor)?;
     }
     Ok(())
+}
+
+/// Pick a short kind chip + Catppuccin colour for an LSP completion item.
+/// The chip text is always 3 chars (padded if shorter) so the body column
+/// stays aligned across rows.
+fn completion_kind_chip(kind: Option<&str>) -> (&'static str, Color) {
+    let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+    let blue = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
+    let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+    let teal = Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 };
+    let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+    let green = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
+    let sky = Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb };
+    let subtext1 = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde };
+    match kind.unwrap_or("") {
+        "function" | "method" => ("fn", blue),
+        "constructor" => ("new", blue),
+        "variable" => ("var", peach),
+        "class" | "struct" => ("cls", yellow),
+        "interface" => ("if", mauve),
+        "field" | "property" => ("fld", teal),
+        "module" => ("mod", sky),
+        "snippet" => ("snp", green),
+        "keyword" => ("kw", mauve),
+        "enum" => ("enm", yellow),
+        "enum-member" => ("em", yellow),
+        "constant" => ("K", peach),
+        "type-param" => ("T", yellow),
+        "value" => ("val", subtext1),
+        "folder" => ("/", subtext1),
+        "file" => ("fi", subtext1),
+        "color" => ("■", peach),
+        "operator" => ("op", mauve),
+        "event" => ("evt", peach),
+        "unit" => ("u", subtext1),
+        "reference" => ("ref", subtext1),
+        _ => ("·", subtext1),
+    }
 }
 
 /// Picker popup geometry. Layout inside the box, rows numbered relative
@@ -1547,6 +1622,7 @@ fn mode_color(mode: Mode) -> Color {
         Mode::Insert => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
         Mode::Visual(VisualKind::Char) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
         Mode::Visual(VisualKind::Line) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
+        Mode::Visual(VisualKind::Block) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
         Mode::Command => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::Search { .. } => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky

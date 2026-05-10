@@ -189,12 +189,36 @@ impl super::App {
 
         match ev.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                let now = std::time::Instant::now();
+                let is_double = self
+                    .last_click
+                    .filter(|(t, l, c)| {
+                        now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW
+                            && *l == buf_line
+                            && *c == buf_col
+                    })
+                    .is_some();
                 if matches!(self.mode, Mode::Visual(_)) {
                     self.exit_visual();
                 }
                 self.cursor.line = buf_line;
                 self.cursor.col = buf_col;
                 self.cursor.want_col = buf_col;
+                if is_double {
+                    // Expand to the inner word under the cursor and enter
+                    // Visual-char mode with that span selected.
+                    self.apply_visual_select_textobj(
+                        crate::text_object::TextObjectVerb::Word { inner: true },
+                    );
+                    if self.visual_anchor.is_some() {
+                        self.mode = Mode::Visual(VisualKind::Char);
+                    }
+                    // Clear so a third click within the window doesn't
+                    // re-trigger.
+                    self.last_click = None;
+                } else {
+                    self.last_click = Some((now, buf_line, buf_col));
+                }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if !matches!(self.mode, Mode::Visual(_)) {
