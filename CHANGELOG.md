@@ -12,6 +12,14 @@ follows [Semantic Versioning](https://semver.org/).
   (new LSP, new tree-sitter grammar, motion/text-object).
 
 ### Changed
+- **Picker redesigned as a centered floating popup.** Catppuccin-Mantle
+  bordered box (~80% wide, ~60% tall, clamped) replacing the full-width
+  bottom panel. Title chip in the top border with a counter on the right;
+  Peach `›` prompt arrow; selected row gets a Lavender `▌` accent + Surface1
+  background + bold; directory part of each path renders dim while the
+  basename pops bright; smart truncation prefers keeping the basename
+  intact; footer hint row (`↵ open  ^N/^P navigate  esc cancel`) with a
+  shorter fallback on narrow terminals.
 - **Source layout: `src/app/` and `src/lsp/` are now sub-module directories.**
   The two largest files (formerly `app.rs` at ~5.6k LoC and `lsp.rs` at ~2k)
   have been split into 14 and 6 focused children respectively. Each parent
