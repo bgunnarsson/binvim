@@ -1466,16 +1466,36 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         )?;
     }
 
-    // Bottom border — a thin Surface1 line separating the tab bar from
-    // the buffer area below.
-    queue!(
-        out,
-        MoveTo(0, 1),
-        SetBackgroundColor(bar_bg),
-        SetForegroundColor(border_fg),
-        Print("─".repeat(total_w)),
-        ResetColor,
-    )?;
+    // Bottom border — a Surface1 line separating the tab bar from the
+    // buffer below. The active tab's bg extends down into the border
+    // row instead of the line, so the block visually "connects" to the
+    // buffer it's editing.
+    queue!(out, MoveTo(0, 1))?;
+    let active_range = slots.iter().find(|s| s.active).map(|s| (s.start_col, s.end_col));
+    match active_range {
+        Some((s, e)) => {
+            queue!(
+                out,
+                SetBackgroundColor(bar_bg),
+                SetForegroundColor(border_fg),
+                Print("─".repeat(s)),
+                SetBackgroundColor(active_bg),
+                Print(" ".repeat(e - s)),
+                SetBackgroundColor(bar_bg),
+                SetForegroundColor(border_fg),
+                Print("─".repeat(total_w.saturating_sub(e))),
+            )?;
+        }
+        None => {
+            queue!(
+                out,
+                SetBackgroundColor(bar_bg),
+                SetForegroundColor(border_fg),
+                Print("─".repeat(total_w)),
+            )?;
+        }
+    }
+    queue!(out, ResetColor)?;
     Ok(())
 }
 
