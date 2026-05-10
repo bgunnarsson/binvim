@@ -16,8 +16,9 @@ follows [Semantic Versioning](https://semver.org/).
   by ±3 (instead of scrolling the buffer behind it); PageUp/PageDown jump
   by a full visible page; Ctrl-U/Ctrl-D jump by half a page; Ctrl-G /
   Home and Ctrl-Shift-G / End jump to first/last result. Existing
-  arrow-keys and Ctrl-N/Ctrl-P/Ctrl-J/Ctrl-K still move by one row;
-  footer hint now advertises `^J`/`^K` to match Vim convention.
+  arrow-keys and Ctrl-J/Ctrl-K still move by one row; footer hint
+  advertises `^J`/`^K` to match Vim convention. (Ctrl-N/Ctrl-P aliases
+  removed — single Vim-style binding only.)
 
 ### Changed
 - **Hover popup now syntax-highlights code and preserves indentation.**

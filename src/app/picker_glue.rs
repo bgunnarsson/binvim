@@ -172,8 +172,8 @@ impl super::App {
             KeyCode::Home => picker.move_by(i64::MIN / 2),
             KeyCode::End => picker.move_by(i64::MAX / 2),
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => match c {
-                'n' | 'j' => picker.move_down(),
-                'p' | 'k' => picker.move_up(),
+                'j' => picker.move_down(),
+                'k' => picker.move_up(),
                 'd' | 'D' => {
                     let half = (crate::render::picker_visible_rows(self) / 2).max(1) as i64;
                     if let Some(p) = self.picker.as_mut() { p.move_by(half); }
