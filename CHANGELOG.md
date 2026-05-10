@@ -23,6 +23,15 @@ follows [Semantic Versioning](https://semver.org/).
   `hydrate_from_session` runs; the restore path now strips that initial
   empty slot when any session buffer is successfully opened.
 
+### Changed
+- **Tab bar replaces the buffer picker.** When 2+ buffers are open
+  (outside the start page), a Catppuccin-Mantle tab row paints across
+  the top of the screen — active tab in Surface1 + Lavender + bold,
+  inactive in Subtext0, dirty buffers carry a Peach `+`. Left-click on
+  a tab switches to it. Buffer area shifts down by one row when the
+  bar is visible. The `<leader>b<space>` picker binding is gone; use
+  the tab bar (click), `:bn`/`:bp`, or `<leader>bn`/`<leader>bp`.
+
 ### Added
 - **Multi-cursor (real, mirrored).** `Ctrl-click` in Normal mode adds
   a secondary cursor at the click position; cursors render as Lavender

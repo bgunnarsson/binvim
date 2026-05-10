@@ -73,6 +73,7 @@ pub enum MarkAction {
 pub enum PickerLeader {
     Files,
     Recents,
+    #[allow(dead_code)]
     Buffers,
     Grep,
     DocumentSymbols,
@@ -501,7 +502,6 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if state.awaiting_buffer_leader {
         state.awaiting_buffer_leader = false;
         let action = match ch {
-            ' ' | 'b' => Some(Action::OpenPicker { kind: PickerLeader::Buffers }),
             'd' => Some(Action::BufferDelete { force: false }),
             'D' => Some(Action::BufferDelete { force: true }),
             'o' => Some(Action::BufferOnly),

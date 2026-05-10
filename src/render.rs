@@ -15,6 +15,9 @@ pub const TAB_WIDTH: usize = 4;
 
 pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, BeginSynchronizedUpdate, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
+    if app.show_tabs() {
+        draw_tab_bar(out, app)?;
+    }
     draw_buffer(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
@@ -189,6 +192,8 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     if cursor_row < popup_h {
         top_row = (cursor_row + 1).min(buffer_rows.saturating_sub(popup_h));
     }
+    // Buffer-relative → screen y.
+    let top_row = top_row + app.buffer_top();
     let gutter = app.gutter_width();
     let cursor_visual = app.cursor_visual_col().saturating_sub(app.view_left);
     let mut left_col = gutter + cursor_visual;
@@ -279,6 +284,7 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     if top_row + popup_h > buffer_rows {
         top_row = cursor_row.saturating_sub(popup_h);
     }
+    let top_row = top_row + app.buffer_top();
     let gutter = app.gutter_width();
     let mut left_col = gutter + app.cursor.col;
     if left_col + popup_w > app.width as usize {
@@ -771,6 +777,7 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
     if top_row + popup_h > buffer_rows {
         top_row = cursor_row.saturating_sub(popup_h);
     }
+    let top_row = top_row + app.buffer_top();
     let mut left_col = cursor_col;
     if left_col + popup_w > app.width as usize {
         left_col = (app.width as usize).saturating_sub(popup_w);
@@ -1268,11 +1275,163 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
+/// One drawable tab on the bar.
+pub(crate) struct TabSlot {
+    /// Index into `App.buffers`.
+    pub idx: usize,
+    /// Inclusive starting column on the screen.
+    pub start_col: usize,
+    /// Exclusive ending column on the screen.
+    pub end_col: usize,
+    pub label: String,
+    pub dirty: bool,
+    pub active: bool,
+}
+
+/// Compute the tab layout for the current buffer set. Each tab gets
+/// `" name [+] "` (the `+` only when dirty) with a thin separator
+/// between tabs. Tabs that wouldn't fit on the screen are dropped from
+/// the right; the active tab is guaranteed to be visible (scrolls the
+/// row left when needed).
+pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
+    let total_w = app.width as usize;
+    let mut entries: Vec<(usize, String, bool)> = Vec::with_capacity(app.buffers.len());
+    for (i, stash) in app.buffers.iter().enumerate() {
+        let (path, dirty) = if i == app.active {
+            (
+                app.buffer.path.as_ref(),
+                app.buffer.dirty,
+            )
+        } else {
+            (stash.buffer.path.as_ref(), stash.buffer.dirty)
+        };
+        let label = path
+            .and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                if i == app.active {
+                    app.buffer.display_name.clone()
+                } else {
+                    stash.buffer.display_name.clone()
+                }
+            })
+            .unwrap_or_else(|| "[No Name]".into());
+        entries.push((i, label, dirty));
+    }
+    // First pass: tentative widths. ` name + ` (8+ chars for short names).
+    // We pad label, then add ` + ` markers and a trailing space, so each
+    // tab cell ends with a column of breathing room.
+    let widths: Vec<usize> = entries
+        .iter()
+        .map(|(_, label, dirty)| label.chars().count() + if *dirty { 3 } else { 2 })
+        .collect();
+    // Find which slice of tabs to render so the active one is on screen.
+    // Greedy: start from the active tab and walk outward.
+    let total_widths: usize = widths.iter().sum();
+    let mut start_idx = 0usize;
+    if total_widths > total_w {
+        // Walk left from active until we've used at most half the width;
+        // then the renderer fills from there forward.
+        let mut used = 0usize;
+        for i in (0..=app.active).rev() {
+            used += widths[i];
+            if used > total_w / 2 {
+                start_idx = (i + 1).min(app.active);
+                break;
+            }
+            start_idx = i;
+        }
+    }
+    let mut slots = Vec::new();
+    let mut col = 0usize;
+    for i in start_idx..entries.len() {
+        let w = widths[i];
+        if col + w > total_w {
+            break;
+        }
+        let (idx, label, dirty) = &entries[i];
+        slots.push(TabSlot {
+            idx: *idx,
+            start_col: col,
+            end_col: col + w,
+            label: label.clone(),
+            dirty: *dirty,
+            active: *idx == app.active,
+        });
+        col += w;
+    }
+    slots
+}
+
+fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
+    let total_w = app.width as usize;
+    queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
+
+    let bar_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let active_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
+    let active_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
+    let inactive_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
+    let dirty_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
+
+    // Background fill across the full row.
+    queue!(
+        out,
+        SetBackgroundColor(bar_bg),
+        SetForegroundColor(inactive_fg),
+        Print(" ".repeat(total_w)),
+        MoveTo(0, 0),
+    )?;
+
+    for slot in tab_layout(app) {
+        queue!(out, MoveTo(slot.start_col as u16, 0))?;
+        if slot.active {
+            queue!(
+                out,
+                SetBackgroundColor(active_bg),
+                SetForegroundColor(active_fg),
+                SetAttribute(Attribute::Bold),
+                Print(' '),
+                Print(&slot.label),
+            )?;
+            if slot.dirty {
+                queue!(
+                    out,
+                    SetForegroundColor(dirty_fg),
+                    Print(" +"),
+                    SetForegroundColor(active_fg),
+                )?;
+            }
+            queue!(out, Print(' '), SetAttribute(Attribute::Reset))?;
+        } else {
+            queue!(
+                out,
+                SetBackgroundColor(bar_bg),
+                SetForegroundColor(inactive_fg),
+                Print(' '),
+                Print(&slot.label),
+            )?;
+            if slot.dirty {
+                queue!(
+                    out,
+                    SetForegroundColor(dirty_fg),
+                    Print(" +"),
+                    SetForegroundColor(inactive_fg),
+                )?;
+            }
+            queue!(out, Print(' '))?;
+        }
+    }
+    queue!(out, ResetColor)?;
+    Ok(())
+}
+
 fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     if app.show_start_page {
         return draw_start_page(out, app);
     }
     let rows = app.buffer_rows();
+    let top = app.buffer_top();
     let gutter = app.gutter_width();
     let avail = (app.width as usize).saturating_sub(gutter);
     let total_lines = app.buffer.line_count();
@@ -1285,7 +1444,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     for row in 0..rows {
         // Clear the row before drawing — guards against terminal-side wrap
         // from the previous row's render leaking onto this one.
-        queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
         if line_idx < total_lines {
             // Diagnostic sign column.
             let sign = app.worst_diagnostic(line_idx).map(|s| match s {
@@ -1982,7 +2141,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let gutter = app.gutter_width();
-    let row = app.cursor.line.saturating_sub(app.view_top) as u16;
+    let row = (app.cursor.line.saturating_sub(app.view_top) + app.buffer_top()) as u16;
     let line = app.buffer.rope.line(app.cursor.line);
     let mut visual = 0usize;
     for (i, c) in line.chars().enumerate() {

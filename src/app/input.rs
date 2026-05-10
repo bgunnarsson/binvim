@@ -167,14 +167,35 @@ impl super::App {
         if in_overlay {
             return;
         }
-        if row >= buffer_rows {
+        // Tab-bar click: only on the very top row when tabs are showing.
+        // Left-click on a tab switches to that buffer; everything else
+        // is ignored.
+        let buffer_top = self.buffer_top();
+        if buffer_top > 0 && row == 0 {
+            if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
+                for slot in crate::render::tab_layout(self) {
+                    if col >= slot.start_col && col < slot.end_col {
+                        if slot.idx != self.active {
+                            let _ = self.switch_to(slot.idx);
+                        }
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        if row < buffer_top {
+            return;
+        }
+        let buf_row = row - buffer_top;
+        if buf_row >= buffer_rows {
             return; // status line / off-buffer area
         }
         let gutter = self.gutter_width();
         if col < gutter {
             return; // sign column / line numbers
         }
-        let buf_line = row + self.view_top;
+        let buf_line = buf_row + self.view_top;
         if buf_line >= self.buffer.line_count() {
             return;
         }

@@ -238,8 +238,24 @@ impl super::App {
     }
 
     pub fn buffer_rows(&self) -> usize {
-        // Reserve only the status line at the bottom; status_msg + diagnostic floats top-right.
-        (self.height as usize).saturating_sub(1)
+        // Reserve the status line at the bottom and (when applicable) one
+        // row at the top for the tab bar.
+        (self.height as usize)
+            .saturating_sub(1)
+            .saturating_sub(self.buffer_top())
+    }
+
+    /// True when the tab bar should be painted — multi-buffer sessions
+    /// outside the start page. Single-buffer sessions don't need tabs;
+    /// the start page would only show one `[No Name]` tab anyway.
+    pub fn show_tabs(&self) -> bool {
+        self.buffers.len() > 1 && !self.show_start_page
+    }
+
+    /// Y of the topmost buffer row. Equal to the tab-bar height —
+    /// 1 when tabs are showing, 0 otherwise.
+    pub fn buffer_top(&self) -> usize {
+        if self.show_tabs() { 1 } else { 0 }
     }
 
     /// Any overlay (command line, search prompt, picker, hover, completion) is active —

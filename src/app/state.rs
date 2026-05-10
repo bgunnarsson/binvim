@@ -175,7 +175,6 @@ pub fn leader_entries() -> Vec<(String, String)> {
 
 pub fn buffer_prefix_entries() -> Vec<(String, String)> {
     vec![
-        ("<space>".into(), "Picker".into()),
         ("d".into(), "Delete".into()),
         ("D".into(), "Delete (force)".into()),
         ("o".into(), "Only (close others)".into()),
