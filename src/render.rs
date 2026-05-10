@@ -254,13 +254,14 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
 }
 
 fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
+    use crate::app::{HoverCodeBlock, HoverLine};
+
     let Some(hover) = app.hover.as_ref() else { return Ok(()); };
     if hover.lines.is_empty() {
         return Ok(());
     }
 
-    // Width: lines were word-wrapped at hover.wrap_width, so use that.
-    let widest_actual = hover.lines.iter().map(|l| l.chars().count()).max().unwrap_or(20);
+    let widest_actual = hover.widest_line().max(20);
     let content_w = widest_actual.min(hover.wrap_width).max(20);
     let popup_w = content_w + 2;
 
@@ -289,6 +290,7 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
     let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let arrow_fg = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
+    let heading_fg = title_fg;
 
     // Top border with title (and a "start-end/total" scroll indicator on the right).
     let total = hover.lines.len();
@@ -325,24 +327,78 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
         Print('╮'),
     )?;
 
+    // Pre-compute byte-colour maps for each code block, keyed by block_idx.
+    // Cached per render call so multiple visible lines from one block share
+    // a single tree-sitter pass.
+    let mut block_colors: std::collections::HashMap<usize, Vec<Option<Color>>> =
+        std::collections::HashMap::new();
+    let needed_blocks: std::collections::HashSet<usize> = hover
+        .lines
+        .iter()
+        .skip(hover.scroll)
+        .take(visible)
+        .filter_map(|l| match l {
+            HoverLine::Code { block_idx, .. } => Some(*block_idx),
+            _ => None,
+        })
+        .collect();
+    for idx in needed_blocks {
+        let HoverCodeBlock { lang, source } = &hover.code_blocks[idx];
+        let colors = lang
+            .and_then(|l| crate::lang::compute_byte_colors(l, source, &app.config))
+            .unwrap_or_else(|| vec![None; source.len()]);
+        block_colors.insert(idx, colors);
+    }
+
     // Body — show `visible` lines starting at `scroll`.
     for i in 0..visible {
+        let y = (top_row + 1 + i) as u16;
         let idx = hover.scroll + i;
-        let line = hover.lines.get(idx).map(|s| s.as_str()).unwrap_or("");
-        let truncated: String = line.chars().take(content_w).collect();
-        let pad = content_w.saturating_sub(truncated.chars().count());
         queue!(
             out,
-            MoveTo(left_col as u16, (top_row + 1 + i) as u16),
+            MoveTo(left_col as u16, y),
             SetBackgroundColor(bg),
             SetForegroundColor(border),
             Print('│'),
-            SetForegroundColor(text_fg),
-            Print(&truncated),
-            Print(" ".repeat(pad)),
-            SetForegroundColor(border),
-            Print('│'),
+            SetBackgroundColor(bg),
         )?;
+        let written = match hover.lines.get(idx) {
+            None | Some(HoverLine::Blank) => 0,
+            Some(HoverLine::Prose(s)) => {
+                let truncated: String = s.chars().take(content_w).collect();
+                let n = truncated.chars().count();
+                queue!(out, SetForegroundColor(text_fg), Print(&truncated))?;
+                n
+            }
+            Some(HoverLine::Heading { text, .. }) => {
+                let truncated: String = text.chars().take(content_w).collect();
+                let n = truncated.chars().count();
+                queue!(
+                    out,
+                    SetForegroundColor(heading_fg),
+                    SetAttribute(Attribute::Bold),
+                    Print(&truncated),
+                    SetAttribute(Attribute::Reset),
+                    SetBackgroundColor(bg),
+                )?;
+                n
+            }
+            Some(HoverLine::Rule) => {
+                let line = "─".repeat(content_w);
+                queue!(out, SetForegroundColor(border), Print(&line))?;
+                content_w
+            }
+            Some(HoverLine::Code { block_idx, byte_offset, byte_len }) => {
+                let block = &hover.code_blocks[*block_idx];
+                let slice = &block.source[*byte_offset..*byte_offset + *byte_len];
+                let colors = block_colors.get(block_idx);
+                paint_code_line(out, slice, *byte_offset, colors, content_w, text_fg)?
+            }
+        };
+        if written < content_w {
+            queue!(out, Print(" ".repeat(content_w - written)))?;
+        }
+        queue!(out, SetForegroundColor(border), Print('│'))?;
     }
 
     // Bottom border.
@@ -357,6 +413,48 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
         ResetColor,
     )?;
     Ok(())
+}
+
+/// Paint one code line into the popup body. `slice` is the original bytes
+/// from the block's source; `byte_offset` is where `slice` starts inside
+/// that source so we can index into the parallel `colors` map. Tabs expand
+/// to TAB_WIDTH spaces in the same colour as the tab byte. Returns the
+/// number of *display columns* written so the caller can pad.
+fn paint_code_line(
+    out: &mut impl Write,
+    slice: &str,
+    byte_offset: usize,
+    colors: Option<&Vec<Option<Color>>>,
+    max_w: usize,
+    default_fg: Color,
+) -> Result<usize> {
+    let mut written = 0usize;
+    let mut byte_pos = 0usize;
+    for ch in slice.chars() {
+        let len = ch.len_utf8();
+        let abs = byte_offset + byte_pos;
+        byte_pos += len;
+        let fg = colors
+            .and_then(|c| c.get(abs).copied().flatten())
+            .unwrap_or(default_fg);
+        if ch == '\t' {
+            let cells = TAB_WIDTH;
+            let avail = max_w.saturating_sub(written);
+            let n = cells.min(avail);
+            if n == 0 {
+                return Ok(written);
+            }
+            queue!(out, SetForegroundColor(fg), Print(" ".repeat(n)))?;
+            written += n;
+        } else {
+            if written >= max_w {
+                return Ok(written);
+            }
+            queue!(out, SetForegroundColor(fg), Print(ch.to_string()))?;
+            written += 1;
+        }
+    }
+    Ok(written)
 }
 
 /// Classify a status message by content into a Catppuccin severity colour. We

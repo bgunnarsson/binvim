@@ -36,8 +36,8 @@ mod view;
 mod visual;
 
 pub use state::{
-    BufferStash, CompletionState, FindRecord, FoldRange, HoverState, LastEdit, Register,
-    WhichKeyState, YankHighlight, HOVER_MAX_HEIGHT,
+    BufferStash, CompletionState, FindRecord, FoldRange, HoverCodeBlock, HoverLine, HoverState,
+    LastEdit, Register, WhichKeyState, YankHighlight, HOVER_MAX_HEIGHT,
 };
 
 use state::WHICHKEY_DELAY;

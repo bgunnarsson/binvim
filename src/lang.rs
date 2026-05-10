@@ -50,6 +50,29 @@ impl Lang {
         }
     }
 
+    /// Map a markdown code-fence tag (`typescript`, `rs`, `c#`, …) to one
+    /// of our supported languages. Used by the hover popup when an LSP
+    /// returns markdown with fenced code blocks. Case-insensitive; handles
+    /// the common short and long aliases LSP servers actually emit.
+    pub fn from_md_tag(tag: &str) -> Option<Self> {
+        match tag.trim().to_ascii_lowercase().as_str() {
+            "rust" | "rs" => Some(Lang::Rust),
+            "typescript" | "ts" => Some(Lang::TypeScript),
+            "tsx" | "typescriptreact" => Some(Lang::Tsx),
+            "javascript" | "js" | "jsx" | "javascriptreact" | "mjs" | "cjs" => {
+                Some(Lang::JavaScript)
+            }
+            "json" | "jsonc" => Some(Lang::Json),
+            "go" | "golang" => Some(Lang::Go),
+            "html" | "htm" | "xhtml" | "cshtml" | "razor" => Some(Lang::Html),
+            "css" | "scss" | "sass" | "less" => Some(Lang::Css),
+            "markdown" | "md" => Some(Lang::Markdown),
+            "csharp" | "cs" | "c#" => Some(Lang::CSharp),
+            "bash" | "sh" | "shell" | "zsh" | "ksh" => Some(Lang::Bash),
+            _ => None,
+        }
+    }
+
     fn ts_language(self) -> Language {
         match self {
             Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
@@ -135,11 +158,24 @@ pub struct HighlightCache {
 }
 
 pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<HighlightCache> {
+    let source = buf.rope.to_string();
+    let colors = compute_byte_colors(lang, &source, config)?;
+    Some(HighlightCache {
+        lang,
+        buffer_version: buf.version,
+        byte_colors: colors,
+    })
+}
+
+/// Run tree-sitter highlighting over a raw source string and return the
+/// per-byte foreground colour map. Reused by the hover popup for fenced
+/// code blocks where there's no underlying `Buffer`. See `compute_highlights`
+/// for the priority-resolution rationale that this shares.
+pub fn compute_byte_colors(lang: Lang, source: &str, config: &Config) -> Option<Vec<Option<Color>>> {
     let language = lang.ts_language();
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
-    let source = buf.rope.to_string();
-    let tree = parser.parse(&source, None)?;
+    let tree = parser.parse(source, None)?;
     let query_src = lang.highlights_query();
     let query = Query::new(&language, &query_src).ok()?;
     let capture_names = query.capture_names();
@@ -174,10 +210,5 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<H
             }
         }
     }
-
-    Some(HighlightCache {
-        lang,
-        buffer_version: buf.version,
-        byte_colors: colors,
-    })
+    Some(colors)
 }

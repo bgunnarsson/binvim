@@ -12,6 +12,16 @@ follows [Semantic Versioning](https://semver.org/).
   (new LSP, new tree-sitter grammar, motion/text-object).
 
 ### Changed
+- **Hover popup now syntax-highlights code and preserves indentation.**
+  The markdown returned by an LSP is parsed into structured lines (prose,
+  headings, horizontal rules, fenced code blocks); each fenced block's
+  language tag drives a tree-sitter pass and the byte-colour map paints
+  per-character, so signatures (e.g. `defineField<{ name: string; … }>`)
+  finally render the way they would in the buffer. Code lines keep their
+  leading whitespace verbatim (tabs expand to four columns); prose still
+  word-wraps to the popup width but indentation carries through to wrapped
+  continuations. Headings render bold + Lavender; rules render as a
+  horizontal divider in the border colour.
 - **Picker redesigned as a centered floating popup.** Catppuccin-Mantle
   bordered box (~80% wide, ~60% tall, clamped) replacing the full-width
   bottom panel. Title chip in the top border with a counter on the right;

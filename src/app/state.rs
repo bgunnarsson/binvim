@@ -78,12 +78,48 @@ pub struct CompletionState {
 }
 
 pub struct HoverState {
-    /// Word-wrapped display lines.
-    pub lines: Vec<String>,
+    /// Display lines in order. The renderer iterates these; each variant
+    /// carries enough context to be coloured/styled.
+    pub lines: Vec<HoverLine>,
+    /// One entry per fenced code block in the original markdown — the
+    /// renderer runs tree-sitter on `source` once per block, then slices
+    /// the byte-color map per `Code` line via its `byte_offset`/`byte_len`.
+    pub code_blocks: Vec<HoverCodeBlock>,
     /// First visible line index when scrolling.
     pub scroll: usize,
-    /// Width the lines were wrapped to.
+    /// Width prose was wrapped to (also the popup's preferred width).
     pub wrap_width: usize,
+}
+
+#[derive(Clone)]
+pub enum HoverLine {
+    /// Empty separator row.
+    Blank,
+    /// Plain prose line. Already wrapped to `wrap_width` with indentation
+    /// preserved on continuation rows.
+    Prose(String),
+    /// Heading line with the leading `#`s stripped. `level` is the original
+    /// `#` count (1..=6) — currently used only to bold the line.
+    Heading {
+        #[allow(dead_code)]
+        level: u8,
+        text: String,
+    },
+    /// Horizontal rule (`---`/`***`/`___` on its own line in markdown).
+    Rule,
+    /// One line of a fenced code block. The renderer reconstructs colour
+    /// for the line by indexing into the corresponding `HoverCodeBlock`.
+    Code {
+        block_idx: usize,
+        byte_offset: usize,
+        byte_len: usize,
+    },
+}
+
+#[derive(Clone)]
+pub struct HoverCodeBlock {
+    pub lang: Option<crate::lang::Lang>,
+    pub source: String,
 }
 
 pub const HOVER_MAX_HEIGHT: usize = 15;
@@ -149,37 +185,131 @@ pub fn buffer_prefix_entries() -> Vec<(String, String)> {
 }
 
 impl HoverState {
+    /// Parse the LSP hover markdown into a structured `HoverState`. Recognises
+    /// fenced code blocks (with language tags), `#`-headings, and horizontal
+    /// rules; everything else is treated as prose and word-wrapped to fit
+    /// `wrap_width`. Code lines are *not* wrapped — they keep their original
+    /// indentation, so the renderer paints them as-typed and the user can
+    /// scroll horizontally if needed.
     pub fn from_lsp_text(text: &str, term_width: usize) -> Option<Self> {
-        let stripped: Vec<String> = text
-            .lines()
-            .filter(|line| !is_code_fence(line))
-            .map(|s| s.trim_end().to_string())
-            .collect();
-        let start = stripped
-            .iter()
-            .position(|l| !l.trim().is_empty())
-            .unwrap_or(stripped.len());
-        let end = stripped
-            .iter()
-            .rposition(|l| !l.trim().is_empty())
-            .map(|i| i + 1)
-            .unwrap_or(start);
-        if start >= end {
-            return None;
-        }
         let wrap_width = HOVER_MAX_WIDTH.min(term_width.saturating_sub(8).max(20));
-        let mut lines = Vec::new();
-        for raw in &stripped[start..end] {
-            if raw.is_empty() {
-                lines.push(String::new());
-            } else {
-                lines.extend(wrap_line(raw, wrap_width));
+
+        let mut lines: Vec<HoverLine> = Vec::new();
+        let mut code_blocks: Vec<HoverCodeBlock> = Vec::new();
+        // Active code-block accumulator: (lang_tag, lines collected so far).
+        let mut in_code: Option<(Option<crate::lang::Lang>, Vec<String>)> = None;
+
+        for raw in text.lines() {
+            // Use the trimmed view for fence detection so leading whitespace
+            // before a fence doesn't disqualify it; the original line wins
+            // for everything else (we want to keep code indentation intact).
+            let trimmed = raw.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("```") {
+                if let Some((lang, collected)) = in_code.take() {
+                    // Closing fence — flush the block.
+                    let source = collected.join("\n");
+                    let block_idx = code_blocks.len();
+                    let mut byte_offset = 0usize;
+                    for (i, line) in collected.iter().enumerate() {
+                        let byte_len = line.len();
+                        lines.push(HoverLine::Code { block_idx, byte_offset, byte_len });
+                        // +1 for the synthetic '\n' between joined lines (no trailing
+                        // newline on the last line, matching `join`'s behaviour).
+                        byte_offset += byte_len + if i + 1 < collected.len() { 1 } else { 0 };
+                    }
+                    code_blocks.push(HoverCodeBlock { lang, source });
+                } else {
+                    // Opening fence — record the lang tag (first run of
+                    // non-whitespace after the backticks).
+                    let tag: String = rest
+                        .chars()
+                        .take_while(|c| !c.is_whitespace())
+                        .collect();
+                    let lang = if tag.is_empty() {
+                        None
+                    } else {
+                        crate::lang::Lang::from_md_tag(&tag)
+                    };
+                    in_code = Some((lang, Vec::new()));
+                }
+                continue;
+            }
+            if let Some((_, collected)) = in_code.as_mut() {
+                // Inside a code block — preserve leading whitespace exactly,
+                // strip trailing whitespace only.
+                collected.push(raw.trim_end().to_string());
+                continue;
+            }
+
+            // Prose / heading / rule.
+            let stripped = raw.trim_end();
+            if stripped.is_empty() {
+                lines.push(HoverLine::Blank);
+                continue;
+            }
+            let trimmed_full = stripped.trim();
+            // Horizontal rule — `---` / `***` / `___` (≥3, only those chars).
+            if trimmed_full.len() >= 3 {
+                let marker = trimmed_full.chars().next().unwrap();
+                if matches!(marker, '-' | '*' | '_')
+                    && trimmed_full.chars().all(|c| c == marker)
+                {
+                    lines.push(HoverLine::Rule);
+                    continue;
+                }
+            }
+            // ATX heading — leading `#`s, up to 6, followed by space.
+            if let Some(level) = atx_heading_level(trimmed_full) {
+                let text = trimmed_full
+                    .trim_start_matches('#')
+                    .trim_start()
+                    .to_string();
+                lines.push(HoverLine::Heading { level, text });
+                continue;
+            }
+            // Plain prose — wrap with leading-whitespace preserved.
+            for w in wrap_prose(stripped, wrap_width) {
+                lines.push(HoverLine::Prose(w));
             }
         }
+
+        // Trailing un-closed code block (rare, but handle gracefully).
+        if let Some((lang, collected)) = in_code {
+            let source = collected.join("\n");
+            let block_idx = code_blocks.len();
+            let mut byte_offset = 0usize;
+            for (i, line) in collected.iter().enumerate() {
+                let byte_len = line.len();
+                lines.push(HoverLine::Code { block_idx, byte_offset, byte_len });
+                byte_offset += byte_len + if i + 1 < collected.len() { 1 } else { 0 };
+            }
+            code_blocks.push(HoverCodeBlock { lang, source });
+        }
+
+        // Trim leading and trailing Blank lines so the popup hugs its content.
+        let leading_blanks = lines
+            .iter()
+            .take_while(|l| matches!(l, HoverLine::Blank))
+            .count();
+        let trailing_blanks = lines
+            .iter()
+            .rev()
+            .take_while(|l| matches!(l, HoverLine::Blank))
+            .count();
+        if leading_blanks + trailing_blanks >= lines.len() {
+            return None;
+        }
+        let keep = lines.len() - leading_blanks - trailing_blanks;
+        let lines: Vec<HoverLine> = lines
+            .into_iter()
+            .skip(leading_blanks)
+            .take(keep)
+            .collect();
+
         if lines.is_empty() {
             return None;
         }
-        Some(HoverState { lines, scroll: 0, wrap_width })
+        Some(HoverState { lines, code_blocks, scroll: 0, wrap_width })
     }
 
     pub fn max_scroll(&self, visible: usize) -> usize {
@@ -191,20 +321,81 @@ impl HoverState {
         let new = (self.scroll as i64 + delta).clamp(0, max as i64);
         self.scroll = new as usize;
     }
+
+    /// Char width of the longest displayable line — used by the renderer
+    /// to size the popup. Code lines count their original byte slice;
+    /// prose / heading count their final rendered text.
+    pub fn widest_line(&self) -> usize {
+        self.lines
+            .iter()
+            .map(|l| match l {
+                HoverLine::Blank => 0,
+                HoverLine::Rule => 0,
+                HoverLine::Prose(s) => s.chars().count(),
+                HoverLine::Heading { text, .. } => text.chars().count(),
+                HoverLine::Code { block_idx, byte_offset, byte_len } => {
+                    let block = &self.code_blocks[*block_idx];
+                    let slice = &block.source[*byte_offset..*byte_offset + *byte_len];
+                    visual_width(slice)
+                }
+            })
+            .max()
+            .unwrap_or(20)
+    }
 }
 
-fn is_code_fence(line: &str) -> bool {
-    let t = line.trim();
-    if !t.starts_with("```") {
-        return false;
+/// Visible width of a string when tabs expand to TAB_WIDTH columns. Used
+/// for sizing only — the renderer does the actual tab expansion.
+fn visual_width(s: &str) -> usize {
+    let mut w = 0usize;
+    for c in s.chars() {
+        if c == '\t' {
+            w += crate::render::TAB_WIDTH;
+        } else {
+            w += 1;
+        }
     }
-    t.chars()
-        .skip(3)
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '+' || c == '.')
+    w
+}
+
+/// Returns 1..=6 if `line` is an ATX-style markdown heading. The convention
+/// requires a single space between the `#`s and the heading text — e.g.
+/// `## Title`. A bare `#` or `#identifier` is not a heading.
+fn atx_heading_level(line: &str) -> Option<u8> {
+    let mut chars = line.chars();
+    let mut hashes = 0u8;
+    while let Some('#') = chars.clone().next() {
+        chars.next();
+        hashes += 1;
+        if hashes > 6 {
+            return None;
+        }
+    }
+    if hashes == 0 {
+        return None;
+    }
+    match chars.next() {
+        Some(' ') => Some(hashes),
+        _ => None,
+    }
+}
+
+/// Wrap a prose line at `width`, preserving any leading whitespace on every
+/// produced row so wrapped continuations align under their parent.
+fn wrap_prose(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_string()];
+    }
+    let lead: String = line.chars().take_while(|c| matches!(c, ' ' | '\t')).collect();
+    let lead_w = lead.chars().count();
+    let body: String = line.chars().skip(lead_w).collect();
+    let body_w = width.saturating_sub(lead_w).max(1);
+    let wrapped = wrap_words(&body, body_w);
+    wrapped.into_iter().map(|w| format!("{lead}{w}")).collect()
 }
 
 /// Word-wrap a single line. Hard-breaks tokens longer than the width.
-fn wrap_line(line: &str, width: usize) -> Vec<String> {
+fn wrap_words(line: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![line.to_string()];
     }
