@@ -167,11 +167,15 @@ impl super::App {
         if in_overlay {
             return;
         }
-        // Tab-bar click: only on the very top row when tabs are showing.
-        // Left-click on a tab's close glyph deletes the buffer; click
-        // anywhere else inside the tab switches to it.
+        // Tab-bar click: only on the content row (row 0). Row 1 is the
+        // separator border — a click there is ignored. Left-click on a
+        // tab's close glyph deletes the buffer; click anywhere else
+        // inside the tab switches to it.
         let buffer_top = self.buffer_top();
-        if buffer_top > 0 && row == 0 {
+        if buffer_top > 0 && row < buffer_top {
+            if row != 0 {
+                return;
+            }
             if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
                 for slot in crate::render::tab_layout(self) {
                     if col >= slot.start_col && col < slot.end_col {

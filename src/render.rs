@@ -1373,18 +1373,27 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
 
 fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     let total_w = app.width as usize;
-    queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
+    queue!(
+        out,
+        MoveTo(0, 0),
+        Clear(ClearType::CurrentLine),
+        MoveTo(0, 1),
+        Clear(ClearType::CurrentLine),
+    )?;
 
-    let bar_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    // Bar bg matches the editor (Base) so the bar doesn't visually
+    // recede into a darker strip.
+    let bar_bg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
     let active_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
     let active_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let inactive_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
     let dirty_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
     let close_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
     let chevron_fg = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde }; // Subtext1
+    let border_fg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
 
-    // Bar-wide background fill so any gaps between tabs render in the
-    // bar colour.
+    // Row 0 background fill so any gaps between tabs render in the bar
+    // colour.
     queue!(
         out,
         SetBackgroundColor(bar_bg),
@@ -1437,7 +1446,7 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
 
-    // Overflow chevrons.
+    // Overflow chevrons on the content row.
     if scrolled_left {
         queue!(
             out,
@@ -1457,7 +1466,16 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         )?;
     }
 
-    queue!(out, ResetColor)?;
+    // Bottom border — a thin Surface1 line separating the tab bar from
+    // the buffer area below.
+    queue!(
+        out,
+        MoveTo(0, 1),
+        SetBackgroundColor(bar_bg),
+        SetForegroundColor(border_fg),
+        Print("─".repeat(total_w)),
+        ResetColor,
+    )?;
     Ok(())
 }
 
