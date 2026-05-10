@@ -107,6 +107,18 @@ impl super::App {
         self.refresh_editorconfig();
         self.show_start_page = false;
         self.touch_recent();
+        // Strip the phantom `[No Name]` seed that App::new() seeds at
+        // index 0 — only on the transition from "fresh launch" (one
+        // empty no-path buffer) to a first real file. Same shape as
+        // the session-restore cleanup.
+        if self.buffers.len() > 1
+            && self.active != 0
+            && self.buffers[0].buffer.path.is_none()
+            && self.buffers[0].buffer.rope.len_chars() == 0
+        {
+            self.buffers.remove(0);
+            self.active = self.active.saturating_sub(1);
+        }
         Ok(())
     }
 

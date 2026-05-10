@@ -245,11 +245,16 @@ impl super::App {
             .saturating_sub(self.buffer_top())
     }
 
-    /// True when the tab bar should be painted — any time there's more
-    /// than one buffer. Single-buffer sessions (or a fresh launch with
-    /// just the `[No Name]` seed) don't show tabs.
+    /// True when the tab bar should be painted. Shown whenever any
+    /// real (path-backed) buffer is open, or whenever there's more
+    /// than one buffer — so the bar reflects what the user actually
+    /// has loaded. A fresh launch with just the `[No Name]` seed
+    /// keeps the bar hidden.
     pub fn show_tabs(&self) -> bool {
-        self.buffers.len() > 1
+        if self.buffers.len() > 1 {
+            return true;
+        }
+        self.buffer.path.is_some()
     }
 
     /// Y of the topmost buffer row. Equal to the tab-bar height —

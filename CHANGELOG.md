@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Tab bar shows for single buffers too.** `show_tabs()` now returns
+  true whenever any path-backed buffer is open (or multiple buffers
+  are loaded), not only the multi-buffer case. The fresh-launch
+  `[No Name]` seed still hides the bar. `open_buffer` strips the
+  phantom seed buffer on the transition into the first real file —
+  same shape as the session-restore cleanup — so the bar starts as a
+  single tab rather than `[No Name] | foo.rs`.
+
 ### Fixed
 - **JSX / TSX tag highlighting.** Tree-sitter-javascript's bundled
   highlight query categorises every JSX element name as a generic
