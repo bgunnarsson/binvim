@@ -699,86 +699,340 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-fn picker_layout(app: &App) -> (usize, usize, usize) {
-    let h = app.height as usize;
-    let picker_h = (h * 2 / 5).clamp(6, 20);
-    let bottom_chrome = 2; // status line + cmdline
-    let top_row = h.saturating_sub(picker_h + bottom_chrome);
-    (top_row, picker_h, h.saturating_sub(bottom_chrome))
+/// Picker popup geometry. Layout inside the box, rows numbered relative
+/// to the top border (row 0):
+///   0           top border `╭─ Files ── 1/54 ─╮`
+///   1           top padding (blank)
+///   2           prompt row `│ › typed   …    │`
+///   3           separator (blank)
+///   4..N-3      list rows
+///   N-3         bottom padding (blank)
+///   N-2         footer hint `│ ↵ open  ^N/^P  esc │`
+///   N-1         bottom border
+struct PickerLayout {
+    left: usize,
+    top: usize,
+    inner_w: usize,
+    list_top: usize,
+    list_h: usize,
+    prompt_row: usize,
+    footer_row: usize,
+    bottom_row: usize,
+}
+
+fn picker_layout(app: &App) -> PickerLayout {
+    let total_w = app.width as usize;
+    let total_h = app.height as usize;
+    // Box dimensions — generous side margins so the popup floats clearly
+    // above the dimmed buffer rather than touching the screen edges.
+    let box_w = ((total_w * 4) / 5).clamp(50, 100).min(total_w.saturating_sub(4));
+    // 7 rows of chrome: top border, top pad, prompt, separator, …, bottom
+    // pad, footer, bottom border. Min 12 keeps at least 5 list rows visible.
+    let box_h = ((total_h * 3) / 5)
+        .clamp(12, 28)
+        .min(total_h.saturating_sub(2));
+
+    let inner_w = box_w.saturating_sub(2);
+    let left = total_w.saturating_sub(box_w) / 2;
+    // Bias slightly above centre so the popup doesn't visually fight the
+    // status line.
+    let bottom_chrome = 2;
+    let top = (total_h.saturating_sub(bottom_chrome).saturating_sub(box_h) / 2).max(0);
+
+    let prompt_row = top + 2;
+    let footer_row = top + box_h - 2;
+    let bottom_row = top + box_h - 1;
+    let list_top = top + 4;
+    let list_h = footer_row.saturating_sub(list_top + 1);
+
+    PickerLayout {
+        left,
+        top,
+        inner_w,
+        list_top,
+        list_h,
+        prompt_row,
+        footer_row,
+        bottom_row,
+    }
 }
 
 fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
     let Some(picker) = app.picker.as_ref() else { return Ok(()); };
-    let (top_row, picker_h, end_row) = picker_layout(app);
-    let w = app.width as usize;
+    let layout = picker_layout(app);
 
-    // Title row.
-    let title = format!(
-        " {}  {}/{} ",
-        picker.title,
-        if picker.filtered.is_empty() { 0 } else { picker.selected + 1 },
-        picker.filtered.len()
-    );
-    let pad = w.saturating_sub(title.chars().count());
+    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
+    let count_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
+    let prompt_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
+    let input_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let path_fg = Color::Rgb { r: 0x9a, g: 0xa0, b: 0xb0 }; // Overlay2
+    let name_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let dim_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
+    let sel_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
+    let sel_accent = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
+    let hint_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
+    let hint_key_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
+
+    // ── Top border with embedded title and counter ─────────────────────
+    let title_seg = format!(" {} ", picker.title);
+    let total = picker.filtered.len();
+    let cur = if total == 0 { 0 } else { picker.selected + 1 };
+    let count_seg = format!(" {}/{} ", cur, total);
+    let title_w = title_seg.chars().count();
+    let count_w = count_seg.chars().count();
+    // Border layout: ╭─ {title} ─...─ {count} ─╮
+    // Reserved for corners + flanking single dashes = 4 chars.
+    let filler = layout.inner_w.saturating_sub(title_w + count_w + 2);
     queue!(
         out,
-        MoveTo(0, top_row as u16),
-        Clear(ClearType::CurrentLine),
-        SetAttribute(Attribute::Reverse),
-        Print(title),
-        Print(" ".repeat(pad)),
-        SetAttribute(Attribute::Reset)
+        MoveTo(layout.left as u16, layout.top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print('─'),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
+        Print(&title_seg),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("─".repeat(filler)),
+        SetForegroundColor(count_fg),
+        Print(&count_seg),
+        SetForegroundColor(border),
+        Print('─'),
+        Print('╮'),
     )?;
 
-    // Input row.
-    let input_row = top_row + 1;
+    // ── Top padding row (blank inside borders) ─────────────────────────
+    draw_padding_row(out, &layout, layout.top + 1, bg, border)?;
+
+    // ── Prompt row: ` › <input>` ───────────────────────────────────────
+    let input_chars: String = picker
+        .input
+        .chars()
+        .take(layout.inner_w.saturating_sub(4))
+        .collect();
+    let input_w = input_chars.chars().count();
+    let prompt_pad = layout.inner_w.saturating_sub(3 + input_w);
     queue!(
         out,
-        MoveTo(0, input_row as u16),
-        Clear(ClearType::CurrentLine),
-        SetForegroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
-        Print("> "),
-        ResetColor,
-        Print(&picker.input)
+        MoveTo(layout.left as u16, layout.prompt_row as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        Print(' '),
+        SetForegroundColor(prompt_fg),
+        Print('›'),
+        Print(' '),
+        SetForegroundColor(input_fg),
+        Print(&input_chars),
+        Print(" ".repeat(prompt_pad)),
+        SetForegroundColor(border),
+        Print('│'),
     )?;
 
-    // List rows.
-    let list_top = top_row + 2;
-    let list_h = (end_row.saturating_sub(list_top)).min(picker_h.saturating_sub(2));
-    let start = if picker.selected >= list_h {
-        picker.selected + 1 - list_h
+    // ── Separator below prompt ─────────────────────────────────────────
+    draw_padding_row(out, &layout, layout.top + 3, bg, border)?;
+
+    // ── List rows ──────────────────────────────────────────────────────
+    let start = if picker.selected >= layout.list_h {
+        picker.selected + 1 - layout.list_h
     } else {
         0
     };
-    for row in 0..list_h {
-        let y = list_top + row;
-        queue!(out, MoveTo(0, y as u16), Clear(ClearType::CurrentLine))?;
+    for row in 0..layout.list_h {
+        let y = layout.list_top + row;
         let pos = start + row;
-        if pos >= picker.filtered.len() {
-            continue;
-        }
-        let item_idx = picker.filtered[pos];
-        let display = &picker.items[item_idx];
-        let selected = pos == picker.selected;
+        let item_in_range = pos < picker.filtered.len();
+        let selected = item_in_range && pos == picker.selected;
+        let row_bg = if selected { sel_bg } else { bg };
+
+        queue!(
+            out,
+            MoveTo(layout.left as u16, y as u16),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+            SetBackgroundColor(row_bg),
+        )?;
+
+        // Selection accent bar (1 char) + 1 space gap before content.
         if selected {
             queue!(
                 out,
-                SetBackgroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
-                SetForegroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })  // Lavender
+                SetForegroundColor(sel_accent),
+                SetAttribute(Attribute::Bold),
+                Print('▌'),
             )?;
+        } else {
+            queue!(out, Print(' '))?;
         }
-        let max_w = w.saturating_sub(2);
-        let truncated: String = display.chars().take(max_w).collect();
-        let pad = max_w.saturating_sub(truncated.chars().count());
+        queue!(out, Print(' '))?;
+
+        // Body width = inner_w - 2 (one for accent, one for trailing pad).
+        let body_w = layout.inner_w.saturating_sub(3);
+        let mut written = 0usize;
+        if item_in_range {
+            let item_idx = picker.filtered[pos];
+            let display = &picker.items[item_idx];
+            written = paint_picker_row(out, display, body_w, selected, path_fg, name_fg, dim_fg)?;
+        }
+        if written < body_w {
+            queue!(out, Print(" ".repeat(body_w - written)))?;
+        }
+
+        if selected {
+            queue!(out, SetAttribute(Attribute::Reset))?;
+        }
         queue!(
             out,
-            Print(format!(" {}{}", truncated, " ".repeat(pad)))
+            SetBackgroundColor(bg),
+            Print(' '),
+            SetForegroundColor(border),
+            Print('│'),
         )?;
-        if selected {
-            queue!(out, ResetColor)?;
-        }
     }
+
+    // ── Bottom padding ─────────────────────────────────────────────────
+    draw_padding_row(out, &layout, layout.footer_row - 1, bg, border)?;
+
+    // ── Footer hint row ────────────────────────────────────────────────
+    // Render as ` ↵ open  ^N/^P navigate  esc cancel `, with the keymap
+    // tokens dimmer than the surrounding labels so the eye picks the
+    // shortcut first. Falls back to a shorter hint on narrow terminals.
+    let full_hint: &[(&str, bool)] = &[
+        (" ", false),
+        ("↵", true),
+        (" open  ", false),
+        ("^N", true),
+        ("/", false),
+        ("^P", true),
+        (" navigate  ", false),
+        ("esc", true),
+        (" cancel", false),
+    ];
+    let short_hint: &[(&str, bool)] = &[
+        (" ", false),
+        ("↵", true),
+        (" open  ", false),
+        ("^N", true),
+        ("/", false),
+        ("^P", true),
+        ("  ", false),
+        ("esc", true),
+    ];
+    let seg_width = |segs: &[(&str, bool)]| -> usize {
+        segs.iter().map(|(s, _)| s.chars().count()).sum()
+    };
+    let hint_segments: &[(&str, bool)] =
+        if seg_width(full_hint) <= layout.inner_w { full_hint }
+        else if seg_width(short_hint) <= layout.inner_w { short_hint }
+        else { &[] };
+    let hint_w = seg_width(hint_segments);
+    let footer_pad = layout.inner_w.saturating_sub(hint_w);
+    queue!(
+        out,
+        MoveTo(layout.left as u16, layout.footer_row as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+    for (seg, is_key) in hint_segments {
+        let fg = if *is_key { hint_key_fg } else { hint_fg };
+        queue!(out, SetForegroundColor(fg), Print(*seg))?;
+    }
+    queue!(
+        out,
+        Print(" ".repeat(footer_pad)),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+
+    // ── Bottom border ──────────────────────────────────────────────────
+    queue!(
+        out,
+        MoveTo(layout.left as u16, layout.bottom_row as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(layout.inner_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
     Ok(())
+}
+
+fn draw_padding_row(
+    out: &mut impl Write,
+    layout: &PickerLayout,
+    y: usize,
+    bg: Color,
+    border: Color,
+) -> Result<()> {
+    queue!(
+        out,
+        MoveTo(layout.left as u16, y as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        Print(" ".repeat(layout.inner_w)),
+        Print('│'),
+    )?;
+    Ok(())
+}
+
+/// Paint one picker entry inside the body band. Splits at the last `/` so
+/// the directory part renders dim and the basename pops bright. Returns
+/// the number of chars written (so the caller can fill the trailing pad).
+fn paint_picker_row(
+    out: &mut impl Write,
+    display: &str,
+    max_w: usize,
+    selected: bool,
+    path_fg: Color,
+    name_fg: Color,
+    dim_fg: Color,
+) -> Result<usize> {
+    if max_w == 0 {
+        return Ok(0);
+    }
+    let (dir_part, name_part) = match display.rfind('/') {
+        Some(i) => (&display[..=i], &display[i + 1..]),
+        None => ("", display),
+    };
+    let dir_chars: Vec<char> = dir_part.chars().collect();
+    let name_chars: Vec<char> = name_part.chars().collect();
+
+    // Truncate the basename first if it alone exceeds the budget — keeps
+    // the directory visible at least partially. Otherwise truncate from
+    // the dir's left so the basename is always intact.
+    let total = dir_chars.len() + name_chars.len();
+    let (dir_slice, name_slice) = if total <= max_w {
+        (dir_chars.as_slice(), name_chars.as_slice())
+    } else if name_chars.len() >= max_w {
+        // Name alone too wide — show the trailing slice of the name.
+        let n = &name_chars[name_chars.len() - max_w..];
+        (&[][..], n)
+    } else {
+        // Trim the head of the directory.
+        let drop = total - max_w;
+        let d = &dir_chars[drop..];
+        (d, name_chars.as_slice())
+    };
+
+    let _ = dim_fg;
+    // Directory dim only on un-selected rows — a selected row's accent
+    // already differentiates it, dimming the dir as well makes it muddy.
+    let dir_color = if selected { name_fg } else { path_fg };
+    let name_color = name_fg;
+    let dir_str: String = dir_slice.iter().collect();
+    let name_str: String = name_slice.iter().collect();
+    queue!(out, SetForegroundColor(dir_color), Print(&dir_str))?;
+    queue!(out, SetForegroundColor(name_color), Print(&name_str))?;
+    Ok(dir_slice.len() + name_slice.len())
 }
 
 const START_LOGO: &[&str] = &[
@@ -1428,10 +1682,14 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     }
     if app.mode == Mode::Picker {
         if let Some(picker) = app.picker.as_ref() {
-            let (top_row, _, _) = picker_layout(app);
-            let input_row = (top_row + 1) as u16;
-            let col = (picker.input.chars().count() + 2) as u16;
-            queue!(out, SetCursorStyle::SteadyBar, MoveTo(col, input_row))?;
+            let layout = picker_layout(app);
+            // Prompt row body: '│' ' ' '›' ' ' <input> — cursor sits 4 cols in
+            // from the left border, plus the typed prefix.
+            let input_max = layout.inner_w.saturating_sub(4);
+            let visible_input = picker.input.chars().count().min(input_max);
+            let col = (layout.left + 4 + visible_input) as u16;
+            let row = layout.prompt_row as u16;
+            queue!(out, SetCursorStyle::SteadyBar, MoveTo(col, row))?;
             return Ok(());
         }
     }
