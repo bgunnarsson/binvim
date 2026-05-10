@@ -24,6 +24,13 @@ follows [Semantic Versioning](https://semver.org/).
   empty slot when any session buffer is successfully opened.
 
 ### Changed
+- **Tab bar polish.** Each tab now carries a 2-char language icon
+  (colour-coded per file type: `rs`/`ts`/`js`/`go`/`{}`/`md`/etc.) on
+  the left and a clickable `×` close button on the right. Padding
+  bumped to give the label and chrome breathing room. Overflow
+  chevrons render `‹` / `›` at the bar edges when tabs have scrolled
+  off either side. Close-clicks honour the same dirty guard as `:bd`
+  (refuse, status message); use the buffer prefix's `D` for force.
 - **Tab bar replaces the buffer picker.** When 2+ buffers are open
   (outside the start page), a Catppuccin-Mantle tab row paints across
   the top of the screen — active tab in Surface1 + Lavender + bold,

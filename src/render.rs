@@ -1275,64 +1275,150 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-/// One drawable tab on the bar.
+/// One drawable tab on the bar. Tab body layout (left → right):
+///
+///   ` <icon> <label>[ +] [<×>] `
+///
+/// where `+` only appears for dirty buffers and `×` only when the close
+/// button fits inside the slot. `close_col` is the absolute screen
+/// column of `×` so the mouse handler can hit-test it without re-doing
+/// the width math.
 pub(crate) struct TabSlot {
-    /// Index into `App.buffers`.
     pub idx: usize,
-    /// Inclusive starting column on the screen.
     pub start_col: usize,
-    /// Exclusive ending column on the screen.
     pub end_col: usize,
+    pub close_col: Option<usize>,
     pub label: String,
+    pub icon: &'static str,
+    pub icon_color: Color,
     pub dirty: bool,
     pub active: bool,
 }
 
-/// Compute the tab layout for the current buffer set. Each tab gets
-/// `" name [+] "` (the `+` only when dirty) with a thin separator
-/// between tabs. Tabs that wouldn't fit on the screen are dropped from
-/// the right; the active tab is guaranteed to be visible (scrolls the
-/// row left when needed).
+/// 2-char extension chip + Catppuccin tint, used as the file-type
+/// indicator inside each tab. Falls back to a dim bullet for unknown
+/// extensions so every tab still has a leading marker.
+fn tab_icon_for(path: Option<&std::path::Path>, display_name: Option<&str>) -> (&'static str, Color) {
+    let peach    = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+    let blue     = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
+    let yellow   = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+    let green    = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
+    let sky      = Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb };
+    let mauve    = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+    let teal     = Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 };
+    let subtext1 = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde };
+    // Synthetic buffers like `[Health]` have no path/extension — pick
+    // them up via their display name.
+    if let Some(name) = display_name {
+        if name.starts_with('[') {
+            return ("◆", subtext1);
+        }
+    }
+    let ext = path
+        .and_then(|p| p.extension())
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "rs" => ("rs", peach),
+        "ts" => ("ts", blue),
+        "tsx" => ("tx", blue),
+        "js" | "mjs" | "cjs" => ("js", yellow),
+        "jsx" => ("jx", yellow),
+        "json" | "jsonc" => ("{}", yellow),
+        "go" => ("go", sky),
+        "html" | "htm" | "xhtml" => ("ht", peach),
+        "css" => ("ss", blue),
+        "scss" | "sass" => ("ss", mauve),
+        "less" => ("ls", mauve),
+        "md" | "markdown" => ("md", subtext1),
+        "toml" => ("tl", peach),
+        "yaml" | "yml" => ("yl", subtext1),
+        "sh" | "bash" | "zsh" | "ksh" => ("sh", green),
+        "cs" => ("c#", mauve),
+        "vb" => ("vb", mauve),
+        "razor" | "cshtml" => ("rz", peach),
+        "astro" => ("as", peach),
+        "vue" => ("vu", green),
+        "svelte" => ("sv", peach),
+        "py" => ("py", blue),
+        "rb" => ("rb", peach),
+        "lua" => ("lu", blue),
+        "java" => ("jv", peach),
+        "kt" | "kts" => ("kt", peach),
+        "swift" => ("sw", peach),
+        "c" => (" c", blue),
+        "h" | "hpp" | "hh" | "hxx" => (" h", blue),
+        "cpp" | "cc" | "cxx" => ("c+", blue),
+        "lock" => ("lk", subtext1),
+        "xml" => ("xm", peach),
+        "ini" | "conf" => ("cf", subtext1),
+        "" => (" •", subtext1),
+        _ => {
+            // 2-letter slice of the extension as a last resort.
+            let chars: Vec<char> = ext.chars().take(2).collect();
+            match chars.as_slice() {
+                [a, b] => match (*a, *b) {
+                    ('a', _) | ('e', _) | ('i', _) | ('o', _) | ('u', _) => (" •", teal),
+                    _ => (" •", subtext1),
+                },
+                _ => (" •", subtext1),
+            }
+        }
+    }
+}
+
+/// Per-tab chrome cost in display columns (excluding the filename
+/// itself): ` icon  label[ +]  × `.
+///   1 leading pad + 2 icon + 2 gap + 2 gap + 1 × + 1 trailing pad = 9
+/// Plus 2 columns for the ` +` dirty marker when applicable. The close
+/// button collapses (no `×`, save 2 cols) when the buffer count is 1 —
+/// but the tab bar only renders for ≥2 buffers anyway, so the close
+/// column is always present in practice.
+fn tab_width(label_chars: usize, dirty: bool) -> usize {
+    let chrome = 9;
+    chrome + label_chars + if dirty { 2 } else { 0 }
+}
+
+/// Compute the tab layout for the current buffer set. The active tab is
+/// guaranteed visible — the slice is anchored so it stays on screen,
+/// scrolling left when needed. `scrolled_left()` / `truncated_right()`
+/// on the result drive the chevron rendering.
 pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
     let total_w = app.width as usize;
-    let mut entries: Vec<(usize, String, bool)> = Vec::with_capacity(app.buffers.len());
+    let mut entries: Vec<(usize, String, bool, &'static str, Color)> =
+        Vec::with_capacity(app.buffers.len());
     for (i, stash) in app.buffers.iter().enumerate() {
-        let (path, dirty) = if i == app.active {
+        let (path, dirty, display_name) = if i == app.active {
             (
                 app.buffer.path.as_ref(),
                 app.buffer.dirty,
+                app.buffer.display_name.as_deref(),
             )
         } else {
-            (stash.buffer.path.as_ref(), stash.buffer.dirty)
+            (
+                stash.buffer.path.as_ref(),
+                stash.buffer.dirty,
+                stash.buffer.display_name.as_deref(),
+            )
         };
         let label = path
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             .map(|s| s.to_string())
-            .or_else(|| {
-                if i == app.active {
-                    app.buffer.display_name.clone()
-                } else {
-                    stash.buffer.display_name.clone()
-                }
-            })
+            .or_else(|| display_name.map(|s| s.to_string()))
             .unwrap_or_else(|| "[No Name]".into());
-        entries.push((i, label, dirty));
+        let (icon, icon_color) =
+            tab_icon_for(path.map(|p| p.as_path()), display_name);
+        entries.push((i, label, dirty, icon, icon_color));
     }
-    // First pass: tentative widths. ` name + ` (8+ chars for short names).
-    // We pad label, then add ` + ` markers and a trailing space, so each
-    // tab cell ends with a column of breathing room.
     let widths: Vec<usize> = entries
         .iter()
-        .map(|(_, label, dirty)| label.chars().count() + if *dirty { 3 } else { 2 })
+        .map(|(_, label, dirty, _, _)| tab_width(label.chars().count(), *dirty))
         .collect();
-    // Find which slice of tabs to render so the active one is on screen.
-    // Greedy: start from the active tab and walk outward.
     let total_widths: usize = widths.iter().sum();
     let mut start_idx = 0usize;
     if total_widths > total_w {
-        // Walk left from active until we've used at most half the width;
-        // then the renderer fills from there forward.
         let mut used = 0usize;
         for i in (0..=app.active).rev() {
             used += widths[i];
@@ -1350,12 +1436,19 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
         if col + w > total_w {
             break;
         }
-        let (idx, label, dirty) = &entries[i];
+        let (idx, label, dirty, icon, icon_color) = &entries[i];
+        // close_col = end_col - 2 (last interior column = `×`, after that
+        // a trailing space pad). Always set — slots are never narrower
+        // than `tab_width` returns.
+        let close_col = Some(col + w - 2);
         slots.push(TabSlot {
             idx: *idx,
             start_col: col,
             end_col: col + w,
+            close_col,
             label: label.clone(),
+            icon,
+            icon_color: *icon_color,
             dirty: *dirty,
             active: *idx == app.active,
         });
@@ -1373,55 +1466,95 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     let active_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let inactive_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
     let dirty_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
+    let close_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
+    let chevron_fg = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde }; // Subtext1
 
-    // Background fill across the full row.
+    // Background fill across the full row first so any gaps between
+    // tabs render in the bar colour.
     queue!(
         out,
         SetBackgroundColor(bar_bg),
         SetForegroundColor(inactive_fg),
         Print(" ".repeat(total_w)),
-        MoveTo(0, 0),
     )?;
 
-    for slot in tab_layout(app) {
-        queue!(out, MoveTo(slot.start_col as u16, 0))?;
-        if slot.active {
-            queue!(
-                out,
-                SetBackgroundColor(active_bg),
-                SetForegroundColor(active_fg),
-                SetAttribute(Attribute::Bold),
-                Print(' '),
-                Print(&slot.label),
-            )?;
-            if slot.dirty {
-                queue!(
-                    out,
-                    SetForegroundColor(dirty_fg),
-                    Print(" +"),
-                    SetForegroundColor(active_fg),
-                )?;
-            }
-            queue!(out, Print(' '), SetAttribute(Attribute::Reset))?;
+    let slots = tab_layout(app);
+    let scrolled_left = slots.first().map(|s| s.idx > 0).unwrap_or(false);
+    let truncated_right = slots
+        .last()
+        .map(|s| s.idx + 1 < app.buffers.len())
+        .unwrap_or(false);
+
+    for slot in &slots {
+        let (bg, fg) = if slot.active {
+            (active_bg, active_fg)
         } else {
+            (bar_bg, inactive_fg)
+        };
+        queue!(
+            out,
+            MoveTo(slot.start_col as u16, 0),
+            SetBackgroundColor(bg),
+            SetForegroundColor(fg),
+        )?;
+        if slot.active {
+            queue!(out, SetAttribute(Attribute::Bold))?;
+        }
+        // ` icon  label[ +]  × `
+        queue!(
+            out,
+            Print(' '),
+            SetForegroundColor(slot.icon_color),
+            Print(slot.icon),
+            SetForegroundColor(fg),
+            Print("  "),
+            Print(&slot.label),
+        )?;
+        if slot.dirty {
             queue!(
                 out,
-                SetBackgroundColor(bar_bg),
-                SetForegroundColor(inactive_fg),
-                Print(' '),
-                Print(&slot.label),
+                SetForegroundColor(dirty_fg),
+                Print(" +"),
+                SetForegroundColor(fg),
             )?;
-            if slot.dirty {
-                queue!(
-                    out,
-                    SetForegroundColor(dirty_fg),
-                    Print(" +"),
-                    SetForegroundColor(inactive_fg),
-                )?;
-            }
-            queue!(out, Print(' '))?;
+        }
+        // Two-space gap then the close glyph. close_fg is the same in
+        // both active/inactive states for visual consistency.
+        queue!(
+            out,
+            Print("  "),
+            SetForegroundColor(close_fg),
+            Print('×'),
+            SetForegroundColor(fg),
+            Print(' '),
+        )?;
+        if slot.active {
+            queue!(out, SetAttribute(Attribute::Reset))?;
         }
     }
+
+    // Overflow chevrons — painted over the leftmost / rightmost columns
+    // of the bar. They sit on top of any padding the tabs reserve, so
+    // they're always visible regardless of how the slots aligned.
+    if scrolled_left {
+        queue!(
+            out,
+            MoveTo(0, 0),
+            SetBackgroundColor(bar_bg),
+            SetForegroundColor(chevron_fg),
+            Print('‹'),
+        )?;
+    }
+    if truncated_right {
+        queue!(
+            out,
+            MoveTo((total_w.saturating_sub(1)) as u16, 0),
+            SetBackgroundColor(bar_bg),
+            SetForegroundColor(chevron_fg),
+            Print('›'),
+        )?;
+    }
+
     queue!(out, ResetColor)?;
     Ok(())
 }

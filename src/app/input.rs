@@ -168,13 +168,35 @@ impl super::App {
             return;
         }
         // Tab-bar click: only on the very top row when tabs are showing.
-        // Left-click on a tab switches to that buffer; everything else
-        // is ignored.
+        // Left-click on a tab's close glyph deletes the buffer; click
+        // anywhere else inside the tab switches to it.
         let buffer_top = self.buffer_top();
         if buffer_top > 0 && row == 0 {
             if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
                 for slot in crate::render::tab_layout(self) {
                     if col >= slot.start_col && col < slot.end_col {
+                        if slot.close_col == Some(col) {
+                            // Match :bd behaviour: refuse to drop a
+                            // dirty buffer. The user can :bd! force or
+                            // save first.
+                            if slot.idx != self.active {
+                                let prev_active = self.active;
+                                if self.switch_to(slot.idx).is_ok() {
+                                    if let Err(e) = self.delete_buffer(false) {
+                                        self.status_msg = format!("error: {e}");
+                                        // delete_buffer left us on the
+                                        // buffer it couldn't drop —
+                                        // hop back to where the user was.
+                                        if prev_active < self.buffers.len() {
+                                            let _ = self.switch_to(prev_active);
+                                        }
+                                    }
+                                }
+                            } else if let Err(e) = self.delete_buffer(false) {
+                                self.status_msg = format!("error: {e}");
+                            }
+                            return;
+                        }
                         if slot.idx != self.active {
                             let _ = self.switch_to(slot.idx);
                         }
