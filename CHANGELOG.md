@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-10
+
 ### Added
 - `CONTRIBUTING.md` — repo conventions, architecture quick-reference, and a
   step-by-step PR walkthrough for the most common contribution shapes
@@ -289,5 +291,6 @@ covered by its bundled language stack.
 - `bim` symlink installed alongside the `binvim` binary.
 - binman-style local release scripts.
 
-[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.0
