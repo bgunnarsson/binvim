@@ -11,10 +11,10 @@ For binvim to reach the broader "could be my daily driver" audience —
 particularly developers eyeing it as a Neovim/VS Code alternative — the
 single biggest gap is **the rest of the popular language stack**. The list
 below is opinionated, tiered by adoption ROI, and grounded in the existing
-`ServerSpec` pattern in `src/lsp.rs`.
+`ServerSpec` pattern in `src/lsp/specs.rs`.
 
 Every entry below assumes the same wiring shape that's already there: one
-arm in `primary_spec_for_path` (`src/lsp.rs:225+`), ext → `Lang` mapping in
+arm in `primary_spec_for_path` (`src/lsp/specs.rs`), ext → `Lang` mapping in
 `src/lang.rs:23–38`, a tree-sitter grammar in `Cargo.toml` (if highlight
 support is wanted — orthogonal to LSP), and a row in the README install
 table.
@@ -40,8 +40,8 @@ reason.
 | Language | LSP | Binary / install | Extensions | Root markers | Notes |
 |---|---|---|---|---|---|
 | **Java** | `jdtls` (Eclipse JDT-LS) | manual tarball | `.java` | `pom.xml`, `build.gradle`, `build.gradle.kts`, `.git` | Heavy: needs `-data <workspace_dir>` and a JVM. Worth the friction for Java developers; consider deferring until requested. |
-| **Vue** | `@vue/language-server` (Volar) | `npm i -g @vue/language-server` | `.vue` | `package.json`, `vue.config.*`, `vite.config.*`, `.git` | Already a Tailwind language ID at `lsp.rs:486` — no primary today. |
-| **Svelte** | `svelte-language-server` | `npm i -g svelte-language-server` | `.svelte` | `svelte.config.js`, `package.json`, `.git` | Same situation as Vue (`lsp.rs:487`). Spawn with `--stdio`. |
+| **Vue** | `@vue/language-server` (Volar) | `npm i -g @vue/language-server` | `.vue` | `package.json`, `vue.config.*`, `vite.config.*`, `.git` | Already a Tailwind language ID in `lsp/specs.rs::tailwind_spec_for_path` — no primary today. |
+| **Svelte** | `svelte-language-server` | `npm i -g svelte-language-server` | `.svelte` | `svelte.config.js`, `package.json`, `.git` | Same situation as Vue. Spawn with `--stdio`. |
 | **Markdown** | `marksman` | `brew install marksman` | `.md`, `.markdown` | `.marksman.toml`, `.git` | Single Go binary. Tree-sitter highlight already wired. |
 | **TOML** | `taplo` | `cargo install taplo-cli --features lsp` / `brew install taplo` | `.toml` | `.git` | Args: `lsp stdio`. Single Rust binary. |
 | **Ruby** | `ruby-lsp` | `gem install ruby-lsp` | `.rb`, `.rake`, `.gemspec` | `Gemfile`, `.ruby-version`, `.git` | Shopify-maintained. Spawn with `stdio`. |
@@ -65,10 +65,9 @@ reason.
 For each new language the change is the same shape — see the existing
 Astro and Go arms as templates:
 
-- **`src/lsp.rs`** — new arm in `primary_spec_for_path` (currently at lines
-  225–435). Use `local_bin(<sub>, <bin>)` for `~/.local/bin/<sub>/<bin>`
-  probes; `find_node_modules_bin(start, name)` for project-local node
-  binaries (already imported at `lsp.rs:617`).
+- **`src/lsp/specs.rs`** — new arm in `primary_spec_for_path`. Use
+  `local_bin(<sub>, <bin>)` for `~/.local/bin/<sub>/<bin>` probes;
+  `find_node_modules_bin(start, name)` for project-local node binaries.
 - **`src/lang.rs:23–38`** — extend `Lang::detect()` and the matching
   `ts_language()` / `highlights_query()` arms (only if you want syntax
   highlighting, which is independent of LSP support).

@@ -42,10 +42,10 @@ If you're testing changes by running `binvim` interactively, remember that **the
 
 These are not stylistic preferences — they are how the codebase is structured, and PRs that fight them tend to get bounced.
 
-- **Flat `src/` layout.** Every module is a single file. Don't introduce `src/lsp/` directories or sub-modules without a real reason; "the file is getting big" is not one (`app.rs` is ~5k lines on purpose — the state machine is centralised so the rest of the modules can stay pure-ish).
+- **Mostly flat `src/` layout, with two sub-module dirs.** `app/` and `lsp/` are split across multiple files (each parent file — `src/app.rs`, `src/lsp.rs` — is a slim entry that declares children and re-exports the public API). Other modules stay flat — don't introduce new `src/foo/` directories without a real reason. Inside `app/`, sibling-visible methods are `pub(super)`.
 - **No new files unless necessary.** Prefer extending an existing module. New top-level files need to justify themselves.
 - **Tests live inline, in `#[cfg(test)] mod tests` at the bottom of the file under test.** No separate `tests/` directory, no `tests/integration/`. `motion.rs` and `text_object.rs` have the densest coverage and are the model.
-- **Comments explain *why*, not *what*.** The existing comments in `lang.rs` (priority resolution), `lsp.rs` (debounce window), and `app.rs` (BufferStash shape) are the pattern: load-bearing context that isn't obvious from the code. Don't add what-comments. Don't add multi-paragraph docstrings.
+- **Comments explain *why*, not *what*.** The existing comments in `lang.rs` (priority resolution), `lsp/manager.rs` (debounce/drain cap), and `app/state.rs` (BufferStash shape) are the pattern: load-bearing context that isn't obvious from the code. Don't add what-comments. Don't add multi-paragraph docstrings.
 - **No backwards-compatibility shims, feature flags, or `// removed` markers** for code that's been deleted. Just delete it.
 - **Don't over-abstract.** Three similar lines is better than a premature abstraction. Don't design for hypothetical future requirements.
 - **LF line endings only.** No CRLF.
@@ -54,23 +54,23 @@ These are not stylistic preferences — they are how the codebase is structured,
 
 For a longer tour see [CLAUDE.md](CLAUDE.md). The 30-second version:
 
-- `app.rs` owns the event loop, active buffer, per-buffer stashes, and all transient UI state. Action dispatch lives here.
-- `parser.rs` turns `KeyEvent`s into `Action` values via the Vim-grammar state machine. Operators, motions, text-objects, counts, registers, leader, surround — all resolved here before `app.rs` sees them.
+- `app.rs` + `app/` own the event loop, active buffer, per-buffer stashes, and all transient UI state. The `App` struct lives in `app.rs`; child files in `app/` (state, view, search, registers, buffers, save, edit, visual, dispatch, input, lsp_glue, picker_glue, health, pair) hold `impl super::App` blocks grouped by concern. Action dispatch is `app/dispatch.rs`.
+- `parser.rs` turns `KeyEvent`s into `Action` values via the Vim-grammar state machine. Operators, motions, text-objects, counts, registers, leader, surround — all resolved here before `app/dispatch.rs` sees them.
 - `motion.rs` and `text_object.rs` are pure functions over `(buffer, cursor)`. New motions or text objects belong here, with tests inline.
 - `lang.rs` owns tree-sitter. The non-obvious bit: **highlight captures resolve by pattern_index priority — later patterns win**. JSON ships its own embedded query because the upstream pattern order is incompatible with that scheme. If you change the priority logic, the JSON block at `lang.rs:88` is the canary.
-- `lsp.rs` is a from-scratch JSON-RPC client. Multiple servers per buffer is supported and used (e.g. tsserver + Tailwind on `.tsx`). `didChange` is debounced with a 50ms burst window in `app.rs`.
+- `lsp.rs` + `lsp/` is a from-scratch JSON-RPC client (entry + types/specs/client/io/manager/parse). Multiple servers per buffer is supported and used (e.g. tsserver + Tailwind on `.tsx`). `didChange` is debounced with a 50ms burst window in `app/lsp_glue.rs`.
 - `render.rs` is the only module that talks to crossterm for drawing.
 
 ## Adding a new LSP
 
 [LSP_ADOPTION.md](LSP_ADOPTION.md) is the authoritative recipe. The four-file change is always:
 
-1. New arm in `primary_spec_for_path` (`src/lsp.rs`).
+1. New arm in `primary_spec_for_path` (`src/lsp/specs.rs`).
 2. Extension → `Lang` mapping in `src/lang.rs`.
 3. `tree-sitter-<lang>` crate in `Cargo.toml` (only if you also want highlighting).
 4. New row in the README install table.
 
-There is no plugin system. Every server is hard-wired in `lsp.rs`. That is a deliberate choice; please don't propose a plugin loader as part of an LSP PR.
+There is no plugin system. Every server is hard-wired in `lsp/specs.rs`. That is a deliberate choice; please don't propose a plugin loader as part of an LSP PR.
 
 ## Adding tree-sitter highlighting for an existing LSP
 
