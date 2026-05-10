@@ -167,6 +167,10 @@ impl super::App {
     }
 
     pub(super) fn cycle_buffer(&mut self, step: i64) {
+        // Any buffer-cycle press dismisses the start page — including the
+        // single-buffer case, where there's nothing to switch *to* but
+        // the user clearly wants to leave the welcome screen.
+        self.show_start_page = false;
         if self.buffers.len() <= 1 {
             self.status_msg = "Only one buffer".into();
             return;
@@ -314,6 +318,11 @@ impl super::App {
         // actually managed to open.
         let target = session.active.min(self.buffers.len().saturating_sub(1));
         let _ = self.switch_to(target);
+        // Land on the start page rather than the active buffer — restored
+        // buffers stay in the background until the user reaches for one
+        // via H/L, :bn, :b<n>, etc. Open_buffer set this to false during
+        // the per-buffer loop above; flip it back here.
+        self.show_start_page = true;
     }
 
     /// Snapshot the current buffer set into a `Session`. Buffers without a

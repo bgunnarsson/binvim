@@ -479,6 +479,10 @@ pub fn is_start_page_passthrough(k: &KeyEvent) -> bool {
     match k.code {
         KeyCode::Char(':') if no_mods => true,
         KeyCode::Char(' ') if no_mods => true,
+        // H / L cycle buffers — let them through so a restored session's
+        // buffers are reachable from the start page.
+        KeyCode::Char('H') if no_mods => true,
+        KeyCode::Char('L') if no_mods => true,
         KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => true,
         KeyCode::Esc => true,
         _ => false,

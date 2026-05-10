@@ -27,14 +27,12 @@ follows [Semantic Versioning](https://semver.org/).
   middle) and the scroll commands for those workflows.
 - **Tab bar reverted to one row.** Drops the 2-row variant. File-type
   icon column also removed; each tab is just ` label[ +]  × ` now.
-- **Tab bar bg matches the editor.** Background switched from Mantle
-  (darker) to Base, so the bar no longer reads as a separate dark
-  strip — just the same canvas the buffer paints on. The active tab
-  still pops via Surface1.
-- **Tab bar bottom border.** A Surface1 `─` line under the tab content
-  separates the bar from the buffer area. The bar now occupies 2 rows
-  total: row 0 = content, row 1 = the separator (which mouse clicks
-  treat as a dead zone).
+- **Restored sessions land on the start page.** The saved buffers are
+  loaded in the background; the welcome screen is on top until the
+  user reaches for one (`H`/`L` cycle, `:bn`/`:bp`, `:b<n>`, `:e`,
+  `<leader>e`). Solo-buffer sessions: `H`/`L` still dismiss the start
+  page and surface the one buffer (with the usual "Only one buffer"
+  hint).
 
 ### Fixed
 - **Snippet / completion accept honours `textEdit.range`.** Servers

@@ -1373,27 +1373,17 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
 
 fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     let total_w = app.width as usize;
-    queue!(
-        out,
-        MoveTo(0, 0),
-        Clear(ClearType::CurrentLine),
-        MoveTo(0, 1),
-        Clear(ClearType::CurrentLine),
-    )?;
+    queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
 
-    // Bar bg matches the editor (Base) so the bar doesn't visually
-    // recede into a darker strip.
-    let bar_bg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
+    let bar_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let active_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
     let active_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let inactive_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
     let dirty_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
     let close_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
     let chevron_fg = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde }; // Subtext1
-    let border_fg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
 
-    // Row 0 background fill so any gaps between tabs render in the bar
-    // colour.
+    // Bar-wide bg fill so gaps between tabs render in the bar colour.
     queue!(
         out,
         SetBackgroundColor(bar_bg),
@@ -1466,35 +1456,6 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         )?;
     }
 
-    // Bottom border — a Surface1 line separating the tab bar from the
-    // buffer below. The active tab's bg extends down into the border
-    // row instead of the line, so the block visually "connects" to the
-    // buffer it's editing.
-    queue!(out, MoveTo(0, 1))?;
-    let active_range = slots.iter().find(|s| s.active).map(|s| (s.start_col, s.end_col));
-    match active_range {
-        Some((s, e)) => {
-            queue!(
-                out,
-                SetBackgroundColor(bar_bg),
-                SetForegroundColor(border_fg),
-                Print("─".repeat(s)),
-                SetBackgroundColor(active_bg),
-                Print(" ".repeat(e - s)),
-                SetBackgroundColor(bar_bg),
-                SetForegroundColor(border_fg),
-                Print("─".repeat(total_w.saturating_sub(e))),
-            )?;
-        }
-        None => {
-            queue!(
-                out,
-                SetBackgroundColor(bar_bg),
-                SetForegroundColor(border_fg),
-                Print("─".repeat(total_w)),
-            )?;
-        }
-    }
     queue!(out, ResetColor)?;
     Ok(())
 }
