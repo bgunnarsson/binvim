@@ -11,7 +11,27 @@ follows [Semantic Versioning](https://semver.org/).
   step-by-step PR walkthrough for the most common contribution shapes
   (new LSP, new tree-sitter grammar, motion/text-object).
 
+### Fixed
+- **Snippet / completion accept honours `textEdit.range`.** Servers
+  send an explicit replacement span (e.g. covering a trailing `.` when
+  proposing `?.method`); previously we always used the client-side
+  word-prefix guess, which produced `obj.?.method` instead of
+  `obj?.method`. Now we honour the server's range when present and
+  fall back to the prefix guess only when it's absent.
+- **Session restore no longer leaves a phantom `[No Name]` buffer.**
+  `App::new()` seeds `buffers[0]` with an empty stash before
+  `hydrate_from_session` runs; the restore path now strips that initial
+  empty slot when any session buffer is successfully opened.
+
 ### Added
+- **Multi-cursor (real, mirrored).** `Ctrl-click` in Insert mode adds
+  a secondary cursor at the click position. Typing and Backspace mirror
+  at the primary cursor and every additional cursor simultaneously
+  (bottom-up edit order keeps indices stable). Cursors render as
+  Lavender blocks. `Esc` exits Insert mode and collapses the cursors;
+  a plain (non-Ctrl) click also collapses them. Auto-pair is disabled
+  while multi-cursor is active — keeps the mirroring math simple, the
+  user is in mass-edit mode anyway.
 - **Inlay hints.** Added `textDocument/inlayHint` request +
   response parser; hints render between buffer chars in dim italic
   (Overlay1). Refetched once per buffer-version; respects horizontal

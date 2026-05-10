@@ -147,6 +147,10 @@ pub struct App {
     /// click at the same `(line, col)` within `DOUBLE_CLICK_WINDOW` is
     /// treated as a double-click and selects the word under the cursor.
     pub last_click: Option<(Instant, usize, usize)>,
+    /// Char-index positions of secondary cursors that mirror Insert-mode
+    /// edits at the primary cursor. Empty when only one cursor is active.
+    /// Populated by `Ctrl-click` in Insert mode; cleared on Esc.
+    pub additional_cursors: Vec<usize>,
     pub(crate) replaying_macro: bool,
     pub(crate) recording: Option<RecordingState>,
     pub(crate) replaying: bool,
@@ -228,6 +232,7 @@ impl App {
             last_inlay_request_version: HashMap::new(),
             last_disk_check: Instant::now(),
             last_click: None,
+            additional_cursors: Vec::new(),
             replaying_macro: false,
             recording: None,
             replaying: false,

@@ -1369,6 +1369,10 @@ fn draw_line_with_selection(
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
     let hint_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
+    // Multi-cursor positions on this line — the renderer paints a
+    // Lavender block at each so the user can see where mirrored edits
+    // will land.
+    let multi_cursors: Vec<usize> = app.line_multi_cursor_cols(line_idx);
 
     // Pre-bin inlay hints by column so we can render them inline at the
     // start of each char iteration (and once more after the last char,
@@ -1472,6 +1476,10 @@ fn draw_line_with_selection(
             && !in_search
             && !in_yank_flash
             && match_pair.iter().any(|(s, e)| col >= *s && col < *e);
+        // Multi-cursor marker — paint the cell the cursor is sitting on
+        // (i.e. the char to its right) in Lavender so the user can see
+        // where their other cursors are.
+        let is_multi_cursor = multi_cursors.contains(&col);
         let syntax_color = app
             .highlight_cache
             .as_ref()
@@ -1497,6 +1505,14 @@ fn draw_line_with_selection(
             queue!(
                 out,
                 SetBackgroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
+                SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
+            )?;
+        } else if is_multi_cursor {
+            // Lavender bg + Base fg — high contrast so the cursor pops,
+            // matches the colour we'd use for the primary's cursor block.
+            queue!(
+                out,
+                SetBackgroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }), // Lavender
                 SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
             )?;
         } else if in_match_pair {
@@ -1551,6 +1567,8 @@ fn draw_line_with_selection(
         } else if in_match_pair {
             // Tear down the bold + bg in one shot.
             queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+        } else if is_multi_cursor {
+            queue!(out, ResetColor)?;
         } else if in_search || in_yank_flash || syntax_color.is_some() || dim || render_hidden {
             queue!(out, ResetColor)?;
         }
@@ -1569,6 +1587,20 @@ fn draw_line_with_selection(
                 )?;
             }
         }
+    }
+
+    // Multi-cursor anchored at end-of-line (col == chars.len()) — paint a
+    // Lavender block so the user can see the cursor sitting past the
+    // last char.
+    if !clipped_right && multi_cursors.contains(&chars.len()) && visual_used + 1 <= avail {
+        queue!(
+            out,
+            SetBackgroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }), // Lavender
+            SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }), // Base
+            Print(' '),
+            ResetColor,
+        )?;
+        visual_used += 1;
     }
 
     // Inlay hints anchored at end-of-line (col == chars.len()) — most

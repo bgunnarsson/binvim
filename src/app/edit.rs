@@ -13,6 +13,136 @@ use super::pair::{is_paired_bracket, surround_open_close};
 use super::state::{YankHighlight, YANK_FLASH_DURATION};
 
 impl super::App {
+    /// Mirror a single-char insert at the primary cursor across all
+    /// additional cursors. Bottom-up insertion order keeps lower
+    /// positions stable during the loop; after all inserts each cursor
+    /// (sorted ascending) lands at `original + (rank + 1)` chars.
+    /// Caller is responsible for any cursor.col bookkeeping the normal
+    /// insert path would have done — this routine handles all
+    /// `additional_cursors` and the primary char-index together.
+    pub(super) fn mirror_insert_char(&mut self, c: char) {
+        let primary_pos = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        if self.additional_cursors.is_empty() {
+            self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
+            self.cursor.col += 1;
+            self.cursor.want_col = self.cursor.col;
+            return;
+        }
+        let mut positions: Vec<(usize, bool)> = vec![(primary_pos, true)];
+        for &p in &self.additional_cursors {
+            positions.push((p, false));
+        }
+        positions.sort_by_key(|x| x.0);
+        // Insert from highest to lowest — earlier inserts (in this loop) are at
+        // higher positions and don't shift later (lower) ones.
+        let s = c.to_string();
+        for (p, _) in positions.iter().rev() {
+            self.buffer.insert_at_idx(*p, &s);
+        }
+        // Compute each cursor's final position: original + (rank + 1) where
+        // rank is the index in sorted-ascending order. Each insertion shifts
+        // every cursor at a strictly higher position by 1.
+        let mut new_primary = primary_pos + 1;
+        let mut new_additional: Vec<usize> = Vec::with_capacity(self.additional_cursors.len());
+        for (rank, (p, is_primary)) in positions.iter().enumerate() {
+            let new_pos = p + rank + 1;
+            if *is_primary {
+                new_primary = new_pos;
+            } else {
+                new_additional.push(new_pos);
+            }
+        }
+        new_additional.sort();
+        new_additional.dedup();
+        self.additional_cursors = new_additional;
+        self.cursor_to_idx(new_primary);
+    }
+
+    /// Mirror a backspace across primary + every additional cursor.
+    /// Cursors at column 0 (or char index 0) are skipped — joining lines
+    /// across the multi-cursor set is genuinely tricky and the user can
+    /// fall back to single-cursor mode for that.
+    pub(super) fn mirror_backspace(&mut self) {
+        let primary_pos = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        if self.additional_cursors.is_empty() {
+            // Fall through to the caller's normal backspace path.
+            return;
+        }
+        // Filter to cursors that have something to delete.
+        let mut positions: Vec<(usize, bool)> = Vec::new();
+        if primary_pos > 0 && self.cursor.col > 0 {
+            positions.push((primary_pos, true));
+        }
+        for &p in &self.additional_cursors {
+            if p > 0 {
+                let line = self.buffer.rope.char_to_line(p);
+                let line_start = self.buffer.rope.line_to_char(line);
+                // Skip cursors that sit at column 0 — see doc comment.
+                if p > line_start {
+                    positions.push((p, false));
+                }
+            }
+        }
+        if positions.is_empty() {
+            return;
+        }
+        positions.sort_by_key(|x| x.0);
+        // Delete from highest to lowest so lower positions don't shift.
+        for (p, _) in positions.iter().rev() {
+            self.buffer.delete_range(*p - 1, *p);
+        }
+        // After all deletions, the cursor at sorted-asc rank R is at
+        // p[R] - 1 (for own delete) - R (for lower-rank deletes that
+        // shifted it down).
+        let mut new_primary = primary_pos.saturating_sub(1);
+        let mut new_additional: Vec<usize> = Vec::with_capacity(self.additional_cursors.len());
+        // Keep any cursors we skipped (column 0) intact.
+        for &p in &self.additional_cursors {
+            if p == 0 {
+                new_additional.push(p);
+                continue;
+            }
+            let line = self.buffer.rope.char_to_line(p);
+            let line_start = self.buffer.rope.line_to_char(line);
+            if p <= line_start {
+                new_additional.push(p);
+            }
+        }
+        for (rank, (p, is_primary)) in positions.iter().enumerate() {
+            let new_pos = p - 1 - rank;
+            if *is_primary {
+                new_primary = new_pos;
+            } else {
+                new_additional.push(new_pos);
+            }
+        }
+        new_additional.sort();
+        new_additional.dedup();
+        self.additional_cursors = new_additional;
+        self.cursor_to_idx(new_primary);
+    }
+
+    /// Per-line char-column positions of additional cursors on `line`.
+    /// Used by the renderer to paint multi-cursor markers.
+    pub fn line_multi_cursor_cols(&self, line: usize) -> Vec<usize> {
+        if self.additional_cursors.is_empty() {
+            return Vec::new();
+        }
+        let total = self.buffer.total_chars();
+        let mut out = Vec::new();
+        for &p in &self.additional_cursors {
+            if p > total {
+                continue;
+            }
+            let l = self.buffer.rope.char_to_line(p);
+            if l == line {
+                let line_start = self.buffer.rope.line_to_char(l);
+                out.push(p - line_start);
+            }
+        }
+        out
+    }
+
     /// Set up a yank flash over the given char-index range. The renderer
     /// paints the range in a Peach background until the deadline passes.
     pub(super) fn flash_yank(&mut self, start: usize, end: usize) {

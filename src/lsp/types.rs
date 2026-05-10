@@ -146,6 +146,12 @@ pub struct CompletionItem {
     /// with `$N` / `${N:default}` placeholders that need to be parsed and
     /// resolved before insertion.
     pub is_snippet: bool,
+    /// `textEdit.range` from the server, if any. When present this is the
+    /// authoritative span to replace on accept — not the client-side
+    /// word-prefix guess. Servers use this to e.g. cover a trailing `.`
+    /// when inserting `?.method`, so we get `obj?.method` instead of
+    /// `obj.?.method`. Stored as `(start_line, start_col, end_line, end_col)`.
+    pub text_edit_range: Option<(usize, usize, usize, usize)>,
 }
 
 #[derive(Debug, Clone)]

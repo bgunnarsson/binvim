@@ -275,7 +275,7 @@ impl super::App {
     /// cursor + viewport, and land on the previously active buffer.
     /// Buffers that no longer exist on disk are silently dropped.
     pub(super) fn hydrate_from_session(&mut self, session: crate::session::Session) {
-        let mut last_opened_idx: Option<usize> = None;
+        let mut opened_any = false;
         for sb in &session.buffers {
             let path = PathBuf::from(&sb.path);
             if !path.exists() {
@@ -292,16 +292,28 @@ impl super::App {
             self.cursor.col = sb.col.min(line_len.saturating_sub(1).max(0));
             self.cursor.want_col = self.cursor.col;
             self.view_top = sb.view_top.min(last);
-            last_opened_idx = Some(self.active);
+            opened_any = true;
         }
-        // Honour the session's `active` index — but only if it points at
-        // one of the buffers we actually managed to open.
-        if !self.buffers.is_empty() {
-            let target = session.active.min(self.buffers.len() - 1);
-            if let Some(open_idx) = last_opened_idx {
-                let _ = self.switch_to(target.min(open_idx).max(0));
-            }
+        if !opened_any {
+            return;
         }
+        // App::new() pre-seeded buffers[0] with a default empty stash —
+        // strip it so the restored session isn't polluted by a phantom
+        // `[No Name]` slot. Index 0's stash has no path AND a fresh
+        // (empty) buffer, distinguishing it from anything we just
+        // restored.
+        if self.buffers.len() > 1
+            && self.active != 0
+            && self.buffers[0].buffer.path.is_none()
+            && self.buffers[0].buffer.rope.len_chars() == 0
+        {
+            self.buffers.remove(0);
+            self.active = self.active.saturating_sub(1);
+        }
+        // Honour the session's `active` index — clamp to whatever we
+        // actually managed to open.
+        let target = session.active.min(self.buffers.len().saturating_sub(1));
+        let _ = self.switch_to(target);
     }
 
     /// Snapshot the current buffer set into a `Session`. Buffers without a

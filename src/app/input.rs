@@ -189,6 +189,23 @@ impl super::App {
 
         match ev.kind {
             MouseEventKind::Down(MouseButton::Left) => {
+                // Ctrl-click in Insert mode adds a secondary cursor at the
+                // click position. Doesn't move the primary cursor — that
+                // would defeat the purpose. Outside Insert mode, the
+                // modifier is ignored (Ctrl-click falls through to normal
+                // click behaviour).
+                if matches!(self.mode, Mode::Insert)
+                    && ev.modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    let line_start = self.buffer.line_start_idx(buf_line);
+                    let pos = line_start + buf_col;
+                    let primary = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                    if pos != primary && !self.additional_cursors.contains(&pos) {
+                        self.additional_cursors.push(pos);
+                        self.additional_cursors.sort();
+                    }
+                    return;
+                }
                 let now = std::time::Instant::now();
                 let is_double = self
                     .last_click
@@ -200,6 +217,11 @@ impl super::App {
                     .is_some();
                 if matches!(self.mode, Mode::Visual(_)) {
                     self.exit_visual();
+                }
+                // A plain click (non-Ctrl) outside multi-cursor scope
+                // collapses any active additional cursors.
+                if !self.additional_cursors.is_empty() {
+                    self.additional_cursors.clear();
                 }
                 self.cursor.line = buf_line;
                 self.cursor.col = buf_col;
@@ -278,6 +300,8 @@ impl super::App {
                 }
                 self.mode = Mode::Normal;
                 self.signature_help = None;
+                // Collapse multi-cursor on the same Esc that exits Insert.
+                self.additional_cursors.clear();
                 if !self.replaying {
                     if let Some(rec) = self.recording.take() {
                         self.last_edit = Some(LastEdit::InsertSession {
@@ -293,12 +317,19 @@ impl super::App {
                 self.lsp_request_completion(None);
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // If the cursor sits on the same closing char the user is typing,
-                // step past it instead of inserting a duplicate. Lets `}`/`)`/`"`
-                // skip over an auto-inserted closer.
-                if is_close_char(c)
+                // Multi-cursor: skip the autopair / closer-skip dance and
+                // just mirror the keystroke at every position. Autopair
+                // across N positions is non-trivial (would need to mirror
+                // the closer too and keep cursors balanced) and the
+                // user is in mass-edit mode anyway.
+                if !self.additional_cursors.is_empty() {
+                    self.mirror_insert_char(c);
+                } else if is_close_char(c)
                     && self.buffer.char_at(self.cursor.line, self.cursor.col) == Some(c)
                 {
+                    // If the cursor sits on the same closing char the user is typing,
+                    // step past it instead of inserting a duplicate. Lets `}`/`)`/`"`
+                    // skip over an auto-inserted closer.
                     self.cursor.col += 1;
                     self.cursor.want_col = self.cursor.col;
                 } else if let Some(close) = open_pair_for(c) {
@@ -359,7 +390,9 @@ impl super::App {
             KeyCode::Enter => self.handle_insert_newline(),
             KeyCode::Backspace => {
                 let popup_was_open = self.completion.is_some();
-                if self.cursor.col > 0 {
+                if !self.additional_cursors.is_empty() {
+                    self.mirror_backspace();
+                } else if self.cursor.col > 0 {
                     // If the cursor sits between an auto-inserted pair like {|},
                     // wipe out both characters in one stroke.
                     let prev = self.buffer.char_at(self.cursor.line, self.cursor.col - 1);

@@ -349,12 +349,25 @@ impl super::App {
         let Some(item) = c.items.get(c.selected).cloned() else {
             return;
         };
-        if c.anchor_line != self.cursor.line {
-            return;
-        }
-        let start = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
-        let end = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
-        if end >= start {
+        // Prefer the server-provided textEdit range — it's the authoritative
+        // span to replace. Fall back to the client-side word-prefix guess
+        // (anchor → cursor) when the server didn't include a textEdit.
+        let (start, end) = match item.text_edit_range {
+            Some((s_line, s_col, e_line, e_col)) => {
+                let s = self.buffer.pos_to_char(s_line, s_col);
+                let e = self.buffer.pos_to_char(e_line, e_col);
+                (s.min(e), s.max(e))
+            }
+            None => {
+                if c.anchor_line != self.cursor.line {
+                    return;
+                }
+                let s = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
+                let e = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                (s.min(e), s.max(e))
+            }
+        };
+        if end > start {
             self.buffer.delete_range(start, end);
         }
         // Snippet items go through the placeholder expander so `${1:foo}`

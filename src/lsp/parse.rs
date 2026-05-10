@@ -318,6 +318,25 @@ pub(super) fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
             })
             .map(|n| n == 2)
             .unwrap_or(false);
+        // Capture `textEdit.range` (or `insert`/`replace` from
+        // `InsertReplaceEdit`) so the accept path can replace the exact
+        // span the server expects instead of guessing client-side.
+        let text_edit_range = item
+            .get("textEdit")
+            .and_then(|t| {
+                t.get("range")
+                    .or_else(|| t.get("replace"))
+                    .or_else(|| t.get("insert"))
+            })
+            .and_then(|range| {
+                let s = range.get("start")?;
+                let e = range.get("end")?;
+                let s_line = s.get("line")?.as_u64()? as usize;
+                let s_col = s.get("character")?.as_u64()? as usize;
+                let e_line = e.get("line")?.as_u64()? as usize;
+                let e_col = e.get("character")?.as_u64()? as usize;
+                Some((s_line, s_col, e_line, e_col))
+            });
         out.push(CompletionItem {
             label,
             insert_text,
@@ -326,6 +345,7 @@ pub(super) fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
             filter_text,
             sort_text,
             is_snippet,
+            text_edit_range,
         });
     }
     out
