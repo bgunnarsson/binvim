@@ -150,12 +150,12 @@ pub fn html_tag_pair_at(
         TagKind::Close => find_open_tag(buf, info.range.0, &info.name)?,
         TagKind::Other => return None,
     };
-    let (open_range, close_range) = match info.kind {
-        TagKind::Open => (info.range, pair),
-        TagKind::Close => (pair, info.range),
+    let (open_name, close_name) = match info.kind {
+        TagKind::Open => (info.name_range, pair),
+        TagKind::Close => (pair, info.name_range),
         TagKind::Other => unreachable!(),
     };
-    Some((open_range, close_range))
+    Some((open_name, close_name))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -166,7 +166,13 @@ enum TagKind {
 }
 
 struct TagInfo {
+    /// Absolute char range of the full `<…>` span.
     range: (usize, usize),
+    /// Absolute char range of just the tag *name* inside the span. Used
+    /// for the matched-pair highlight so the user sees `main` / `main`
+    /// highlighted on the open and close tags rather than the entire
+    /// `<main className="…">` / `</main>` runs.
+    name_range: (usize, usize),
     name: String,
     kind: TagKind,
 }
@@ -215,11 +221,14 @@ fn enclosing_tag(buf: &Buffer, here: usize) -> Option<TagInfo> {
     if end > start && buf.rope.char(end - 1) == '/' {
         return Some(TagInfo {
             range: (start, end + 1),
+            name_range: (start, start),
             name: String::new(),
             kind: TagKind::Other,
         });
     }
     let inner: String = buf.rope.slice((start + 1)..end).to_string();
+    let inner_char_count = inner.chars().count();
+    let leading_ws = inner.chars().take_while(|c| c.is_whitespace()).count();
     let trimmed = inner.trim_start();
     if trimmed.is_empty() {
         return None;
@@ -231,6 +240,7 @@ fn enclosing_tag(buf: &Buffer, here: usize) -> Option<TagInfo> {
         c if c.is_alphabetic() || c == '_' => TagKind::Open,
         _ => TagKind::Other,
     };
+    let slash_offset = if matches!(kind, TagKind::Close) { 1 } else { 0 };
     let after_slash = if matches!(kind, TagKind::Close) {
         &trimmed[1..]
     } else {
@@ -240,22 +250,31 @@ fn enclosing_tag(buf: &Buffer, here: usize) -> Option<TagInfo> {
         .chars()
         .take_while(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))
         .collect();
+    // Name starts at: `<` + leading whitespace inside the span + (1 for `/`
+    // on close tags) + (0 for open). End is name's char-count chars later.
+    let name_chars = name.chars().count();
+    let name_start = start + 1 + leading_ws + slash_offset;
+    let name_end = name_start + name_chars;
+    let _ = inner_char_count;
     if name.is_empty() {
         return Some(TagInfo {
             range: (start, end + 1),
+            name_range: (name_start, name_start),
             name,
             kind: TagKind::Other,
         });
     }
     Some(TagInfo {
         range: (start, end + 1),
+        name_range: (name_start, name_end),
         name,
         kind,
     })
 }
 
 /// Walk forward from `start` to find the matching `</name>` for an open
-/// tag, accounting for nested same-name openers.
+/// tag, accounting for nested same-name openers. Returns the *name*
+/// range of the matching close tag (not its full `<…>` span).
 fn find_close_tag(buf: &Buffer, start: usize, name: &str) -> Option<(usize, usize)> {
     let total = buf.total_chars();
     let mut depth = 1usize;
@@ -271,7 +290,7 @@ fn find_close_tag(buf: &Buffer, start: usize, name: &str) -> Option<(usize, usiz
             TagKind::Close if info.name == name => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(info.range);
+                    return Some(info.name_range);
                 }
             }
             _ => {}
@@ -283,7 +302,8 @@ fn find_close_tag(buf: &Buffer, start: usize, name: &str) -> Option<(usize, usiz
 }
 
 /// Walk backward from `end` to find the matching `<name…>` for a close
-/// tag, accounting for nested same-name closers.
+/// tag, accounting for nested same-name closers. Returns the *name*
+/// range of the matching open tag (not its full `<…>` span).
 fn find_open_tag(buf: &Buffer, end: usize, name: &str) -> Option<(usize, usize)> {
     let mut depth = 1usize;
     let mut i = end;
@@ -300,7 +320,7 @@ fn find_open_tag(buf: &Buffer, end: usize, name: &str) -> Option<(usize, usize)>
             TagKind::Open if info.name == name => {
                 depth -= 1;
                 if depth == 0 {
-                    return Some(info.range);
+                    return Some(info.name_range);
                 }
             }
             _ => {}

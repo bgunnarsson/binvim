@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **HTML-tag matched-pair highlight narrows to the tag name.** Cursor on
+  `<main className="…">` used to highlight the whole opening run and the
+  whole `</main>` run; now both halves underline just the tag name
+  (`main` ↔ `main`).
+
 ## [0.1.1] - 2026-05-10
 
 ### Added
