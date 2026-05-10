@@ -818,6 +818,13 @@ struct PickerLayout {
     bottom_row: usize,
 }
 
+/// Number of list rows the picker can display in its current geometry.
+/// Driven from the same layout math the renderer uses, so PageUp/PageDown
+/// in the picker handler match what's actually on screen.
+pub(crate) fn picker_visible_rows(app: &App) -> usize {
+    picker_layout(app).list_h
+}
+
 fn picker_layout(app: &App) -> PickerLayout {
     let total_w = app.width as usize;
     let total_h = app.height as usize;

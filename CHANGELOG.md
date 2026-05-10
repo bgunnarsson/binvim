@@ -11,6 +11,13 @@ follows [Semantic Versioning](https://semver.org/).
   step-by-step PR walkthrough for the most common contribution shapes
   (new LSP, new tree-sitter grammar, motion/text-object).
 
+### Added
+- **Picker scrolling.** Mouse wheel inside the picker moves the selection
+  by ±3 (instead of scrolling the buffer behind it); PageUp/PageDown jump
+  by a full visible page; Ctrl-U/Ctrl-D jump by half a page; Ctrl-G /
+  Home and Ctrl-Shift-G / End jump to first/last result. Existing
+  arrow-keys and Ctrl-N/Ctrl-P/Ctrl-J/Ctrl-K still move by one row.
+
 ### Changed
 - **Hover popup now syntax-highlights code and preserves indentation.**
   The markdown returned by an LSP is parsed into structured lines (prose,

@@ -82,6 +82,17 @@ impl PickerState {
         }
     }
 
+    /// Move the selection by `delta` rows, clamping at both ends. Used for
+    /// PageUp/PageDown, Ctrl-U/D, and mouse-wheel scrolling.
+    pub fn move_by(&mut self, delta: i64) {
+        if self.filtered.is_empty() {
+            return;
+        }
+        let max = (self.filtered.len() - 1) as i64;
+        let new = (self.selected as i64 + delta).clamp(0, max);
+        self.selected = new as usize;
+    }
+
     pub fn current(&self) -> Option<&PickerPayload> {
         let item_idx = *self.filtered.get(self.selected)?;
         self.payloads.get(item_idx)

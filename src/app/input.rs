@@ -128,13 +128,25 @@ impl super::App {
             MouseEventKind::ScrollUp => {
                 self.hover = None;
                 self.whichkey = None;
-                self.scroll_view(-3);
+                if matches!(self.mode, Mode::Picker) {
+                    if let Some(p) = self.picker.as_mut() {
+                        p.move_by(-3);
+                    }
+                } else {
+                    self.scroll_view(-3);
+                }
                 return;
             }
             MouseEventKind::ScrollDown => {
                 self.hover = None;
                 self.whichkey = None;
-                self.scroll_view(3);
+                if matches!(self.mode, Mode::Picker) {
+                    if let Some(p) = self.picker.as_mut() {
+                        p.move_by(3);
+                    }
+                } else {
+                    self.scroll_view(3);
+                }
                 return;
             }
             MouseEventKind::ScrollLeft => {
