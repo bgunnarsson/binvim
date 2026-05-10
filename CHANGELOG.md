@@ -33,6 +33,14 @@ follows [Semantic Versioning](https://semver.org/).
   the tab bar (click), `:bn`/`:bp`, or `<leader>bn`/`<leader>bp`.
 
 ### Added
+- **Sublime-style multi-selection.** In Visual-char mode, `Ctrl-N`
+  finds the next literal-text occurrence of the current selection and
+  adds it as a parallel selection. Repeat to keep selecting. `d`, `c`,
+  `y` then apply to every selection at once: `d` deletes all,
+  `c` deletes and enters Insert mode with a mirrored cursor at every
+  former selection start (typing then mirrors across all sites via
+  the existing multi-cursor machinery). Wraps the buffer once; status
+  message when only one occurrence exists or none are left.
 - **Multi-cursor (real, mirrored).** `Ctrl-click` in Normal mode adds
   a secondary cursor at the click position; cursors render as Lavender
   blocks. Entering Insert via `i` keeps cursors anchored; via `a`

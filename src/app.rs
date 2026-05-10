@@ -151,6 +151,11 @@ pub struct App {
     /// edits at the primary cursor. Empty when only one cursor is active.
     /// Populated by `Ctrl-click` in Insert mode; cleared on Esc.
     pub additional_cursors: Vec<usize>,
+    /// Additional Visual-char selection ranges (start, end exclusive).
+    /// Populated by `Ctrl-N` while a Visual-char selection is active;
+    /// `d`/`c`/`y` then operates on every range plus the primary one.
+    /// Cleared on Esc / exiting Visual / collapse.
+    pub additional_selections: Vec<(usize, usize)>,
     pub(crate) replaying_macro: bool,
     pub(crate) recording: Option<RecordingState>,
     pub(crate) replaying: bool,
@@ -233,6 +238,7 @@ impl App {
             last_disk_check: Instant::now(),
             last_click: None,
             additional_cursors: Vec::new(),
+            additional_selections: Vec::new(),
             replaying_macro: false,
             recording: None,
             replaying: false,

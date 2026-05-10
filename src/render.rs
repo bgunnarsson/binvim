@@ -1513,6 +1513,7 @@ fn draw_line_with_selection(
         text.pop();
     }
     let sel = app.line_selection(line_idx);
+    let extra_sels = app.line_extra_selections(line_idx);
     let search_matches = app.line_search_matches(line_idx);
     let yank_flash = app.line_yank_highlight(line_idx);
     let match_pair = app.line_match_pair(line_idx);
@@ -1626,7 +1627,8 @@ fn draw_line_with_selection(
             clipped_right = true;
             break;
         }
-        let in_sel = sel.map(|(s, e)| col >= s && col < e).unwrap_or(false);
+        let in_sel = sel.map(|(s, e)| col >= s && col < e).unwrap_or(false)
+            || extra_sels.iter().any(|(s, e)| col >= *s && col < *e);
         let in_search = !in_sel && search_matches.iter().any(|(s, e)| col >= *s && col < *e);
         let in_yank_flash = !in_sel
             && !in_search

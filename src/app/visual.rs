@@ -9,6 +9,64 @@ impl super::App {
     pub(super) fn exit_visual(&mut self) {
         self.mode = Mode::Normal;
         self.visual_anchor = None;
+        self.additional_selections.clear();
+    }
+
+    /// `Ctrl-N` in Visual-char mode — find the next literal-text match of
+    /// the current primary selection and add it as an additional
+    /// selection. The primary cursor jumps to the new occurrence (so a
+    /// rapid sequence of `Ctrl-N` adds one occurrence per press, walking
+    /// the buffer); the previous primary selection is stored in
+    /// `additional_selections`. No-ops outside Visual-char.
+    pub(super) fn add_next_occurrence_selection(&mut self) {
+        let kind = match self.mode {
+            Mode::Visual(k) => k,
+            _ => return,
+        };
+        if !matches!(kind, VisualKind::Char) {
+            self.status_msg = "Ctrl-N: only in Visual-char".into();
+            return;
+        }
+        let (start, end, _linewise) = self.visual_range_chars(kind);
+        if end <= start {
+            return;
+        }
+        let needle = self.buffer.rope.slice(start..end).to_string();
+        if needle.is_empty() {
+            return;
+        }
+        // Search forward from one past the end of the current selection,
+        // wrapping back to the start so the user can cycle through all
+        // occurrences. Wrap is bounded: if the next hit is the same
+        // range we already have (only one match in the buffer) we bail.
+        let total = self.buffer.total_chars();
+        let from = end.min(total);
+        let needle_chars = needle.chars().count();
+        let hit = self.search(&needle, from, true, true);
+        let Some(hit_start) = hit else {
+            self.status_msg = format!("No more occurrences of \"{needle}\"");
+            return;
+        };
+        let hit_end = (hit_start + needle_chars).min(total);
+        // Don't add the same range twice — e.g. when there's only one
+        // match in the buffer and search wraps back to it.
+        if hit_start == start && hit_end == end {
+            self.status_msg = format!("Only one occurrence of \"{needle}\"");
+            return;
+        }
+        // Save the current primary as an extra selection, then move the
+        // primary to the new occurrence.
+        let primary_range = (start, end);
+        if !self.additional_selections.contains(&primary_range) {
+            self.additional_selections.push(primary_range);
+        }
+        self.additional_selections.sort();
+        self.additional_selections.dedup();
+        // Anchor at hit_start, cursor at hit_end - 1 (inclusive end for visual).
+        self.cursor_to_idx(hit_start);
+        let anchor = self.cursor;
+        self.cursor_to_idx(hit_end.saturating_sub(1).max(hit_start));
+        self.visual_anchor = Some(anchor);
     }
 
     pub(super) fn visual_range_chars(&self, kind: VisualKind) -> (usize, usize, bool) {
@@ -54,6 +112,15 @@ impl super::App {
         // Block selection is non-contiguous — handle it on its own track.
         if matches!(kind, VisualKind::Block) {
             self.apply_block_operate(op, target);
+            return;
+        }
+        // Multi-selection (Ctrl-N): operator applies to every range —
+        // primary plus each stored `additional_selections`. Indent /
+        // outdent fall through to the single-selection line path below.
+        if !self.additional_selections.is_empty()
+            && !matches!(op, Operator::Indent | Operator::Outdent)
+        {
+            self.apply_multi_selection_operate(op, target);
             return;
         }
         // Indent / outdent take only the line span and ignore column boundaries.
@@ -119,6 +186,107 @@ impl super::App {
             }
             Operator::Indent | Operator::Outdent => unreachable!(),
         }
+    }
+
+    /// Apply d/c/y to every selection — primary + every entry in
+    /// `additional_selections`. Bottom-up edit order keeps the lower
+    /// ranges' indices stable across the loop. For `Change`, the
+    /// resulting Insert mode picks up `additional_cursors` populated
+    /// with each former selection's start position so subsequent typing
+    /// mirrors at every site.
+    fn apply_multi_selection_operate(&mut self, op: Operator, target: Option<char>) {
+        let kind = match self.mode {
+            Mode::Visual(k) => k,
+            _ => return,
+        };
+        // Gather all ranges. The primary is computed from the current
+        // anchor + cursor; additional ones are stored as (start, end).
+        let (p_start, p_end, _linewise) = self.visual_range_chars(kind);
+        let mut ranges: Vec<(usize, usize)> = vec![(p_start, p_end)];
+        for r in &self.additional_selections {
+            if r.0 != p_start || r.1 != p_end {
+                ranges.push(*r);
+            }
+        }
+        ranges.sort_by_key(|r| r.0);
+        ranges.dedup();
+        // Concatenated removed-text for the register, in document order.
+        let mut texts: Vec<String> = Vec::with_capacity(ranges.len());
+        for &(s, e) in &ranges {
+            if e > s {
+                texts.push(self.buffer.rope.slice(s..e).to_string());
+            } else {
+                texts.push(String::new());
+            }
+        }
+        let removed_joined = texts.join("\n");
+
+        match op {
+            Operator::Yank => {
+                self.write_yank_register(target, removed_joined, false);
+                // Flash the primary range only — multi-range flash would
+                // need a renderer change.
+                self.flash_yank(p_start, p_end);
+                self.additional_selections.clear();
+                self.cursor_to_idx(p_start);
+                self.clamp_cursor_normal();
+                self.exit_visual();
+            }
+            Operator::Delete | Operator::Change => {
+                self.write_register(target, removed_joined, false);
+                // Delete bottom-up so earlier (lower-indexed) ranges stay valid.
+                for &(s, e) in ranges.iter().rev() {
+                    if e > s {
+                        self.buffer.delete_range(s, e);
+                    }
+                }
+                // The lowest range's start is now where the primary cursor
+                // lands; every other range's start (after the bottom-up
+                // delete sequence) becomes an additional cursor anchored
+                // at its own former start. Bottom-up deletes don't shift
+                // indices below the cut, so each range's `s` is still
+                // valid as the post-delete cursor location.
+                let mut starts: Vec<usize> = ranges.iter().map(|r| r.0).collect();
+                starts.sort();
+                starts.dedup();
+                let primary = starts[0];
+                let extras: Vec<usize> = starts.into_iter().skip(1).collect();
+                self.cursor_to_idx(primary);
+                self.additional_cursors = extras;
+                self.additional_selections.clear();
+                self.clamp_cursor_normal();
+                if matches!(op, Operator::Change) {
+                    self.mode = Mode::Insert;
+                    self.visual_anchor = None;
+                } else {
+                    self.exit_visual();
+                }
+            }
+            Operator::Indent | Operator::Outdent => unreachable!(),
+        }
+    }
+
+    /// Per-line char-column ranges from `additional_selections` that
+    /// intersect `line`. Used by the renderer to paint multi-selection
+    /// highlights alongside the primary selection.
+    pub fn line_extra_selections(&self, line: usize) -> Vec<(usize, usize)> {
+        if self.additional_selections.is_empty() {
+            return Vec::new();
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        let line_end = line_start + self.buffer.line_len(line);
+        let mut out = Vec::new();
+        for &(s, e) in &self.additional_selections {
+            if e <= line_start || s >= line_end {
+                continue;
+            }
+            let cs = s.saturating_sub(line_start);
+            let ce = e.min(line_end).saturating_sub(line_start);
+            if ce > cs {
+                out.push((cs, ce));
+            }
+        }
+        out
     }
 
     /// Apply an operator to the current visual-block selection. Block

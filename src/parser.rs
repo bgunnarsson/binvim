@@ -133,6 +133,11 @@ pub enum Action {
     /// cursor in the current buffer. Opens a prompt; on Enter applies the
     /// replacement to every occurrence via the same machinery as `:%s`.
     ReplaceAllInBuffer,
+    /// `Ctrl-N` in Visual-char mode — find the next occurrence of the
+    /// current selection's text and add it as an additional selection.
+    /// Subsequent `d`/`c`/`y` apply to every selection; `c` lands in
+    /// Insert mode with mirrored cursors at each former selection start.
+    AddNextOccurrenceSelection,
     /// `ds{char}` — strip the surrounding pair around the cursor.
     SurroundDelete { ch: char },
     /// `cs{old}{new}` — swap the surrounding pair from `old` to `new`.
@@ -331,6 +336,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                         ParseResult::Action(Action::EnterVisual(VisualKind::Block))
                     }
                 }
+            }
+            'n' | 'N' if matches!(ctx, ParseCtx::Visual) => {
+                state.reset();
+                ParseResult::Action(Action::AddNextOccurrenceSelection)
             }
             _ => ParseResult::Pending,
         };

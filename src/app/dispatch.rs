@@ -99,6 +99,7 @@ impl super::App {
             Action::LspFindReferences => self.lsp_request_references(),
             Action::LspRename => self.start_rename_prompt(),
             Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
+            Action::AddNextOccurrenceSelection => self.add_next_occurrence_selection(),
             Action::SurroundDelete { ch } => {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.surround_delete(ch);
@@ -132,7 +133,12 @@ impl super::App {
             }
             Action::VisualSwitch(target) => match self.mode {
                 Mode::Visual(cur) if cur == target => self.exit_visual(),
-                _ => self.mode = Mode::Visual(target),
+                _ => {
+                    // Switching kinds invalidates multi-selection — the
+                    // ranges were computed under the old kind's geometry.
+                    self.additional_selections.clear();
+                    self.mode = Mode::Visual(target);
+                }
             },
         }
     }
