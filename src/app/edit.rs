@@ -229,6 +229,29 @@ impl super::App {
 
     pub(super) fn enter_insert(&mut self, w: InsertWhere) {
         self.history.record(&self.buffer.rope, self.cursor);
+        // Multi-cursor preservation: `i` and `a` keep the secondary
+        // cursors aligned with the primary's transformation. Every other
+        // Insert-entry (line-above/below, jump to line ends) does
+        // something line-specific that doesn't translate cleanly to N
+        // positions — collapse so mirroring isn't surprising.
+        match w {
+            InsertWhere::Cursor => {}
+            InsertWhere::AfterCursor => {
+                let total = self.buffer.total_chars();
+                for pos in &mut self.additional_cursors {
+                    let line = self.buffer.rope.char_to_line(*pos);
+                    let line_start = self.buffer.rope.line_to_char(line);
+                    let col = *pos - line_start;
+                    let len = self.buffer.line_len(line);
+                    if col < len && *pos + 1 <= total {
+                        *pos += 1;
+                    }
+                }
+            }
+            _ => {
+                self.additional_cursors.clear();
+            }
+        }
         match w {
             InsertWhere::Cursor => {}
             InsertWhere::AfterCursor => {

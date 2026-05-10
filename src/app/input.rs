@@ -189,12 +189,14 @@ impl super::App {
 
         match ev.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                // Ctrl-click in Insert mode adds a secondary cursor at the
-                // click position. Doesn't move the primary cursor — that
-                // would defeat the purpose. Outside Insert mode, the
-                // modifier is ignored (Ctrl-click falls through to normal
-                // click behaviour).
-                if matches!(self.mode, Mode::Insert)
+                // Ctrl-click in Normal mode adds a secondary cursor at
+                // the click position. Doesn't move the primary cursor —
+                // that would defeat the purpose. The cursors persist
+                // through the next `i`/`a` into Insert mode, where typing
+                // and Backspace mirror at every position.
+                // In any other mode the modifier falls through to the
+                // normal click handler.
+                if matches!(self.mode, Mode::Normal)
                     && ev.modifiers.contains(KeyModifiers::CONTROL)
                 {
                     let line_start = self.buffer.line_start_idx(buf_line);

@@ -24,13 +24,15 @@ follows [Semantic Versioning](https://semver.org/).
   empty slot when any session buffer is successfully opened.
 
 ### Added
-- **Multi-cursor (real, mirrored).** `Ctrl-click` in Insert mode adds
-  a secondary cursor at the click position. Typing and Backspace mirror
-  at the primary cursor and every additional cursor simultaneously
-  (bottom-up edit order keeps indices stable). Cursors render as
-  Lavender blocks. `Esc` exits Insert mode and collapses the cursors;
-  a plain (non-Ctrl) click also collapses them. Auto-pair is disabled
-  while multi-cursor is active — keeps the mirroring math simple, the
+- **Multi-cursor (real, mirrored).** `Ctrl-click` in Normal mode adds
+  a secondary cursor at the click position; cursors render as Lavender
+  blocks. Entering Insert via `i` keeps cursors anchored; via `a`
+  shifts each cursor by +1 (so typing lands *after* each char). Other
+  Insert-entries (`I`/`A`/`o`/`O`) collapse the multi-cursors. Inside
+  Insert mode, typing and Backspace mirror at the primary cursor and
+  every additional cursor (bottom-up edit order keeps indices stable).
+  `Esc` exits Insert and collapses; a plain (non-Ctrl) click also
+  collapses. Auto-pair is disabled while multi-cursor is active — the
   user is in mass-edit mode anyway.
 - **Inlay hints.** Added `textDocument/inlayHint` request +
   response parser; hints render between buffer chars in dim italic
