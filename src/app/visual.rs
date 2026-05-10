@@ -234,23 +234,28 @@ impl super::App {
             }
             Operator::Delete | Operator::Change => {
                 self.write_register(target, removed_joined, false);
-                // Delete bottom-up so earlier (lower-indexed) ranges stay valid.
+                // Delete bottom-up so each subsequent (lower-indexed) delete
+                // doesn't invalidate already-removed higher ranges.
                 for &(s, e) in ranges.iter().rev() {
                     if e > s {
                         self.buffer.delete_range(s, e);
                     }
                 }
-                // The lowest range's start is now where the primary cursor
-                // lands; every other range's start (after the bottom-up
-                // delete sequence) becomes an additional cursor anchored
-                // at its own former start. Bottom-up deletes don't shift
-                // indices below the cut, so each range's `s` is still
-                // valid as the post-delete cursor location.
-                let mut starts: Vec<usize> = ranges.iter().map(|r| r.0).collect();
-                starts.sort();
-                starts.dedup();
-                let primary = starts[0];
-                let extras: Vec<usize> = starts.into_iter().skip(1).collect();
+                // Post-delete cursor positions. Each range's start needs
+                // to be shifted down by the cumulative length of every
+                // earlier (lower-indexed) deletion — once those deletes
+                // happen, the chars at higher positions slide left.
+                //   final = s - sum(e_j - s_j for j < self)
+                let mut cumulative = 0usize;
+                let mut final_positions: Vec<usize> = Vec::with_capacity(ranges.len());
+                for &(s, e) in &ranges {
+                    final_positions.push(s - cumulative);
+                    cumulative += e - s;
+                }
+                final_positions.sort();
+                final_positions.dedup();
+                let primary = final_positions[0];
+                let extras: Vec<usize> = final_positions.into_iter().skip(1).collect();
                 self.cursor_to_idx(primary);
                 self.additional_cursors = extras;
                 self.additional_selections.clear();

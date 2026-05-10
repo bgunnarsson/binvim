@@ -1459,7 +1459,16 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
 
 fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     let total_w = app.width as usize;
-    queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
+    // Two rows: row 0 is a padding strip that extends the active tab's
+    // background colour (so it visually feels taller); row 1 carries the
+    // tab content. Clear both.
+    queue!(
+        out,
+        MoveTo(0, 0),
+        Clear(ClearType::CurrentLine),
+        MoveTo(0, 1),
+        Clear(ClearType::CurrentLine),
+    )?;
 
     let bar_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let active_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
@@ -1469,14 +1478,17 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     let close_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
     let chevron_fg = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde }; // Subtext1
 
-    // Background fill across the full row first so any gaps between
-    // tabs render in the bar colour.
-    queue!(
-        out,
-        SetBackgroundColor(bar_bg),
-        SetForegroundColor(inactive_fg),
-        Print(" ".repeat(total_w)),
-    )?;
+    // Bar-wide background fill on both rows so any gaps between tabs
+    // render in the bar colour.
+    for y in 0..=1u16 {
+        queue!(
+            out,
+            MoveTo(0, y),
+            SetBackgroundColor(bar_bg),
+            SetForegroundColor(inactive_fg),
+            Print(" ".repeat(total_w)),
+        )?;
+    }
 
     let slots = tab_layout(app);
     let scrolled_left = slots.first().map(|s| s.idx > 0).unwrap_or(false);
@@ -1485,6 +1497,20 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         .map(|s| s.idx + 1 < app.buffers.len())
         .unwrap_or(false);
 
+    // Row 0 — extend each tab's bg colour into the padding strip so the
+    // active tab feels like a taller block.
+    for slot in &slots {
+        let bg = if slot.active { active_bg } else { bar_bg };
+        let span = slot.end_col - slot.start_col;
+        queue!(
+            out,
+            MoveTo(slot.start_col as u16, 0),
+            SetBackgroundColor(bg),
+            Print(" ".repeat(span)),
+        )?;
+    }
+
+    // Row 1 — full tab content.
     for slot in &slots {
         let (bg, fg) = if slot.active {
             (active_bg, active_fg)
@@ -1493,14 +1519,13 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         };
         queue!(
             out,
-            MoveTo(slot.start_col as u16, 0),
+            MoveTo(slot.start_col as u16, 1),
             SetBackgroundColor(bg),
             SetForegroundColor(fg),
         )?;
         if slot.active {
             queue!(out, SetAttribute(Attribute::Bold))?;
         }
-        // ` icon  label[ +]  × `
         queue!(
             out,
             Print(' '),
@@ -1518,8 +1543,6 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
                 SetForegroundColor(fg),
             )?;
         }
-        // Two-space gap then the close glyph. close_fg is the same in
-        // both active/inactive states for visual consistency.
         queue!(
             out,
             Print("  "),
@@ -1533,13 +1556,12 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
 
-    // Overflow chevrons — painted over the leftmost / rightmost columns
-    // of the bar. They sit on top of any padding the tabs reserve, so
-    // they're always visible regardless of how the slots aligned.
+    // Overflow chevrons — painted at the leftmost / rightmost columns of
+    // the content row.
     if scrolled_left {
         queue!(
             out,
-            MoveTo(0, 0),
+            MoveTo(0, 1),
             SetBackgroundColor(bar_bg),
             SetForegroundColor(chevron_fg),
             Print('‹'),
@@ -1548,7 +1570,7 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     if truncated_right {
         queue!(
             out,
-            MoveTo((total_w.saturating_sub(1)) as u16, 0),
+            MoveTo((total_w.saturating_sub(1)) as u16, 1),
             SetBackgroundColor(bar_bg),
             SetForegroundColor(chevron_fg),
             Print('›'),

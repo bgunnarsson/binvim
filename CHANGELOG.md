@@ -12,6 +12,20 @@ follows [Semantic Versioning](https://semver.org/).
   (new LSP, new tree-sitter grammar, motion/text-object).
 
 ### Fixed
+- **Multi-selection delete cursor shift.** After `d` / `c` on a
+  Ctrl-N multi-selection, secondary cursors landed at stale positions
+  — they used original char indices without accounting for the
+  cumulative shift left from earlier (lower-indexed) deletes. Now each
+  cursor's final position subtracts the total length of every prior
+  deletion, so all cursors sit exactly where the deleted ranges were.
+
+### Changed
+- **Tab bar is now 2 rows tall.** Active tab's background extends into
+  the padding row above the content row, giving the active block a
+  visually heavier feel. Clicks on either row inside the bar switch
+  the tab; the close button is only valid on the content row.
+
+### Fixed
 - **Snippet / completion accept honours `textEdit.range`.** Servers
   send an explicit replacement span (e.g. covering a trailing `.` when
   proposing `?.method`); previously we always used the client-side
