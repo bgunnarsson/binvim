@@ -7,6 +7,14 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **JSX / TSX tag highlighting.** Tree-sitter-javascript's bundled
+  highlight query categorises every JSX element name as a generic
+  identifier, leaving `<div>` / `<main>` / `<span>` indistinguishable
+  from surrounding variables. Added an overlay query that tags
+  lowercase JSX names as `@tag` (Mauve) and PascalCase names as
+  `@constructor` (Yellow), with attribute names rendering as
+  `@attribute`. Member-access components (`Foo.Bar`) are coloured on
+  both halves. Layered onto JS / TS / TSX.
 - **HTML-tag matched-pair highlight narrows to the tag name.** Cursor on
   `<main className="…">` used to highlight the whole opening run and the
   whole `</main>` run; now both halves underline just the tag name

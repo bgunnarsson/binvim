@@ -93,13 +93,23 @@ impl Lang {
         match self {
             Lang::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY.into(),
             // tree-sitter-typescript ships only a TS-specific overlay (5 captures).
-            // Combine with the tree-sitter-javascript query for full coverage.
+            // Combine with the tree-sitter-javascript query for full coverage,
+            // then append a JSX overlay so HTML-style tags (`<div>` etc.) get
+            // tagged as `@tag` and component-style tags (`<Foo>`) as
+            // `@constructor`. The bundled JS query categorises both as plain
+            // identifiers, which renders them indistinguishable from
+            // surrounding variables.
             Lang::TypeScript | Lang::Tsx => format!(
+                "{}\n{}\n{}",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                JSX_OVERLAY_QUERY,
+            ),
+            Lang::JavaScript => format!(
                 "{}\n{}",
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
-                tree_sitter_typescript::HIGHLIGHTS_QUERY
+                JSX_OVERLAY_QUERY,
             ),
-            Lang::JavaScript => tree_sitter_javascript::HIGHLIGHT_QUERY.into(),
             // Replace the bundled tree-sitter-json query — its pattern
             // order (specific @string.special.key BEFORE general
             // @string) is incompatible with how compute_highlights
@@ -148,6 +158,62 @@ impl Lang {
         }
     }
 }
+
+/// Extra tree-sitter highlight captures layered onto the JS / TS / TSX
+/// queries. The bundled tree-sitter-javascript query categorises every
+/// JSX element name as a generic identifier, so HTML tags (`<div>`,
+/// `<main>`) and React components (`<Foo>`) end up rendered like any
+/// other variable — visually unhelpful. This overlay tags them per the
+/// upstream tree-sitter conventions: lowercase JSX names → `@tag`,
+/// PascalCase JSX names → `@constructor`. We also tag JSX attribute
+/// names so `className=` reads as a property rather than a variable
+/// reference.
+const JSX_OVERLAY_QUERY: &str = r#"
+; HTML-style tag names (lowercase) — open + close + self-closing.
+((jsx_opening_element
+   name: (identifier) @tag)
+ (#match? @tag "^[a-z]"))
+
+((jsx_closing_element
+   name: (identifier) @tag)
+ (#match? @tag "^[a-z]"))
+
+((jsx_self_closing_element
+   name: (identifier) @tag)
+ (#match? @tag "^[a-z]"))
+
+; Component-style tag names (PascalCase).
+((jsx_opening_element
+   name: (identifier) @constructor)
+ (#match? @constructor "^[A-Z]"))
+
+((jsx_closing_element
+   name: (identifier) @constructor)
+ (#match? @constructor "^[A-Z]"))
+
+((jsx_self_closing_element
+   name: (identifier) @constructor)
+ (#match? @constructor "^[A-Z]"))
+
+; Member-access components (`Foo.Bar`).
+(jsx_opening_element
+  name: (member_expression
+    object: (identifier) @constructor
+    property: (property_identifier) @constructor))
+
+(jsx_closing_element
+  name: (member_expression
+    object: (identifier) @constructor
+    property: (property_identifier) @constructor))
+
+(jsx_self_closing_element
+  name: (member_expression
+    object: (identifier) @constructor
+    property: (property_identifier) @constructor))
+
+; Attribute names — `className=`, `onClick=`, etc.
+(jsx_attribute (property_identifier) @attribute)
+"#;
 
 #[derive(Clone)]
 pub struct HighlightCache {
