@@ -120,7 +120,7 @@ impl LspClient {
                         "completion": {
                             "dynamicRegistration": false,
                             "completionItem": {
-                                "snippetSupport": false,
+                                "snippetSupport": true,
                                 "documentationFormat": ["markdown", "plaintext"],
                                 "deprecatedSupport": true,
                                 "preselectSupport": false,

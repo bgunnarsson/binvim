@@ -12,6 +12,27 @@ follows [Semantic Versioning](https://semver.org/).
   (new LSP, new tree-sitter grammar, motion/text-object).
 
 ### Added
+- **Inlay hints.** Added `textDocument/inlayHint` request +
+  response parser; hints render between buffer chars in dim italic
+  (Overlay1). Refetched once per buffer-version; respects horizontal
+  scroll and shares the line's width budget with the buffer chars.
+  Servers that publish hints (rust-analyzer, typescript-language-server,
+  gopls, …) now annotate types and parameters inline.
+- **Snippet expansion.** LSP completion items marked
+  `insertTextFormat == 2` get their `$N` / `${N:default}` / `$0`
+  placeholders parsed and resolved. The cursor lands at `$1` (or `$0`
+  if no `$1`); first-seen defaults mirror to later bare references of
+  the same stop. `snippetSupport: true` advertised in the initialize
+  payload so servers actually send them. Tab cycling between stops is
+  a follow-up.
+- **Project-wide substitute (`:S/pat/repl/[g]`).** Walks ripgrep for
+  every file containing `pat` under `cwd`, opens each, applies the
+  substitution buffer-wide, saves. Status reports total substitutions
+  + file count + any per-file errors. Range prefix ignored.
+- **Replace-all in buffer (`<leader>R`).** Literal-string counterpart
+  to LSP rename: gathers the word under the cursor, opens a prompt
+  pre-filled with it, on submit runs `:%s/word/new/g`. Useful when the
+  symbol isn't LSP-tracked (config files, comments, prose).
 - **Double-click to select word.** A second left-click at the same buffer
   position within 350ms expands to the inner word under the cursor and
   enters Visual-char mode.

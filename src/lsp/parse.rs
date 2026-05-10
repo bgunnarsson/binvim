@@ -5,7 +5,8 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 use super::types::{
-    CodeActionItem, CompletionItem, LocationItem, SignatureHelp, SymbolItem, uri_to_path,
+    CodeActionItem, CompletionItem, InlayHint, LocationItem, SignatureHelp, SymbolItem,
+    uri_to_path,
 };
 
 pub(super) fn parse_code_actions_response(result: &Value) -> Vec<CodeActionItem> {
@@ -304,6 +305,19 @@ pub(super) fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string())
             .unwrap_or_else(|| label.clone());
+        // `insertTextFormat`: 1 = PlainText, 2 = Snippet. Some servers also
+        // tag `textEdit.insertTextFormat`; fall back to that when the
+        // top-level field is absent.
+        let is_snippet = item
+            .get("insertTextFormat")
+            .and_then(|v| v.as_u64())
+            .or_else(|| {
+                item.get("textEdit")
+                    .and_then(|t| t.get("insertTextFormat"))
+                    .and_then(|v| v.as_u64())
+            })
+            .map(|n| n == 2)
+            .unwrap_or(false);
         out.push(CompletionItem {
             label,
             insert_text,
@@ -311,6 +325,7 @@ pub(super) fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
             detail,
             filter_text,
             sort_text,
+            is_snippet,
         });
     }
     out
@@ -372,6 +387,42 @@ pub(super) fn parse_def_response(result: &Value) -> Option<(PathBuf, usize, usiz
     let line = start.get("line")?.as_u64()? as usize;
     let col = start.get("character")?.as_u64()? as usize;
     Some((path, line, col))
+}
+
+/// Parse `textDocument/inlayHint` response. The LSP spec allows the
+/// `label` field to be either a string or an array of `InlayHintLabelPart`
+/// objects; we flatten the latter into a single string and ignore part
+/// metadata (tooltips, command refs) for now.
+pub(super) fn parse_inlay_hints_response(result: &Value) -> Vec<InlayHint> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        let Some(pos) = entry.get("position") else { continue };
+        let line = pos.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let col = pos.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let label = match entry.get("label") {
+            Some(v) if v.is_string() => v.as_str().unwrap_or("").to_string(),
+            Some(v) if v.is_array() => {
+                let mut s = String::new();
+                for part in v.as_array().unwrap() {
+                    if let Some(t) = part.get("value").and_then(|v| v.as_str()) {
+                        s.push_str(t);
+                    }
+                }
+                s
+            }
+            _ => continue,
+        };
+        if label.is_empty() {
+            continue;
+        }
+        let kind = entry.get("kind").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+        out.push(InlayHint { line, col, label, kind });
+    }
+    out
 }
 
 pub(super) fn parse_hover_response(result: &Value) -> Option<String> {

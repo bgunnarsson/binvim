@@ -54,7 +54,7 @@ use crate::config::Config;
 use crate::cursor::Cursor;
 use crate::editorconfig::EditorConfig;
 use crate::lang::HighlightCache;
-use crate::lsp::{CodeActionItem, LspManager, SignatureHelp};
+use crate::lsp::{CodeActionItem, InlayHint, LspManager, SignatureHelp};
 use crate::mode::Mode;
 use crate::parser::PendingCmd;
 use crate::picker::PickerState;
@@ -134,6 +134,12 @@ pub struct App {
     /// Most-recently-used files for the file picker. Persisted to
     /// `~/.cache/binvim/recents`.
     pub recents: Vec<PathBuf>,
+    /// Latest inlay hints per buffer path, indexed by canonicalised path.
+    /// Cleared on buffer reload, replaced on each `InlayHints` event.
+    pub inlay_hints: HashMap<PathBuf, Vec<InlayHint>>,
+    /// Buffer version we last asked inlay hints for, per path. Lets us
+    /// skip the request when nothing changed since the previous response.
+    pub last_inlay_request_version: HashMap<PathBuf, u64>,
     /// Wall clock of the last disk-mtime probe — drives the watch-and-reload
     /// loop without spamming syscalls.
     pub last_disk_check: Instant,
@@ -218,6 +224,8 @@ impl App {
             folds_version: u64::MAX,
             closed_folds: std::collections::HashSet::new(),
             recents: buffers::load_recents(),
+            inlay_hints: HashMap::new(),
+            last_inlay_request_version: HashMap::new(),
             last_disk_check: Instant::now(),
             last_click: None,
             replaying_macro: false,
@@ -246,6 +254,7 @@ impl App {
                 self.ensure_highlights();
                 self.ensure_folds();
                 self.lsp_sync_active_debounced();
+                self.lsp_request_inlay_hints_if_due();
                 render::draw(&mut stdout, self)?;
                 stdout.flush()?;
                 needs_render = false;

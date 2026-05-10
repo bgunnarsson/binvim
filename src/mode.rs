@@ -17,6 +17,10 @@ pub enum PromptKind {
     /// `<leader>r` — typed string is the new name for the symbol under
     /// the cursor at the time the prompt was opened.
     Rename,
+    /// `Ctrl-D` — typed string replaces every occurrence of the word
+    /// under the cursor in the current buffer. Literal-string match, not
+    /// LSP-aware (use `<leader>r` for that).
+    ReplaceAll,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

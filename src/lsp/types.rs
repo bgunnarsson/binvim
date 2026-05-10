@@ -41,6 +41,21 @@ pub enum LspIncoming {
     ApplyEditRequest { id: u64, edit: Value },
 }
 
+/// One inlay hint. `line`/`col` are 0-indexed buffer coordinates where
+/// the hint should appear; `label` is the displayable text. `kind` is
+/// the LSP `InlayHintKind` enum (1 = Type, 2 = Parameter).
+#[derive(Debug, Clone)]
+pub struct InlayHint {
+    pub line: usize,
+    pub col: usize,
+    pub label: String,
+    /// LSP `InlayHintKind`: 1 = Type, 2 = Parameter. Currently unused by
+    /// the renderer (both shown in the same dim italic) but kept for the
+    /// upcoming "param hints styled differently" pass.
+    #[allow(dead_code)]
+    pub kind: u8,
+}
+
 #[derive(Debug, Clone)]
 pub enum LspEvent {
     GotoDef { path: PathBuf, line: usize, col: usize },
@@ -62,6 +77,9 @@ pub enum LspEvent {
         edit: Value,
     },
     DiagnosticsUpdated,
+    /// `textDocument/inlayHint` results for `path` — the App stores them
+    /// per-buffer and the renderer pulls them on draw.
+    InlayHints { path: PathBuf, hints: Vec<InlayHint> },
     NotFound(&'static str),
 }
 
@@ -124,6 +142,10 @@ pub struct CompletionItem {
     /// LSP's relevance order survive client-side filtering (e.g. typescript's
     /// "0~document" sorts globals before locals when relevant).
     pub sort_text: String,
+    /// LSP `insertTextFormat == 2` — `insert_text` is a TextMate snippet
+    /// with `$N` / `${N:default}` placeholders that need to be parsed and
+    /// resolved before insertion.
+    pub is_snippet: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -13,6 +13,10 @@ pub enum ExCommand {
     BufferList,
     BufferSwitch(String),
     Substitute { range: ExRange, pattern: String, replacement: String, global: bool },
+    /// `:S/pat/repl/[g]` — project-wide substitute. Scans the workspace
+    /// with ripgrep, applies the substitution to every matching file,
+    /// saves each one. The range prefix (if any) is ignored.
+    ProjectSubstitute { pattern: String, replacement: String, global: bool },
     DeleteRange { range: ExRange },
     YankRange { range: ExRange },
     NoHighlight,
@@ -51,6 +55,11 @@ pub fn parse(line: &str) -> ExCommand {
     if let Some(args) = rest.strip_prefix('s') {
         if let Some((pat, repl, global)) = parse_substitute_args(args) {
             return ExCommand::Substitute { range, pattern: pat, replacement: repl, global };
+        }
+    }
+    if let Some(args) = rest.strip_prefix('S') {
+        if let Some((pat, repl, global)) = parse_substitute_args(args) {
+            return ExCommand::ProjectSubstitute { pattern: pat, replacement: repl, global };
         }
     }
     if rest == "d" || rest == "delete" {

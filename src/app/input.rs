@@ -653,6 +653,9 @@ impl super::App {
                     format!("{n} substitution{}", if n == 1 { "" } else { "s" })
                 };
             }
+            ExCommand::ProjectSubstitute { pattern, replacement, global } => {
+                self.project_substitute(&pattern, &replacement, global);
+            }
             ExCommand::DeleteRange { range } => {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.delete_lines(range);
@@ -688,6 +691,7 @@ impl super::App {
                 let input = std::mem::take(&mut self.cmdline);
                 match kind {
                     crate::mode::PromptKind::Rename => self.finish_rename(input),
+                    crate::mode::PromptKind::ReplaceAll => self.finish_replace_all(input),
                 }
                 self.mode = Mode::Normal;
                 self.rename_anchor = None;
@@ -733,7 +737,7 @@ impl super::App {
         }
     }
 
-    fn substitute(&mut self, range: ExRange, pat: &str, repl: &str, global: bool) -> usize {
+    pub(super) fn substitute(&mut self, range: ExRange, pat: &str, repl: &str, global: bool) -> usize {
         if pat.is_empty() {
             return 0;
         }
@@ -808,6 +812,83 @@ impl super::App {
         self.cursor.want_col = 0;
         self.status_msg = format!("{} lines deleted", l2 - l1 + 1);
         let _ = last_line;
+    }
+
+    /// Project-wide substitute. ripgrep enumerates the files that contain
+    /// `pattern`, then we walk each, open it into a buffer, apply the
+    /// substitution across every line, and save. The originally-active
+    /// buffer is restored at the end so the user lands back where they
+    /// were. No confirmation prompt — the user has git for safety.
+    fn project_substitute(&mut self, pattern: &str, replacement: &str, global: bool) {
+        if pattern.is_empty() {
+            self.status_msg = "S: empty pattern".into();
+            return;
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // Use ripgrep's --files-with-matches to get the candidate file list.
+        let files_output = std::process::Command::new("rg")
+            .arg("--files-with-matches")
+            .arg("--color=never")
+            .arg("--fixed-strings")
+            .arg("--")
+            .arg(pattern)
+            .arg(".")
+            .current_dir(&cwd)
+            .output();
+        let Ok(out) = files_output else {
+            self.status_msg = "S: ripgrep not on PATH".into();
+            return;
+        };
+        if !out.status.success() && out.stdout.is_empty() {
+            self.status_msg = format!("S: pattern not found: {pattern}");
+            return;
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let files: Vec<PathBuf> = stdout
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| cwd.join(l))
+            .collect();
+        if files.is_empty() {
+            self.status_msg = format!("S: pattern not found: {pattern}");
+            return;
+        }
+        let original_active = self.active;
+        let mut total_subs = 0usize;
+        let mut files_changed = 0usize;
+        let mut errors = 0usize;
+        for path in files {
+            if self.open_buffer(path.clone()).is_err() {
+                errors += 1;
+                continue;
+            }
+            self.history.record(&self.buffer.rope, self.cursor);
+            let n = self.substitute(crate::command::ExRange::Whole, pattern, replacement, global);
+            if n > 0 {
+                total_subs += n;
+                files_changed += 1;
+                if self.save_active().is_err() {
+                    errors += 1;
+                }
+            }
+        }
+        if original_active < self.buffers.len() && self.active != original_active {
+            let _ = self.switch_to(original_active);
+        }
+        self.status_msg = if total_subs == 0 {
+            format!("S: pattern not found: {pattern}")
+        } else {
+            format!(
+                "{total_subs} substitution{} across {files_changed} file{}{}",
+                if total_subs == 1 { "" } else { "s" },
+                if files_changed == 1 { "" } else { "s" },
+                if errors > 0 {
+                    format!(" ({errors} error{})", if errors == 1 { "" } else { "s" })
+                } else {
+                    String::new()
+                },
+            )
+        };
     }
 
     fn yank_lines(&mut self, range: ExRange) {

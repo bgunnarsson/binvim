@@ -128,6 +128,10 @@ pub enum Action {
     LspGotoDefinition,
     LspFindReferences,
     LspRename,
+    /// `<leader>R` — literal-string replace-all of the word under the
+    /// cursor in the current buffer. Opens a prompt; on Enter applies the
+    /// replacement to every occurrence via the same machinery as `:%s`.
+    ReplaceAllInBuffer,
     /// `ds{char}` — strip the surrounding pair around the cursor.
     SurroundDelete { ch: char },
     /// `cs{old}{new}` — swap the surrounding pair from `old` to `new`.
@@ -481,6 +485,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
                 'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
                 'r' => Some(Action::LspRename),
+                'R' => Some(Action::ReplaceAllInBuffer),
                 _ => None,
             };
             if let Some(a) = action {

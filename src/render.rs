@@ -1368,6 +1368,23 @@ fn draw_line_with_selection(
     let mut visual_used = 0usize;
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
+    let hint_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
+
+    // Pre-bin inlay hints by column so we can render them inline at the
+    // start of each char iteration (and once more after the last char,
+    // for hints anchored at end-of-line).
+    let mut hint_at: Vec<Vec<&crate::lsp::InlayHint>> = vec![Vec::new(); chars.len() + 1];
+    if !dim {
+        if let Some(path) = app.buffer.path.as_ref() {
+            if let Some(hints) = app.inlay_hints.get(path) {
+                for h in hints {
+                    if h.line == line_idx && h.col <= chars.len() {
+                        hint_at[h.col].push(h);
+                    }
+                }
+            }
+        }
+    }
     let dim_color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
     // `:set list` equivalent — render every space as `·`, every tab as
     // `→` + filler, every non-breaking space as `⎵`, and the end-of-line
@@ -1394,6 +1411,36 @@ fn draw_line_with_selection(
     }
     let mut clipped_right = false;
     for (col, c) in chars.iter().enumerate() {
+        // Paint any inlay hints anchored at this column before the char.
+        // Hints contribute to the on-screen width budget so the buffer
+        // chars after them still wrap and clip correctly.
+        if !hint_at[col].is_empty() && line_visual_pos >= view_left {
+            for h in &hint_at[col] {
+                let label_w = h.label.chars().count();
+                let remaining = avail.saturating_sub(visual_used);
+                if remaining == 0 {
+                    break;
+                }
+                let printable: String = h.label.chars().take(remaining).collect();
+                let written = printable.chars().count();
+                queue!(
+                    out,
+                    SetForegroundColor(hint_fg),
+                    SetAttribute(Attribute::Italic),
+                    Print(&printable),
+                    SetAttribute(Attribute::Reset),
+                    ResetColor,
+                )?;
+                visual_used += written;
+                if written < label_w {
+                    clipped_right = true;
+                    break;
+                }
+            }
+            if clipped_right {
+                break;
+            }
+        }
         let display_w = if *c == '\t' { TAB_WIDTH } else { 1 };
         let char_visual_end = line_visual_pos + display_w;
         // Entirely off the left edge — advance trackers, render nothing.
@@ -1520,6 +1567,34 @@ fn draw_line_with_selection(
                     Print(" "),
                     SetAttribute(Attribute::Reset)
                 )?;
+            }
+        }
+    }
+
+    // Inlay hints anchored at end-of-line (col == chars.len()) — most
+    // common case for type annotations on `let` bindings.
+    if !clipped_right && !hint_at[chars.len()].is_empty() {
+        for h in &hint_at[chars.len()] {
+            let label_w = h.label.chars().count();
+            let remaining = avail.saturating_sub(visual_used);
+            if remaining == 0 {
+                clipped_right = true;
+                break;
+            }
+            let printable: String = h.label.chars().take(remaining).collect();
+            let written = printable.chars().count();
+            queue!(
+                out,
+                SetForegroundColor(hint_fg),
+                SetAttribute(Attribute::Italic),
+                Print(&printable),
+                SetAttribute(Attribute::Reset),
+                ResetColor,
+            )?;
+            visual_used += written;
+            if written < label_w {
+                clipped_right = true;
+                break;
             }
         }
     }

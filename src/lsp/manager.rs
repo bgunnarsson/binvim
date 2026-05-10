@@ -17,7 +17,7 @@ use super::types::{
     path_to_uri, uri_to_path, ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) enum PendingRequest {
     GotoDef,
     Hover,
@@ -28,6 +28,10 @@ pub(super) enum PendingRequest {
     WorkspaceSymbols,
     CodeActions,
     Rename,
+    /// Carries the requesting path so the response — which the LSP spec
+    /// returns without echoing the URI — can be routed back to the right
+    /// buffer in the editor.
+    InlayHints { path: PathBuf },
 }
 
 /// Container for per-language LSP clients keyed by `ServerSpec.key`.
@@ -400,6 +404,30 @@ impl LspManager {
         true
     }
 
+    /// Request `textDocument/inlayHint` for a line range. `end_line` is
+    /// exclusive (LSP `Range.end`). Skipped silently when the primary
+    /// server is missing.
+    pub fn request_inlay_hints(&mut self, path: &Path, end_line: usize) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/inlayHint",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "range": {
+                    "start": { "line": 0, "character": 0 },
+                    "end":   { "line": end_line, "character": 0 },
+                }
+            }),
+        );
+        self.pending.insert(
+            (client.name.clone(), id),
+            PendingRequest::InlayHints { path: path.to_path_buf() },
+        );
+        true
+    }
+
     /// Request `textDocument/signatureHelp` from the primary server. Goes
     /// to one server only — multi-server fan-out wouldn't help here, the
     /// primary is the source of truth for the language's call syntax.
@@ -478,6 +506,10 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
             } else {
                 Some(LspEvent::Rename { edit: result.clone() })
             }
+        }
+        PendingRequest::InlayHints { path } => {
+            let hints = super::parse::parse_inlay_hints_response(result);
+            Some(LspEvent::InlayHints { path, hints })
         }
     }
 }

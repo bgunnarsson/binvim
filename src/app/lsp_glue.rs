@@ -71,6 +71,13 @@ impl super::App {
                     self.lsp.send_apply_edit_response(&client_key, id, applied);
                 }
                 LspEvent::DiagnosticsUpdated => {}
+                LspEvent::InlayHints { path, hints } => {
+                    if hints.is_empty() {
+                        self.inlay_hints.remove(&path);
+                    } else {
+                        self.inlay_hints.insert(path, hints);
+                    }
+                }
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
                         // Auto-trigger fires on every keystroke; silently
@@ -229,6 +236,58 @@ impl super::App {
         self.mode = Mode::Prompt(crate::mode::PromptKind::Rename);
     }
 
+    /// Open the literal-string replace-all prompt. Captures the word
+    /// under the cursor as the search term and stashes it in
+    /// `rename_anchor`; the prompt key handler routes the typed
+    /// replacement to `finish_replace_all`.
+    pub(super) fn start_replace_all_prompt(&mut self) {
+        let Some(current) = self.word_under_cursor() else {
+            self.status_msg = "No word under cursor".into();
+            return;
+        };
+        // We reuse `rename_anchor` to carry the original word — the path
+        // / line / col fields are unused for replace-all but the tuple
+        // is the only place a prompt action has to stash arbitrary data
+        // alongside the typed string.
+        let placeholder = self.buffer.path.clone().unwrap_or_default();
+        self.rename_anchor = Some((placeholder, 0, 0, current.clone()));
+        self.cmdline = current;
+        self.mode = Mode::Prompt(crate::mode::PromptKind::ReplaceAll);
+    }
+
+    /// Apply the typed replacement to every occurrence of the captured
+    /// word in the current buffer. Uses the same machinery as `:%s` for
+    /// the actual substitution.
+    pub(super) fn finish_replace_all(&mut self, new_text: String) {
+        let Some((_, _, _, original)) = self.rename_anchor.clone() else {
+            self.status_msg = "replace: lost anchor".into();
+            return;
+        };
+        if new_text == original {
+            self.status_msg = "replace: unchanged".into();
+            return;
+        }
+        if new_text.is_empty() {
+            self.status_msg = "replace cancelled (empty)".into();
+            return;
+        }
+        self.history.record(&self.buffer.rope, self.cursor);
+        let n = self.substitute(
+            crate::command::ExRange::Whole,
+            &original,
+            &new_text,
+            true,
+        );
+        self.status_msg = if n == 0 {
+            format!("Pattern not found: {original}")
+        } else {
+            format!(
+                "{n} replacement{}",
+                if n == 1 { "" } else { "s" }
+            )
+        };
+    }
+
     pub(super) fn finish_rename(&mut self, new_name: String) {
         let trimmed = new_name.trim();
         if trimmed.is_empty() {
@@ -290,17 +349,29 @@ impl super::App {
         let Some(item) = c.items.get(c.selected).cloned() else {
             return;
         };
-        // Replace [(anchor_line, anchor_col), cursor) with insert_text.
-        if c.anchor_line == self.cursor.line {
-            let start = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
-            let end = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
-            if end >= start {
-                self.buffer.delete_range(start, end);
-            }
-            self.buffer.insert_at_idx(start, &item.insert_text);
-            let new_idx = start + item.insert_text.chars().count();
-            self.cursor_to_idx(new_idx);
+        if c.anchor_line != self.cursor.line {
+            return;
         }
+        let start = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
+        let end = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        if end >= start {
+            self.buffer.delete_range(start, end);
+        }
+        // Snippet items go through the placeholder expander so `${1:foo}`
+        // doesn't end up as literal text in the buffer. Plain items insert
+        // verbatim.
+        let (text, first_stop_offset) = if item.is_snippet {
+            expand_snippet(&item.insert_text)
+        } else {
+            (item.insert_text.clone(), None)
+        };
+        self.buffer.insert_at_idx(start, &text);
+        let inserted = text.chars().count();
+        let landing = match first_stop_offset {
+            Some(off) => start + off.min(inserted),
+            None => start + inserted,
+        };
+        self.cursor_to_idx(landing);
     }
 
     pub(super) fn lsp_attach_active(&mut self) {
@@ -384,6 +455,27 @@ impl super::App {
         let col = self.cursor.col;
         if !self.lsp.request_definition(&path, line, col) {
             self.status_msg = "LSP: not active for this buffer".into();
+        }
+    }
+
+    /// Ask the active buffer's LSP for inlay hints — once per buffer
+    /// version. Throttled by `last_inlay_request_version` so we don't
+    /// spam the server on every keystroke; the debounced sync upstream
+    /// already coalesces text changes.
+    pub(super) fn lsp_request_inlay_hints_if_due(&mut self) {
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let version = self.buffer.version;
+        let last = self
+            .last_inlay_request_version
+            .get(&path)
+            .copied()
+            .unwrap_or(u64::MAX);
+        if last == version {
+            return;
+        }
+        let end_line = self.buffer.line_count();
+        if self.lsp.request_inlay_hints(&path, end_line) {
+            self.last_inlay_request_version.insert(path, version);
         }
     }
 
@@ -695,6 +787,146 @@ impl super::App {
             })
             .collect();
         crate::picker::replace_items(picker, entries);
+    }
+}
+
+/// Resolve a TextMate-style LSP snippet into plain text and the char
+/// offset of the first tab stop. Recognises `$N`, `${N}`, `${N:default}`,
+/// `$0`, and `\$` for escaping. Anything more exotic (regex transforms,
+/// choice lists) is left untouched — landing the cursor at `$1` and
+/// expanding defaults covers the >95% of snippets servers emit.
+///
+/// Returns `(resolved_text, first_stop_char_offset)`. The offset prefers
+/// `$1`; if no `$1` exists it falls back to `$0`; otherwise the cursor
+/// lands at the end of the resolved text.
+fn expand_snippet(template: &str) -> (String, Option<usize>) {
+    use std::collections::HashMap;
+    let chars: Vec<char> = template.chars().collect();
+    let mut out = String::new();
+    // (tab_stop_index, char_offset_into_out)
+    let mut stops: Vec<(u32, usize)> = Vec::new();
+    // First-seen default text per stop. Subsequent bare `$N` references
+    // mirror this — matches what most LSP servers expect from a snippet
+    // consumer for the common `for (let ${1:i} = 0; $1 < $1.length; $1++)`
+    // pattern.
+    let mut defaults: HashMap<u32, String> = HashMap::new();
+    let mut i = 0usize;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && i + 1 < chars.len() {
+            out.push(chars[i + 1]);
+            i += 2;
+            continue;
+        }
+        if c != '$' {
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        let next = chars.get(i + 1).copied();
+        match next {
+            Some(d) if d.is_ascii_digit() => {
+                // `$N` — read run of digits.
+                let mut j = i + 1;
+                let mut idx: u32 = 0;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    idx = idx.saturating_mul(10).saturating_add(chars[j] as u32 - '0' as u32);
+                    j += 1;
+                }
+                let here = out.chars().count();
+                if let Some(def) = defaults.get(&idx) {
+                    out.push_str(def);
+                }
+                stops.push((idx, here));
+                i = j;
+            }
+            Some('{') => {
+                // `${N}` or `${N:default}` — find the matching `}`.
+                let mut j = i + 2;
+                let mut idx: u32 = 0;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    idx = idx.saturating_mul(10).saturating_add(chars[j] as u32 - '0' as u32);
+                    j += 1;
+                }
+                let here = out.chars().count();
+                let mut default_text = String::new();
+                if chars.get(j) == Some(&':') {
+                    j += 1;
+                    while j < chars.len() && chars[j] != '}' {
+                        if chars[j] == '\\' && j + 1 < chars.len() {
+                            default_text.push(chars[j + 1]);
+                            j += 2;
+                            continue;
+                        }
+                        default_text.push(chars[j]);
+                        j += 1;
+                    }
+                }
+                if chars.get(j) == Some(&'}') {
+                    j += 1;
+                }
+                if default_text.is_empty() {
+                    if let Some(prev) = defaults.get(&idx) {
+                        out.push_str(prev);
+                    }
+                } else {
+                    out.push_str(&default_text);
+                    defaults.entry(idx).or_insert(default_text);
+                }
+                stops.push((idx, here));
+                i = j;
+            }
+            _ => {
+                out.push('$');
+                i += 1;
+            }
+        }
+    }
+    let stop = stops
+        .iter()
+        .find(|(idx, _)| *idx == 1)
+        .or_else(|| stops.iter().find(|(idx, _)| *idx == 0))
+        .map(|(_, off)| *off);
+    (out, stop)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::expand_snippet;
+
+    #[test]
+    fn snippet_plain_text_passthrough() {
+        assert_eq!(expand_snippet("hello").0, "hello");
+        assert_eq!(expand_snippet("hello").1, None);
+    }
+
+    #[test]
+    fn snippet_basic_stop() {
+        let (text, stop) = expand_snippet("console.log($1)");
+        assert_eq!(text, "console.log()");
+        assert_eq!(stop, Some(12)); // right between the parens
+    }
+
+    #[test]
+    fn snippet_default_text_expanded() {
+        let (text, stop) = expand_snippet("for (let ${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}");
+        assert_eq!(text, "for (let i = 0; i < n; i++) {\n\t\n}");
+        // First $1 is at "for (let " — that's 9 chars.
+        assert_eq!(stop, Some(9));
+    }
+
+    #[test]
+    fn snippet_zero_stop_used_when_no_one() {
+        let (text, stop) = expand_snippet("return $0;");
+        assert_eq!(text, "return ;");
+        assert_eq!(stop, Some(7));
+    }
+
+    #[test]
+    fn snippet_escaped_dollar() {
+        let (text, stop) = expand_snippet("\\$keep $1");
+        assert_eq!(text, "$keep ");
+        assert_eq!(stop, Some(6));
     }
 }
 

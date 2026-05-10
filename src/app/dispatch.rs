@@ -98,6 +98,7 @@ impl super::App {
             Action::LspGotoDefinition => self.lsp_request_goto(),
             Action::LspFindReferences => self.lsp_request_references(),
             Action::LspRename => self.start_rename_prompt(),
+            Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
             Action::SurroundDelete { ch } => {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.surround_delete(ch);
