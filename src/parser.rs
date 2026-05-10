@@ -26,8 +26,10 @@ pub enum MotionVerb {
     FindChar { ch: char, forward: bool, before: bool },
     RepeatFind { reverse: bool },
     SearchNext { reverse: bool },
+    #[allow(dead_code)]
     ViewportTop,
     ViewportMiddle,
+    #[allow(dead_code)]
     ViewportBottom,
     Mark { name: char, exact: bool },
 }
@@ -760,9 +762,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         '0' => Some(MotionVerb::LineStart),
         '^' => Some(MotionVerb::FirstNonBlank),
         '$' => Some(MotionVerb::LineEnd),
-        'H' => Some(MotionVerb::ViewportTop),
+        // H / L are bound to buffer cycling instead of the viewport
+        // top/bottom motions — see the singleton-Action match below.
         'M' => Some(MotionVerb::ViewportMiddle),
-        'L' => Some(MotionVerb::ViewportBottom),
         'G' => {
             let n = state.count1.or(state.count2);
             Some(match n {
@@ -806,6 +808,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'P' => Some(Action::Put { before: true, count: state.total_count(), register: state.register }),
             ':' => Some(Action::EnterCommand),
             '.' => Some(Action::Repeat),
+            // Buffer cycling — replaces the H/L viewport motions.
+            // `<leader>bn`/`<leader>bp` still work for the same effect.
+            'H' => Some(Action::BufferPrev),
+            'L' => Some(Action::BufferNext),
             'D' => Some(Action::Operate {
                 op: Operator::Delete,
                 motion: MotionVerb::LineEnd,

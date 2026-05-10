@@ -167,21 +167,15 @@ impl super::App {
         if in_overlay {
             return;
         }
-        // Tab-bar click: anywhere in the bar's rows when tabs are
-        // showing. Left-click on a tab's close glyph (only valid on the
-        // content row) deletes the buffer; click anywhere else inside
-        // the tab switches to it.
+        // Tab-bar click: only on the very top row when tabs are showing.
+        // Left-click on a tab's close glyph deletes the buffer; click
+        // anywhere else inside the tab switches to it.
         let buffer_top = self.buffer_top();
-        if buffer_top > 0 && row < buffer_top {
+        if buffer_top > 0 && row == 0 {
             if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
-                // The close button only lives on the content row
-                // (`buffer_top - 1`). A click on the padding row that
-                // happens to share a column with `×` still switches the
-                // tab rather than closing it — easier to recover from.
-                let is_content_row = row + 1 == buffer_top;
                 for slot in crate::render::tab_layout(self) {
                     if col >= slot.start_col && col < slot.end_col {
-                        if is_content_row && slot.close_col == Some(col) {
+                        if slot.close_col == Some(col) {
                             // Match :bd behaviour: refuse to drop a
                             // dirty buffer. The user can :bd! force or
                             // save first.

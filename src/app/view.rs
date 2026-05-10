@@ -253,11 +253,9 @@ impl super::App {
     }
 
     /// Y of the topmost buffer row. Equal to the tab-bar height —
-    /// 2 when tabs are showing (row 0 is a padding strip that lets the
-    /// active tab visually span two rows, row 1 has the content), 0
-    /// otherwise.
+    /// 1 when tabs are showing, 0 otherwise.
     pub fn buffer_top(&self) -> usize {
-        if self.show_tabs() { 2 } else { 0 }
+        if self.show_tabs() { 1 } else { 0 }
     }
 
     /// Any overlay (command line, search prompt, picker, hover, completion) is active —

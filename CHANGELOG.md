@@ -20,10 +20,13 @@ follows [Semantic Versioning](https://semver.org/).
   deletion, so all cursors sit exactly where the deleted ranges were.
 
 ### Changed
-- **Tab bar is now 2 rows tall.** Active tab's background extends into
-  the padding row above the content row, giving the active block a
-  visually heavier feel. Clicks on either row inside the bar switch
-  the tab; the close button is only valid on the content row.
+- **`H` / `L` cycle buffers (tabs).** Shift-h / shift-l in Normal mode
+  now switch to the previous / next buffer respectively (same as
+  `:bp`/`:bn` and `<leader>bp`/`<leader>bn`). They no longer fire the
+  Vim viewport-top / viewport-bottom motions — use `M` (viewport
+  middle) and the scroll commands for those workflows.
+- **Tab bar reverted to one row.** Drops the 2-row variant. File-type
+  icon column also removed; each tab is just ` label[ +]  × ` now.
 
 ### Fixed
 - **Snippet / completion accept honours `textEdit.range`.** Servers
