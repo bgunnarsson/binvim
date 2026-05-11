@@ -174,7 +174,7 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "constant" | "boolean" | "number" | "float" => Some(CATP_PEACH),
         "operator" => Some(CATP_SKY),
         "attribute" => Some(CATP_YELLOW),
-        "tag" => Some(CATP_MAUVE),
+        "tag" => Some(CATP_PINK),
         "label" => Some(CATP_SAPPHIRE),
         "property" | "key" => Some(CATP_LAVENDER),
         "parameter" => Some(CATP_MAROON),
