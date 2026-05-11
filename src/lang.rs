@@ -17,6 +17,13 @@ pub enum Lang {
     Css,
     Markdown,
     CSharp,
+    /// Razor (`.cshtml` / `.razor`) — tree-sitter-razor extends the C#
+    /// grammar with Razor's `@`-prefixed directives, code blocks, and
+    /// implicit/explicit expressions. We pair its tree with the C# highlight
+    /// query plus a Razor overlay so C# inside `@{}`/`@if`/`@expr` actually
+    /// gets coloured, instead of falling out as plain text under the HTML
+    /// grammar.
+    Razor,
     Bash,
 }
 
@@ -30,7 +37,8 @@ impl Lang {
                 "jsx" | "js" | "mjs" | "cjs" => return Some(Lang::JavaScript),
                 "json" | "jsonc" => return Some(Lang::Json),
                 "go" => return Some(Lang::Go),
-                "html" | "htm" | "cshtml" | "razor" => return Some(Lang::Html),
+                "html" | "htm" => return Some(Lang::Html),
+                "cshtml" | "razor" => return Some(Lang::Razor),
                 "css" | "scss" | "less" => return Some(Lang::Css),
                 "md" | "markdown" => return Some(Lang::Markdown),
                 "cs" => return Some(Lang::CSharp),
@@ -64,7 +72,8 @@ impl Lang {
             }
             "json" | "jsonc" => Some(Lang::Json),
             "go" | "golang" => Some(Lang::Go),
-            "html" | "htm" | "xhtml" | "cshtml" | "razor" => Some(Lang::Html),
+            "html" | "htm" | "xhtml" => Some(Lang::Html),
+            "cshtml" | "razor" => Some(Lang::Razor),
             "css" | "scss" | "sass" | "less" => Some(Lang::Css),
             "markdown" | "md" => Some(Lang::Markdown),
             "csharp" | "cs" | "c#" => Some(Lang::CSharp),
@@ -85,6 +94,7 @@ impl Lang {
             Lang::Css => tree_sitter_css::LANGUAGE.into(),
             Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
             Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            Lang::Razor => tree_sitter_razor::LANGUAGE.into(),
             Lang::Bash => tree_sitter_bash::LANGUAGE.into(),
         }
     }
@@ -159,6 +169,15 @@ impl Lang {
             Lang::Css => tree_sitter_css::HIGHLIGHTS_QUERY.into(),
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
             Lang::CSharp => tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(),
+            // Razor's grammar extends C#, so the bundled C# query already
+            // matches every C# node inside `@{}`, `@if`, `@(expr)`, etc.
+            // The Razor overlay tags the `@`-marker directives and the
+            // Razor / HTML comment nodes that the C# query has no view of.
+            Lang::Razor => format!(
+                "{}\n{}",
+                tree_sitter_c_sharp::HIGHLIGHTS_QUERY,
+                RAZOR_OVERLAY_QUERY,
+            ),
             Lang::Bash => tree_sitter_bash::HIGHLIGHT_QUERY.into(),
         }
     }
@@ -218,6 +237,60 @@ const JSX_OVERLAY_QUERY: &str = r#"
 
 ; Attribute names — `className=`, `onClick=`, etc.
 (jsx_attribute (property_identifier) @attribute)
+"#;
+
+/// Extra captures layered on top of the C# highlight query for Razor files.
+/// The `at_*` nodes are aliases the grammar attaches to the `@`-prefixed
+/// keyword sequences (`@inject`, `@if`, `@{`, `@(...)`, `@*…*@` opener, …) —
+/// matching them as `@keyword.directive` paints both the `@` and the keyword
+/// in the same Mauve tone, the way an LSP highlighter would. HTML tag and
+/// attribute names are produced by anonymous lexer rules in the grammar so
+/// they aren't reachable from a tree-sitter query; those are handled by the
+/// `apply_razor_html_overlay` regex post-pass below.
+const RAZOR_OVERLAY_QUERY: &str = r#"
+; `at_*` are anonymous string aliases in the grammar (`alias(seq("@", "if"),
+; "at_if")`), so they need string-literal query syntax, not named-node parens.
+[
+  "at_page"
+  "at_using"
+  "at_model"
+  "at_inherits"
+  "at_layout"
+  "at_attribute"
+  "at_implements"
+  "at_typeparam"
+  "at_inject"
+  "at_namespace"
+  "at_rendermode"
+  "at_preservewhitespace"
+  "at_block"
+  "at_section"
+  "at_explicit"
+  "at_implicit"
+  "at_await"
+  "at_lock"
+  "at_if"
+  "at_try"
+  "at_switch"
+  "at_for"
+  "at_foreach"
+  "at_while"
+  "at_do"
+  "at_colon_transition"
+  "at_at_escape"
+] @keyword.directive
+
+(razor_comment) @comment
+(html_comment) @comment
+
+; HTML element delimiters and the attribute `=` — the tag name and
+; attribute name themselves are anonymous in the grammar, so we colour
+; them in a regex post-pass instead. Painting the brackets here gives
+; the structural cue even before that pass runs.
+(element "<" @punctuation.bracket)
+(element ">" @punctuation.bracket)
+(element "/>" @punctuation.bracket)
+(element "=" @operator)
 "#;
 
 #[derive(Clone)]
@@ -281,5 +354,189 @@ pub fn compute_byte_colors(lang: Lang, source: &str, config: &Config) -> Option<
             }
         }
     }
+    if lang == Lang::Razor {
+        apply_razor_html_overlay(&tree, source.as_bytes(), &mut colors, config);
+    }
     Some(colors)
+}
+
+/// HTML tag and attribute names are produced by anonymous lexer rules in
+/// tree-sitter-razor (`_tag_name`, `_html_attribute_name`), so they don't
+/// appear as queryable nodes — only their surrounding `<`/`>`/`=` do.
+/// Walk the parsed tree, find each `element`, and colour the tag name (the
+/// run of `[A-Za-z0-9_:-]+` right after `<` or `</`) plus every attribute
+/// name (a run before `=`). Only paints over uncoloured bytes so any nested
+/// Razor expression already coloured by the main query stays put.
+fn apply_razor_html_overlay(
+    tree: &tree_sitter::Tree,
+    source: &[u8],
+    colors: &mut [Option<Color>],
+    config: &Config,
+) {
+    let tag_color = config.color_for_capture("tag");
+    let attr_color = config.color_for_capture("attribute");
+    if tag_color.is_none() && attr_color.is_none() {
+        return;
+    }
+    let mut stack = vec![tree.root_node()];
+    while let Some(node) = stack.pop() {
+        if node.kind() == "element" {
+            colour_element_names(node, source, colors, tag_color, attr_color);
+            // Nested elements still need their own pass — keep walking.
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            stack.push(child);
+        }
+    }
+}
+
+fn colour_element_names(
+    node: tree_sitter::Node,
+    source: &[u8],
+    colors: &mut [Option<Color>],
+    tag_color: Option<Color>,
+    attr_color: Option<Color>,
+) {
+    let start = node.start_byte();
+    let end = node.end_byte().min(source.len());
+    if end <= start {
+        return;
+    }
+    // Build the set of byte ranges that belong to direct child nodes — for
+    // an `element`, those are nested elements, Razor expressions, the
+    // `_end_tag` etc. We want to paint within `element`'s direct text only,
+    // skipping any descendant's bytes so we never overwrite C#/Razor colours.
+    let mut child_ranges: Vec<(usize, usize)> = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        // The literal `<`/`>`/`/>`/`=` tokens are 1-2 bytes and contain no
+        // identifier we'd want to colour — keeping them in `child_ranges`
+        // would just create gaps in the scan, so allow them.
+        let kind = child.kind();
+        if matches!(kind, "<" | ">" | "/>" | "=" | "\"") {
+            continue;
+        }
+        child_ranges.push((child.start_byte(), child.end_byte().min(source.len())));
+    }
+    child_ranges.sort_by_key(|r| r.0);
+    let in_child = |pos: usize| -> bool {
+        child_ranges.iter().any(|(s, e)| pos >= *s && pos < *e)
+    };
+    let is_name_byte = |b: u8| -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':')
+    };
+    // Tag name: right after a `<` or `</`, skipping descendant bytes.
+    let mut i = start;
+    while i < end {
+        if in_child(i) {
+            i += 1;
+            continue;
+        }
+        let b = source[i];
+        if b == b'<' {
+            let mut j = i + 1;
+            if j < end && source[j] == b'/' {
+                j += 1;
+            }
+            let name_start = j;
+            while j < end && !in_child(j) && is_name_byte(source[j]) {
+                j += 1;
+            }
+            if j > name_start {
+                if let Some(color) = tag_color {
+                    for k in name_start..j {
+                        if colors[k].is_none() {
+                            colors[k] = Some(color);
+                        }
+                    }
+                }
+            }
+            i = j.max(i + 1);
+            continue;
+        }
+        // Attribute name: a run of name chars immediately followed by `=`.
+        if is_name_byte(b) {
+            let name_start = i;
+            let mut j = i;
+            while j < end && !in_child(j) && is_name_byte(source[j]) {
+                j += 1;
+            }
+            if j < end && !in_child(j) && source[j] == b'=' {
+                if let Some(color) = attr_color {
+                    for k in name_start..j {
+                        if colors[k].is_none() {
+                            colors[k] = Some(color);
+                        }
+                    }
+                }
+            }
+            i = j.max(i + 1);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+
+    #[test]
+    fn razor_detects_cshtml() {
+        assert_eq!(
+            Lang::detect(std::path::Path::new("foo.cshtml")),
+            Some(Lang::Razor)
+        );
+        assert_eq!(
+            Lang::detect(std::path::Path::new("Bar.razor")),
+            Some(Lang::Razor)
+        );
+        // Plain HTML still goes to the HTML grammar — Razor's tag-name
+        // overlay is regex-based and would underperform tree-sitter-html
+        // on files that don't need any Razor support.
+        assert_eq!(
+            Lang::detect(std::path::Path::new("page.html")),
+            Some(Lang::Html)
+        );
+    }
+
+    #[test]
+    fn razor_colours_directives_and_csharp_blocks() {
+        let src = r#"@inject IFoo foo
+@using Some.Namespace
+@{
+    var x = "hello";
+    if (x.Length > 0) { return; }
+}
+<div class="card"><span>@x</span></div>
+"#;
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Razor, src, &cfg).expect("highlight ok");
+        // `@inject` at byte 0..7 should be coloured as a directive.
+        assert!(colors[0].is_some(), "@ in @inject should be coloured");
+        assert!(colors[5].is_some(), "inject keyword should be coloured");
+        // `var` is a C# keyword inside the @{} block.
+        let var_idx = src.find("var").unwrap();
+        assert!(
+            colors[var_idx].is_some(),
+            "`var` inside @{{}} should pick up C# keyword colour"
+        );
+        // The string literal `"hello"` should be coloured.
+        let hello_idx = src.find("\"hello\"").unwrap();
+        assert!(
+            colors[hello_idx + 1].is_some(),
+            "`hello` inside string literal should be coloured"
+        );
+        // Tag name `div` and attribute `class` should be picked up by the
+        // regex post-pass. (Skip if the grammar misparses; the post-pass
+        // only paints over uncoloured bytes anyway.)
+        if let Some(div_idx) = src.find("<div") {
+            assert!(
+                colors[div_idx + 1].is_some(),
+                "HTML tag name `div` should be coloured via the post-pass"
+            );
+        }
+    }
 }

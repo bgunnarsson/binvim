@@ -56,6 +56,7 @@ dependencies = [
  "tree-sitter-javascript",
  "tree-sitter-json",
  "tree-sitter-md",
+ "tree-sitter-razor",
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "unicode-segmentation",
@@ -767,6 +768,16 @@ name = "tree-sitter-md"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "17f968c22a01010b83fc960455ae729db08dbeb6388617d9113897cb9204b030"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-razor"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c99d14709439f7c7383c8376765219ece638eddb86ccc2b434a4853c64838c5"
 dependencies = [
  "cc",
  "tree-sitter-language",

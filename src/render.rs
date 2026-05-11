@@ -1953,7 +1953,7 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Html => '\u{e60e}',
         Lang::Css => '\u{e749}',
         Lang::Markdown => '\u{e609}',
-        Lang::CSharp => '\u{f81a}',
+        Lang::CSharp | Lang::Razor => '\u{f81a}',
         Lang::Bash => '\u{f489}',
     }
 }
@@ -1970,6 +1970,7 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::Css => "css",
         Lang::Markdown => "markdown",
         Lang::CSharp => "csharp",
+        Lang::Razor => "razor",
         Lang::Bash => "bash",
     }
 }
