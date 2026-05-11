@@ -41,11 +41,6 @@ doesn't drift out of memory.
 
 ## Bigger projects
 
-- **Split windows / panes.** `:vsp` / `:sp`. The biggest functional
-  gap. App's single-buffer rendering assumes one viewport; adding
-  splits means a `Window` tree, per-window cursor/viewport, and the
-  layout math in `render.rs` becomes substantial. High ROI but real
-  work.
 - **Quickfix list.** Step through compile errors / grep results /
   LSP diagnostics with `:cnext`. The pickers cover discovery; a
   quickfix list covers iteration.
@@ -56,9 +51,6 @@ doesn't drift out of memory.
 - **Git gutter + inline blame.** `+`/`~`/`-` sign-column markers for
   changed lines; `]c`/`[c` hunks navigation; `<leader>gb` toggle for
   per-line blame. Sign column already exists for diagnostics.
-- **DAP (debugger).** Biggest lift on the list, biggest payoff if
-  Rust / Go is the day job. Would touch the LSP module's
-  send-request infrastructure to bolt on a parallel DAP client.
 - **Multi-cursor across motions / operators.** Today only Insert-
   mode typing / Backspace mirror. Mirroring `dw` / `cw` / `yy` etc.
   across N cursors requires every primitive in `app/edit.rs` and
