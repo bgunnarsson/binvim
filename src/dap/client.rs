@@ -6,30 +6,34 @@
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::io::Write;
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::io::{BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, ChildStderr, Command, Stdio};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::io::reader_loop;
 use super::specs::{resolve_command, DapAdapterSpec};
-use super::types::DapIncoming;
+use super::types::{DapIncoming, OutputLine};
 
 pub struct DapClient {
     #[allow(dead_code)]
     pub adapter_key: String,
-    _child: Child,
+    child: Arc<Mutex<Child>>,
     stdin: Arc<Mutex<ChildStdin>>,
     pub incoming_rx: Receiver<DapIncoming>,
+    /// Adapter stderr — populated by a side thread that pushes each line
+    /// into the channel as a synthetic `output` event. Lets the user see
+    /// adapter crashes that would otherwise look like a silent hang.
+    pub stderr_rx: Receiver<OutputLine>,
     next_seq: Arc<Mutex<u64>>,
 }
 
 impl DapClient {
-    /// Spawn the adapter described by `spec`. The reader thread starts
-    /// immediately and pushes parsed messages onto the returned receiver.
-    /// Returns `None` if the adapter command can't be resolved on `$PATH`
-    /// or the spawn itself fails.
+    /// Spawn the adapter described by `spec`. Two reader threads start
+    /// immediately: one parses framed DAP messages off stdout, the other
+    /// drains stderr into a synthetic output channel so adapter crashes
+    /// surface to the pane instead of disappearing.
     pub fn spawn_spec(spec: &DapAdapterSpec) -> Option<Self> {
         let cmd_path = resolve_command(spec.cmd_candidates)?;
         let mut command = Command::new(&cmd_path);
@@ -39,24 +43,42 @@ impl DapClient {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .ok()?;
         let stdin = Arc::new(Mutex::new(child.stdin.take()?));
         let stdout = child.stdout.take()?;
+        let stderr = child.stderr.take()?;
 
         let (tx, rx) = channel();
         thread::spawn(move || {
             reader_loop(stdout, tx);
         });
 
+        let (stderr_tx, stderr_rx) = channel();
+        thread::spawn(move || {
+            stderr_loop(stderr, stderr_tx);
+        });
+
         Some(Self {
             adapter_key: spec.key.to_string(),
-            _child: child,
+            child: Arc::new(Mutex::new(child)),
             stdin,
             incoming_rx: rx,
+            stderr_rx,
             next_seq: Arc::new(Mutex::new(1)),
         })
+    }
+
+    /// Has the adapter process exited? Non-blocking — `Some(code)` once
+    /// the child reaps, `None` while it's still alive. The manager polls
+    /// this on `drain` so a silent crash becomes an `AdapterError` event.
+    pub fn try_exit_status(&self) -> Option<i32> {
+        let mut child = self.child.lock().ok()?;
+        match child.try_wait() {
+            Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
+            _ => None,
+        }
     }
 
     pub fn alloc_seq(&self) -> u64 {
@@ -107,5 +129,23 @@ impl DapClient {
         stdin.write_all(frame.as_bytes())?;
         stdin.flush()?;
         Ok(())
+    }
+}
+
+/// Forward each line of the adapter's stderr to the editor as a synthetic
+/// "stderr"-category output line. Without this, crashes that print a stack
+/// trace and exit immediately look identical to "adapter is alive but not
+/// answering" — i.e. an indistinguishable hang.
+fn stderr_loop(stderr: ChildStderr, tx: Sender<OutputLine>) {
+    let reader = BufReader::new(stderr);
+    for line in reader.lines() {
+        let Ok(text) = line else { break };
+        if text.is_empty() {
+            continue;
+        }
+        let _ = tx.send(OutputLine {
+            category: "stderr".into(),
+            output: text,
+        });
     }
 }

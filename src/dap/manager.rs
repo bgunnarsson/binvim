@@ -167,7 +167,10 @@ impl DapManager {
                 json!({
                     "clientID": "binvim",
                     "clientName": "binvim",
-                    "adapterID": adapter.key,
+                    // VSCode's well-known type id for .NET — netcoredbg
+                    // (and other adapters) gate behaviour on it. Our
+                    // internal `adapter.key` ("dotnet") wouldn't match.
+                    "adapterID": "coreclr",
                     "pathFormat": "path",
                     "linesStartAt1": true,
                     "columnsStartAt1": true,
@@ -237,13 +240,51 @@ impl DapManager {
     pub fn drain(&mut self) -> Vec<DapEvent> {
         let mut events = Vec::new();
         let mut msgs = Vec::new();
+        let mut stderr_lines: Vec<OutputLine> = Vec::new();
+        let mut exit_code: Option<i32> = None;
         if let Some(session) = self.session.as_ref() {
             while let Ok(msg) = session.client.incoming_rx.try_recv() {
                 msgs.push(msg);
             }
+            while let Ok(line) = session.client.stderr_rx.try_recv() {
+                stderr_lines.push(line);
+            }
+            // If the adapter exited without going through `terminated`/
+            // `exited`, the reader thread will block forever — surface
+            // the crash so the user sees something instead of a hang.
+            exit_code = session.client.try_exit_status();
+        }
+        for line in stderr_lines {
+            // Stream into the output buffer so the pane shows whatever the
+            // adapter printed before dying.
+            let trimmed = line.output.clone();
+            self.output_buffer.push(line.clone());
+            if self.output_buffer.len() > OUTPUT_LOG_CAP {
+                let excess = self.output_buffer.len() - OUTPUT_LOG_CAP;
+                self.output_buffer.drain(0..excess);
+            }
+            events.push(DapEvent::Output(line));
+            // Mirror the freshest stderr line into the pane status so the
+            // user spots the crash without having to scroll the output.
+            if let Some(s) = self.session.as_mut() {
+                s.status_line = trimmed;
+            }
         }
         for msg in msgs {
             self.process_incoming(msg, &mut events);
+        }
+        if let Some(code) = exit_code {
+            // Don't double-report if the protocol path already saw
+            // `terminated` and cleared the session.
+            if self.session.is_some() {
+                let msg = format!("adapter exited unexpectedly (code {})", code);
+                if let Some(s) = self.session.as_mut() {
+                    s.state = SessionState::Terminated;
+                    s.status_line = msg.clone();
+                }
+                events.push(DapEvent::AdapterError(msg));
+                events.push(DapEvent::Terminated);
+            }
         }
         events
     }
