@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Word-aware drag after double-click.** Double-click a word to select
+  it, then drag forward or backward to extend the visual selection
+  word-by-word. The anchor pins to the side of the original word
+  opposite the drag direction; the cursor snaps to the word boundary
+  under the mouse. Dragging through whitespace holds the selection at
+  the previous word boundary so it only grows when a new word is
+  crossed. Falls back to the existing char-by-char drag if the drag
+  didn't start from a double-click.
+
 ## [0.1.4] - 2026-05-11
 
 ### Added
