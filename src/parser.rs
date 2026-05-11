@@ -131,6 +131,9 @@ pub enum Action {
     LspGotoDefinition,
     LspFindReferences,
     LspRename,
+    /// `<leader>f` — run the buffer's formatter and replace its contents
+    /// with the result. Same code path as `:fmt` / `:format`.
+    Format,
     /// `<leader>R` — literal-string replace-all of the word under the
     /// cursor in the current buffer. Opens a prompt; on Enter applies the
     /// replacement to every occurrence via the same machinery as `:%s`.
@@ -502,6 +505,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
                 'r' => Some(Action::LspRename),
                 'R' => Some(Action::ReplaceAllInBuffer),
+                'f' => Some(Action::Format),
                 _ => None,
             };
             if let Some(a) = action {

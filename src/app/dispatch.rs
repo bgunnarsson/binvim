@@ -99,6 +99,7 @@ impl super::App {
             Action::LspFindReferences => self.lsp_request_references(),
             Action::LspRename => self.start_rename_prompt(),
             Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
+            Action::Format => self.format_active(),
             Action::AddNextOccurrenceSelection => self.add_next_occurrence_selection(),
             Action::SurroundDelete { ch } => {
                 self.history.record(&self.buffer.rope, self.cursor);

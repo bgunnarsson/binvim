@@ -170,6 +170,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("S".into(), "Workspace symbols".into()),
         ("a".into(), "Code actions".into()),
         ("r".into(), "Rename".into()),
+        ("f".into(), "Format".into()),
     ]
 }
 
