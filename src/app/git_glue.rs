@@ -1,6 +1,6 @@
 //! Glue between the parsed git hunks (`App.git_hunks`) and user-facing
-//! actions: `]h` / `[h` navigation, `<leader>hp` preview. Stage 3 will
-//! grow this into stage/unstage/reset.
+//! actions: `]h` / `[h` navigation, `<leader>hp` preview, `<leader>hs`
+//! stage, `<leader>hu` unstage, `<leader>hr` reset.
 
 use crate::app::state::HoverState;
 
@@ -68,6 +68,102 @@ impl super::App {
             _ => {
                 self.status_msg = "git: no preview available".into();
             }
+        }
+    }
+
+    /// Stage the hunk under the cursor. Builds a single-file unified
+    /// diff from the working-tree-vs-index diff (`-U0`) for just this
+    /// hunk, then pipes it through `git apply --cached --unidiff-zero`.
+    /// On success the gutter sign for the hunk disappears.
+    pub(super) fn hunk_stage(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "no path: open a file first".into();
+            return;
+        };
+        let line_one_based = self.cursor.line + 1;
+        match crate::git::unidiff_zero_hunk_for_line(&path, line_one_based, false) {
+            Some((root, rel, hunk)) if !hunk.trim().is_empty() => {
+                let patch = crate::git::build_patch(&rel, &hunk);
+                match crate::git::apply_patch(
+                    &root,
+                    &patch,
+                    &["--cached", "--unidiff-zero", "--whitespace=nowarn"],
+                ) {
+                    Ok(()) => {
+                        self.refresh_git_hunks();
+                        self.status_msg = "hunk staged".into();
+                    }
+                    Err(e) => self.status_msg = format!("git stage: {e}"),
+                }
+            }
+            _ => self.status_msg = "no hunk under cursor".into(),
+        }
+    }
+
+    /// Unstage the hunk under the cursor — the inverse of `hunk_stage`.
+    /// Operates on the *cached* diff (`--cached --unified=0`), so this
+    /// only makes sense after the user has staged something. Pipes a
+    /// reversed patch through `git apply --cached --reverse`.
+    pub(super) fn hunk_unstage(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "no path: open a file first".into();
+            return;
+        };
+        let line_one_based = self.cursor.line + 1;
+        match crate::git::unidiff_zero_hunk_for_line(&path, line_one_based, true) {
+            Some((root, rel, hunk)) if !hunk.trim().is_empty() => {
+                let patch = crate::git::build_patch(&rel, &hunk);
+                match crate::git::apply_patch(
+                    &root,
+                    &patch,
+                    &["--cached", "--unidiff-zero", "--reverse", "--whitespace=nowarn"],
+                ) {
+                    Ok(()) => {
+                        self.refresh_git_hunks();
+                        self.status_msg = "hunk unstaged".into();
+                    }
+                    Err(e) => self.status_msg = format!("git unstage: {e}"),
+                }
+            }
+            _ => self.status_msg = "no staged hunk under cursor".into(),
+        }
+    }
+
+    /// Discard the working-tree change for the hunk under the cursor.
+    /// Refuses to run when the buffer is dirty — unsaved edits would be
+    /// overwritten by the reload. Builds a reversed patch and applies
+    /// it to the working tree (not the index), then reloads the buffer
+    /// from disk so the user sees the revert immediately.
+    pub(super) fn hunk_reset(&mut self) {
+        if self.buffer.dirty {
+            self.status_msg = "reset: buffer has unsaved changes (`:w` first)".into();
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "no path: open a file first".into();
+            return;
+        };
+        let line_one_based = self.cursor.line + 1;
+        match crate::git::unidiff_zero_hunk_for_line(&path, line_one_based, false) {
+            Some((root, rel, hunk)) if !hunk.trim().is_empty() => {
+                let patch = crate::git::build_patch(&rel, &hunk);
+                match crate::git::apply_patch(
+                    &root,
+                    &patch,
+                    &["--unidiff-zero", "--reverse", "--whitespace=nowarn"],
+                ) {
+                    Ok(()) => {
+                        let name = self.force_reload_from_disk();
+                        self.refresh_git_hunks();
+                        self.status_msg = match name {
+                            Some(n) => format!("hunk reset in {n}"),
+                            None => "hunk reset".into(),
+                        };
+                    }
+                    Err(e) => self.status_msg = format!("git reset: {e}"),
+                }
+            }
+            _ => self.status_msg = "no hunk under cursor".into(),
         }
     }
 }

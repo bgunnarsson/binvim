@@ -205,6 +205,13 @@ pub enum Action {
     HunkPrev,
     /// `<leader>hp` — preview the hunk under the cursor in a hover popup.
     HunkPreview,
+    /// `<leader>hs` — stage the hunk under the cursor (`git apply --cached`).
+    HunkStage,
+    /// `<leader>hu` — unstage the hunk under the cursor.
+    HunkUnstage,
+    /// `<leader>hr` — discard the working-tree change for the hunk under
+    /// the cursor (reset to the staged version).
+    HunkReset,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -627,13 +634,14 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // doc-symbol / workspace-symbol pickers — Step out moves to `O`
     // (capital sibling of step-over `n` / step-in `i`) and Stop session
     // moves to `q` (matches the `:q` mnemonic).
-    // Git-hunk prefix dispatch (after `<leader>h`). `p` is wired now;
-    // `s` / `u` / `r` land in a follow-up commit but are reserved here
-    // so accidental presses cancel cleanly instead of falling through.
+    // Git-hunk prefix dispatch (after `<leader>h`).
     if state.awaiting_hunk_leader {
         state.awaiting_hunk_leader = false;
         let action = match ch {
             'p' => Some(Action::HunkPreview),
+            's' => Some(Action::HunkStage),
+            'u' => Some(Action::HunkUnstage),
+            'r' => Some(Action::HunkReset),
             _ => None,
         };
         state.reset();

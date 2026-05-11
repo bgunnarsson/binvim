@@ -15,6 +15,17 @@ follows [Semantic Versioning](https://semver.org/).
   Implementation shells out to `git diff --no-color --unified=0` and
   parses the hunk headers; no libgit2 dependency. Gutter widens by one
   column to make room (`digits + 3`).
+- **Stage / unstage / reset hunk (stage 3 of git integration).**
+  `<leader>hs` stages the hunk under the cursor by building a one-file
+  unified diff and piping it through `git apply --cached --unidiff-zero`.
+  `<leader>hu` unstages a staged hunk via the reverse patch. `<leader>hr`
+  discards the working-tree change — applies the reversed patch to the
+  working tree (not the index) and reloads the buffer from disk. Reset
+  refuses to run while the buffer is dirty, so unsaved edits can't be
+  silently overwritten. Each action refreshes the gutter and reports
+  success / failure in the status line. Reuses the existing reload-from-
+  disk path (now exposed as `force_reload_from_disk` for cases that
+  bypass the dirty guard).
 - **Hunk navigation + preview (stage 2 of git integration).** `]h` /
   `[h` jump to the next / previous git hunk in the active buffer (bonks
   at the end, no wrap-around — matches `]q` / `[q`). `<leader>hp`

@@ -241,9 +241,9 @@ pub fn buffer_prefix_entries() -> Vec<(String, String)> {
 pub fn hunk_prefix_entries() -> Vec<(String, String)> {
     vec![
         ("p".into(), "Preview hunk".into()),
-        ("s".into(), "Stage hunk (soon)".into()),
-        ("u".into(), "Unstage hunk (soon)".into()),
-        ("r".into(), "Reset hunk (soon)".into()),
+        ("s".into(), "Stage hunk".into()),
+        ("u".into(), "Unstage hunk".into()),
+        ("r".into(), "Reset hunk".into()),
     ]
 }
 

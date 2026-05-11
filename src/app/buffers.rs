@@ -145,30 +145,44 @@ impl super::App {
             Some(prev) if disk_mtime <= prev => return,
             _ => {}
         }
-        // Reload. Normalize CRLF → LF (matches Buffer::from_path) so reloaded
+        if let Some(name) = self.reload_buffer_from_disk_inner(&path, Some(disk_mtime)) {
+            self.status_msg = format!("reloaded {name} (changed on disk)");
+        }
+    }
+
+    /// Force-reload the active buffer from disk, bypassing the dirty
+    /// guard and the once-per-second throttle. Returns the file's name
+    /// for status reporting (or `None` if the reload failed).
+    pub(super) fn force_reload_from_disk(&mut self) -> Option<String> {
+        let path = self.buffer.path.clone()?;
+        self.reload_buffer_from_disk_inner(&path, None)
+    }
+
+    fn reload_buffer_from_disk_inner(
+        &mut self,
+        path: &std::path::Path,
+        disk_mtime: Option<std::time::SystemTime>,
+    ) -> Option<String> {
+        let raw = std::fs::read_to_string(path).ok()?;
+        // Normalize CRLF → LF (matches Buffer::from_path) so reloaded
         // CRLF files don't leak `\r` chars into the rope.
-        let Ok(raw) = std::fs::read_to_string(&path) else { return };
         let text = raw.replace("\r\n", "\n");
-        let new_rope = Rope::from_str(&text);
+        let _ = Rope::from_str(&text); // touch ropey so caches invalidate downstream
         let total = self.buffer.total_chars();
         self.buffer.delete_range(0, total);
         self.buffer.insert_at_idx(0, &text);
-        self.buffer.disk_mtime = Some(disk_mtime);
+        self.buffer.disk_mtime = disk_mtime.or_else(|| {
+            std::fs::metadata(path).and_then(|m| m.modified()).ok()
+        });
         self.buffer.dirty = false;
-        // Cursor may have ended up past the new EOL — clamp.
         let last = self.buffer.line_count().saturating_sub(1);
         if self.cursor.line > last {
             self.cursor.line = last;
         }
         self.clamp_cursor_normal();
-        // Touch the version so caches invalidate.
-        let _ = new_rope; // kept just to make the read explicit.
-        self.status_msg = format!(
-            "reloaded {} (changed on disk)",
-            path.file_name()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_else(|| path.display().to_string()),
-        );
+        path.file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .or_else(|| Some(path.display().to_string()))
     }
 
     /// Move the active buffer's path to the front of the recents list and

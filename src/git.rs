@@ -5,8 +5,9 @@
 //! flat. `unified=0` so we get one hunk per contiguous change with no
 //! surrounding context muddying the line math.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitHunkKind {
@@ -177,6 +178,110 @@ pub fn hunk_text_for_line(path: &Path, target_line: usize) -> Option<String> {
         }
     }
     None
+}
+
+/// Return the precise (unified=0) hunk body covering `target_line`, plus
+/// the repo root and relative path. Used to build a synthetic patch for
+/// `git apply` — we need the zero-context form so the apply succeeds
+/// against the current working tree / index.
+pub fn unidiff_zero_hunk_for_line(
+    path: &Path,
+    target_line: usize,
+    cached: bool,
+) -> Option<(PathBuf, PathBuf, String)> {
+    let start = path.parent()?;
+    let root = find_repo_root(start)?;
+    let rel = path.strip_prefix(&root).ok()?.to_path_buf();
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(&root).arg("diff").arg("--no-color").arg("--unified=0");
+    if cached {
+        cmd.arg("--cached");
+    }
+    cmd.arg("--").arg(&rel);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+
+    // Find the hunk containing target_line in the new-side range.
+    let mut headers: Vec<(usize, usize, usize)> = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix("@@ ") {
+            let mut parts = rest.split_whitespace();
+            let _old = parts.next();
+            let new_tok = parts.next().unwrap_or("");
+            let (new_start, new_count) = parse_range(new_tok.trim_start_matches('+'));
+            headers.push((idx, new_start, new_count));
+        }
+    }
+    for (i, &(idx, new_start, new_count)) in headers.iter().enumerate() {
+        // For pure deletions new_count == 0 — treat target_line == new_start
+        // as a hit so the user can reset a deletion they're standing on.
+        let in_range = if new_count == 0 {
+            target_line == new_start || target_line == new_start.saturating_sub(1).max(0)
+        } else {
+            target_line >= new_start && target_line < new_start + new_count
+        };
+        if in_range {
+            let next_idx = headers.get(i + 1).map(|&(j, _, _)| j);
+            let body: Vec<&str> = text
+                .lines()
+                .skip(idx)
+                .take(next_idx.map(|n| n - idx).unwrap_or(usize::MAX))
+                .collect();
+            return Some((root, rel, body.join("\n")));
+        }
+    }
+    None
+}
+
+/// Build a one-file unified diff suitable for `git apply --unidiff-zero`.
+/// `rel` is the path relative to the repo root; `hunk` is the `@@ … @@`
+/// header plus its body lines (no file metadata yet).
+pub fn build_patch(rel: &Path, hunk: &str) -> String {
+    let path_str = rel.display();
+    format!(
+        "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}\n",
+        path = path_str,
+        hunk = hunk.trim_end()
+    )
+}
+
+/// Pipe `patch` through `git -C <root> apply <args…>` on stdin. Returns
+/// `Ok(())` on success, or `Err(stderr)` so the caller can surface a
+/// useful status message.
+pub fn apply_patch(root: &Path, patch: &str, args: &[&str]) -> Result<(), String> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(root).arg("apply");
+    for a in args {
+        cmd.arg(a);
+    }
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    {
+        let stdin = child.stdin.as_mut().ok_or_else(|| "git apply: stdin missing".to_string())?;
+        stdin
+            .write_all(patch.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if msg.is_empty() {
+            "git apply: failed".into()
+        } else {
+            msg
+        })
+    }
 }
 
 /// `<start>[,<count>]` → `(start, count)`. Missing count defaults to 1,
