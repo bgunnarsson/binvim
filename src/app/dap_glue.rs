@@ -45,8 +45,20 @@ impl super::App {
             self.adjust_viewport();
         }
         self.dap_pane_cursor = 0;
+        self.dap_right_scroll = 0;
+        // Park the left column on the last couple of frames so the
+        // separator and first locals are visible by default — without
+        // hiding the user-relevant frame context above.
+        let frames_len = self
+            .dap
+            .session
+            .as_ref()
+            .map(|s| s.frames.len())
+            .unwrap_or(0);
+        self.dap_left_scroll = frames_len.saturating_sub(2);
         self.mode = Mode::DebugPane;
-        self.status_msg = "pane: j/k navigate · Enter/Tab expand · Esc exits".into();
+        self.status_msg =
+            "pane: j/k navigate · ^Y/^E scroll · J/K log · Enter expand · Esc exits".into();
     }
 
     pub(super) fn dap_exit_pane_focus(&mut self) {
@@ -59,6 +71,7 @@ impl super::App {
     /// Key dispatch for `Mode::DebugPane`. Returns `true` if the key was
     /// consumed (the caller skips the normal-mode dispatch in that case).
     pub(super) fn handle_debug_pane_key(&mut self, key: KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let locals_len = self
             .dap
             .session
@@ -70,26 +83,59 @@ impl super::App {
                 self.dap_exit_pane_focus();
                 true
             }
+            // Ctrl-Y / Ctrl-E: scroll the left column without moving the
+            // selection — Vim-convention free scroll for peeking at
+            // frames above the locals.
+            KeyCode::Char('y') if ctrl => {
+                self.dap_left_scroll = self.dap_left_scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Char('e') if ctrl => {
+                self.dap_left_scroll = self
+                    .dap_left_scroll
+                    .saturating_add(1)
+                    .min(self.dap_left_scroll_max());
+                true
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 if locals_len > 0 {
                     self.dap_pane_cursor = (self.dap_pane_cursor + 1).min(locals_len - 1);
+                    self.dap_follow_selection_in_left_column();
                 }
                 true
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.dap_pane_cursor = self.dap_pane_cursor.saturating_sub(1);
+                self.dap_follow_selection_in_left_column();
                 true
             }
             KeyCode::Char('g') => {
                 self.dap_pane_cursor = 0;
+                self.dap_follow_selection_in_left_column();
                 true
             }
             KeyCode::Char('G') => {
                 self.dap_pane_cursor = locals_len.saturating_sub(1);
+                self.dap_follow_selection_in_left_column();
+                true
+            }
+            // Right column scrolling — capital J/K so lowercase stays
+            // bound to locals navigation. J pages toward the latest log
+            // line; K pages back into older history.
+            KeyCode::Char('J') => {
+                self.dap_right_scroll = self.dap_right_scroll.saturating_sub(1);
+                true
+            }
+            KeyCode::Char('K') => {
+                self.dap_right_scroll = self
+                    .dap_right_scroll
+                    .saturating_add(1)
+                    .min(self.dap_right_scroll_max());
                 true
             }
             KeyCode::Enter | KeyCode::Tab | KeyCode::Char(' ') => {
                 self.dap_pane_toggle_at_cursor();
+                self.dap_follow_selection_in_left_column();
                 true
             }
             // Stepping bindings while focus is in the pane — saves an
@@ -118,6 +164,69 @@ impl super::App {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// Maximum valid value for `dap_left_scroll`. The total left-column
+    /// row count (frames + optional separator + locals tree) minus the
+    /// number of body rows the pane currently has.
+    pub(super) fn dap_left_scroll_max(&self) -> usize {
+        let Some(session) = self.dap.session.as_ref() else {
+            return 0;
+        };
+        let flat = flat_locals_view(session);
+        let total = if flat.is_empty() {
+            session.frames.len()
+        } else {
+            session.frames.len() + 1 + flat.len()
+        };
+        let body_rows = self.debug_pane_rows().saturating_sub(1);
+        total.saturating_sub(body_rows)
+    }
+
+    /// Maximum valid value for `dap_right_scroll`. Counts every output
+    /// line currently in the buffer; the buffer is bounded by
+    /// `OUTPUT_LOG_CAP` so this is cheap.
+    pub(super) fn dap_right_scroll_max(&self) -> usize {
+        let total_lines: usize = self
+            .dap
+            .output_buffer
+            .iter()
+            .map(|o| o.output.lines().count().max(1))
+            .sum();
+        let body_rows = self.debug_pane_rows().saturating_sub(1);
+        total_lines.saturating_sub(body_rows)
+    }
+
+    /// Adjust `dap_left_scroll` so the currently-selected local is in
+    /// the visible viewport. Called after every selection-moving key.
+    fn dap_follow_selection_in_left_column(&mut self) {
+        let Some(session) = self.dap.session.as_ref() else {
+            return;
+        };
+        let frames_len = session.frames.len();
+        let flat_len = flat_locals_view(session).len();
+        if flat_len == 0 {
+            return;
+        }
+        let cursor = self.dap_pane_cursor.min(flat_len - 1);
+        // Locals occupy rows `[frames_len + 1, frames_len + 1 + flat_len)`
+        // — the `+1` accounts for the "── Locals ──" separator row.
+        let selected_abs = frames_len + 1 + cursor;
+        let body_rows = self.debug_pane_rows().saturating_sub(1);
+        if body_rows == 0 {
+            return;
+        }
+        if selected_abs < self.dap_left_scroll {
+            self.dap_left_scroll = selected_abs;
+        }
+        let last_visible = self.dap_left_scroll + body_rows;
+        if selected_abs >= last_visible {
+            self.dap_left_scroll = selected_abs + 1 - body_rows;
+        }
+        let max = self.dap_left_scroll_max();
+        if self.dap_left_scroll > max {
+            self.dap_left_scroll = max;
         }
     }
 
@@ -302,6 +411,13 @@ impl super::App {
                     thread_id, reason, ..
                 } => {
                     self.status_msg = format!("debug: stopped — {} (thread {})", reason, thread_id);
+                    // Reset the pane scroll positions so the user sees
+                    // the new stop's frame + locals from a sensible
+                    // starting position rather than wherever the previous
+                    // stop's viewport happened to land.
+                    self.dap_pane_cursor = 0;
+                    self.dap_right_scroll = 0;
+                    self.dap_left_scroll = 0;
                     self.dap_jump_to_top_frame();
                 }
                 DapEvent::Continued { .. } => {

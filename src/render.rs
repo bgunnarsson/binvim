@@ -2145,24 +2145,10 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
             };
             left_rows.push(LeftRow::Note(note));
         }
-        // When locals are present, cap the frame list so the user-relevant
-        // top frames + the separator + at least a few locals all fit in
-        // the body. Deep ASP.NET / framework stacks otherwise eat the
-        // whole left column and locals disappear off-screen.
-        let frames_cap = if flat.is_empty() {
-            session.frames.len()
-        } else {
-            // Leave room for: separator (1) + at least 3 locals rows.
-            body_rows
-                .saturating_sub(4)
-                .min(session.frames.len())
-                .max(3)
-                .min(session.frames.len())
-        };
-        let visible_frames = frames_cap.min(session.frames.len());
-        let hidden = session.frames.len().saturating_sub(visible_frames);
-        let take = if hidden > 0 { visible_frames.saturating_sub(1) } else { visible_frames };
-        for f in session.frames.iter().take(take) {
+        // Show every frame — overflow is handled by the left column's
+        // scroll position (`dap_left_scroll`), driven by the key handler
+        // and clamped below.
+        for f in &session.frames {
             let loc = f
                 .source
                 .as_ref()
@@ -2171,12 +2157,6 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 .map(|n| format!("{}:{}", n, f.line))
                 .unwrap_or_else(|| format!("?:{}", f.line));
             left_rows.push(LeftRow::Frame(format!("{} — {}", loc, f.name)));
-        }
-        if hidden > 0 {
-            // Note row holds a hint that more frames exist — gives the
-            // user the count without us having to wire a scroll model.
-            let hidden_total = session.frames.len() - take;
-            left_rows.push(LeftRow::Frame(format!("    … +{} more frame(s)", hidden_total)));
         }
         if !flat.is_empty() {
             left_rows.push(LeftRow::Separator(" Locals "));
@@ -2197,21 +2177,43 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
 
-    let output_tail: Vec<&str> = {
-        let n = app.dap.output_buffer.len();
-        let take = body_rows.min(n);
-        app.dap.output_buffer[n - take..]
-            .iter()
-            .flat_map(|line| line.output.lines())
-            .collect()
+    // Clamp the user-driven scroll positions to their valid range. The
+    // key handler keeps them in range too, but resizing the terminal or
+    // a fresh log line landing right before the draw can put them
+    // slightly out of bounds — easier to clamp here than to chase every
+    // upstream mutation.
+    let left_scroll = {
+        let max = left_rows.len().saturating_sub(body_rows);
+        app.dap_left_scroll.min(max)
     };
+
+    // Full flat-mapped output buffer — we need every line because the
+    // user can scroll back through history with `K`. The buffer is
+    // bounded by `OUTPUT_LOG_CAP` so this stays cheap.
+    let output_all: Vec<&str> = app
+        .dap
+        .output_buffer
+        .iter()
+        .flat_map(|line| line.output.lines())
+        .collect();
+    let right_scroll = {
+        let max = output_all.len().saturating_sub(body_rows);
+        app.dap_right_scroll.min(max)
+    };
+    // Visible right-column window: last `body_rows` lines, then walked
+    // back `right_scroll` lines into the past.
+    let total_lines = output_all.len();
+    let end = total_lines.saturating_sub(right_scroll);
+    let start = end.saturating_sub(body_rows);
+    let output_tail: &[&str] = &output_all[start..end];
 
     for r in 0..body_rows {
         let y = (top + 1 + r) as u16;
         queue!(out, MoveTo(0, y), Clear(ClearType::CurrentLine))?;
         queue!(out, SetBackgroundColor(body_bg))?;
-        // Left column.
-        let row = left_rows.get(r).unwrap_or(&LeftRow::Empty);
+        // Left column. Apply scroll offset so the user can pan through
+        // a stack deeper than the visible viewport.
+        let row = left_rows.get(r + left_scroll).unwrap_or(&LeftRow::Empty);
         let inner_w = left_w.saturating_sub(2);
         match row {
             LeftRow::Empty => {

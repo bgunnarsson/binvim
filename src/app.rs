@@ -131,6 +131,14 @@ pub struct App {
     /// access time — vrefs can shift across stops, so the renderer and
     /// key handler clamp before use.
     pub dap_pane_cursor: usize,
+    /// Top of the left column's viewport (frames + separator + locals).
+    /// Driven by `j`/`k` (auto-follow the selection) and `Ctrl-Y`/`Ctrl-E`
+    /// (free scroll without moving selection).
+    pub dap_left_scroll: usize,
+    /// Number of "latest" console-output rows hidden below the right
+    /// column's viewport. `0` keeps the latest line glued to the bottom;
+    /// `J`/`K` scrolls into the older history.
+    pub dap_right_scroll: usize,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -243,6 +251,8 @@ impl App {
             show_start_page,
             debug_pane_open: false,
             dap_pane_cursor: 0,
+            dap_left_scroll: 0,
+            dap_right_scroll: 0,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             rename_anchor: None,
