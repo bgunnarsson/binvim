@@ -2162,6 +2162,10 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Markdown => '\u{e609}',
         Lang::CSharp | Lang::Razor => '\u{f81a}',
         Lang::Bash => '\u{f489}',
+        Lang::Yaml => '\u{e6a8}',
+        Lang::Xml => '\u{e619}',
+        Lang::EditorConfig => '\u{e652}',
+        Lang::GitIgnore => '\u{f1d3}',
     }
 }
 
@@ -2179,6 +2183,10 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::CSharp => "csharp",
         Lang::Razor => "razor",
         Lang::Bash => "bash",
+        Lang::Yaml => "yaml",
+        Lang::Xml => "xml",
+        Lang::EditorConfig => "editorconfig",
+        Lang::GitIgnore => "gitignore",
     }
 }
 

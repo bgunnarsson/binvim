@@ -7,6 +7,33 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **YAML / XML syntax highlighting.** New `Lang::Yaml` and `Lang::Xml`
+  variants wired to `tree-sitter-yaml` and `tree-sitter-xml`. XML
+  detection covers the MSBuild + .NET family — `.xml`, `.csproj`,
+  `.fsproj`, `.vbproj`, `.props`, `.targets`, `.config`, `.manifest`,
+  `.nuspec`, `.resx`, `.xaml`, `.xhtml`, `.xsd`, `.xsl`, `.xslt`,
+  `.plist`.
+- **`.editorconfig` highlighting.** Byte-level scanner: `#`/`;`
+  comments in Overlay1, `[*.cs]`-style section headers in Pink,
+  `key = value` pairs with the key in Lavender, the `=` in Sky, and
+  the value in Green. TOML grammar can't parse the bracket-pattern
+  section headers so it's a custom pass.
+- **`.gitignore` family highlighting.** Covers `.gitignore`,
+  `.gitattributes`, `.dockerignore`, `.npmignore`. `#` comments,
+  `!`-negation prefix in Mauve, pattern lines in Lavender.
+
+### Changed
+- **CSS highlight query replaces the bundled tree-sitter-css one.**
+  Upstream paints `class_name`, `id_name`, `namespace_name`,
+  `property_name`, and `feature_name` all as `@property` — so in
+  `.foo { color: red; }` the selector `.foo` and the property
+  `color` rendered in the same Lavender. The replacement query
+  splits them: `.class-name` is `@constructor` (Yellow),
+  `#id-name` is `@label` (Sapphire), `property:` stays `@property`
+  (Lavender), `--custom-prop` is `@variable`, at-rules
+  (`@media`/`@keyframes`/…) are `@keyword` (Mauve).
+
+### Added (continued)
 - **DAP multi-project workspace support.** `<leader>ds` works from
   any file now — not just `.cs`. When the workspace has more than
   one `.csproj` (or `.fsproj` / `.vbproj`), a picker opens listing
