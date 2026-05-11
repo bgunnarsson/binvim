@@ -539,4 +539,48 @@ mod tests {
             );
         }
     }
+
+    /// Regression for the screenshot the user shared — even when the
+    /// grammar throws ERROR nodes on the Tailwind `class="… pt-[60px]"`
+    /// substring, the surrounding `<section>` / `<div>` elements still
+    /// parse and their tag/attribute names should still light up.
+    #[test]
+    fn razor_colours_tags_despite_bracket_attrs() {
+        let src = r#"@{
+    Layout = "Master.cshtml";
+}
+
+<section class="store-category pt-[60px]">
+    <div class="wrapper">
+        <partial name="MMS/Components/Headline" />
+    </div>
+</section>
+"#;
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Razor, src, &cfg).expect("highlight ok");
+        for name in ["section", "div", "partial"] {
+            let idx = src.find(&format!("<{}", name)).unwrap() + 1;
+            assert!(
+                colors[idx].is_some(),
+                "tag name `{}` (byte {}) should be coloured",
+                name,
+                idx,
+            );
+            assert!(
+                colors[idx + name.len() - 1].is_some(),
+                "last char of `{}` should be coloured",
+                name,
+            );
+        }
+        // Attribute names too — these come right before the `=`.
+        for attr in ["class", "name"] {
+            let pat = format!(" {}=", attr);
+            let idx = src.find(&pat).unwrap() + 1; // skip leading space
+            assert!(
+                colors[idx].is_some(),
+                "attribute `{}` should be coloured",
+                attr,
+            );
+        }
+    }
 }
