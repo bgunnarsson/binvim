@@ -204,10 +204,12 @@ impl HoverState {
     /// Parse the LSP hover markdown into a structured `HoverState`. Recognises
     /// fenced code blocks (with language tags), `#`-headings, and horizontal
     /// rules; everything else is treated as prose and word-wrapped to fit
-    /// `wrap_width`. Code lines are *not* wrapped — they keep their original
-    /// indentation, so the renderer paints them as-typed and the user can
-    /// scroll horizontally if needed.
-    pub fn from_lsp_text(text: &str, term_width: usize) -> Option<Self> {
+    /// `wrap_width`.
+    ///
+    /// `wrap_code` controls whether long code lines (e.g. a wide function
+    /// signature) get hard-wrapped to `wrap_width`. When false, code keeps
+    /// its original line breaks and the renderer clips at the popup edge.
+    pub fn from_lsp_text(text: &str, term_width: usize, wrap_code: bool) -> Option<Self> {
         let wrap_width = HOVER_MAX_WIDTH.min(term_width.saturating_sub(8).max(20));
 
         let mut lines: Vec<HoverLine> = Vec::new();
@@ -225,14 +227,9 @@ impl HoverState {
                     // Closing fence — flush the block.
                     let source = collected.join("\n");
                     let block_idx = code_blocks.len();
-                    let mut byte_offset = 0usize;
-                    for (i, line) in collected.iter().enumerate() {
-                        let byte_len = line.len();
-                        lines.push(HoverLine::Code { block_idx, byte_offset, byte_len });
-                        // +1 for the synthetic '\n' between joined lines (no trailing
-                        // newline on the last line, matching `join`'s behaviour).
-                        byte_offset += byte_len + if i + 1 < collected.len() { 1 } else { 0 };
-                    }
+                    emit_code_lines(
+                        &mut lines, block_idx, &collected, wrap_code, wrap_width,
+                    );
                     code_blocks.push(HoverCodeBlock { lang, source });
                 } else {
                     // Opening fence — record the lang tag (first run of
@@ -293,12 +290,7 @@ impl HoverState {
         if let Some((lang, collected)) = in_code {
             let source = collected.join("\n");
             let block_idx = code_blocks.len();
-            let mut byte_offset = 0usize;
-            for (i, line) in collected.iter().enumerate() {
-                let byte_len = line.len();
-                lines.push(HoverLine::Code { block_idx, byte_offset, byte_len });
-                byte_offset += byte_len + if i + 1 < collected.len() { 1 } else { 0 };
-            }
+            emit_code_lines(&mut lines, block_idx, &collected, wrap_code, wrap_width);
             code_blocks.push(HoverCodeBlock { lang, source });
         }
 
@@ -372,6 +364,64 @@ fn visual_width(s: &str) -> usize {
         }
     }
     w
+}
+
+/// Push one `HoverLine::Code` per source line of `collected`, or one
+/// `HoverLine::Code` per `wrap_width`-char chunk when `wrap` is true.
+/// Each chunk records the byte range it spans in the joined source so
+/// the renderer can index into the per-block byte-color cache without
+/// re-running tree-sitter.
+fn emit_code_lines(
+    lines: &mut Vec<HoverLine>,
+    block_idx: usize,
+    collected: &[String],
+    wrap: bool,
+    wrap_width: usize,
+) {
+    let mut byte_offset = 0usize;
+    let last = collected.len().saturating_sub(1);
+    for (i, line) in collected.iter().enumerate() {
+        if !wrap || line.chars().count() <= wrap_width || wrap_width == 0 {
+            lines.push(HoverLine::Code {
+                block_idx,
+                byte_offset,
+                byte_len: line.len(),
+            });
+        } else {
+            // Walk char-by-char, accumulating bytes per chunk so the
+            // chunk boundary always lands on a char boundary. Multi-byte
+            // UTF-8 chars are rare in code but worth handling — splitting
+            // mid-char would scramble the byte-color cache.
+            let mut chunk_chars = 0usize;
+            let mut chunk_start_byte = 0usize;
+            let mut byte_pos = 0usize;
+            for c in line.chars() {
+                if chunk_chars >= wrap_width {
+                    lines.push(HoverLine::Code {
+                        block_idx,
+                        byte_offset: byte_offset + chunk_start_byte,
+                        byte_len: byte_pos - chunk_start_byte,
+                    });
+                    chunk_start_byte = byte_pos;
+                    chunk_chars = 0;
+                }
+                byte_pos += c.len_utf8();
+                chunk_chars += 1;
+            }
+            // Flush the final tail (always non-empty since we just
+            // checked the line had more than wrap_width chars).
+            if byte_pos > chunk_start_byte {
+                lines.push(HoverLine::Code {
+                    block_idx,
+                    byte_offset: byte_offset + chunk_start_byte,
+                    byte_len: byte_pos - chunk_start_byte,
+                });
+            }
+        }
+        // +1 for the synthetic '\n' between joined lines (no trailing
+        // newline on the last line, matching `join`'s behaviour).
+        byte_offset += line.len() + if i < last { 1 } else { 0 };
+    }
 }
 
 /// Returns 1..=6 if `line` is an ATX-style markdown heading. The convention
@@ -503,5 +553,66 @@ pub fn is_start_page_passthrough(k: &KeyEvent) -> bool {
         KeyCode::Char('c') if k.modifiers.contains(KeyModifiers::CONTROL) => true,
         KeyCode::Esc => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hover_wrap_off_keeps_long_signatures_on_one_row() {
+        // 40-col term → wrap_width = 32. Signature is 75 chars wide,
+        // would wrap with the flag on; off, stays as one row.
+        let long = "fn foo(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32) -> Result<(), Error>";
+        let text = format!("```rust\n{long}\n```");
+        let h = HoverState::from_lsp_text(&text, 40, false).expect("hover");
+        let code_rows: Vec<&HoverLine> = h
+            .lines
+            .iter()
+            .filter(|l| matches!(l, HoverLine::Code { .. }))
+            .collect();
+        assert_eq!(code_rows.len(), 1, "wrap_code=false → one Code row per source line");
+    }
+
+    #[test]
+    fn hover_wrap_on_splits_long_signatures_into_chunks() {
+        let long = "fn foo(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32) -> Result<(), Error>";
+        let text = format!("```rust\n{long}\n```");
+        // 40-col term forces wrap_width = 32; the 75-char signature
+        // should split into 3 chunks (32 / 32 / 11 bytes).
+        let h = HoverState::from_lsp_text(&text, 40, true).expect("hover");
+        let code_rows: Vec<&HoverLine> = h
+            .lines
+            .iter()
+            .filter(|l| matches!(l, HoverLine::Code { .. }))
+            .collect();
+        assert!(
+            code_rows.len() > 1,
+            "wrap_code=true → long signature splits into multiple Code rows (got {})",
+            code_rows.len(),
+        );
+        // Sum of byte_lens == original line length (single source line, no '\n').
+        let total: usize = code_rows
+            .iter()
+            .map(|l| match l {
+                HoverLine::Code { byte_len, .. } => *byte_len,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(total, long.len(), "chunks together cover the whole source line");
+    }
+
+    #[test]
+    fn hover_wrap_on_preserves_multi_line_blocks() {
+        let text = "```rust\nfn foo() {\n    bar();\n}\n```";
+        let h = HoverState::from_lsp_text(text, 200, true).expect("hover");
+        let code_rows: Vec<&HoverLine> = h
+            .lines
+            .iter()
+            .filter(|l| matches!(l, HoverLine::Code { .. }))
+            .collect();
+        // Three short source lines → three Code rows (none gets wrapped).
+        assert_eq!(code_rows.len(), 3);
     }
 }

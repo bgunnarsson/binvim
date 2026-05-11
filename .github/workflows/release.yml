@@ -12,6 +12,11 @@ on:
 
 permissions:
   contents: write
+  # `id-token: write` is required for keyless signing — cosign exchanges
+  # the workflow's short-lived OIDC token for a Sigstore Fulcio
+  # certificate, signs the artifact, and uploads the proof to the public
+  # Rekor transparency log. No long-lived private key in the repo.
+  id-token: write
 
 jobs:
   build:
@@ -64,6 +69,30 @@ jobs:
           sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
 
+      # Sigstore keyless signing — no static key in the repo. cosign
+      # round-trips the workflow's OIDC token through Fulcio for a
+      # short-lived certificate, signs the tarball, and writes a Rekor
+      # log entry. Verifiers run:
+      #   cosign verify-blob --bundle binvim-vX.Y.Z-target.tar.gz.bundle \
+      #     --certificate-identity-regexp \
+      #       '^https://github\.com/bgunnarsson/binvim/\.github/workflows/release\.yml@' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+      #     binvim-vX.Y.Z-target.tar.gz
+      # The `.bundle` carries the signature, the Fulcio cert, and the
+      # Rekor inclusion proof, so verification is offline once it's
+      # downloaded.
+      - name: install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: sign tarball with cosign (keyless)
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="${{ steps.package.outputs.name }}"
+          cosign sign-blob --yes \
+            --bundle "${NAME}.tar.gz.bundle" \
+            "${NAME}.tar.gz"
+
       - name: upload artifact
         uses: actions/upload-artifact@v5
         with:
@@ -71,6 +100,7 @@ jobs:
           path: |
             ${{ steps.package.outputs.name }}.tar.gz
             ${{ steps.package.outputs.name }}.tar.gz.sha256
+            ${{ steps.package.outputs.name }}.tar.gz.bundle
 
   release:
     name: publish release
@@ -101,3 +131,4 @@ jobs:
           files: |
             artifacts/*.tar.gz
             artifacts/*.tar.gz.sha256
+            artifacts/*.tar.gz.bundle

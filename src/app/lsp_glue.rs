@@ -31,7 +31,11 @@ impl super::App {
                     self.clamp_cursor_normal();
                 }
                 LspEvent::Hover { text } => {
-                    self.hover = HoverState::from_lsp_text(&text, self.width as usize);
+                    self.hover = HoverState::from_lsp_text(
+                        &text,
+                        self.width as usize,
+                        self.config.hover.wrap_code,
+                    );
                     if self.hover.is_none() {
                         self.status_msg = "LSP: empty hover".into();
                     }

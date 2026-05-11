@@ -16,6 +16,8 @@ pub struct Config {
     pub whitespace: WhitespaceConfig,
     #[serde(default)]
     pub line_numbers: LineNumberConfig,
+    #[serde(default)]
+    pub hover: HoverConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -66,6 +68,28 @@ impl Default for LineNumberConfig {
     }
 }
 
+/// Hover popup behaviour. By default code blocks inside an LSP hover
+/// (e.g. a function signature) keep their full original line and the
+/// renderer clips at the popup's right edge — that loses the trailing
+/// arguments / return type. With `wrap_code = true` (the default), long
+/// source lines split at the popup width into multiple rows so wide
+/// signatures stay readable without horizontal overflow.
+#[derive(Debug, Deserialize)]
+pub struct HoverConfig {
+    #[serde(default = "default_hover_wrap_code")]
+    pub wrap_code: bool,
+}
+
+fn default_hover_wrap_code() -> bool {
+    true
+}
+
+impl Default for HoverConfig {
+    fn default() -> Self {
+        Self { wrap_code: true }
+    }
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -78,6 +102,7 @@ impl Default for Config {
             start_page: StartPageConfig::default(),
             whitespace: WhitespaceConfig::default(),
             line_numbers: LineNumberConfig::default(),
+            hover: HoverConfig::default(),
         }
     }
 }
