@@ -195,6 +195,10 @@ pub enum Action {
     BufferOnly,
     BufferNext,
     BufferPrev,
+    /// `]q` — jump to the next entry in the quickfix list.
+    QuickfixNext,
+    /// `[q` — jump to the previous entry in the quickfix list.
+    QuickfixPrev,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -232,6 +236,13 @@ pub struct PendingCmd {
     pub cs_old: Option<char>,
     /// Visual `S{char}` — next char names the surround pair to wrap with.
     pub awaiting_visual_surround: bool,
+    /// Set after `]` in Normal mode — next char (e.g. `q`) selects a
+    /// "jump forward" target. Today the only consumer is the quickfix
+    /// list (`]q`). Cancels on any unrecognised follow-up.
+    pub awaiting_bracket_close: bool,
+    /// Set after `[` — mirror of `awaiting_bracket_close` for backward
+    /// navigation (`[q` → previous quickfix entry).
+    pub awaiting_bracket_open: bool,
 }
 
 impl PendingCmd {
@@ -447,6 +458,26 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 count: 1,
             },
         });
+    }
+
+    // Resolve pending `]` / `[` — Vim's "next" / "prev" prefixes. Today
+    // only `q` is wired (quickfix list); anything else cancels so future
+    // additions (`]d` for diagnostics, etc.) don't accidentally fire.
+    if state.awaiting_bracket_close {
+        state.awaiting_bracket_close = false;
+        state.reset();
+        return match ch {
+            'q' => ParseResult::Action(Action::QuickfixNext),
+            _ => ParseResult::Cancelled,
+        };
+    }
+    if state.awaiting_bracket_open {
+        state.awaiting_bracket_open = false;
+        state.reset();
+        return match ch {
+            'q' => ParseResult::Action(Action::QuickfixPrev),
+            _ => ParseResult::Cancelled,
+        };
     }
 
     // Resolve pending `z` — viewport adjust.
@@ -796,6 +827,20 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if ctx == ParseCtx::Normal && state.operator.is_some() && (ch == 'i' || ch == 'a') {
         state.awaiting_textobj = Some(ch == 'i');
         return ParseResult::Pending;
+    }
+
+    // Bracket prefixes — `]q` / `[q` step through the quickfix list. The
+    // pending state only kicks in when no operator is in flight (`d]` is
+    // still text-object territory; brackets there go through `awaiting_textobj`).
+    if ctx == ParseCtx::Normal && state.operator.is_none() {
+        if ch == ']' {
+            state.awaiting_bracket_close = true;
+            return ParseResult::Pending;
+        }
+        if ch == '[' {
+            state.awaiting_bracket_open = true;
+            return ParseResult::Pending;
+        }
     }
 
     if ch == 'g' {

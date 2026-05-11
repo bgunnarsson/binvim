@@ -29,6 +29,7 @@ mod input;
 mod lsp_glue;
 mod pair;
 mod picker_glue;
+mod quickfix;
 mod registers;
 mod save;
 mod search;
@@ -185,6 +186,10 @@ pub struct App {
     /// snippet completion expands; Tab cycles the cursor through its
     /// stops. `None` when no snippet is in flight.
     pub snippet_session: Option<crate::app::state::SnippetSession>,
+    /// Quickfix list — `:cnext` / `:cprev` / `]q` / `[q` navigate it.
+    /// Loaded from grep, LSP references, or diagnostics; `None` when
+    /// nothing has been populated yet.
+    pub quickfix: Option<crate::app::state::QuickfixState>,
     /// Additional Visual-char selection ranges (start, end exclusive).
     /// Populated by `Ctrl-N` while a Visual-char selection is active;
     /// `d`/`c`/`y` then operates on every range plus the primary one.
@@ -280,6 +285,7 @@ impl App {
             last_click: None,
             additional_cursors: Vec::new(),
             snippet_session: None,
+            quickfix: None,
             additional_selections: Vec::new(),
             replaying_macro: false,
             recording: None,

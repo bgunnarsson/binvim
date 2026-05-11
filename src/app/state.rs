@@ -69,6 +69,30 @@ pub struct RecordingState {
     pub keys: Vec<KeyEvent>,
 }
 
+/// One row in the quickfix list — populated from grep results, LSP
+/// references, or diagnostics. Line / column are 1-indexed (Vim
+/// convention; what `:clist` shows). `text` is a short preview for the
+/// list display and is otherwise unused for navigation.
+#[derive(Debug, Clone)]
+pub struct QuickfixEntry {
+    pub path: std::path::PathBuf,
+    pub line: usize,
+    pub col: usize,
+    pub text: String,
+}
+
+/// Quickfix list — Vim's `:cnext` / `:cprev` / `]q` / `[q` flow.
+///
+/// Loaded on demand from grep / references / diagnostics; `current` is
+/// the index last jumped to (or `0` on fresh load). Jumping pushes the
+/// previous cursor to the jumplist so `<C-o>` returns where the user
+/// was. Cleared by `:cclose`.
+#[derive(Debug, Clone)]
+pub struct QuickfixState {
+    pub entries: Vec<QuickfixEntry>,
+    pub current: usize,
+}
+
 /// Active snippet expansion — Tab cycles the cursor between stops.
 ///
 /// `stops` holds doc-char positions in tab-cycle order (`$1 → $2 → … → $0`).

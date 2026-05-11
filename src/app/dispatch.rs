@@ -91,6 +91,8 @@ impl super::App {
             }
             Action::BufferNext => self.cycle_buffer(1),
             Action::BufferPrev => self.cycle_buffer(-1),
+            Action::QuickfixNext => self.qf_next(),
+            Action::QuickfixPrev => self.qf_prev(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),

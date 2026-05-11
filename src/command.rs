@@ -36,7 +36,24 @@ pub enum ExCommand {
     Format,
     Health,
     Debug(DebugSubCmd),
+    /// Quickfix-list sub-commands — `:cn`/`:cp`/`:clist`/`:cfirst`/
+    /// `:clast`/`:cdiag`/`:cclose`. Dispatch lives in `app/input.rs`.
+    Quickfix(QuickfixSubCmd),
     Unknown(String),
+}
+
+/// Quickfix sub-commands. Grouped so the dispatch arm stays tight.
+#[derive(Debug, Clone, Copy)]
+pub enum QuickfixSubCmd {
+    Next,
+    Prev,
+    First,
+    Last,
+    List,
+    /// Replace the qf list with diagnostics from every open buffer.
+    Diagnostics,
+    /// Clear the qf list.
+    Close,
 }
 
 /// Debugger sub-commands accessible via `:debug`, `:dapstop`, `:dapbreak`,
@@ -151,6 +168,13 @@ pub fn parse(line: &str) -> ExCommand {
         "dapin" | "dapi" => ExCommand::Debug(DebugSubCmd::StepIn),
         "dapout" | "dapo" => ExCommand::Debug(DebugSubCmd::StepOut),
         "dappane" => ExCommand::Debug(DebugSubCmd::PaneToggle),
+        "cn" | "cnext" => ExCommand::Quickfix(QuickfixSubCmd::Next),
+        "cp" | "cprev" | "cprevious" | "cN" => ExCommand::Quickfix(QuickfixSubCmd::Prev),
+        "cfirst" | "cr" | "crewind" => ExCommand::Quickfix(QuickfixSubCmd::First),
+        "clast" => ExCommand::Quickfix(QuickfixSubCmd::Last),
+        "cl" | "clist" => ExCommand::Quickfix(QuickfixSubCmd::List),
+        "cdiag" | "cdiagnostics" => ExCommand::Quickfix(QuickfixSubCmd::Diagnostics),
+        "cclose" => ExCommand::Quickfix(QuickfixSubCmd::Close),
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

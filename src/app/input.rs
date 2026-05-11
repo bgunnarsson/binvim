@@ -943,6 +943,18 @@ impl super::App {
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
+            ExCommand::Quickfix(sub) => {
+                use crate::command::QuickfixSubCmd;
+                match sub {
+                    QuickfixSubCmd::Next => self.qf_next(),
+                    QuickfixSubCmd::Prev => self.qf_prev(),
+                    QuickfixSubCmd::First => self.qf_first(),
+                    QuickfixSubCmd::Last => self.qf_last(),
+                    QuickfixSubCmd::List => self.qf_list(),
+                    QuickfixSubCmd::Diagnostics => self.qf_load_from_diagnostics(),
+                    QuickfixSubCmd::Close => self.qf_close(),
+                }
+            }
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
                 self.cursor = m.target;

@@ -128,8 +128,27 @@ impl super::App {
             }
             KeyCode::Enter => {
                 let payload = picker.current().cloned();
+                // Grep / references → snapshot the filtered result set
+                // into the quickfix list before tearing the picker down,
+                // so `:cnext` / `]q` can step through the remaining
+                // matches without re-running the search.
+                let qf_snapshot = if matches!(payload, Some(PickerPayload::Location { .. })) {
+                    let picked = picker.selected;
+                    let entries = crate::app::quickfix::entries_from_picker(picker);
+                    if entries.is_empty() {
+                        None
+                    } else {
+                        let current = picked.min(entries.len().saturating_sub(1));
+                        Some(crate::app::state::QuickfixState { entries, current })
+                    }
+                } else {
+                    None
+                };
                 self.picker = None;
                 self.mode = Mode::Normal;
+                if let Some(state) = qf_snapshot {
+                    self.quickfix = Some(state);
+                }
                 if let Some(p) = payload {
                     match p {
                         PickerPayload::Path(path) => {
