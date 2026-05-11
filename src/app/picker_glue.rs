@@ -121,6 +121,10 @@ impl super::App {
             KeyCode::Esc => {
                 self.picker = None;
                 self.mode = Mode::Normal;
+                // Cancel cleans up any pending debug-launch state so a
+                // half-finished flow doesn't leak into the next picker.
+                self.pending_debug_project = None;
+                self.pending_debug_profiles.clear();
             }
             KeyCode::Enter => {
                 let payload = picker.current().cloned();
@@ -154,6 +158,20 @@ impl super::App {
                         }
                         PickerPayload::DebugProject(project) => {
                             self.dap_start_session_with_project(project);
+                        }
+                        PickerPayload::DebugProfile(idx) => {
+                            let project = self.pending_debug_project.take();
+                            let profile = if idx < self.pending_debug_profiles.len() {
+                                Some(self.pending_debug_profiles.remove(idx))
+                            } else {
+                                None
+                            };
+                            self.pending_debug_profiles.clear();
+                            if let Some(project) = project {
+                                self.dap_start_session_with_profile(project, profile);
+                            } else {
+                                self.status_msg = "debug: profile pick lost context".into();
+                            }
                         }
                     }
                 }
@@ -206,7 +224,8 @@ impl super::App {
             | PickerKind::References
             | PickerKind::DocumentSymbols
             | PickerKind::CodeActions
-            | PickerKind::DebugProject => picker.refilter(),
+            | PickerKind::DebugProject
+            | PickerKind::DebugProfile => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());

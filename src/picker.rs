@@ -15,6 +15,9 @@ pub enum PickerKind {
     /// Pick which `.csproj` (or `.fsproj` / `.vbproj`) the DAP session
     /// should launch when the workspace has more than one.
     DebugProject,
+    /// Pick which `launchSettings.json` profile to use when the chosen
+    /// project has more than one `commandName: "Project"` profile.
+    DebugProfile,
 }
 
 pub struct PickerState {
@@ -47,6 +50,10 @@ pub enum PickerPayload {
     /// Absolute path to a `.csproj` chosen from the DebugProject picker.
     /// Routed straight into `dap_start_session_with_project`.
     DebugProject(PathBuf),
+    /// Index into `App.pending_debug_profiles`. The project context
+    /// (path + profile list) was stashed when the picker opened, so the
+    /// payload only needs to identify which profile in that list.
+    DebugProfile(usize),
 }
 
 impl PickerState {

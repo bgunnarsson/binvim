@@ -145,6 +145,14 @@ pub struct App {
     /// Pending code actions waiting for the user to pick from the picker.
     /// Indexed by `PickerPayload::CodeActionIdx`.
     pub pending_code_actions: Vec<CodeActionItem>,
+    /// Debug-launch state captured between the project picker and the
+    /// profile picker. When `launchSettings.json` for the chosen project
+    /// has more than one runnable profile, we stash the project + the
+    /// parsed profile list here and open the profile picker; on accept
+    /// the index in `PickerPayload::DebugProfile` selects which profile
+    /// goes into the LaunchContext.
+    pub pending_debug_project: Option<std::path::PathBuf>,
+    pub pending_debug_profiles: Vec<crate::dap::LaunchProfile>,
     /// Symbol position captured when a rename prompt opened — the LSP
     /// rename request needs the original `(line, col)` even after the
     /// prompt has stolen focus and the user has moved focus around.
@@ -255,6 +263,8 @@ impl App {
             dap_right_scroll: 0,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
+            pending_debug_project: None,
+            pending_debug_profiles: Vec::new(),
             rename_anchor: None,
             folds: Vec::new(),
             folds_version: u64::MAX,

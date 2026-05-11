@@ -358,12 +358,76 @@ impl super::App {
         self.mode = Mode::Picker;
     }
 
-    /// Kick off the session for a specific picked `.csproj`. Reads
-    /// `Properties/launchSettings.json` next to it and uses the first
-    /// `commandName: "Project"` profile (Kestrel hosting) — its
-    /// `applicationUrl` becomes `ASPNETCORE_URLS`, its
-    /// `environmentVariables` go into the process env.
+    /// Continue the launch flow once a project has been picked (or auto-
+    /// selected when there's only one). Reads
+    /// `Properties/launchSettings.json` next to the project:
+    ///
+    /// - 0 runnable profiles → start without overrides (framework default
+    ///   port, no extra env).
+    /// - 1 runnable profile → use it directly.
+    /// - >1 runnable profiles → stash the project + profile list on the
+    ///   App and open the profile picker. The accept path routes back
+    ///   through `dap_start_session_with_profile`.
     pub(super) fn dap_start_session_with_project(&mut self, project: std::path::PathBuf) {
+        let project_dir = match project.parent() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                self.status_msg = "debug: project path has no parent".into();
+                return;
+            }
+        };
+        let profiles = crate::dap::load_launch_profiles(&project_dir);
+        match profiles.len() {
+            0 => self.dap_start_session_with_profile(project, None),
+            1 => {
+                let profile = profiles.into_iter().next();
+                self.dap_start_session_with_profile(project, profile);
+            }
+            _ => self.open_debug_profile_picker(project, profiles),
+        }
+    }
+
+    /// Open the profile picker — one row per `commandName: "Project"`
+    /// profile found in `Properties/launchSettings.json`. Each row
+    /// displays the profile name and the first application URL so the
+    /// user can tell `Umbraco.Web.UI (https://localhost:44317)` from
+    /// `FaroeShip (https://localhost:44318)` at a glance.
+    fn open_debug_profile_picker(
+        &mut self,
+        project: std::path::PathBuf,
+        profiles: Vec<crate::dap::LaunchProfile>,
+    ) {
+        use crate::picker::{PickerKind, PickerPayload, PickerState};
+        let items: Vec<(String, PickerPayload)> = profiles
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let url_hint = if p.application_urls.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({})", p.application_urls.join(", "))
+                };
+                (format!("{}{}", p.name, url_hint), PickerPayload::DebugProfile(i))
+            })
+            .collect();
+        // Stash the project + profile list so the picker accept path can
+        // resolve which profile the index refers to. Cleared on accept,
+        // on Esc cancel via picker_glue, and on next picker open.
+        self.pending_debug_project = Some(project);
+        self.pending_debug_profiles = profiles;
+        let picker = PickerState::new(PickerKind::DebugProfile, "Launch profile".into(), items);
+        self.picker = Some(picker);
+        self.mode = Mode::Picker;
+    }
+
+    /// Final stage of the launch flow. `profile` is `None` when the
+    /// project has no `commandName: "Project"` entries — we still start,
+    /// just without applicationUrl / env overrides (framework defaults).
+    pub(super) fn dap_start_session_with_profile(
+        &mut self,
+        project: std::path::PathBuf,
+        profile: Option<crate::dap::LaunchProfile>,
+    ) {
         let project_dir = match project.parent() {
             Some(p) => p.to_path_buf(),
             None => {
@@ -376,12 +440,10 @@ impl super::App {
                 "debug: no adapter found for this workspace (need a *.csproj/*.sln)".into();
             return;
         };
-        let profiles = crate::dap::load_launch_profiles(&project_dir);
-        let (application_urls, env) = profiles
-            .into_iter()
-            .next()
-            .map(|p| (p.application_urls, p.env))
-            .unwrap_or_default();
+        let (application_urls, env, profile_label) = match profile {
+            Some(p) => (p.application_urls, p.env, p.name),
+            None => (Vec::new(), Default::default(), String::new()),
+        };
         let ctx = crate::dap::LaunchContext {
             root: project_dir.clone(),
             project_path: Some(project.clone()),
@@ -392,9 +454,20 @@ impl super::App {
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or_else(|| "project");
-        self.status_msg = format!("debug: {} ({})", adapter.key, project_label);
+        self.status_msg = if profile_label.is_empty() {
+            format!("debug: {} ({})", adapter.key, project_label)
+        } else {
+            format!(
+                "debug: {} ({} · {})",
+                adapter.key, project_label, profile_label
+            )
+        };
         self.debug_pane_open = true;
         self.adjust_viewport();
+        // Clear pending state so a subsequent <leader>ds doesn't see
+        // stale data from this run.
+        self.pending_debug_project = None;
+        self.pending_debug_profiles.clear();
         match self.dap.start_session(adapter, ctx) {
             Ok(()) => {
                 self.status_msg = "debug: session starting".into();

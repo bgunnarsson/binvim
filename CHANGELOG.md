@@ -15,16 +15,21 @@ follows [Semantic Versioning](https://semver.org/).
   beneath it (skipping `bin/`, `obj/`, `node_modules/`, etc., with
   a 6-deep bound). The buffer's path doesn't need to be inside the
   picked project — opens fine from a README at the repo root.
-- **DAP reads `Properties/launchSettings.json`.** Picks the first
-  profile with `commandName == "Project"` (Kestrel hosting via
-  `dotnet run`). The profile's `applicationUrl` becomes
-  `ASPNETCORE_URLS` on the launched process, so the app binds to
-  the user's configured port instead of the framework default
-  `http://localhost:5000` — fixes the "Failed to bind to
-  127.0.0.1:5000: address already in use" case when another local
-  service squats on :5000. The profile's `environmentVariables`
-  pass through as `env` on the launch payload (e.g.
-  `ASPNETCORE_ENVIRONMENT=Local`).
+- **DAP reads `Properties/launchSettings.json`.** Every profile
+  with `commandName == "Project"` (Kestrel hosting via `dotnet run`)
+  becomes a launchable option:
+  - 0 profiles → start with framework defaults (no overrides).
+  - 1 profile → use it directly.
+  - >1 profiles → open the launch-profile picker, one row per
+    profile, displaying the profile name + its applicationUrl
+    (e.g. `Umbraco.Web.UI  (https://localhost:44317, http://…)`).
+  The chosen profile's `applicationUrl` becomes `ASPNETCORE_URLS`
+  on the launched process so the app binds to the user's configured
+  port instead of the framework default `http://localhost:5000` —
+  fixes the "Failed to bind to 127.0.0.1:5000: address already in
+  use" case when another local service squats on :5000. The
+  profile's `environmentVariables` pass through as `env` on the
+  launch payload (e.g. `ASPNETCORE_ENVIRONMENT=Local`).
 - **Picker file-type icons.** Files / Recents / Buffers / Grep /
   References rows get a Nerd Font icon per row from `Lang::detect`
   on the basename. Symbol / CodeAction pickers stay unchanged (rows
