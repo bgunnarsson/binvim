@@ -40,7 +40,7 @@ Pattern-priority resolution so `(method_declaration name: (identifier) @function
 
 A few language-specific tweaks on top of the bundled queries:
 
-- **JSX / TSX** — overlay tags lowercase elements (`<div>`) as `@tag` (Pink) and PascalCase components (`<Foo>`, `<Foo.Bar>`) as `@constructor` (Yellow). JSX fragments `<></>` and `{expr}` expression braces also get treated as JSX-template syntax instead of falling through to generic punctuation / object-literal braces.
+- **JSX / TSX** — overlay tags lowercase elements (`<div>`) as `@tag` (Pink) and PascalCase components (`<Foo>`, `<Foo.Bar>`) as `@constructor` (Yellow). `{expr}` braces inside JSX get treated as JSX-template syntax (`@operator`) instead of falling through to the object-literal punctuation tone.
 - **Razor** — `@inject` / `@using` / `@{…}` / `@if` / `@(…)` / `@*…*@` etc. paint as `@keyword.directive`; C# inside the blocks is highlighted by the C# query. A byte-level overlay handles HTML tag / attribute names + C# keywords inside broken-parse regions (BOM headers, Tailwind `class="…[16px]…"` bracket attributes, …).
 - **CSS** — replacement query so selectors and properties don't collide: `.class-name` is `@constructor` (Yellow), `#id-name` is `@label` (Sapphire), `property:` is `@property` (Lavender), `--custom-prop` is `@variable`, at-rules (`@media`/`@keyframes`/…) are `@keyword` (Mauve).
 - **`.editorconfig`** — comments, `[*.cs]` section headers in Pink, `key = value` pairs with the key in Lavender, `=` in Sky, value in Green.

@@ -71,10 +71,14 @@ follows [Semantic Versioning](https://semver.org/).
   render in a warmer Overlay2 tone; type hints (`kind == 1` or
   unknown) keep the muted Overlay1 they had — both categories scan
   apart on a mixed line.
-- **JSX overlay: fragments + expression containers.** `<>…</>` gets
-  `@tag` on its delimiters; JSX `{expr}` braces get `@operator` so
-  they read as JSX-template syntax instead of being mistaken for
-  object literals.
+- **JSX overlay: `{expr}` braces tagged as JSX-template syntax.**
+  JSX expression containers get `@operator` on their braces so they
+  read as JSX-template syntax instead of being mistaken for object
+  literals. (Originally also covered `<>…</>` fragments via a
+  `jsx_fragment` capture, but that node type isn't in
+  tree-sitter-typescript / tree-sitter-javascript 0.23 — adding it
+  made `Query::new` fail and wiped the entire highlight cache for
+  every .tsx / .jsx file. Reverted, regression-tested.)
 - **`<leader>do` / `<leader>dS` for Doc / Workspace symbols.** Moved
   from top-level `<leader>o` / `<leader>S` so all "navigate around
   code while debugging" pickers cluster in the debug sub-menu.

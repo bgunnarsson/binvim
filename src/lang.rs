@@ -383,9 +383,10 @@ const JSX_OVERLAY_QUERY: &str = r#"
 ; JSX fragments `<>…</>` — paint the < / > / </ / > tokens as @tag so
 ; they read consistently with named elements. Without this they fall
 ; through to whatever generic punctuation rule the JS query emits.
-(jsx_fragment "<" @tag)
-(jsx_fragment ">" @tag)
-(jsx_fragment "</" @tag)
+; jsx_fragment for `<>…</>` would belong here but isn't a node type
+; in tree-sitter-typescript 0.23 / tree-sitter-javascript 0.23 —
+; adding it makes Query::new fail and wipes the highlight cache for
+; every .tsx / .jsx file.
 
 ; JSX expression containers `{expr}` — the braces are JSX-template
 ; syntax, not an object literal, so paint them with the operator tone
@@ -1051,6 +1052,59 @@ mod tests {
         assert!(colors[pattern_idx].is_some());
         assert!(colors[bang_idx].is_some());
         assert_ne!(colors[comment_idx], colors[bang_idx]);
+    }
+
+    #[test]
+    fn tsx_highlight_cache_is_populated() {
+        // Regression: any unknown node type in the JSX overlay (e.g.
+        // `jsx_fragment` from older binvim versions) made `Query::new`
+        // fail and the whole TSX highlight cache came back empty, so
+        // every char rendered as plain text. Make sure a representative
+        // TSX snippet still gets meaningful colour after the overlay
+        // runs.
+        let src = r#"import { Foo } from "./foo";
+export function Page() {
+    const items = [1, 2, 3];
+    return (
+        <div className="card">
+            {items.map(n => <span key={n}>{n}</span>)}
+        </div>
+    );
+}
+"#;
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Tsx, src, &cfg).expect("tsx highlight cache");
+        // `import` keyword should be coloured.
+        assert!(
+            colors[src.find("import").unwrap()].is_some(),
+            "TSX keyword `import` should be coloured"
+        );
+        // `Page` (function declaration) should be coloured.
+        assert!(
+            colors[src.find("Page").unwrap()].is_some(),
+            "TSX function `Page` should be coloured"
+        );
+        // `div` (lowercase JSX tag) should be coloured (Pink @tag).
+        assert!(
+            colors[src.find("<div").unwrap() + 1].is_some(),
+            "TSX `<div>` should be coloured"
+        );
+    }
+
+    #[test]
+    fn jsx_highlight_cache_is_populated() {
+        // Same regression for .jsx — JavaScript grammar plus JSX overlay.
+        let src = "export const Page = () => <div className=\"c\">{x}</div>;\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::JavaScript, src, &cfg).expect("js highlight cache");
+        assert!(
+            colors[src.find("export").unwrap()].is_some(),
+            "JSX keyword `export` should be coloured"
+        );
+        assert!(
+            colors[src.find("<div").unwrap() + 1].is_some(),
+            "JSX `<div>` should be coloured"
+        );
     }
 
     #[test]
