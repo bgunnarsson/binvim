@@ -215,17 +215,52 @@ impl super::App {
         }
         // Tab-bar click: only on the top row when tabs are showing.
         // Left-click on a tab's close glyph deletes the buffer; click
-        // anywhere else inside the tab switches to it.
+        // anywhere else inside the tab switches to it. Middle-click
+        // anywhere on a tab also deletes it (subject to the same dirty
+        // guard) — faster than aiming for the `×`. Clicking the `‹` /
+        // `›` overflow chevrons walks the active buffer one step in
+        // that direction, which is what shifts the visible slice.
         let buffer_top = self.buffer_top();
         if buffer_top > 0 && row == 0 {
-            if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
-                for slot in crate::render::tab_layout(self) {
+            let total_w = self.width as usize;
+            if matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+            ) {
+                let slots = crate::render::tab_layout(self);
+                let scrolled_left = slots.first().map(|s| s.idx > 0).unwrap_or(false);
+                let truncated_right = slots
+                    .last()
+                    .map(|s| s.idx + 1 < self.buffers.len())
+                    .unwrap_or(false);
+                // Chevron clicks — only on Left, only when the indicator
+                // is actually painted at that column. Middle on a chevron
+                // falls through to no-op.
+                if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    if scrolled_left && col == 0 {
+                        let first_visible = slots.first().map(|s| s.idx).unwrap_or(0);
+                        let _ = self.switch_to(first_visible.saturating_sub(1));
+                        return;
+                    }
+                    if truncated_right && col == total_w.saturating_sub(1) {
+                        let last_visible = slots
+                            .last()
+                            .map(|s| s.idx)
+                            .unwrap_or(self.buffers.len() - 1);
+                        let next = (last_visible + 1).min(self.buffers.len() - 1);
+                        let _ = self.switch_to(next);
+                        return;
+                    }
+                }
+                for slot in &slots {
                     if col >= slot.start_col && col < slot.end_col {
-                        // Any tab interaction dismisses the start page —
-                        // restored sessions show tabs above the welcome
-                        // screen and clicking one is the obvious way in.
                         self.show_start_page = false;
-                        if slot.close_col == Some(col) {
+                        let is_middle = matches!(
+                            ev.kind,
+                            MouseEventKind::Down(MouseButton::Middle)
+                        );
+                        let on_close = slot.close_col == Some(col);
+                        if is_middle || on_close {
                             // Match :bd behaviour: refuse to drop a
                             // dirty buffer. The user can :bd! force or
                             // save first.

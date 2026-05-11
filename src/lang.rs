@@ -237,6 +237,19 @@ const JSX_OVERLAY_QUERY: &str = r#"
 
 ; Attribute names — `className=`, `onClick=`, etc.
 (jsx_attribute (property_identifier) @attribute)
+
+; JSX fragments `<>…</>` — paint the < / > / </ / > tokens as @tag so
+; they read consistently with named elements. Without this they fall
+; through to whatever generic punctuation rule the JS query emits.
+(jsx_fragment "<" @tag)
+(jsx_fragment ">" @tag)
+(jsx_fragment "</" @tag)
+
+; JSX expression containers `{expr}` — the braces are JSX-template
+; syntax, not an object literal, so paint them with the operator tone
+; to set them apart from the object-literal braces that surround them.
+(jsx_expression "{" @operator)
+(jsx_expression "}" @operator)
 "#;
 
 /// Extra captures layered on top of the C# highlight query for Razor files.

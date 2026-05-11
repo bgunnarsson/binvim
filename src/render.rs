@@ -1066,7 +1066,19 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
         if item_in_range {
             let item_idx = picker.filtered[pos];
             let display = &picker.items[item_idx];
-            written = paint_picker_row(out, display, body_w, selected, path_fg, name_fg, dim_fg)?;
+            // Path-based pickers get a file-type icon prefix; symbol /
+            // code-action lists don't (the row isn't a file).
+            let show_icon = matches!(
+                picker.kind,
+                crate::picker::PickerKind::Files
+                    | crate::picker::PickerKind::Recents
+                    | crate::picker::PickerKind::Buffers
+                    | crate::picker::PickerKind::Grep
+                    | crate::picker::PickerKind::References,
+            );
+            written = paint_picker_row(
+                out, display, body_w, selected, path_fg, name_fg, dim_fg, show_icon,
+            )?;
         }
         if written < body_w {
             queue!(out, Print(" ".repeat(body_w - written)))?;
@@ -1183,44 +1195,112 @@ fn paint_picker_row(
     path_fg: Color,
     name_fg: Color,
     dim_fg: Color,
+    show_icon: bool,
 ) -> Result<usize> {
     if max_w == 0 {
         return Ok(0);
     }
-    let (dir_part, name_part) = match display.rfind('/') {
-        Some(i) => (&display[..=i], &display[i + 1..]),
-        None => ("", display),
+    // Grep / References rows look like `path/to/file:LN:COL:match-text` —
+    // peel the trailing `:LN…` so it doesn't break path detection or
+    // get mistaken for part of the filename.
+    let (display_path, suffix) = split_grep_location(display);
+    let (dir_part, name_part) = match display_path.rfind('/') {
+        Some(i) => (&display_path[..=i], &display_path[i + 1..]),
+        None => ("", display_path),
     };
+
+    // Resolve a file-type icon from the basename — Nerd Font glyphs per
+    // detected Lang, with a generic document fallback. Two columns wide
+    // in the budget (icon + space).
+    let icon: Option<char> = if show_icon {
+        Some(icon_for_basename(name_part))
+    } else {
+        None
+    };
+    let icon_w = if icon.is_some() { 2 } else { 0 };
+
     let dir_chars: Vec<char> = dir_part.chars().collect();
     let name_chars: Vec<char> = name_part.chars().collect();
+    let suffix_chars: Vec<char> = suffix.chars().collect();
+    let body_w = max_w.saturating_sub(icon_w);
 
     // Truncate the basename first if it alone exceeds the budget — keeps
     // the directory visible at least partially. Otherwise truncate from
-    // the dir's left so the basename is always intact.
+    // the dir's left so the basename is always intact. Suffix (grep
+    // location) is preserved as-is — clipping it would lose the match
+    // line/column that's the whole point of the row.
+    let suffix_len = suffix_chars.len();
+    let path_budget = body_w.saturating_sub(suffix_len);
     let total = dir_chars.len() + name_chars.len();
-    let (dir_slice, name_slice) = if total <= max_w {
+    let (dir_slice, name_slice) = if total <= path_budget {
         (dir_chars.as_slice(), name_chars.as_slice())
-    } else if name_chars.len() >= max_w {
-        // Name alone too wide — show the trailing slice of the name.
-        let n = &name_chars[name_chars.len() - max_w..];
+    } else if name_chars.len() >= path_budget {
+        let n = &name_chars[name_chars.len() - path_budget..];
         (&[][..], n)
     } else {
-        // Trim the head of the directory.
-        let drop = total - max_w;
+        let drop = total - path_budget;
         let d = &dir_chars[drop..];
         (d, name_chars.as_slice())
     };
 
     let _ = dim_fg;
-    // Directory dim only on un-selected rows — a selected row's accent
-    // already differentiates it, dimming the dir as well makes it muddy.
     let dir_color = if selected { name_fg } else { path_fg };
     let name_color = name_fg;
+    if let Some(ch) = icon {
+        queue!(
+            out,
+            SetForegroundColor(if selected { name_fg } else { path_fg }),
+            Print(ch),
+            Print(' '),
+        )?;
+    }
     let dir_str: String = dir_slice.iter().collect();
     let name_str: String = name_slice.iter().collect();
     queue!(out, SetForegroundColor(dir_color), Print(&dir_str))?;
     queue!(out, SetForegroundColor(name_color), Print(&name_str))?;
-    Ok(dir_slice.len() + name_slice.len())
+    let mut written = icon_w + dir_slice.len() + name_slice.len();
+    if !suffix.is_empty() && written < max_w {
+        let room = max_w - written;
+        let suffix_str: String = if suffix_chars.len() <= room {
+            suffix_chars.iter().collect()
+        } else {
+            suffix_chars[..room].iter().collect()
+        };
+        queue!(out, SetForegroundColor(path_fg), Print(&suffix_str))?;
+        written += suffix_chars.len().min(room);
+    }
+    Ok(written)
+}
+
+/// Peel off a trailing `:LINE:COL:…` (grep) or `:LINE` (references)
+/// suffix so the path-portion routes through the same dir/name split as
+/// a bare filename. Returns `(path, suffix)` where suffix includes the
+/// leading colon.
+fn split_grep_location(display: &str) -> (&str, &str) {
+    let bytes = display.as_bytes();
+    // Find the first colon that's followed by a digit. Skip `C:` Windows-
+    // style drive letters by requiring something before the colon.
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b':' && i > 0 {
+            let next = bytes.get(i + 1).copied().unwrap_or(0);
+            if next.is_ascii_digit() {
+                return (&display[..i], &display[i..]);
+            }
+        }
+    }
+    (display, "")
+}
+
+/// File-type icon for a basename. Detects the language via the same
+/// path-extension logic the buffer uses; falls back to a generic
+/// document glyph when nothing matches.
+fn icon_for_basename(basename: &str) -> char {
+    let path = std::path::Path::new(basename);
+    if let Some(lang) = Lang::detect(path) {
+        return lang_icon(lang);
+    }
+    // Nerd Font generic file icon.
+    '\u{f15b}'
 }
 
 const START_LOGO: &[&str] = &[
@@ -1668,9 +1748,21 @@ fn draw_line_with_selection(
                 }
                 let printable: String = h.label.chars().take(remaining).collect();
                 let written = printable.chars().count();
+                // Parameter hints (kind == 2) read better in a slightly
+                // warmer tone than type hints — they sit right before
+                // the value the user just typed, so a touch of
+                // differentiation makes them scannable as "this is the
+                // parameter name" rather than blending into the type
+                // hints elsewhere on the line. Type hints (kind == 1
+                // or unknown) keep the muted Overlay1 tone.
+                let fg = if h.kind == 2 {
+                    Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 } // Overlay2 — warmer than Overlay1
+                } else {
+                    hint_fg
+                };
                 queue!(
                     out,
-                    SetForegroundColor(hint_fg),
+                    SetForegroundColor(fg),
                     SetAttribute(Attribute::Italic),
                     Print(&printable),
                     SetAttribute(Attribute::Reset),
@@ -1857,9 +1949,16 @@ fn draw_line_with_selection(
             }
             let printable: String = h.label.chars().take(remaining).collect();
             let written = printable.chars().count();
+            // Same kind-aware tone the inline pass uses — parameter
+            // hints lean a shade warmer than type hints.
+            let fg = if h.kind == 2 {
+                Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 }
+            } else {
+                hint_fg
+            };
             queue!(
                 out,
-                SetForegroundColor(hint_fg),
+                SetForegroundColor(fg),
                 SetAttribute(Attribute::Italic),
                 Print(&printable),
                 SetAttribute(Attribute::Reset),

@@ -620,6 +620,16 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(Action::LspFindReferences);
         }
+        // gt / gT — Vim convention for next / previous tab. Aliases for
+        // H / L which we already bind to the same actions.
+        if ch == 't' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::BufferNext);
+        }
+        if ch == 'T' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::BufferPrev);
+        }
         let mv = match ch {
             'g' => Some(MotionVerb::FirstLine),
             'e' => Some(MotionVerb::EndWordBackward),
