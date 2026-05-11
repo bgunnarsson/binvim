@@ -2160,7 +2160,12 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Html => '\u{e60e}',
         Lang::Css => '\u{e749}',
         Lang::Markdown => '\u{e609}',
-        Lang::CSharp | Lang::Razor => '\u{f81a}',
+        // Nerd Fonts v3 dropped `\u{f81a}` (the old "C#" glyph from v2),
+        // so any user on a recent font (Hack Nerd Font, JetBrainsMono
+        // Nerd Font 3.x, …) saw the missing-glyph tofu. The Seti
+        // codepoint `\u{e648}` has been stable across v2 and v3 and
+        // renders correctly on every current Nerd Font release.
+        Lang::CSharp | Lang::Razor => '\u{e648}',
         Lang::Bash => '\u{f489}',
         Lang::Yaml => '\u{e6a8}',
         Lang::Xml => '\u{e619}',
@@ -2196,7 +2201,7 @@ fn lang_name(lang: Lang) -> &'static str {
 fn lang_label(path: Option<&std::path::Path>, lang: Lang) -> (char, &'static str) {
     if let Some(ext) = path.and_then(|p| p.extension()).and_then(|e| e.to_str()) {
         match ext {
-            "cshtml" | "razor" => return ('\u{f81a}', "razor"),
+            "cshtml" | "razor" => return ('\u{e648}', "razor"),
             "zsh" => return (lang_icon(lang), "zsh"),
             "ksh" => return (lang_icon(lang), "ksh"),
             _ => {}
