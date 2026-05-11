@@ -294,6 +294,107 @@ impl super::App {
         out
     }
 
+    /// Replace the visual selection with the contents of a register
+    /// (`p`/`P` in Visual mode). The replaced text overwrites the unnamed
+    /// register — matching Vim's default — but the paste itself uses the
+    /// register snapshot taken before the delete, so back-to-back visual
+    /// pastes of the same content keep working.
+    pub(super) fn apply_visual_put(&mut self, register: Option<char>) {
+        let kind = match self.mode {
+            Mode::Visual(k) => k,
+            _ => return,
+        };
+        let Some(reg) = self.read_register(register) else {
+            self.exit_visual();
+            return;
+        };
+        if matches!(kind, VisualKind::Block) {
+            self.apply_block_put(reg);
+            return;
+        }
+        let (start, end, linewise_selection) = self.visual_range_chars(kind);
+        if end <= start {
+            self.exit_visual();
+            return;
+        }
+        let removed = self.buffer.rope.slice(start..end).to_string();
+        // Overwrite the unnamed register with the deleted selection so a
+        // follow-up `yy`/`p` cycle behaves like in Vim. The paste below uses
+        // the snapshot taken above, not the register's new contents.
+        self.write_register(None, removed, linewise_selection);
+        self.buffer.delete_range(start, end);
+        let to_insert = if reg.linewise && !linewise_selection {
+            // Pasting a linewise yank over a charwise selection — drop the
+            // trailing newline so we don't open a stray empty line.
+            reg.text.trim_end_matches('\n').to_string()
+        } else {
+            reg.text.clone()
+        };
+        let inserted_chars = to_insert.chars().count();
+        self.buffer.insert_at_idx(start, &to_insert);
+        if inserted_chars > 0 {
+            self.cursor_to_idx(start + inserted_chars - 1);
+        } else {
+            self.cursor_to_idx(start);
+        }
+        self.clamp_cursor_normal();
+        self.exit_visual();
+    }
+
+    /// Block-selection variant of `apply_visual_put` — delete the rectangle
+    /// row by row and insert the register's text once at the upper-left
+    /// corner. Multi-line block pastes that preserve the rectangle shape
+    /// would need a full block-paste implementation; this is the minimum
+    /// that makes `vp` over a block selection do something useful.
+    fn apply_block_put(&mut self, reg: super::state::Register) {
+        let anchor = self.visual_anchor.unwrap_or(self.cursor);
+        let l1 = anchor.line.min(self.cursor.line);
+        let l2 = anchor.line.max(self.cursor.line);
+        let c1 = anchor.col.min(self.cursor.col);
+        let c2 = anchor.col.max(self.cursor.col);
+        // Collect the rectangle's text for the unnamed register, then strip
+        // it from the buffer bottom-up so the upper rows' indices stay valid.
+        let mut chunks: Vec<String> = Vec::with_capacity(l2 - l1 + 1);
+        for line in l1..=l2 {
+            let line_len = self.buffer.line_len(line);
+            let start = c1.min(line_len);
+            let end = (c2 + 1).min(line_len);
+            if end <= start {
+                chunks.push(String::new());
+                continue;
+            }
+            let line_start = self.buffer.line_start_idx(line);
+            chunks.push(
+                self.buffer
+                    .rope
+                    .slice((line_start + start)..(line_start + end))
+                    .to_string(),
+            );
+        }
+        self.write_register(None, chunks.join("\n"), false);
+        for line in (l1..=l2).rev() {
+            let line_len = self.buffer.line_len(line);
+            let start = c1.min(line_len);
+            let end = (c2 + 1).min(line_len);
+            if end > start {
+                let line_start = self.buffer.line_start_idx(line);
+                self.buffer.delete_range(line_start + start, line_start + end);
+            }
+        }
+        // Insert the register text once at the corner.
+        let corner = self.buffer.line_start_idx(l1) + c1.min(self.buffer.line_len(l1));
+        let to_insert = reg.text.trim_end_matches('\n').to_string();
+        let inserted_chars = to_insert.chars().count();
+        self.buffer.insert_at_idx(corner, &to_insert);
+        if inserted_chars > 0 {
+            self.cursor_to_idx(corner + inserted_chars - 1);
+        } else {
+            self.cursor_to_idx(corner);
+        }
+        self.clamp_cursor_normal();
+        self.exit_visual();
+    }
+
     /// Apply an operator to the current visual-block selection. Block
     /// operations delete / yank / change the rectangular column range on
     /// each row of the line span. Indent / outdent on a block fall back to

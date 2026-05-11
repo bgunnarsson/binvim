@@ -149,6 +149,10 @@ pub enum Action {
     Fold(FoldOp),
     LspHover,
     VisualOperate { op: Operator, register: Option<char> },
+    /// Visual `p` / `P` — replace the selection with the register's contents.
+    /// `before` is unused (both keys behave the same in visual mode) but kept
+    /// for symmetry with `Action::Put`.
+    VisualPut { register: Option<char> },
     VisualSelectTextObject { obj: TextObjectVerb },
     VisualSwap,
     VisualSwitch(VisualKind),
@@ -596,6 +600,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 let register = state.take_register();
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate { op: Operator::Change, register });
+            }
+            'p' | 'P' => {
+                let register = state.take_register();
+                state.reset();
+                return ParseResult::Action(Action::VisualPut { register });
             }
             'S' => {
                 state.awaiting_visual_surround = true;

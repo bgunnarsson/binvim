@@ -122,6 +122,10 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.apply_visual_operate(op, register);
             }
+            Action::VisualPut { register } => {
+                self.history.record(&self.buffer.rope, self.cursor);
+                self.apply_visual_put(register);
+            }
             Action::VisualSelectTextObject { obj } => {
                 self.apply_visual_select_textobj(obj);
             }

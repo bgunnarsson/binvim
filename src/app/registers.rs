@@ -115,6 +115,7 @@ impl super::App {
             | Action::OperateTextObject { op, .. } => matches!(op, Operator::Delete),
             Action::DeleteCharForward { .. }
             | Action::Put { .. }
+            | Action::VisualPut { .. }
             | Action::ReplaceChar { .. }
             | Action::JoinLines { .. }
             | Action::AdjustNumber { .. }
