@@ -23,7 +23,10 @@ mod types;
 
 pub use manager::{flat_locals_view, DapManager, StepKind};
 #[allow(unused_imports)]
-pub use specs::{adapter_for_workspace, DapAdapterSpec, PrelaunchCommand};
+pub use specs::{
+    adapter_for_workspace, find_dotnet_projects, find_dotnet_workspace_root,
+    load_launch_profiles, DapAdapterSpec, LaunchContext, LaunchProfile, PrelaunchCommand,
+};
 #[allow(unused_imports)]
 pub use types::{
     Breakpoint, DapEvent, DapIncoming, OutputLine, Scope, SessionState, SourceBreakpoint,

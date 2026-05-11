@@ -306,6 +306,11 @@ impl super::App {
     }
 
     fn dap_start_session(&mut self) {
+        // Start from the active buffer's directory when it's path-backed
+        // (typical Normal-mode launch), otherwise the workspace cwd. Non-
+        // .cs files are fine — adapter resolution walks up looking for a
+        // .csproj/.sln so a README open at the project root still finds
+        // the right adapter.
         let start_dir = self
             .buffer
             .path
@@ -314,21 +319,83 @@ impl super::App {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             });
-        let Some((adapter, root)) = adapter_for_workspace(&start_dir) else {
+        let workspace_root = crate::dap::find_dotnet_workspace_root(&start_dir);
+        let projects = crate::dap::find_dotnet_projects(&workspace_root);
+        match projects.len() {
+            0 => {
+                self.status_msg = format!(
+                    "debug: no .csproj/.fsproj/.vbproj under {}",
+                    workspace_root.display()
+                );
+            }
+            1 => {
+                let project = projects.into_iter().next().unwrap();
+                self.dap_start_session_with_project(project);
+            }
+            _ => self.open_debug_project_picker(projects),
+        }
+    }
+
+    /// Open the project picker — one row per discovered `.csproj`,
+    /// displayed as the path relative to the workspace root so the user
+    /// can tell `Vettvangur.Site` from `Vettvangur.Core` at a glance.
+    fn open_debug_project_picker(&mut self, projects: Vec<std::path::PathBuf>) {
+        use crate::picker::{PickerKind, PickerPayload, PickerState};
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let canon_cwd = cwd.canonicalize().unwrap_or(cwd);
+        let items: Vec<(String, PickerPayload)> = projects
+            .into_iter()
+            .map(|p| {
+                let display = p
+                    .strip_prefix(&canon_cwd)
+                    .map(|r| r.display().to_string())
+                    .unwrap_or_else(|_| p.display().to_string());
+                (display, PickerPayload::DebugProject(p))
+            })
+            .collect();
+        let picker = PickerState::new(PickerKind::DebugProject, "Debug project".into(), items);
+        self.picker = Some(picker);
+        self.mode = Mode::Picker;
+    }
+
+    /// Kick off the session for a specific picked `.csproj`. Reads
+    /// `Properties/launchSettings.json` next to it and uses the first
+    /// `commandName: "Project"` profile (Kestrel hosting) — its
+    /// `applicationUrl` becomes `ASPNETCORE_URLS`, its
+    /// `environmentVariables` go into the process env.
+    pub(super) fn dap_start_session_with_project(&mut self, project: std::path::PathBuf) {
+        let project_dir = match project.parent() {
+            Some(p) => p.to_path_buf(),
+            None => {
+                self.status_msg = "debug: project path has no parent".into();
+                return;
+            }
+        };
+        let Some((adapter, _)) = adapter_for_workspace(&project_dir) else {
             self.status_msg =
                 "debug: no adapter found for this workspace (need a *.csproj/*.sln)".into();
             return;
         };
-        // Surface the build progress before the blocking prelaunch step.
-        // We can't redraw mid-call (the prelaunch runs synchronously) but
-        // setting the status here means it's at least visible after the
-        // build finishes if there was no error.
-        self.status_msg = format!("debug: {} ({})", adapter.key, root.display());
-        // Force the pane open so the user can see status as the handshake
-        // unfolds.
+        let profiles = crate::dap::load_launch_profiles(&project_dir);
+        let (application_urls, env) = profiles
+            .into_iter()
+            .next()
+            .map(|p| (p.application_urls, p.env))
+            .unwrap_or_default();
+        let ctx = crate::dap::LaunchContext {
+            root: project_dir.clone(),
+            project_path: Some(project.clone()),
+            application_urls,
+            env,
+        };
+        let project_label = project
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_else(|| "project");
+        self.status_msg = format!("debug: {} ({})", adapter.key, project_label);
         self.debug_pane_open = true;
         self.adjust_viewport();
-        match self.dap.start_session(adapter, root) {
+        match self.dap.start_session(adapter, ctx) {
             Ok(()) => {
                 self.status_msg = "debug: session starting".into();
             }

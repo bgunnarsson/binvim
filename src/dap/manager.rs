@@ -142,16 +142,25 @@ impl DapManager {
     pub fn start_session(
         &mut self,
         adapter: DapAdapterSpec,
-        root: PathBuf,
+        ctx: super::specs::LaunchContext,
     ) -> Result<(), String> {
         if self.is_active() {
             return Err("debug session already active — :dapstop first".into());
         }
 
+        let root = ctx.root.clone();
+        // Prelaunch runs inside the *project* directory when one was
+        // picked (so `dotnet build` rebuilds the right project), and the
+        // workspace root otherwise.
+        let prelaunch_cwd = ctx
+            .project_path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| root.clone());
         if let Some(pre) = adapter.prelaunch {
             let output = std::process::Command::new(pre.program)
                 .args(pre.args)
-                .current_dir(&root)
+                .current_dir(&prelaunch_cwd)
                 .output()
                 .map_err(|e| format!("{} failed to start: {}", pre.program, e))?;
             if !output.status.success() {
@@ -169,7 +178,7 @@ impl DapManager {
 
         // Resolve launch args before spawning the adapter — if the dll
         // can't be found we avoid leaking an orphan netcoredbg process.
-        let launch_args = (adapter.build_launch_args)(&root)?;
+        let launch_args = (adapter.build_launch_args)(&ctx)?;
 
         let client = DapClient::spawn_spec(&adapter)
             .ok_or_else(|| format!("could not spawn adapter `{}`", adapter.key))?;

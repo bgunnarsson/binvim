@@ -12,6 +12,9 @@ pub enum PickerKind {
     DocumentSymbols,
     WorkspaceSymbols,
     CodeActions,
+    /// Pick which `.csproj` (or `.fsproj` / `.vbproj`) the DAP session
+    /// should launch when the workspace has more than one.
+    DebugProject,
 }
 
 pub struct PickerState {
@@ -41,6 +44,9 @@ pub enum PickerPayload {
     /// Index into a separately-stored vector of pending code actions on the
     /// app — the actual `WorkspaceEdit` is too heavy to carry around.
     CodeActionIdx(usize),
+    /// Absolute path to a `.csproj` chosen from the DebugProject picker.
+    /// Routed straight into `dap_start_session_with_project`.
+    DebugProject(PathBuf),
 }
 
 impl PickerState {

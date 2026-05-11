@@ -7,6 +7,24 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **DAP multi-project workspace support.** `<leader>ds` works from
+  any file now — not just `.cs`. When the workspace has more than
+  one `.csproj` (or `.fsproj` / `.vbproj`), a picker opens listing
+  every project relative to the cwd. Walking up looks for `.sln` or
+  `.git` first to find the workspace root, then enumerates projects
+  beneath it (skipping `bin/`, `obj/`, `node_modules/`, etc., with
+  a 6-deep bound). The buffer's path doesn't need to be inside the
+  picked project — opens fine from a README at the repo root.
+- **DAP reads `Properties/launchSettings.json`.** Picks the first
+  profile with `commandName == "Project"` (Kestrel hosting via
+  `dotnet run`). The profile's `applicationUrl` becomes
+  `ASPNETCORE_URLS` on the launched process, so the app binds to
+  the user's configured port instead of the framework default
+  `http://localhost:5000` — fixes the "Failed to bind to
+  127.0.0.1:5000: address already in use" case when another local
+  service squats on :5000. The profile's `environmentVariables`
+  pass through as `env` on the launch payload (e.g.
+  `ASPNETCORE_ENVIRONMENT=Local`).
 - **Picker file-type icons.** Files / Recents / Buffers / Grep /
   References rows get a Nerd Font icon per row from `Lang::detect`
   on the basename. Symbol / CodeAction pickers stay unchanged (rows

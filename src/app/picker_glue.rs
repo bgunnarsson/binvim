@@ -152,6 +152,9 @@ impl super::App {
                         PickerPayload::CodeActionIdx(idx) => {
                             self.run_code_action(idx);
                         }
+                        PickerPayload::DebugProject(project) => {
+                            self.dap_start_session_with_project(project);
+                        }
                     }
                 }
             }
@@ -202,7 +205,8 @@ impl super::App {
             | PickerKind::Buffers
             | PickerKind::References
             | PickerKind::DocumentSymbols
-            | PickerKind::CodeActions => picker.refilter(),
+            | PickerKind::CodeActions
+            | PickerKind::DebugProject => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());
