@@ -304,9 +304,18 @@ impl DapManager {
     }
 
     /// Pull all available messages off the reader-thread channel, run them
-    /// through the protocol state machine, and return the editor-facing
-    /// `DapEvent`s the main loop should react to.
-    pub fn drain(&mut self) -> Vec<DapEvent> {
+    /// through the protocol state machine, and return:
+    ///
+    /// - the editor-facing `DapEvent`s the main loop should react to, and
+    /// - a `progress` bool that's `true` whenever *any* incoming message
+    ///   was processed.
+    ///
+    /// Many protocol replies (stackTrace, scopes, variables) update visible
+    /// session state without emitting a user-facing event — the renderer
+    /// still needs to know they happened, otherwise frames + locals
+    /// appear stale until the next keypress. The `progress` flag lets the
+    /// main loop request a redraw on those silent state mutations.
+    pub fn drain(&mut self) -> (Vec<DapEvent>, bool) {
         let mut events = Vec::new();
         let mut msgs = Vec::new();
         let mut stderr_lines: Vec<OutputLine> = Vec::new();
@@ -323,6 +332,7 @@ impl DapManager {
             // the crash so the user sees something instead of a hang.
             exit_code = session.client.try_exit_status();
         }
+        let progress = !msgs.is_empty() || !stderr_lines.is_empty() || exit_code.is_some();
         for line in stderr_lines {
             // Stream into the output buffer so the pane shows whatever the
             // adapter printed before dying.
@@ -355,7 +365,7 @@ impl DapManager {
                 events.push(DapEvent::Terminated);
             }
         }
-        events
+        (events, progress)
     }
 
     fn process_incoming(&mut self, msg: DapIncoming, events: &mut Vec<DapEvent>) {
@@ -959,7 +969,9 @@ mod tests {
     fn idle_manager_is_inactive_and_drains_empty() {
         let mut m = DapManager::new();
         assert!(!m.is_active());
-        assert!(m.drain().is_empty());
+        let (events, progress) = m.drain();
+        assert!(events.is_empty());
+        assert!(!progress);
     }
 
     #[test]

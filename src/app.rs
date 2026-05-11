@@ -375,9 +375,16 @@ impl App {
                 self.handle_lsp_events(events);
                 needs_render = true;
             }
-            let dap_events = self.dap.drain();
-            if !dap_events.is_empty() {
+            let (dap_events, dap_progress) = self.dap.drain();
+            let had_dap_events = !dap_events.is_empty();
+            if had_dap_events {
                 self.handle_dap_events(dap_events);
+            }
+            // Silent protocol replies (stackTrace / scopes / variables)
+            // mutate visible session state without producing a user-facing
+            // event — render anyway so the pane reflects the new frames
+            // and locals immediately instead of on the next keypress.
+            if had_dap_events || dap_progress {
                 needs_render = true;
             }
             // Drop the yank flash once its deadline has passed so the next
