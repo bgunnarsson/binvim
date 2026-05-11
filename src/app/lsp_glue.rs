@@ -380,18 +380,68 @@ impl super::App {
         // Snippet items go through the placeholder expander so `${1:foo}`
         // doesn't end up as literal text in the buffer. Plain items insert
         // verbatim.
-        let (text, first_stop_offset) = if item.is_snippet {
+        let (text, stop_offsets) = if item.is_snippet {
             expand_snippet(&item.insert_text)
         } else {
-            (item.insert_text.clone(), None)
+            (item.insert_text.clone(), Vec::new())
         };
         self.buffer.insert_at_idx(start, &text);
         let inserted = text.chars().count();
-        let landing = match first_stop_offset {
-            Some(off) => start + off.min(inserted),
+        let landing = match stop_offsets.first() {
+            Some(&off) => start + off.min(inserted),
             None => start + inserted,
         };
         self.cursor_to_idx(landing);
+        // Two-or-more stops → Tab cycling kicks in (one stop has nothing
+        // to cycle to). Convert relative offsets into absolute doc-char
+        // positions; subsequent edits shift later stops via
+        // `snippet_session_record_insert` / `_record_delete`.
+        if stop_offsets.len() >= 2 {
+            let stops: Vec<usize> = stop_offsets
+                .iter()
+                .map(|&off| start + off.min(inserted))
+                .collect();
+            self.snippet_session = Some(crate::app::state::SnippetSession {
+                stops,
+                current: 0,
+                anchor_chars: self.buffer.total_chars(),
+            });
+        } else {
+            self.snippet_session = None;
+        }
+    }
+
+    /// Advance the cursor to the next snippet stop. Returns `true` if a
+    /// session was active and a stop was consumed — the caller then
+    /// suppresses the Tab key's normal indent behaviour. Returns `false`
+    /// if no session is active (Tab falls through to indent insertion).
+    ///
+    /// On reaching the final stop the session is cleared. The cumulative
+    /// buffer-char delta since the previous Tab (or expansion) is applied
+    /// to every later stop before jumping — that's how user-typed text at
+    /// the active stop pushes the remaining stops along.
+    pub(super) fn advance_snippet_session(&mut self) -> bool {
+        let Some(session) = self.snippet_session.as_mut() else {
+            return false;
+        };
+        let now = self.buffer.total_chars();
+        let delta = now as isize - session.anchor_chars as isize;
+        if delta != 0 {
+            for off in session.stops.iter_mut().skip(session.current + 1) {
+                let shifted = *off as isize + delta;
+                *off = shifted.max(0) as usize;
+            }
+        }
+        session.anchor_chars = now;
+        let next = session.current + 1;
+        if next >= session.stops.len() {
+            self.snippet_session = None;
+            return true;
+        }
+        session.current = next;
+        let target = session.stops[next].min(now);
+        self.cursor_to_idx(target);
+        true
     }
 
     pub(super) fn lsp_attach_active(&mut self) {
@@ -816,7 +866,15 @@ impl super::App {
 /// Returns `(resolved_text, first_stop_char_offset)`. The offset prefers
 /// `$1`; if no `$1` exists it falls back to `$0`; otherwise the cursor
 /// lands at the end of the resolved text.
-fn expand_snippet(template: &str) -> (String, Option<usize>) {
+/// Expand a TextMate snippet template into its literal text + the ordered
+/// list of tab-stop char offsets (sorted by stop index, with `$0` last).
+///
+/// Tab cycling consumes the full ordered list: the caller stores it on the
+/// app, lands the cursor at `stops[0]`, and on `Tab` advances to the next
+/// entry. The first-occurrence-only dedup is intentional — mirrored `$N`
+/// references should track each other (we don't want to tab through them
+/// individually), so the second `$1` is dropped here.
+pub(super) fn expand_snippet(template: &str) -> (String, Vec<usize>) {
     use std::collections::HashMap;
     let chars: Vec<char> = template.chars().collect();
     let mut out = String::new();
@@ -899,12 +957,19 @@ fn expand_snippet(template: &str) -> (String, Option<usize>) {
             }
         }
     }
-    let stop = stops
-        .iter()
-        .find(|(idx, _)| *idx == 1)
-        .or_else(|| stops.iter().find(|(idx, _)| *idx == 0))
-        .map(|(_, off)| *off);
-    (out, stop)
+    // First-occurrence dedup so mirrored `$N` references collapse to a
+    // single tab stop. `$0` is the final landing position so it sorts
+    // after all positive indices regardless of source order.
+    let mut seen: HashMap<u32, ()> = HashMap::new();
+    let mut ordered: Vec<(u32, usize)> = Vec::new();
+    for (idx, off) in stops {
+        if seen.insert(idx, ()).is_none() {
+            ordered.push((idx, off));
+        }
+    }
+    ordered.sort_by_key(|(idx, _)| if *idx == 0 { u32::MAX } else { *idx });
+    let stop_offsets: Vec<usize> = ordered.into_iter().map(|(_, off)| off).collect();
+    (out, stop_offsets)
 }
 
 #[cfg(test)]
@@ -914,36 +979,63 @@ mod tests {
     #[test]
     fn snippet_plain_text_passthrough() {
         assert_eq!(expand_snippet("hello").0, "hello");
-        assert_eq!(expand_snippet("hello").1, None);
+        assert!(expand_snippet("hello").1.is_empty());
     }
 
     #[test]
     fn snippet_basic_stop() {
-        let (text, stop) = expand_snippet("console.log($1)");
+        let (text, stops) = expand_snippet("console.log($1)");
         assert_eq!(text, "console.log()");
-        assert_eq!(stop, Some(12)); // right between the parens
+        assert_eq!(stops, vec![12]); // right between the parens
     }
 
     #[test]
     fn snippet_default_text_expanded() {
-        let (text, stop) = expand_snippet("for (let ${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}");
+        let (text, stops) = expand_snippet("for (let ${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}");
         assert_eq!(text, "for (let i = 0; i < n; i++) {\n\t\n}");
-        // First $1 is at "for (let " — that's 9 chars.
-        assert_eq!(stop, Some(9));
+        // $1 at "for (let " (9), $2 at "for (let i = 0; i < " (20), $0 at
+        // "for (let i = 0; i < n; i++) {\n\t" — \n counts as 1 char, so
+        // 9 + 17 + 1 = 27 → +1 tab + 1 newline put $0 at 31.
+        assert_eq!(stops.len(), 3);
+        assert_eq!(stops[0], 9);
+        assert_eq!(stops[1], 20);
     }
 
     #[test]
     fn snippet_zero_stop_used_when_no_one() {
-        let (text, stop) = expand_snippet("return $0;");
+        let (text, stops) = expand_snippet("return $0;");
         assert_eq!(text, "return ;");
-        assert_eq!(stop, Some(7));
+        assert_eq!(stops, vec![7]);
     }
 
     #[test]
     fn snippet_escaped_dollar() {
-        let (text, stop) = expand_snippet("\\$keep $1");
+        let (text, stops) = expand_snippet("\\$keep $1");
         assert_eq!(text, "$keep ");
-        assert_eq!(stop, Some(6));
+        assert_eq!(stops, vec![6]);
+    }
+
+    #[test]
+    fn snippet_zero_sorts_last_regardless_of_source_order() {
+        // $0 placed before $1 / $2 in the template must still be the
+        // final tab destination.
+        let (_text, stops) = expand_snippet("$0 $2 $1");
+        assert_eq!(stops.len(), 3);
+        // stops returned in order $1 → $2 → $0
+        // offsets in output "  " — wait, $N with no default expands to
+        // empty, so the output is "  " (two spaces between three empty
+        // stops). Positions: $0 at 0, " " 1, $2 at 1, " " 2, $1 at 2.
+        // Ordered by index 1→2→0: [2, 1, 0].
+        assert_eq!(stops, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn snippet_mirrored_stop_dedups_to_first_occurrence() {
+        // `$1` appears 3 times. Only the first occurrence is a tab stop;
+        // the others are mirrors and should not produce extra stops.
+        let (_text, stops) = expand_snippet("$1.foo($1, $1)");
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0], 0);
     }
 }
 

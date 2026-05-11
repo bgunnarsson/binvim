@@ -69,6 +69,32 @@ pub struct RecordingState {
     pub keys: Vec<KeyEvent>,
 }
 
+/// Active snippet expansion — Tab cycles the cursor between stops.
+///
+/// `stops` holds doc-char positions in tab-cycle order (`$1 → $2 → … → $0`).
+/// `current` is the index into `stops` of the stop the cursor is currently
+/// on (or last advanced to).
+///
+/// We use a delta-from-anchor scheme to keep the implementation small: at
+/// session start (and after every Tab advance) we record the live buffer
+/// total char count in `anchor_chars`. The next Tab compares against the
+/// live count, shifts every stop after `current` by the delta, and resets
+/// the anchor. The assumption is that all edits between Tab presses
+/// happen at the current stop, so the cumulative buffer delta equals the
+/// amount the later stops need to slide right (or left, on Backspace).
+/// Type → Tab → type → Tab keeps everything aligned. Editing elsewhere
+/// while in a session is unsupported and may misalign later stops.
+///
+/// Session ends when:
+///  - Insert mode exits (Esc clears it in `handle_insert_key`)
+///  - Tab advances past the final stop
+#[derive(Debug, Clone)]
+pub struct SnippetSession {
+    pub stops: Vec<usize>,
+    pub current: usize,
+    pub anchor_chars: usize,
+}
+
 pub struct CompletionState {
     pub items: Vec<CompletionItem>,
     pub selected: usize,

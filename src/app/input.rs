@@ -492,6 +492,8 @@ impl super::App {
                 self.signature_help = None;
                 // Collapse multi-cursor on the same Esc that exits Insert.
                 self.additional_cursors.clear();
+                // A snippet session is Insert-mode-only — Esc ends it.
+                self.snippet_session = None;
                 if !self.replaying {
                     if let Some(rec) = self.recording.take() {
                         self.last_edit = Some(LastEdit::InsertSession {
@@ -642,6 +644,14 @@ impl super::App {
                 }
             }
             KeyCode::Tab => {
+                // Snippet session takes priority: Tab cycles to the next
+                // stop. After advancing past the final stop we clear the
+                // session and fall through; clearing only — no indent is
+                // inserted on the cycle-completion Tab (the user almost
+                // certainly meant "exit snippet", not "indent").
+                if self.advance_snippet_session() {
+                    return;
+                }
                 let s = self.editorconfig.indent_string();
                 let inserted = s.chars().count();
                 self.buffer.insert_str(self.cursor.line, self.cursor.col, &s);

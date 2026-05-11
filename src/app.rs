@@ -181,6 +181,10 @@ pub struct App {
     /// edits at the primary cursor. Empty when only one cursor is active.
     /// Populated by `Ctrl-click` in Insert mode; cleared on Esc.
     pub additional_cursors: Vec<usize>,
+    /// Active TextMate snippet session — populated when a multi-stop
+    /// snippet completion expands; Tab cycles the cursor through its
+    /// stops. `None` when no snippet is in flight.
+    pub snippet_session: Option<crate::app::state::SnippetSession>,
     /// Additional Visual-char selection ranges (start, end exclusive).
     /// Populated by `Ctrl-N` while a Visual-char selection is active;
     /// `d`/`c`/`y` then operates on every range plus the primary one.
@@ -275,6 +279,7 @@ impl App {
             last_disk_check: Instant::now(),
             last_click: None,
             additional_cursors: Vec::new(),
+            snippet_session: None,
             additional_selections: Vec::new(),
             replaying_macro: false,
             recording: None,
