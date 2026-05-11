@@ -2581,7 +2581,27 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let branch_text = app
         .git_branch
         .as_deref()
-        .map(|b| format!(" {} {} ", NF_BRANCH, b))
+        .map(|b| {
+            // Append `+A ~M -D` counts when there are working-tree changes
+            // — A added hunks, M modified, D deleted. Skipped entirely
+            // when the buffer is clean.
+            let mut added = 0usize;
+            let mut modified = 0usize;
+            let mut deleted = 0usize;
+            for h in &app.git_hunks {
+                match h.kind {
+                    crate::git::GitHunkKind::Added => added += 1,
+                    crate::git::GitHunkKind::Modified => modified += 1,
+                    crate::git::GitHunkKind::Deleted => deleted += 1,
+                }
+            }
+            let stats = if added + modified + deleted > 0 {
+                format!(" +{added} ~{modified} -{deleted}")
+            } else {
+                String::new()
+            };
+            format!(" {} {}{} ", NF_BRANCH, b, stats)
+        })
         .unwrap_or_default();
     let dirty = if app.buffer.dirty { " " } else { " " };
     let path = app.buffer.path.as_deref();

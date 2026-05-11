@@ -199,6 +199,12 @@ pub enum Action {
     QuickfixNext,
     /// `[q` — jump to the previous entry in the quickfix list.
     QuickfixPrev,
+    /// `]h` — jump to the next git hunk in the active buffer.
+    HunkNext,
+    /// `[h` — jump to the previous git hunk in the active buffer.
+    HunkPrev,
+    /// `<leader>hp` — preview the hunk under the cursor in a hover popup.
+    HunkPreview,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -237,12 +243,15 @@ pub struct PendingCmd {
     /// Visual `S{char}` — next char names the surround pair to wrap with.
     pub awaiting_visual_surround: bool,
     /// Set after `]` in Normal mode — next char (e.g. `q`) selects a
-    /// "jump forward" target. Today the only consumer is the quickfix
-    /// list (`]q`). Cancels on any unrecognised follow-up.
+    /// "jump forward" target. Today consumers are the quickfix list
+    /// (`]q`) and git hunks (`]h`). Cancels on any unrecognised follow-up.
     pub awaiting_bracket_close: bool,
     /// Set after `[` — mirror of `awaiting_bracket_close` for backward
-    /// navigation (`[q` → previous quickfix entry).
+    /// navigation (`[q` → previous quickfix entry, `[h` → previous hunk).
     pub awaiting_bracket_open: bool,
+    /// Set after `<leader>h` — next char picks a git-hunk action
+    /// (`p` preview, `s` stage, `u` unstage, `r` reset).
+    pub awaiting_hunk_leader: bool,
 }
 
 impl PendingCmd {
@@ -468,6 +477,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.reset();
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixNext),
+            'h' => ParseResult::Action(Action::HunkNext),
             _ => ParseResult::Cancelled,
         };
     }
@@ -476,6 +486,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.reset();
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixPrev),
+            'h' => ParseResult::Action(Action::HunkPrev),
             _ => ParseResult::Cancelled,
         };
     }
@@ -563,9 +574,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.awaiting_debug_leader = true;
                 return ParseResult::Pending;
             }
-            // `d` opens the debugger sub-menu.
-            if ch == 'd' {
-                state.awaiting_debug_leader = true;
+            // `h` opens the git-hunk sub-menu (`<leader>hp` preview,
+            // `<leader>hs` stage, `<leader>hu` unstage, `<leader>hr` reset).
+            if ch == 'h' {
+                state.awaiting_hunk_leader = true;
                 return ParseResult::Pending;
             }
             let action = match ch {
@@ -615,6 +627,22 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // doc-symbol / workspace-symbol pickers — Step out moves to `O`
     // (capital sibling of step-over `n` / step-in `i`) and Stop session
     // moves to `q` (matches the `:q` mnemonic).
+    // Git-hunk prefix dispatch (after `<leader>h`). `p` is wired now;
+    // `s` / `u` / `r` land in a follow-up commit but are reserved here
+    // so accidental presses cancel cleanly instead of falling through.
+    if state.awaiting_hunk_leader {
+        state.awaiting_hunk_leader = false;
+        let action = match ch {
+            'p' => Some(Action::HunkPreview),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
     if state.awaiting_debug_leader {
         state.awaiting_debug_leader = false;
         let action = match ch {

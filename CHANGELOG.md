@@ -15,6 +15,15 @@ follows [Semantic Versioning](https://semver.org/).
   Implementation shells out to `git diff --no-color --unified=0` and
   parses the hunk headers; no libgit2 dependency. Gutter widens by one
   column to make room (`digits + 3`).
+- **Hunk navigation + preview (stage 2 of git integration).** `]h` /
+  `[h` jump to the next / previous git hunk in the active buffer (bonks
+  at the end, no wrap-around — matches `]q` / `[q`). `<leader>hp`
+  previews the hunk under the cursor in a hover popup, rendered from
+  `git diff -U3` so three lines of surrounding context come along.
+  Status line gains a `+A ~M -D` counter next to the branch name when
+  the working tree has any added / modified / deleted hunks. New
+  `<leader>h` which-key entry advertises the sub-menu (`s` / `u` / `r`
+  reserved for stage 3).
 - **Word-aware drag after double-click.** Double-click a word to select
   it, then drag forward or backward to extend the visual selection
   word-by-word. The anchor pins to the side of the original word

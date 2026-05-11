@@ -219,6 +219,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("<space>".into(), "Files".into()),
         ("b".into(), "+Buffer".into()),
         ("d".into(), "+Debug".into()),
+        ("h".into(), "+Hunk".into()),
         ("g".into(), "Grep".into()),
         ("e".into(), "Yazi".into()),
         ("a".into(), "Code actions".into()),
@@ -234,6 +235,15 @@ pub fn buffer_prefix_entries() -> Vec<(String, String)> {
         ("o".into(), "Only (close others)".into()),
         ("n".into(), "Next".into()),
         ("p".into(), "Prev".into()),
+    ]
+}
+
+pub fn hunk_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("p".into(), "Preview hunk".into()),
+        ("s".into(), "Stage hunk (soon)".into()),
+        ("u".into(), "Unstage hunk (soon)".into()),
+        ("r".into(), "Reset hunk (soon)".into()),
     ]
 }
 

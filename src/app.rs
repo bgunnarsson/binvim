@@ -24,6 +24,7 @@ mod buffers;
 mod dap_glue;
 mod dispatch;
 mod edit;
+mod git_glue;
 mod health;
 mod input;
 mod lsp_glue;
@@ -394,6 +395,11 @@ impl App {
                         Some(WhichKeyState {
                             title: "Debug".into(),
                             entries: state::debug_prefix_entries(),
+                        })
+                    } else if self.pending.awaiting_hunk_leader {
+                        Some(WhichKeyState {
+                            title: "Hunk".into(),
+                            entries: state::hunk_prefix_entries(),
                         })
                     } else {
                         None

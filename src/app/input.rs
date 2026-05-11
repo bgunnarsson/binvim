@@ -162,7 +162,8 @@ impl super::App {
                 // resolve normally.
                 let leader_pending = self.pending.awaiting_leader
                     || self.pending.awaiting_buffer_leader
-                    || self.pending.awaiting_debug_leader;
+                    || self.pending.awaiting_debug_leader
+                    || self.pending.awaiting_hunk_leader;
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
@@ -543,7 +544,8 @@ impl super::App {
         // Track any prefix that's awaiting its next key — drives the which-key timer.
         let prefix_active = self.pending.awaiting_leader
             || self.pending.awaiting_buffer_leader
-            || self.pending.awaiting_debug_leader;
+            || self.pending.awaiting_debug_leader
+            || self.pending.awaiting_hunk_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());

@@ -129,6 +129,56 @@ pub fn parse_unified_diff(diff: &str) -> Vec<GitHunk> {
     out
 }
 
+/// Return the unified-diff body (header + body lines, no file metadata)
+/// of the hunk that covers `target_line` (1-indexed, new file). Runs
+/// `git diff -U3` so the slice includes three context lines, which is
+/// what most preview popups want. `None` when the path isn't tracked,
+/// when there's no hunk at that line, or when git fails.
+pub fn hunk_text_for_line(path: &Path, target_line: usize) -> Option<String> {
+    let start = path.parent()?;
+    let root = find_repo_root(start)?;
+    let rel = path.strip_prefix(&root).ok()?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .arg("diff")
+        .arg("--no-color")
+        .arg("--unified=3")
+        .arg("--")
+        .arg(rel)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+
+    let mut header_indices: Vec<(usize, usize, usize)> = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        if let Some(rest) = line.strip_prefix("@@ ") {
+            let mut parts = rest.split_whitespace();
+            let _old = parts.next();
+            let new_tok = parts.next().unwrap_or("");
+            let (new_start, new_count) = parse_range(new_tok.trim_start_matches('+'));
+            header_indices.push((idx, new_start, new_count));
+        }
+    }
+    for (i, &(idx, new_start, new_count)) in header_indices.iter().enumerate() {
+        let end_inclusive = new_start + new_count.saturating_sub(1);
+        if target_line >= new_start && target_line <= end_inclusive.max(new_start) {
+            // Body ends at the next header, or at EOF.
+            let next_idx = header_indices.get(i + 1).map(|&(j, _, _)| j);
+            let body: Vec<&str> = text
+                .lines()
+                .skip(idx)
+                .take(next_idx.map(|n| n - idx).unwrap_or(usize::MAX))
+                .collect();
+            return Some(body.join("\n"));
+        }
+    }
+    None
+}
+
 /// `<start>[,<count>]` → `(start, count)`. Missing count defaults to 1,
 /// matching the unified-diff convention.
 fn parse_range(s: &str) -> (usize, usize) {
