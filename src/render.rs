@@ -1976,6 +1976,7 @@ fn mode_color(mode: Mode) -> Color {
         Mode::Search { .. } => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
         Mode::Prompt(_) => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
+        Mode::DebugPane => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach — matches debug pane accent
     }
 }
 
@@ -2101,8 +2102,30 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         Note(&'a str),
         Frame(String),
         Separator(&'a str),
-        Local(&'a str, &'a str),
+        Local {
+            depth: usize,
+            marker: char,
+            name: &'a str,
+            value: &'a str,
+            selected: bool,
+        },
     }
+
+    // Flat locals tree — computed once so the key handler and renderer
+    // agree on row order (the renderer's selection highlight has to point
+    // at the same row the cursor's index does).
+    let flat = app
+        .dap
+        .session
+        .as_ref()
+        .map(crate::dap::flat_locals_view)
+        .unwrap_or_default();
+    let pane_focused = app.mode == Mode::DebugPane;
+    let selected_local_idx = if pane_focused && !flat.is_empty() {
+        Some(app.dap_pane_cursor.min(flat.len() - 1))
+    } else {
+        None
+    };
 
     let mut left_rows: Vec<LeftRow> = Vec::new();
     if let Some(session) = app.dap.session.as_ref() {
@@ -2129,10 +2152,21 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 .unwrap_or_else(|| format!("?:{}", f.line));
             left_rows.push(LeftRow::Frame(format!("{} — {}", loc, f.name)));
         }
-        if !session.locals.is_empty() {
+        if !flat.is_empty() {
             left_rows.push(LeftRow::Separator(" Locals "));
-            for v in &session.locals {
-                left_rows.push(LeftRow::Local(&v.name, &v.value));
+            for (i, row) in flat.iter().enumerate() {
+                let marker = if row.expandable {
+                    if row.expanded { '▼' } else { '▶' }
+                } else {
+                    ' '
+                };
+                left_rows.push(LeftRow::Local {
+                    depth: row.depth,
+                    marker,
+                    name: &row.var.name,
+                    value: &row.var.value,
+                    selected: selected_local_idx == Some(i),
+                });
             }
         }
     }
@@ -2190,14 +2224,36 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 )?;
                 pad_right(out, 2 + bar_room + label.chars().count(), left_w)?;
             }
-            LeftRow::Local(name, value) => {
-                let entry = format!("{} = {}", name, value);
+            LeftRow::Local {
+                depth,
+                marker,
+                name,
+                value,
+                selected,
+            } => {
+                // Catppuccin Surface2 — visible against body_bg without
+                // shouting.
+                let selection_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 };
+                let row_bg = if *selected { selection_bg } else { body_bg };
+                let indent: String = "  ".repeat(*depth);
+                let entry = format!("{}{} {} = {}", indent, marker, name, value);
+                let max_inner = inner_w.saturating_sub(1);
+                let visible = truncate_left(&entry, max_inner);
                 queue!(
                     out,
+                    SetBackgroundColor(row_bg),
                     SetForegroundColor(header_fg),
-                    Print(format!("   {} ", truncate_left(&entry, inner_w.saturating_sub(1)))),
+                    Print(format!(" {} ", visible)),
                 )?;
-                pad_right(out, 4 + entry.chars().count().min(inner_w.saturating_sub(1)), left_w)?;
+                let used = 2 + visible.chars().count();
+                if left_w > used {
+                    queue!(
+                        out,
+                        SetBackgroundColor(row_bg),
+                        Print(" ".repeat(left_w - used))
+                    )?;
+                }
+                queue!(out, SetBackgroundColor(body_bg))?;
             }
         }
         // Right column (and column divider) — only when the pane is wide
@@ -2376,6 +2432,13 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     if app.show_start_page
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
+        queue!(out, Hide)?;
+        return Ok(());
+    }
+    // In the debug pane focus mode the selection highlight in the pane
+    // is the user's "cursor" — the editor's terminal cursor would just
+    // distract.
+    if app.mode == Mode::DebugPane {
         queue!(out, Hide)?;
         return Ok(());
     }

@@ -41,6 +41,7 @@ pub enum DebugSubCmd {
     StepIn,
     StepOut,
     PaneToggle,
+    FocusPane,
 }
 
 #[derive(Debug, Clone, Copy)]

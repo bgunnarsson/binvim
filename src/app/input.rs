@@ -115,6 +115,9 @@ impl super::App {
                     Mode::Search { .. } => self.handle_search_key(k),
                     Mode::Picker => self.handle_picker_key(k),
                     Mode::Prompt(_) => self.handle_prompt_key(k),
+                    Mode::DebugPane => {
+                        self.handle_debug_pane_key(k);
+                    }
                 }
             }
             crossterm::event::Event::Mouse(me) => {

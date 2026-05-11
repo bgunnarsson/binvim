@@ -21,7 +21,7 @@ mod manager;
 mod specs;
 mod types;
 
-pub use manager::{DapManager, StepKind};
+pub use manager::{flat_locals_view, DapManager, StepKind};
 #[allow(unused_imports)]
 pub use specs::{adapter_for_workspace, DapAdapterSpec, PrelaunchCommand};
 #[allow(unused_imports)]

@@ -94,6 +94,8 @@ pub enum DebugAction {
     StepOut,
     /// `<leader>dp` — toggle the bottom debug pane.
     PaneToggle,
+    /// `<leader>df` — focus the bottom debug pane for tree navigation.
+    FocusPane,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -594,6 +596,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'i' => Some(Action::Debug(DebugAction::StepIn)),
             'O' => Some(Action::Debug(DebugAction::StepOut)),
             'p' => Some(Action::Debug(DebugAction::PaneToggle)),
+            'f' => Some(Action::Debug(DebugAction::FocusPane)),
             'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),
             'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
             _ => None,
@@ -601,29 +604,6 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.reset();
         return match action {
             Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
-    }
-
-    // Debug-prefix dispatch (after `<leader>d`). Every entry maps onto a
-    // `:dap*` command — same code path, different keymap.
-    if state.awaiting_debug_leader {
-        state.awaiting_debug_leader = false;
-        let action = match ch {
-            's' => Some(DebugAction::Start),
-            'S' => Some(DebugAction::Stop),
-            'b' => Some(DebugAction::ToggleBreakpoint),
-            'B' => Some(DebugAction::ClearBreakpointsInFile),
-            'c' => Some(DebugAction::Continue),
-            'n' => Some(DebugAction::Next),
-            'i' => Some(DebugAction::StepIn),
-            'o' => Some(DebugAction::StepOut),
-            'p' => Some(DebugAction::PaneToggle),
-            _ => None,
-        };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(Action::Debug(a)),
             None => ParseResult::Cancelled,
         };
     }

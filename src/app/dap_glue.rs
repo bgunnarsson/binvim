@@ -5,8 +5,11 @@
 //! stopped frame, surfacing status messages, opening the bottom pane on
 //! session start) live here, not in `dap/manager.rs`.
 
+use crossterm::event::{KeyCode, KeyEvent};
+
 use crate::command::DebugSubCmd;
-use crate::dap::{adapter_for_workspace, DapEvent, SessionState, StepKind};
+use crate::dap::{adapter_for_workspace, flat_locals_view, DapEvent, SessionState, StepKind};
+use crate::mode::Mode;
 
 impl super::App {
     pub(super) fn dispatch_debug(&mut self, sub: DebugSubCmd) {
@@ -28,7 +31,115 @@ impl super::App {
                     "debug pane: closed".into()
                 };
             }
+            DebugSubCmd::FocusPane => self.dap_enter_pane_focus(),
         }
+    }
+
+    fn dap_enter_pane_focus(&mut self) {
+        if !self.dap.is_active() {
+            self.status_msg = "debug: no active session".into();
+            return;
+        }
+        if !self.debug_pane_open {
+            self.debug_pane_open = true;
+            self.adjust_viewport();
+        }
+        self.dap_pane_cursor = 0;
+        self.mode = Mode::DebugPane;
+        self.status_msg = "pane: j/k navigate · Enter/Tab expand · Esc exits".into();
+    }
+
+    pub(super) fn dap_exit_pane_focus(&mut self) {
+        if self.mode == Mode::DebugPane {
+            self.mode = Mode::Normal;
+            self.status_msg.clear();
+        }
+    }
+
+    /// Key dispatch for `Mode::DebugPane`. Returns `true` if the key was
+    /// consumed (the caller skips the normal-mode dispatch in that case).
+    pub(super) fn handle_debug_pane_key(&mut self, key: KeyEvent) -> bool {
+        let locals_len = self
+            .dap
+            .session
+            .as_ref()
+            .map(|s| flat_locals_view(s).len())
+            .unwrap_or(0);
+        match key.code {
+            KeyCode::Esc => {
+                self.dap_exit_pane_focus();
+                true
+            }
+            KeyCode::Char('j') | KeyCode::Down => {
+                if locals_len > 0 {
+                    self.dap_pane_cursor = (self.dap_pane_cursor + 1).min(locals_len - 1);
+                }
+                true
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.dap_pane_cursor = self.dap_pane_cursor.saturating_sub(1);
+                true
+            }
+            KeyCode::Char('g') => {
+                self.dap_pane_cursor = 0;
+                true
+            }
+            KeyCode::Char('G') => {
+                self.dap_pane_cursor = locals_len.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter | KeyCode::Tab | KeyCode::Char(' ') => {
+                self.dap_pane_toggle_at_cursor();
+                true
+            }
+            // Stepping bindings while focus is in the pane — saves an
+            // Esc + <leader>d{c,n,i,O} round-trip during inspection.
+            KeyCode::Char('c') => {
+                self.dap.step(StepKind::Continue);
+                true
+            }
+            KeyCode::Char('n') => {
+                self.dap.step(StepKind::Next);
+                true
+            }
+            KeyCode::Char('i') => {
+                self.dap.step(StepKind::StepIn);
+                true
+            }
+            KeyCode::Char('O') => {
+                self.dap.step(StepKind::StepOut);
+                true
+            }
+            // Ex-command escape hatch so the user can `:dapstop`/etc from
+            // inside the pane without having to bounce through Normal.
+            KeyCode::Char(':') => {
+                self.mode = Mode::Command;
+                self.cmdline.clear();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn dap_pane_toggle_at_cursor(&mut self) {
+        // Pull out the vref to toggle in a tight `&self` scope so the
+        // ensuing `toggle_expanded` call can take `&mut self.dap`.
+        let vref = {
+            let Some(session) = self.dap.session.as_ref() else {
+                return;
+            };
+            let flat = flat_locals_view(session);
+            if flat.is_empty() {
+                return;
+            }
+            let idx = self.dap_pane_cursor.min(flat.len() - 1);
+            let row = &flat[idx];
+            if !row.expandable {
+                return;
+            }
+            row.var.variables_reference
+        };
+        self.dap.toggle_expanded(vref);
     }
 
     fn dap_start_session(&mut self) {
@@ -71,6 +182,9 @@ impl super::App {
         }
         self.dap.stop_session();
         self.status_msg = "debug: session terminated".into();
+        if self.mode == Mode::DebugPane {
+            self.mode = Mode::Normal;
+        }
         // Close the bottom pane on stop — the session is gone, there's
         // nothing useful to look at, and reclaiming the rows snaps the
         // editor back to its usual height.
@@ -152,6 +266,9 @@ impl super::App {
                 DapEvent::Terminated => {
                     self.status_msg = "debug: session ended".into();
                     self.dap.session = None;
+                    if self.mode == Mode::DebugPane {
+                        self.mode = Mode::Normal;
+                    }
                     if self.debug_pane_open {
                         self.debug_pane_open = false;
                         self.adjust_viewport();

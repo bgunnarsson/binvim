@@ -126,6 +126,11 @@ pub struct App {
     /// editor area; height is computed from terminal size in `view.rs`.
     /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
     pub debug_pane_open: bool,
+    /// Index into the flat locals tree of the currently-selected row when
+    /// `Mode::DebugPane` has focus. Bounded against the live tree at
+    /// access time — vrefs can shift across stops, so the renderer and
+    /// key handler clamp before use.
+    pub dap_pane_cursor: usize,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -237,6 +242,7 @@ impl App {
             ),
             show_start_page,
             debug_pane_open: false,
+            dap_pane_cursor: 0,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             rename_anchor: None,

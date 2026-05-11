@@ -5,7 +5,7 @@
 //! pull the resulting `DapEvent`s off and react.
 
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::client::DapClient;
@@ -40,9 +40,24 @@ pub struct DapSession {
     /// Variable scopes reported for the top frame (typically just "Locals").
     /// Refreshed on each `stopped` event; cleared on `continued`.
     pub scopes: Vec<Scope>,
-    /// Resolved locals for the first non-expensive scope. The pane shows
-    /// these directly. Expanding nested values is Phase 3 territory.
-    pub locals: Vec<Variable>,
+    /// `variables_reference` of the scope whose contents are displayed in
+    /// the pane as "locals". Picked as the first non-expensive scope on
+    /// each stop; expansion further into structured values lives in
+    /// `children` and `expanded`.
+    pub scope_for_display: Option<u64>,
+    /// Cached children per `variables_reference`. The pane's root locals
+    /// are `children[scope_for_display]`; expanding a variable populates
+    /// `children[var.variables_reference]` lazily.
+    pub children: HashMap<u64, Vec<Variable>>,
+    /// `variables_reference`s the user has toggled open. Persisted across
+    /// pane re-renders; cleared on each stop so stale handles don't leak
+    /// between stops (DAP doesn't promise vref stability).
+    pub expanded: HashSet<u64>,
+    /// In-flight `variables` requests — `request_seq → parent_vref`. Lets
+    /// the response handler store children under the right parent when
+    /// several fetches are outstanding (e.g. user expands a deeply-nested
+    /// branch quickly).
+    pub pending_variable_fetches: HashMap<u64, u64>,
     /// Spawned adapter process + reader channel. Dropping the session
     /// drops the child, which closes the reader thread on its own.
     pub client: DapClient,
@@ -188,7 +203,10 @@ impl DapManager {
             frames: Vec::new(),
             current_thread: None,
             scopes: Vec::new(),
-            locals: Vec::new(),
+            scope_for_display: None,
+            children: HashMap::new(),
+            expanded: HashSet::new(),
+            pending_variable_fetches: HashMap::new(),
             client,
             launch_args,
             status_line: "initialising adapter…".into(),
@@ -217,6 +235,57 @@ impl DapManager {
     /// One step / continue command targeted at the currently-stopped
     /// thread. Silently does nothing if the session isn't in a stopped
     /// state — the calling key/command handler decides whether to warn.
+    /// Flip whether `vref` is expanded in the pane's locals tree. Returns
+    /// the new state. When expanding for the first time, kicks off a DAP
+    /// `variables` request so the children populate asynchronously.
+    pub fn toggle_expanded(&mut self, vref: u64) -> bool {
+        let now_expanded = match self.session.as_mut() {
+            Some(s) if s.expanded.contains(&vref) => {
+                s.expanded.remove(&vref);
+                false
+            }
+            Some(s) => {
+                s.expanded.insert(vref);
+                true
+            }
+            None => return false,
+        };
+        if now_expanded {
+            // Only fetch if we haven't cached this set of children yet.
+            let need_fetch = self
+                .session
+                .as_ref()
+                .map(|s| !s.children.contains_key(&vref))
+                .unwrap_or(false);
+            if need_fetch {
+                self.request_variables(vref);
+            }
+        }
+        now_expanded
+    }
+
+    /// Send a `variables` request and record the `seq → parent_vref`
+    /// mapping so the response handler stores children under the right
+    /// parent. Idempotency of in-flight requests is the caller's problem;
+    /// double-firing just produces two responses that both write the same
+    /// `children[vref]` entry.
+    fn request_variables(&mut self, vref: u64) {
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        let seq = session.client.alloc_seq();
+        if session
+            .client
+            .send_request(seq, "variables", json!({ "variablesReference": vref }))
+            .is_err()
+        {
+            return;
+        }
+        if let Some(s) = self.session.as_mut() {
+            s.pending_variable_fetches.insert(seq, vref);
+        }
+    }
+
     pub fn step(&self, kind: StepKind) {
         let Some(session) = self.session.as_ref() else {
             return;
@@ -292,12 +361,12 @@ impl DapManager {
     fn process_incoming(&mut self, msg: DapIncoming, events: &mut Vec<DapEvent>) {
         match msg {
             DapIncoming::Response {
+                request_seq,
                 command,
                 success,
                 body,
                 message,
-                ..
-            } => self.handle_response(command, success, body, message, events),
+            } => self.handle_response(request_seq, command, success, body, message, events),
             DapIncoming::Event { event, body } => self.handle_event(event, body, events),
             DapIncoming::Request {
                 seq, command, ..
@@ -315,6 +384,7 @@ impl DapManager {
 
     fn handle_response(
         &mut self,
+        request_seq: u64,
         command: String,
         success: bool,
         body: Value,
@@ -445,28 +515,32 @@ impl DapManager {
             }
             "scopes" => {
                 let scopes = parse_scopes(&body);
-                // Pick the first non-expensive scope (typically "Locals").
+                // Pick the first non-expensive scope (typically "Locals"
+                // for stack-based languages, "Arguments + Locals" for C#).
                 let target = scopes
                     .iter()
                     .find(|s| !s.expensive)
                     .map(|s| s.variables_reference);
                 if let Some(s) = self.session.as_mut() {
                     s.scopes = scopes;
-                    s.locals.clear();
+                    s.scope_for_display = target;
+                    s.children.clear();
+                    s.expanded.clear();
+                    s.pending_variable_fetches.clear();
                 }
-                if let (Some(vref), Some(session)) = (target, self.session.as_ref()) {
-                    let seq = session.client.alloc_seq();
-                    let _ = session.client.send_request(
-                        seq,
-                        "variables",
-                        json!({ "variablesReference": vref }),
-                    );
+                if let Some(vref) = target {
+                    self.request_variables(vref);
                 }
             }
             "variables" => {
                 let vars = parse_variables(&body);
                 if let Some(s) = self.session.as_mut() {
-                    s.locals = vars;
+                    if let Some(parent_vref) = s.pending_variable_fetches.remove(&request_seq) {
+                        s.children.insert(parent_vref, vars);
+                    } else {
+                        // No mapping — most likely a stale response from
+                        // before the last stop. Discard quietly.
+                    }
                 }
             }
             _ => {}
@@ -504,6 +578,14 @@ impl DapManager {
                     };
                     s.current_thread = Some(thread_id);
                     s.status_line = format!("stopped — {}", reason);
+                    // `variables_reference` numbers aren't guaranteed
+                    // stable across stops — drop the cached tree state
+                    // before we re-fetch scopes for the new top frame.
+                    s.scopes.clear();
+                    s.scope_for_display = None;
+                    s.children.clear();
+                    s.expanded.clear();
+                    s.pending_variable_fetches.clear();
                 }
                 // Ask for the live thread list and the top frame's stack
                 // back-to-back. netcoredbg in particular needs the
@@ -543,7 +625,10 @@ impl DapManager {
                 if let Some(s) = self.session.as_mut() {
                     s.frames.clear();
                     s.scopes.clear();
-                    s.locals.clear();
+                    s.scope_for_display = None;
+                    s.children.clear();
+                    s.expanded.clear();
+                    s.pending_variable_fetches.clear();
                     s.current_thread = None;
                     if !matches!(s.state, SessionState::Terminated) {
                         s.state = SessionState::Running;
@@ -791,6 +876,55 @@ fn parse_stack_frames(body: &Value) -> Vec<StackFrame> {
         });
     }
     out
+}
+
+/// One row in the flattened locals tree. The pane renderer prints these
+/// with indentation; the pane-focus key handler indexes into the slice
+/// by `App.dap_pane_cursor` to figure out which variable Enter/Tab
+/// should toggle.
+pub struct FlatLocalRow<'a> {
+    pub depth: usize,
+    pub var: &'a Variable,
+    pub expandable: bool,
+    pub expanded: bool,
+}
+
+/// Flatten the session's locals tree, honouring the current `expanded`
+/// set. Returns an empty `Vec` whenever locals aren't available yet
+/// (running state, no scope picked, response in flight, …).
+pub fn flat_locals_view(session: &DapSession) -> Vec<FlatLocalRow<'_>> {
+    let mut out = Vec::new();
+    let Some(root_vref) = session.scope_for_display else {
+        return out;
+    };
+    let Some(roots) = session.children.get(&root_vref) else {
+        return out;
+    };
+    walk_locals(session, roots, 0, &mut out);
+    out
+}
+
+fn walk_locals<'a>(
+    session: &'a DapSession,
+    vars: &'a [Variable],
+    depth: usize,
+    out: &mut Vec<FlatLocalRow<'a>>,
+) {
+    for v in vars {
+        let expandable = v.variables_reference > 0;
+        let expanded = expandable && session.expanded.contains(&v.variables_reference);
+        out.push(FlatLocalRow {
+            depth,
+            var: v,
+            expandable,
+            expanded,
+        });
+        if expanded {
+            if let Some(children) = session.children.get(&v.variables_reference) {
+                walk_locals(session, children, depth + 1, out);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

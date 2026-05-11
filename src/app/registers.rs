@@ -108,6 +108,9 @@ impl super::App {
                 Mode::Search { .. } => self.handle_search_key(k),
                 Mode::Picker => self.handle_picker_key(k),
                 Mode::Prompt(_) => self.handle_prompt_key(k),
+                // Macros don't navigate the debug pane — replay aborts if
+                // the user happened to start recording while focused there.
+                Mode::DebugPane => break,
             }
         }
         self.replaying_macro = false;

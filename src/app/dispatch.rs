@@ -113,6 +113,7 @@ impl super::App {
                     DebugAction::StepIn => DebugSubCmd::StepIn,
                     DebugAction::StepOut => DebugSubCmd::StepOut,
                     DebugAction::PaneToggle => DebugSubCmd::PaneToggle,
+                    DebugAction::FocusPane => DebugSubCmd::FocusPane,
                 };
                 self.dispatch_debug(sub);
             }

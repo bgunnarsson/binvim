@@ -194,6 +194,7 @@ pub fn debug_prefix_entries() -> Vec<(String, String)> {
         ("i".into(), "Step into".into()),
         ("O".into(), "Step out".into()),
         ("p".into(), "Toggle pane".into()),
+        ("f".into(), "Focus pane".into()),
         ("o".into(), "Doc symbols".into()),
         ("S".into(), "Workspace symbols".into()),
     ]
