@@ -15,6 +15,15 @@ follows [Semantic Versioning](https://semver.org/).
   Implementation shells out to `git diff --no-color --unified=0` and
   parses the hunk headers; no libgit2 dependency. Gutter widens by one
   column to make room (`digits + 3`).
+- **Inline git blame (stage 4 — git integration complete).** `:Gblame`
+  toggles per-line virtual text at the end of every row: author •
+  relative age (`3d`, `2w`, `4mo`) • short SHA, in muted italic so the
+  text reads as metadata not content. Sourced from `git blame
+  --porcelain`, parsed locally. Each buffer toggles independently, so
+  blame can be on for one file and off for another. Re-fetched on
+  reload (e.g. after `<leader>hr`) since line numbers shift; cleared
+  when the toggle is off so memory doesn't grow. Suppressed on rows
+  that already show an inline diagnostic to avoid stacking overlays.
 - **Stage / unstage / reset hunk (stage 3 of git integration).**
   `<leader>hs` stages the hunk under the cursor by building a one-file
   unified diff and piping it through `git apply --cached --unidiff-zero`.

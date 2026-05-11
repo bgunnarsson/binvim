@@ -39,6 +39,9 @@ pub enum ExCommand {
     /// Quickfix-list sub-commands — `:cn`/`:cp`/`:clist`/`:cfirst`/
     /// `:clast`/`:cdiag`/`:cclose`. Dispatch lives in `app/input.rs`.
     Quickfix(QuickfixSubCmd),
+    /// `:Gblame` — toggle inline git-blame virtual text for every line
+    /// of the active buffer.
+    GitBlame,
     Unknown(String),
 }
 
@@ -175,6 +178,7 @@ pub fn parse(line: &str) -> ExCommand {
         "cl" | "clist" => ExCommand::Quickfix(QuickfixSubCmd::List),
         "cdiag" | "cdiagnostics" => ExCommand::Quickfix(QuickfixSubCmd::Diagnostics),
         "cclose" => ExCommand::Quickfix(QuickfixSubCmd::Close),
+        "Gblame" | "gblame" => ExCommand::GitBlame,
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

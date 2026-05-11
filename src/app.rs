@@ -126,6 +126,12 @@ pub struct App {
     /// into per-line hunk markers. Painted as a coloured stripe at column
     /// 0 of the gutter. Refreshed on save, buffer switch, and `:Gdiff`.
     pub git_hunks: Vec<crate::git::GitHunk>,
+    /// Whether `:Gblame` virtual text is currently rendered for the
+    /// active buffer.
+    pub blame_visible: bool,
+    /// Per-line blame metadata for the active buffer. Populated on first
+    /// toggle of `blame_visible` and refreshed on save.
+    pub blame: Vec<crate::git::BlameLine>,
     /// True when binvim was launched with no path — render the start page in
     /// place of the empty buffer until the user opens something.
     pub show_start_page: bool,
@@ -278,6 +284,8 @@ impl App {
                 &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             ),
             git_hunks: Vec::new(),
+            blame_visible: false,
+            blame: Vec::new(),
             show_start_page,
             debug_pane_open: false,
             dap_pane_cursor: 0,

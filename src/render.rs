@@ -2117,8 +2117,10 @@ fn draw_line_with_selection(
     // one column of slack so any width-miscount can't push past the row edge
     // and force the terminal to wrap onto the next row — which would clobber
     // the next line's render with the diagnostic's tail.
+    let diags = app.line_diagnostics(line_idx);
+    let has_diag = !diags.is_empty();
     if !dim {
-        if let Some(diag) = app.line_diagnostics(line_idx).first() {
+        if let Some(diag) = diags.first() {
             use unicode_width::UnicodeWidthChar;
             let remaining = avail.saturating_sub(visual_used);
             let icon = match diag.severity {
@@ -2151,6 +2153,42 @@ fn draw_line_with_selection(
                     SetAttribute(Attribute::NoItalic),
                     ResetColor
                 )?;
+            }
+        }
+    }
+
+    // Inline git-blame virtual text — only when blame is toggled on, no
+    // diagnostic is already painted on this row, and we have a blame
+    // record for the line. Same width-safety math as the diagnostic
+    // overlay; one column of slack so a miscount can't wrap.
+    if !dim && app.blame_visible && !has_diag {
+        if let Some(b) = app.blame.get(line_idx) {
+            use unicode_width::UnicodeWidthChar;
+            let label = format!("  {} • {} • {}", b.author, b.age, b.sha);
+            let remaining = avail.saturating_sub(visual_used);
+            let safety = 1usize;
+            if remaining > safety {
+                let budget = remaining - safety;
+                let mut used = 0usize;
+                let mut msg = String::new();
+                for c in label.chars() {
+                    let w = UnicodeWidthChar::width(c).unwrap_or(0);
+                    if used + w > budget {
+                        break;
+                    }
+                    msg.push(c);
+                    used += w;
+                }
+                if !msg.is_empty() {
+                    queue!(
+                        out,
+                        SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
+                        SetAttribute(Attribute::Italic),
+                        Print(&msg),
+                        SetAttribute(Attribute::NoItalic),
+                        ResetColor
+                    )?;
+                }
             }
         }
     }

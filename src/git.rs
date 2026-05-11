@@ -284,6 +284,128 @@ pub fn apply_patch(root: &Path, patch: &str, args: &[&str]) -> Result<(), String
     }
 }
 
+/// One line of blame metadata — what we render as inline virtual text.
+/// `age` is a short relative date label (`"3d"`, `"2w"`, `"4mo"`).
+#[derive(Debug, Clone)]
+pub struct BlameLine {
+    pub sha: String,
+    pub author: String,
+    pub age: String,
+}
+
+/// Run `git blame --porcelain -- <path>` and return one `BlameLine` per
+/// 0-indexed line, or `None` if the file isn't tracked / git fails.
+/// Porcelain output groups records by commit, so we keep a side table
+/// keyed by SHA and emit a `BlameLine` for each line as it arrives.
+pub fn blame(path: &Path) -> Option<Vec<BlameLine>> {
+    let start = path.parent()?;
+    let root = find_repo_root(start)?;
+    let rel = path.strip_prefix(&root).ok()?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .arg("blame")
+        .arg("--porcelain")
+        .arg("--")
+        .arg(rel)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+
+    // Commit-keyed metadata: author name + author-time epoch.
+    let mut meta: std::collections::HashMap<String, (String, i64)> =
+        std::collections::HashMap::new();
+    let mut current_sha: Option<String> = None;
+    let mut lines: Vec<BlameLine> = Vec::new();
+    let mut iter = text.lines();
+    while let Some(line) = iter.next() {
+        // Header lines look like `<sha> <orig-line> <final-line>[ <count>]`.
+        // Any other key/value lines come after — `author Foo Bar`,
+        // `author-time 1700000000`, etc. The body line itself is
+        // prefixed with a literal tab.
+        if line.starts_with('\t') {
+            // Body line — emit a record for the current sha.
+            if let Some(sha) = &current_sha {
+                let (author, t) = meta
+                    .get(sha)
+                    .cloned()
+                    .unwrap_or_else(|| ("?".to_string(), now));
+                lines.push(BlameLine {
+                    sha: sha.chars().take(7).collect(),
+                    author,
+                    age: format_age((now - t).max(0)),
+                });
+            }
+            continue;
+        }
+        // Header line — only when the first token is a 40-char hex SHA.
+        let mut parts = line.splitn(2, ' ');
+        if let (Some(first), Some(_rest)) = (parts.next(), parts.next()) {
+            if first.len() == 40 && first.chars().all(|c| c.is_ascii_hexdigit()) {
+                current_sha = Some(first.to_string());
+                meta.entry(first.to_string())
+                    .or_insert_with(|| ("?".to_string(), now));
+                continue;
+            }
+        }
+        // Key/value metadata for the most recent header.
+        if let (Some(key), Some(val)) = (line.split_whitespace().next(), line.split_once(' ')) {
+            let value = val.1;
+            if let Some(sha) = &current_sha {
+                let entry = meta
+                    .entry(sha.clone())
+                    .or_insert_with(|| ("?".to_string(), now));
+                match key {
+                    "author" => entry.0 = value.to_string(),
+                    "author-time" => {
+                        if let Ok(n) = value.parse::<i64>() {
+                            entry.1 = n;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Some(lines)
+}
+
+/// Compact relative age — `45s`, `12m`, `3h`, `5d`, `2w`, `4mo`, `2y`.
+/// Optimised for at-a-glance reading, not precision.
+fn format_age(seconds: i64) -> String {
+    let s = seconds.max(0) as u64;
+    if s < 60 {
+        return format!("{s}s");
+    }
+    let m = s / 60;
+    if m < 60 {
+        return format!("{m}m");
+    }
+    let h = m / 60;
+    if h < 24 {
+        return format!("{h}h");
+    }
+    let d = h / 24;
+    if d < 7 {
+        return format!("{d}d");
+    }
+    if d < 30 {
+        return format!("{}w", d / 7);
+    }
+    if d < 365 {
+        return format!("{}mo", d / 30);
+    }
+    format!("{}y", d / 365)
+}
+
 /// `<start>[,<count>]` → `(start, count)`. Missing count defaults to 1,
 /// matching the unified-diff convention.
 fn parse_range(s: &str) -> (usize, usize) {
@@ -355,6 +477,18 @@ index 1..2 100644
         let h = parse_unified_diff(diff);
         assert_eq!(h.len(), 1);
         assert!(matches!(h[0].kind, GitHunkKind::Modified));
+    }
+
+    #[test]
+    fn format_age_buckets() {
+        assert_eq!(format_age(0), "0s");
+        assert_eq!(format_age(30), "30s");
+        assert_eq!(format_age(60), "1m");
+        assert_eq!(format_age(3600), "1h");
+        assert_eq!(format_age(86_400), "1d");
+        assert_eq!(format_age(8 * 86_400), "1w");
+        assert_eq!(format_age(40 * 86_400), "1mo");
+        assert_eq!(format_age(400 * 86_400), "1y");
     }
 
     #[test]

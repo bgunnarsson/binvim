@@ -33,6 +33,8 @@ impl super::App {
             folds_version: std::mem::replace(&mut self.folds_version, u64::MAX),
             closed_folds: std::mem::take(&mut self.closed_folds),
             git_hunks: std::mem::take(&mut self.git_hunks),
+            blame_visible: std::mem::take(&mut self.blame_visible),
+            blame: std::mem::take(&mut self.blame),
         }
     }
 
@@ -51,6 +53,8 @@ impl super::App {
         self.folds_version = stash.folds_version;
         self.closed_folds = stash.closed_folds;
         self.git_hunks = stash.git_hunks;
+        self.blame_visible = stash.blame_visible;
+        self.blame = stash.blame;
     }
 
     pub(super) fn switch_to(&mut self, idx: usize) -> Result<()> {
@@ -180,6 +184,13 @@ impl super::App {
             self.cursor.line = last;
         }
         self.clamp_cursor_normal();
+        // Blame is keyed by the on-disk file's line numbers; a reload
+        // can shift them. Re-fetch when visible, clear when not.
+        if self.blame_visible {
+            self.blame = crate::git::blame(path).unwrap_or_default();
+        } else {
+            self.blame.clear();
+        }
         path.file_name()
             .map(|s| s.to_string_lossy().to_string())
             .or_else(|| Some(path.display().to_string()))

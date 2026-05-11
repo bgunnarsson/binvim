@@ -129,6 +129,32 @@ impl super::App {
         }
     }
 
+    /// `:Gblame` — toggle per-line blame virtual text for the active
+    /// buffer. Populates `self.blame` lazily the first time it's turned
+    /// on (or refreshes it if the buffer's path is set), and clears the
+    /// status line either way.
+    pub(super) fn toggle_blame(&mut self) {
+        if self.blame_visible {
+            self.blame_visible = false;
+            self.status_msg = "blame off".into();
+            return;
+        }
+        let Some(path) = self.buffer.path.as_ref() else {
+            self.status_msg = "blame: buffer has no path".into();
+            return;
+        };
+        match crate::git::blame(path) {
+            Some(b) if !b.is_empty() => {
+                self.blame = b;
+                self.blame_visible = true;
+                self.status_msg = "blame on".into();
+            }
+            _ => {
+                self.status_msg = "blame: file isn't tracked by git".into();
+            }
+        }
+    }
+
     /// Discard the working-tree change for the hunk under the cursor.
     /// Refuses to run when the buffer is dirty — unsaved edits would be
     /// overwritten by the reload. Builds a reversed patch and applies

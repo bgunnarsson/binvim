@@ -1031,6 +1031,7 @@ impl super::App {
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
+            ExCommand::GitBlame => self.toggle_blame(),
             ExCommand::Quickfix(sub) => {
                 use crate::command::QuickfixSubCmd;
                 match sub {

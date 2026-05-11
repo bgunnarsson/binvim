@@ -56,6 +56,14 @@ pub struct BufferStash {
     /// markers. Refreshed on save, buffer switch, and explicit `:Gdiff`.
     /// Drives the git stripe painted in the gutter.
     pub git_hunks: Vec<crate::git::GitHunk>,
+    /// Whether `:Gblame` virtual text is currently rendered for this
+    /// buffer. Toggled per-buffer so the user can have blame on for
+    /// one file and off for another.
+    pub blame_visible: bool,
+    /// One entry per 0-indexed line — `git blame --porcelain` output.
+    /// Populated lazily the first time `blame_visible` is turned on;
+    /// rebuilt on save / disk reload.
+    pub blame: Vec<crate::git::BlameLine>,
 }
 
 #[derive(Debug, Clone)]
