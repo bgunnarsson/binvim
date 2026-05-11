@@ -2089,31 +2089,44 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     }
     queue!(out, ResetColor)?;
 
-    // Body — split horizontally into two columns when there's room: left
-    // shows the call stack, right shows the recent debug-console output.
-    // When the pane is too narrow we drop the call stack column.
+    // Body — split horizontally when the terminal is wide enough. The
+    // left column stacks call stack on top of locals (with a labelled
+    // separator); the right column is the console-output tail.
     let body_rows = rows.saturating_sub(1);
     let split_at = if width >= 80 { width / 2 } else { width };
-    let frames: Vec<String> = app
-        .dap
-        .session
-        .as_ref()
-        .map(|s| {
-            s.frames
-                .iter()
-                .map(|f| {
-                    let loc = f
-                        .source
-                        .as_ref()
-                        .and_then(|p| p.file_name())
-                        .and_then(|n| n.to_str())
-                        .map(|n| format!("{}:{}", n, f.line))
-                        .unwrap_or_else(|| format!("?:{}", f.line));
-                    format!("{} — {}", loc, f.name)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let left_w = if split_at < width { split_at.saturating_sub(1) } else { width };
+
+    enum LeftRow<'a> {
+        Empty,
+        Note(&'a str),
+        Frame(String),
+        Separator(&'a str),
+        Local(&'a str, &'a str),
+    }
+
+    let mut left_rows: Vec<LeftRow> = Vec::new();
+    if let Some(session) = app.dap.session.as_ref() {
+        if session.frames.is_empty() {
+            left_rows.push(LeftRow::Note("(no frames — running)"));
+        }
+        for f in &session.frames {
+            let loc = f
+                .source
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|n| format!("{}:{}", n, f.line))
+                .unwrap_or_else(|| format!("?:{}", f.line));
+            left_rows.push(LeftRow::Frame(format!("{} — {}", loc, f.name)));
+        }
+        if !session.locals.is_empty() {
+            left_rows.push(LeftRow::Separator(" Locals "));
+            for v in &session.locals {
+                left_rows.push(LeftRow::Local(&v.name, &v.value));
+            }
+        }
+    }
+
     let output_tail: Vec<&str> = {
         let n = app.dap.output_buffer.len();
         let take = body_rows.min(n);
@@ -2126,24 +2139,59 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     for r in 0..body_rows {
         let y = (top + 1 + r) as u16;
         queue!(out, MoveTo(0, y), Clear(ClearType::CurrentLine))?;
-        // Left column: frames.
-        queue!(
-            out,
-            SetBackgroundColor(body_bg),
-            SetForegroundColor(header_fg),
-        )?;
-        let left_w = if split_at < width { split_at.saturating_sub(1) } else { width };
-        let left_text = match (r, frames.get(r)) {
-            (0, None) if app.dap.session.is_some() => " (no frames yet — waiting for stop) ".to_string(),
-            (_, Some(f)) => format!(" {} ", truncate_left(f, left_w.saturating_sub(2))),
-            (_, None) => String::new(),
-        };
-        let visible: String = left_text.chars().take(left_w).collect();
-        queue!(out, Print(&visible))?;
-        if visible.chars().count() < left_w {
-            queue!(out, Print(" ".repeat(left_w - visible.chars().count())))?;
+        queue!(out, SetBackgroundColor(body_bg))?;
+        // Left column.
+        let row = left_rows.get(r).unwrap_or(&LeftRow::Empty);
+        let inner_w = left_w.saturating_sub(2);
+        match row {
+            LeftRow::Empty => {
+                queue!(out, Print(" ".repeat(left_w)))?;
+            }
+            LeftRow::Note(s) => {
+                queue!(
+                    out,
+                    SetForegroundColor(muted),
+                    Print(format!(" {} ", truncate_left(s, inner_w))),
+                )?;
+                pad_right(out, 2 + s.chars().count(), left_w)?;
+            }
+            LeftRow::Frame(s) => {
+                queue!(
+                    out,
+                    SetForegroundColor(header_fg),
+                    Print(format!(" {} ", truncate_left(s, inner_w))),
+                )?;
+                pad_right(out, 2 + s.chars().count().min(inner_w), left_w)?;
+            }
+            LeftRow::Separator(label) => {
+                let bar_room = inner_w.saturating_sub(label.chars().count());
+                let left_bar = bar_room / 2;
+                let right_bar = bar_room - left_bar;
+                queue!(
+                    out,
+                    SetForegroundColor(muted),
+                    Print(" "),
+                    Print("─".repeat(left_bar)),
+                    SetForegroundColor(header_fg),
+                    Print(*label),
+                    SetForegroundColor(muted),
+                    Print("─".repeat(right_bar)),
+                    Print(" "),
+                )?;
+                pad_right(out, 2 + bar_room + label.chars().count(), left_w)?;
+            }
+            LeftRow::Local(name, value) => {
+                let entry = format!("{} = {}", name, value);
+                queue!(
+                    out,
+                    SetForegroundColor(header_fg),
+                    Print(format!("   {} ", truncate_left(&entry, inner_w.saturating_sub(1)))),
+                )?;
+                pad_right(out, 4 + entry.chars().count().min(inner_w.saturating_sub(1)), left_w)?;
+            }
         }
-        // Separator column.
+        // Right column (and column divider) — only when the pane is wide
+        // enough to split.
         if split_at < width {
             queue!(
                 out,
@@ -2151,7 +2199,6 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 Print("│"),
                 SetForegroundColor(header_fg),
             )?;
-            // Right column: console output tail.
             let right_w = width.saturating_sub(left_w + 1);
             let right_text = output_tail
                 .get(r)
@@ -2164,6 +2211,15 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
             }
         }
         queue!(out, ResetColor)?;
+    }
+    Ok(())
+}
+
+/// Pad the current row out to `target` columns by writing spaces. `written`
+/// is how many character columns have already been printed for this row.
+fn pad_right(out: &mut impl Write, written: usize, target: usize) -> Result<()> {
+    if target > written {
+        queue!(out, Print(" ".repeat(target - written)))?;
     }
     Ok(())
 }

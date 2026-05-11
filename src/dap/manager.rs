@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use super::client::DapClient;
 use super::specs::DapAdapterSpec;
 use super::types::{
-    DapEvent, DapIncoming, OutputLine, SessionState, SourceBreakpoint, StackFrame,
+    DapEvent, DapIncoming, OutputLine, Scope, SessionState, SourceBreakpoint, StackFrame, Variable,
 };
 
 #[derive(Default)]
@@ -37,6 +37,12 @@ pub struct DapSession {
     pub state: SessionState,
     pub frames: Vec<StackFrame>,
     pub current_thread: Option<u64>,
+    /// Variable scopes reported for the top frame (typically just "Locals").
+    /// Refreshed on each `stopped` event; cleared on `continued`.
+    pub scopes: Vec<Scope>,
+    /// Resolved locals for the first non-expensive scope. The pane shows
+    /// these directly. Expanding nested values is Phase 3 territory.
+    pub locals: Vec<Variable>,
     /// Spawned adapter process + reader channel. Dropping the session
     /// drops the child, which closes the reader thread on its own.
     pub client: DapClient,
@@ -178,6 +184,8 @@ impl DapManager {
             state: SessionState::Initializing,
             frames: Vec::new(),
             current_thread: None,
+            scopes: Vec::new(),
+            locals: Vec::new(),
             client,
             launch_args,
             status_line: "initialising adapter…".into(),
@@ -309,8 +317,45 @@ impl DapManager {
             }
             "stackTrace" => {
                 let frames = parse_stack_frames(&body);
+                let top_id = frames.first().map(|f| f.id);
                 if let Some(s) = self.session.as_mut() {
                     s.frames = frames;
+                }
+                // Auto-chain into scopes for the top frame so the pane can
+                // show locals without an extra command from the user.
+                if let (Some(id), Some(session)) = (top_id, self.session.as_ref()) {
+                    let seq = session.client.alloc_seq();
+                    let _ = session.client.send_request(
+                        seq,
+                        "scopes",
+                        json!({ "frameId": id }),
+                    );
+                }
+            }
+            "scopes" => {
+                let scopes = parse_scopes(&body);
+                // Pick the first non-expensive scope (typically "Locals").
+                let target = scopes
+                    .iter()
+                    .find(|s| !s.expensive)
+                    .map(|s| s.variables_reference);
+                if let Some(s) = self.session.as_mut() {
+                    s.scopes = scopes;
+                    s.locals.clear();
+                }
+                if let (Some(vref), Some(session)) = (target, self.session.as_ref()) {
+                    let seq = session.client.alloc_seq();
+                    let _ = session.client.send_request(
+                        seq,
+                        "variables",
+                        json!({ "variablesReference": vref }),
+                    );
+                }
+            }
+            "variables" => {
+                let vars = parse_variables(&body);
+                if let Some(s) = self.session.as_mut() {
+                    s.locals = vars;
                 }
             }
             _ => {}
@@ -378,6 +423,8 @@ impl DapManager {
                     .unwrap_or(false);
                 if let Some(s) = self.session.as_mut() {
                     s.frames.clear();
+                    s.scopes.clear();
+                    s.locals.clear();
                     s.current_thread = None;
                     if !matches!(s.state, SessionState::Terminated) {
                         s.state = SessionState::Running;
@@ -495,6 +542,62 @@ impl DapManager {
             }),
         );
     }
+}
+
+fn parse_scopes(body: &Value) -> Vec<Scope> {
+    let mut out = Vec::new();
+    let Some(arr) = body.get("scopes").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for s in arr {
+        let name = s
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let variables_reference = s
+            .get("variablesReference")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let expensive = s.get("expensive").and_then(|v| v.as_bool()).unwrap_or(false);
+        out.push(Scope {
+            name,
+            variables_reference,
+            expensive,
+        });
+    }
+    out
+}
+
+fn parse_variables(body: &Value) -> Vec<Variable> {
+    let mut out = Vec::new();
+    let Some(arr) = body.get("variables").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for v in arr {
+        let name = v
+            .get("name")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let value = v
+            .get("value")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        let type_name = v.get("type").and_then(|x| x.as_str()).map(|s| s.to_string());
+        let variables_reference = v
+            .get("variablesReference")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0);
+        out.push(Variable {
+            name,
+            value,
+            type_name,
+            variables_reference,
+        });
+    }
+    out
 }
 
 fn parse_stack_frames(body: &Value) -> Vec<StackFrame> {
