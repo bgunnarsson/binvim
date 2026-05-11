@@ -24,21 +24,29 @@ impl super::App {
             }
             Action::Operate { op, motion, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                let m = self.run_motion(motion, count);
-                self.apply_op_with_motion(op, m, register);
+                if !self.try_multi_op_motion(op, motion, count, register) {
+                    let m = self.run_motion(motion, count);
+                    self.apply_op_with_motion(op, m, register);
+                }
             }
             Action::OperateLine { op, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.apply_op_linewise(op, count, register);
+                if !self.try_multi_op_linewise(op, count, register) {
+                    self.apply_op_linewise(op, count, register);
+                }
             }
             Action::OperateTextObject { op, obj, count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.apply_text_object(op, obj, count, register);
+                if !self.try_multi_op_textobj(op, obj, register) {
+                    self.apply_text_object(op, obj, count, register);
+                }
             }
             Action::EnterInsert(w) => self.enter_insert(w),
             Action::DeleteCharForward { count, register } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                self.delete_char_forward(count, register);
+                if !self.try_multi_delete_char(count, register) {
+                    self.delete_char_forward(count, register);
+                }
             }
             Action::ReplaceChar { ch, count } => {
                 self.history.record(&self.buffer.rope, self.cursor);

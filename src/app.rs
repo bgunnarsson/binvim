@@ -27,6 +27,7 @@ mod edit;
 mod health;
 mod input;
 mod lsp_glue;
+mod multi_cursor;
 mod pair;
 mod picker_glue;
 mod quickfix;
