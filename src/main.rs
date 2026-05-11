@@ -7,6 +7,7 @@ mod buffer;
 mod command;
 mod config;
 mod cursor;
+mod dap;
 mod editorconfig;
 mod format;
 mod lang;

@@ -787,6 +787,15 @@ impl super::App {
             }
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
+            ExCommand::DebugPaneToggle => {
+                self.debug_pane_open = !self.debug_pane_open;
+                self.adjust_viewport();
+                self.status_msg = if self.debug_pane_open {
+                    "Debug pane opened".into()
+                } else {
+                    "Debug pane closed".into()
+                };
+            }
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
                 self.cursor = m.target;

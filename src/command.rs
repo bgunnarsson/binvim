@@ -22,6 +22,7 @@ pub enum ExCommand {
     NoHighlight,
     Format,
     Health,
+    DebugPaneToggle,
     Unknown(String),
 }
 
@@ -99,6 +100,7 @@ pub fn parse(line: &str) -> ExCommand {
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
+        "dappane" => ExCommand::DebugPaneToggle,
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

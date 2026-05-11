@@ -19,6 +19,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         draw_tab_bar(out, app)?;
     }
     draw_buffer(out, app)?;
+    draw_debug_pane(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
     if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
@@ -2012,6 +2013,57 @@ fn truncate_left(s: &str, max: usize) -> String {
     let mut out = String::from("…");
     out.extend(chars[start..].iter());
     out
+}
+
+fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
+    let rows = app.debug_pane_rows();
+    if rows == 0 {
+        return Ok(());
+    }
+    let top = app.debug_pane_top();
+    let width = app.width as usize;
+
+    let header_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
+    let header_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let body_bg = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 };   // Surface0
+    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };     // Overlay0
+    let accent = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };    // Peach — debug accent
+
+    // Header row: " DEBUG  <status hint> "
+    let label = " DEBUG ";
+    let hint = " no session — :debug to start ";
+    queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
+    queue!(
+        out,
+        SetBackgroundColor(accent),
+        SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }), // Base
+        SetAttribute(Attribute::Bold),
+        Print(label),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(header_bg),
+        SetForegroundColor(muted),
+        Print(hint),
+    )?;
+    let used = label.chars().count() + hint.chars().count();
+    if width > used {
+        queue!(out, SetBackgroundColor(header_bg), Print(" ".repeat(width - used)))?;
+    }
+    queue!(out, ResetColor)?;
+
+    // Body rows — filled with the panel background so the editor's cleared
+    // ground doesn't bleed through. Phase 1: empty placeholder.
+    for r in 1..rows {
+        queue!(
+            out,
+            MoveTo(0, (top + r) as u16),
+            Clear(ClearType::CurrentLine),
+            SetBackgroundColor(body_bg),
+            SetForegroundColor(header_fg),
+            Print(" ".repeat(width)),
+            ResetColor
+        )?;
+    }
+    Ok(())
 }
 
 fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {

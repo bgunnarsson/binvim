@@ -52,6 +52,7 @@ use std::time::{Duration, Instant};
 use crate::buffer::Buffer;
 use crate::config::Config;
 use crate::cursor::Cursor;
+use crate::dap::DapManager;
 use crate::editorconfig::EditorConfig;
 use crate::lang::HighlightCache;
 use crate::lsp::{CodeActionItem, InlayHint, LspManager, SignatureHelp};
@@ -100,6 +101,10 @@ pub struct App {
     pub config: Config,
     pub editorconfig: EditorConfig,
     pub lsp: LspManager,
+    /// Debug session manager. Phase 1 holds only the user's breakpoint
+    /// table; Phase 2 wires actual sessions through this.
+    #[allow(dead_code)]
+    pub dap: DapManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
     /// Wall-clock of the last `did_change` flush. Drives the keystroke
@@ -117,6 +122,10 @@ pub struct App {
     /// True when binvim was launched with no path — render the start page in
     /// place of the empty buffer until the user opens something.
     pub show_start_page: bool,
+    /// Bottom debug pane visibility. When open it steals rows from the
+    /// editor area; height is computed from terminal size in `view.rs`.
+    /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
+    pub debug_pane_open: bool,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -215,6 +224,7 @@ impl App {
             config: Config::load(),
             editorconfig: EditorConfig::default(),
             lsp: LspManager::new(),
+            dap: DapManager::new(),
             last_sent_version: HashMap::new(),
             last_lsp_sync_at: Instant::now(),
             completion: None,
@@ -226,6 +236,7 @@ impl App {
                 &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             ),
             show_start_page,
+            debug_pane_open: false,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             rename_anchor: None,
