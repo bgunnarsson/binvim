@@ -414,7 +414,10 @@ fn colour_element_names(
         // identifier we'd want to colour — keeping them in `child_ranges`
         // would just create gaps in the scan, so allow them.
         let kind = child.kind();
-        if matches!(kind, "<" | ">" | "/>" | "=" | "\"") {
+        // `</` is the closing-tag opener — exclude it from the skip set
+        // along with the other structural tokens so the scanner reaches
+        // the tag name that follows it (`</div>` → colour `div`).
+        if matches!(kind, "<" | "</" | ">" | "/>" | "=" | "\"") {
             continue;
         }
         child_ranges.push((child.start_byte(), child.end_byte().min(source.len())));
@@ -613,6 +616,20 @@ mod tests {
                 "attribute `{}` should be coloured",
                 attr,
             );
+        }
+        // Closing tag names too — these come after `</`. Opening and
+        // closing tags should match in colour for visual balance.
+        let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
+        for closer in ["</section>", "</div>", "</partial>"] {
+            if let Some(idx) = src.find(closer) {
+                let name_start = idx + 2; // skip `</`
+                assert_eq!(
+                    colors[name_start],
+                    Some(pink),
+                    "closing-tag name in `{}` should be Pink",
+                    closer,
+                );
+            }
         }
     }
 }
