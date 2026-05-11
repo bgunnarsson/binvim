@@ -203,6 +203,20 @@ impl LspManager {
         }
     }
 
+    /// Send `textDocument/didOpen` to every running client that should
+    /// attach to `path`, using each spec's languageId. Looking up the
+    /// spec per call (instead of the client's stored `language_id`) is
+    /// what lets one shared `typescript-language-server` instance serve
+    /// both `.ts` (`typescript`) and `.tsx` (`typescriptreact`)
+    /// correctly.
+    pub fn did_open_all(&self, path: &Path, text: &str) {
+        for spec in specs_for_path(path) {
+            if let Some(client) = self.clients.get(&spec.key) {
+                let _ = client.did_open(path, text, &spec.language_id);
+            }
+        }
+    }
+
     /// Reply to a server's `workspace/applyEdit` request after the main
     /// thread has applied (or failed to apply) the edit.
     pub fn send_apply_edit_response(&self, client_key: &str, id: u64, applied: bool) {

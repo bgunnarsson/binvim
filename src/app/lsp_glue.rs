@@ -395,10 +395,9 @@ impl super::App {
         }
         let text = self.buffer.rope.to_string();
         // Every attached server (primary + auxiliaries like Tailwind) needs
-        // its own didOpen — each carries its own languageId.
-        for client in self.lsp.clients_for_path(&path) {
-            let _ = client.did_open(&path, &text);
-        }
+        // its own didOpen — each carries its own languageId, derived from
+        // the spec for this path (not the client's stored one).
+        self.lsp.did_open_all(&path, &text);
         self.last_sent_version
             .insert(path, self.buffer.version);
     }
@@ -418,9 +417,7 @@ impl super::App {
         }
         let text = self.buffer.rope.to_string();
         if last == u64::MAX {
-            for client in self.lsp.clients_for_path(&path) {
-                let _ = client.did_open(&path, &text);
-            }
+            self.lsp.did_open_all(&path, &text);
         } else {
             self.lsp.did_change_all(&path, self.buffer.version, &text);
         }

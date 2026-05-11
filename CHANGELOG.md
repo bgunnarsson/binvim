@@ -16,6 +16,14 @@ follows [Semantic Versioning](https://semver.org/).
   single tab rather than `[No Name] | foo.rs`.
 
 ### Fixed
+- **`.tsx` files parsed as TypeScript by tsserver.** A single
+  `typescript-language-server` client serves both `.ts` and `.tsx`
+  (same `ServerSpec.key`). On `didOpen` we were reusing the client's
+  stored `language_id` — whichever spec spawned it first — so a
+  `.tsx` file opened after a `.ts` would get `languageId: typescript`
+  and every JSX `<…>` came back as a syntax error. `LspClient::did_open`
+  now takes the languageId per call; `LspManager::did_open_all` looks
+  up the spec for each path and pipes the right one through.
 - **Pure-TypeScript syntax highlighting regression.** The JSX overlay
   query referenced `jsx_*` node types that don't exist in
   tree-sitter-typescript's pure-TS grammar (only TSX has them), so

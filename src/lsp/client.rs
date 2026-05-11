@@ -244,13 +244,21 @@ impl LspClient {
         }))
     }
 
-    pub fn did_open(&self, path: &Path, text: &str) -> Result<()> {
+    /// `textDocument/didOpen`. The languageId is passed explicitly per
+    /// call rather than read off the client because a single client
+    /// instance often hosts multiple file types (the `ts` server keys
+    /// `.ts` and `.tsx`, the `omnisharp` server keys `.cs`, `.razor`,
+    /// `.cshtml`, …). Using `self.language_id` would lock every
+    /// follow-up file to whichever spec the client first spawned for —
+    /// which is how `.tsx` files end up parsed as plain TS and the
+    /// server complains about every `<…>`.
+    pub fn did_open(&self, path: &Path, text: &str, language_id: &str) -> Result<()> {
         self.send_notification(
             "textDocument/didOpen",
             json!({
                 "textDocument": {
                     "uri": path_to_uri(path),
-                    "languageId": self.language_id,
+                    "languageId": language_id,
                     "version": 1,
                     "text": text,
                 }
