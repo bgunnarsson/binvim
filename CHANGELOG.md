@@ -6,6 +6,106 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **.NET Core debugger via DAP.** New `src/dap/` module spawns Samsung's
+  netcoredbg (looked up on `$PATH`), drives the full Debug Adapter
+  Protocol handshake (initialize → launch → setBreakpoints →
+  configurationDone), and surfaces stop / step / output events in a new
+  bottom debug pane. `:debug` (or `<leader>ds`) auto-builds the project
+  via `dotnet build` and auto-resolves the dll under `bin/Debug/net*/`,
+  preferring `<project>.dll` from the most recently built target. The
+  adapter registry in `src/dap/specs.rs` is adapter-agnostic — additional
+  adapters (delve, debugpy, lldb-dap) plug in with one struct entry.
+  Tested against .NET 10 on Apple Silicon.
+- **Bottom debug pane.** `:dappane` / `<leader>dp` toggles a split below
+  the editor (painted in the tab bar's Mantle shade so it reads as
+  chrome rather than a buffer split). The pane silently no-ops on
+  terminals too short to keep the editor usable. Header shows
+  `DEBUG │ <adapter> · <status>`; body splits into call stack +
+  locals on the left, debug-console tail on the right.
+- **`Mode::DebugPane` for in-pane navigation.** `<leader>df` focuses
+  the pane; `j`/`k`/`g`/`G` move the locals selection (with auto-follow
+  scroll), `Enter` / `Tab` / `<space>` expand a structured value,
+  `Ctrl-Y` / `Ctrl-E` free-scroll the left column without losing the
+  selection, `J` / `K` scroll the console column, `c`/`n`/`i`/`O` step
+  without leaving the pane, `:` enters the command line, `Esc` returns
+  to Normal.
+- **Variable expansion in the locals tree.** Structured locals render
+  with ▶ / ▼ markers; expansion lazily fetches `children` per
+  `variables_reference` and caches them. Children fetched concurrently
+  are routed back to the right parent via a `request_seq → vref` map.
+  All maps clear on `stopped` / `continued` — DAP doesn't promise vref
+  stability between stops.
+- **Breakpoint and current-PC gutter markers.** User breakpoints render
+  as ● in the sign column; the currently-stopped top frame renders as
+  ▶ (Catppuccin Peach). Both win over LSP diagnostic severity on the
+  same line.
+- **Visual Studio / Rider F-key bindings.** `F5` continue (or start
+  when no session), `Shift+F5` stop, `F9` toggle breakpoint, `F10`
+  step over, `F11` step into, `Shift+F11` step out. Work in any
+  editor mode so the muscle memory carries through Insert / DebugPane.
+- **Auto-jump to stopped frame.** When a `stopped` event arrives, the
+  editor opens the source of the top frame (if not already open),
+  jumps the cursor onto the paused line, and the gutter ▶ marker
+  lands there. Scroll positions reset so each new stop starts from a
+  predictable viewport.
+- **Adapter stderr surfaced in the pane.** Any line netcoredbg writes
+  to stderr streams into the debug-console buffer and the pane status
+  header — adapter crashes no longer look like silent hangs. An
+  unexpected `Child::try_wait` exit becomes an `AdapterError` event so
+  the user sees the cause instead of a frozen pane.
+- **Unverified-breakpoint surfacing.** netcoredbg's `setBreakpoints`
+  response includes per-breakpoint `verified` flags; unverified entries
+  now stream into the console + status line so the user spots a
+  missing-PDB / wrong-line / "bind by pattern" misfire instead of
+  silently never hitting.
+
+### Changed
+- **`<leader>d` is the debugger sub-menu.** Doc symbols moved from
+  top-level `<leader>o` to `<leader>do`; Workspace symbols from
+  `<leader>S` to `<leader>dS`. The leader-pick popup lists `+Debug`
+  alongside `+Buffer`. The leader-entry hints update with the new
+  mapping.
+- **Debug pane uses the tab-bar's Mantle shade.** Previously rendered
+  in Surface0 / Surface1, which read as a second buffer split. Now
+  both header and body paint as `#181825` so the pane visually sits
+  in the chrome layer.
+
+### Fixed
+- **Stale frames + locals after step / breakpoint hit.** `stackTrace`,
+  `scopes`, and `variables` responses mutated session state but didn't
+  emit a user-facing `DapEvent`, so the main loop's `events.is_empty()`
+  gate skipped the re-render and the ▶ marker + locals appeared only
+  on the next keypress. `DapManager::drain` now returns
+  `(events, progress)` and the main loop renders on either condition.
+- **DAP polling latency.** The main loop's 100ms poll ceiling stacked
+  ~500ms of perceived lag onto a single step (4-5 request/response
+  round-trips, each waiting on the next poll wake). The poll budget
+  now caps at 16ms while `DapManager::is_active()`; idle keeps the
+  100ms cadence.
+- **Deep stacks hiding locals.** With `justMyCode=false`, an ASP.NET
+  breakpoint produced 10-15 framework frames that filled the left
+  column and pushed locals off-screen. The renderer used to cap the
+  frame list, but now every frame is in the list and the column
+  scrolls — `Ctrl-Y` / `Ctrl-E` peek upward without losing the
+  selection.
+- **`adapterID` for netcoredbg.** The adapter keys behaviour on the
+  well-known `coreclr` adapter id; passing our internal `"dotnet"` key
+  produced a degraded session. The initialize request now sends
+  `adapterID: "coreclr"` while the editor-side registry continues to
+  use the `dotnet` key.
+- **Lambdas inside minimal-API endpoints never hitting.** Default
+  `justMyCode=true` caused netcoredbg to rebind breakpoints inside
+  endpoint lambdas to the nearest user-code sequence point (the
+  `MapGet` registration line), so they fired once during startup and
+  never again on request. Switched the default to `false`; the
+  `breakpoint` DAP event is now handled so adapter-side rebinds
+  propagate to the gutter.
+- **netcoredbg empty stackTrace immediately after stop.** Some adapters
+  refuse to populate `stackTrace` until the client has called
+  `threads`. The `stopped` event now fires both requests back-to-back
+  so the frame list is populated by the time `stackTrace` returns.
+
 ## [0.1.2] - 2026-05-11
 
 ### Changed
