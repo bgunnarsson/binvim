@@ -121,7 +121,17 @@ fn dotnet_launch_payload(program: &Path, cwd: &Path) -> Value {
         "cwd": cwd.display().to_string(),
         "console": "internalConsole",
         "stopAtEntry": false,
-        "justMyCode": true,
+        // Off so breakpoints inside minimal-API endpoint lambdas — which
+        // dispatch through framework code — actually bind on JIT. With
+        // JMC on, netcoredbg silently rebinds the breakpoint to the
+        // nearest user-code sequence point (the MapGet registration
+        // line), so it fires once during startup and never again on
+        // request.
+        "justMyCode": false,
+        // Tell the adapter we don't care if the source file's hash
+        // matches the PDB — useful when the user has edited the file
+        // since the last build but hasn't re-built yet.
+        "requireExactSource": false,
     })
 }
 

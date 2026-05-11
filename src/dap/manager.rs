@@ -600,6 +600,50 @@ impl DapManager {
                     .to_string();
                 events.push(DapEvent::Thread { reason, thread_id });
             }
+            // netcoredbg fires this when a previously-pending
+            // breakpoint binds after a JIT, or when it rebinds an
+            // existing one to a different line (common for lambdas:
+            // line N → line N-3 of the enclosing call). Surface the
+            // change so the user sees that the breakpoint actually
+            // landed somewhere — and where.
+            "breakpoint" => {
+                let reason = body
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if let Some(bp) = body.get("breakpoint") {
+                    let verified = bp
+                        .get("verified")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let line = bp.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let msg = bp
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let summary = match (reason.as_str(), verified, msg) {
+                        ("changed", true, _) => format!("breakpoint bound at line {line}"),
+                        ("changed", false, Some(m)) => format!("breakpoint line {line}: {m}"),
+                        ("changed", false, None) => format!("breakpoint line {line}: still pending"),
+                        ("removed", _, _) => format!("breakpoint at line {line} removed by adapter"),
+                        (r, _, _) => format!("breakpoint event ({r}) at line {line}"),
+                    };
+                    if let Some(s) = self.session.as_mut() {
+                        s.status_line = summary.clone();
+                    }
+                    let line = OutputLine {
+                        category: "console".into(),
+                        output: summary,
+                    };
+                    self.output_buffer.push(line.clone());
+                    if self.output_buffer.len() > OUTPUT_LOG_CAP {
+                        let excess = self.output_buffer.len() - OUTPUT_LOG_CAP;
+                        self.output_buffer.drain(0..excess);
+                    }
+                    events.push(DapEvent::Output(line));
+                }
+            }
             _ => {}
         }
     }
