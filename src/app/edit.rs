@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use crate::editorconfig::IndentStyle;
-use crate::mode::Mode;
+use crate::mode::{Mode, VisualKind};
 use crate::parser::InsertWhere;
 
 use super::pair::{is_paired_bracket, surround_open_close};
@@ -403,6 +403,42 @@ impl super::App {
             Mode::Visual(k) => k,
             _ => return,
         };
+        // Block selection: wrap each row's column slice independently —
+        // (anchor.col, cursor.col) defines the rectangle, and we insert
+        // `open`/`close` at `(c1, c2+1)` on every row in the span. Going
+        // bottom-up keeps higher-row char indices stable while we edit.
+        if matches!(kind, VisualKind::Block) {
+            let anchor = self.visual_anchor.unwrap_or(self.cursor);
+            let l1 = anchor.line.min(self.cursor.line);
+            let l2 = anchor.line.max(self.cursor.line);
+            let c1 = anchor.col.min(self.cursor.col);
+            let c2 = anchor.col.max(self.cursor.col);
+            let (open, close) = surround_open_close(ch);
+            for line in (l1..=l2).rev() {
+                let line_len = self.buffer.line_len(line);
+                // Skip rows the rectangle doesn't actually intersect —
+                // matches Vim's "block over short lines is a no-op
+                // there" rule.
+                if c1 > line_len {
+                    continue;
+                }
+                let start_col = c1.min(line_len);
+                let end_col = (c2 + 1).min(line_len);
+                let line_start = self.buffer.line_start_idx(line);
+                self.buffer
+                    .insert_at_idx(line_start + end_col, close);
+                self.buffer
+                    .insert_at_idx(line_start + start_col, open);
+            }
+            // Land the cursor on the freshly-inserted opener of the
+            // first row — same convention as charwise surround.
+            self.cursor.line = l1;
+            self.cursor.col = c1;
+            self.cursor.want_col = c1;
+            self.clamp_cursor_normal();
+            self.exit_visual();
+            return;
+        }
         let (start, end, _linewise) = self.visual_range_chars(kind);
         if end <= start {
             self.exit_visual();

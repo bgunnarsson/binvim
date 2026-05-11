@@ -310,6 +310,19 @@ impl super::App {
             self.cursor.col = sb.col.min(line_len.saturating_sub(1).max(0));
             self.cursor.want_col = self.cursor.col;
             self.view_top = sb.view_top.min(last);
+            // Restore jumplist — clamp each entry against the current
+            // buffer's bounds so a file shortened since the last session
+            // doesn't carry an out-of-range jump.
+            self.jumplist = sb
+                .jumplist
+                .iter()
+                .map(|(l, c)| {
+                    let line = (*l).min(last);
+                    let col_max = self.buffer.line_len(line).saturating_sub(1);
+                    (line, (*c).min(col_max))
+                })
+                .collect();
+            self.jump_idx = sb.jump_idx.min(self.jumplist.len());
             opened_any = true;
         }
         if !opened_any {
@@ -348,12 +361,14 @@ impl super::App {
         let mut buffers: Vec<crate::session::SessionBuffer> = Vec::new();
         let mut active_in_session: usize = 0;
         for (i, stash) in self.buffers.iter().enumerate() {
-            let (path, line, col, view_top) = if i == self.active {
+            let (path, line, col, view_top, jumplist, jump_idx) = if i == self.active {
                 (
                     self.buffer.path.as_ref(),
                     self.cursor.line,
                     self.cursor.col,
                     self.view_top,
+                    self.jumplist.clone(),
+                    self.jump_idx,
                 )
             } else {
                 (
@@ -361,6 +376,8 @@ impl super::App {
                     stash.cursor.line,
                     stash.cursor.col,
                     stash.view_top,
+                    stash.jumplist.clone(),
+                    stash.jump_idx,
                 )
             };
             let Some(path) = path else { continue };
@@ -372,6 +389,8 @@ impl super::App {
                 line,
                 col,
                 view_top,
+                jumplist,
+                jump_idx,
             });
         }
         crate::session::Session {

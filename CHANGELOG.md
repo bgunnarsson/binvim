@@ -7,6 +7,56 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Picker file-type icons.** Files / Recents / Buffers / Grep /
+  References rows get a Nerd Font icon per row from `Lang::detect`
+  on the basename. Symbol / CodeAction pickers stay unchanged (rows
+  aren't files). Grep / references rows now correctly split off the
+  trailing `:LN:COL:…` suffix instead of treating it as part of the
+  filename.
+- **Picker fuzzy-match char highlighting.** `fuzzy_match` returns
+  match positions alongside the score; matched chars render in
+  Catppuccin Yellow + Bold so it's obvious which query letters
+  produced the row's rank.
+- **Inlay-hint kind styling.** Parameter hints (LSP `kind == 2`)
+  render in a warmer Overlay2 tone; type hints (`kind == 1` or
+  unknown) keep the muted Overlay1 they had — both categories scan
+  apart on a mixed line.
+- **JSX overlay: fragments + expression containers.** `<>…</>` gets
+  `@tag` on its delimiters; JSX `{expr}` braces get `@operator` so
+  they read as JSX-template syntax instead of being mistaken for
+  object literals.
+- **`<leader>do` / `<leader>dS` for Doc / Workspace symbols.** Moved
+  from top-level `<leader>o` / `<leader>S` so all "navigate around
+  code while debugging" pickers cluster in the debug sub-menu.
+  Existing debug bindings shift: `dq` is Stop session, `dO` is Step
+  out (was `dS` / `do`).
+- **`gt` / `gT` Vim aliases for next / previous buffer.** Same path
+  as `H` / `L`.
+- **Middle-click closes a tab.** Subject to the same dirty-buffer
+  guard as `:bd`. Faster than aiming for the `×`.
+- **Clickable tab-bar overflow chevrons.** `‹` / `›` shift the
+  visible slice by one tab when clicked — sets the active buffer to
+  one step before the first visible tab (`‹`) or one step after the
+  last visible tab (`›`).
+- **Multi-cursor Enter mirroring.** Pressing Enter with additional
+  cursors active inserts a literal `\n` at every cursor. Smart
+  indent at the secondaries is non-trivial (neighbouring context can
+  disagree across positions) so v1 keeps them in basic sync.
+- **Persistent jumplist.** Each `SessionBuffer` now serialises its
+  per-buffer `jumplist` + `jump_idx`; on launch the values restore
+  alongside cursor/viewport. Entries are clamped against the
+  current buffer's bounds so a file shortened since the last session
+  doesn't carry an out-of-range jump.
+- **`:s` / `:S` regex flag.** Add `r` to the flag tail (e.g.
+  `:s/foo.*bar/x/gr` or `:%S/^let /var /r`) to interpret the pattern
+  as a regex. Replacement honours `$1`/`$2`/… capture references. No
+  flag → fixed-string substitution, same as before. Project-wide
+  `:S` also drops `--fixed-strings` from the ripgrep candidate
+  search when `r` is set.
+- **Proper visual-block surround.** `Vb`-selected rectangle now
+  wraps each row's column slice independently — `(c1, c2+1)` on
+  every row in the rectangle — instead of falling back to a coarse
+  anchor-to-cursor span across the whole region.
 - **Razor / `.cshtml` syntax highlighting.** New `Lang::Razor` variant
   routed via `tree-sitter-razor`, paired with the bundled C# highlights
   query plus a Razor overlay that tags every `@`-marker directive

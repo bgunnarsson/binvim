@@ -26,6 +26,18 @@ pub struct SessionBuffer {
     pub line: usize,
     pub col: usize,
     pub view_top: usize,
+    /// Per-buffer jumplist — `(line, col)` pairs the user can walk via
+    /// `Ctrl-O` / `Ctrl-I`. Skipped on serialisation when empty so old
+    /// session files keep parsing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub jumplist: Vec<(usize, usize)>,
+    /// Cursor index into `jumplist` — `Ctrl-O` walks backward from here.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub jump_idx: usize,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// `~/.cache/binvim/sessions/<hash>.json` for the given cwd. Returns `None`

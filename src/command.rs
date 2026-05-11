@@ -12,11 +12,24 @@ pub enum ExCommand {
     BufferDelete { force: bool },
     BufferList,
     BufferSwitch(String),
-    Substitute { range: ExRange, pattern: String, replacement: String, global: bool },
+    Substitute {
+        range: ExRange,
+        pattern: String,
+        replacement: String,
+        global: bool,
+        /// `r` flag — pattern is a regex (otherwise plain literal text).
+        /// Replacement honours `$1`/`$2`/… capture references when set.
+        regex: bool,
+    },
     /// `:S/pat/repl/[g]` — project-wide substitute. Scans the workspace
     /// with ripgrep, applies the substitution to every matching file,
     /// saves each one. The range prefix (if any) is ignored.
-    ProjectSubstitute { pattern: String, replacement: String, global: bool },
+    ProjectSubstitute {
+        pattern: String,
+        replacement: String,
+        global: bool,
+        regex: bool,
+    },
     DeleteRange { range: ExRange },
     YankRange { range: ExRange },
     NoHighlight,
@@ -72,13 +85,24 @@ pub fn parse(line: &str) -> ExCommand {
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
     let rest = rest.trim();
     if let Some(args) = rest.strip_prefix('s') {
-        if let Some((pat, repl, global)) = parse_substitute_args(args) {
-            return ExCommand::Substitute { range, pattern: pat, replacement: repl, global };
+        if let Some((pat, repl, global, regex)) = parse_substitute_args(args) {
+            return ExCommand::Substitute {
+                range,
+                pattern: pat,
+                replacement: repl,
+                global,
+                regex,
+            };
         }
     }
     if let Some(args) = rest.strip_prefix('S') {
-        if let Some((pat, repl, global)) = parse_substitute_args(args) {
-            return ExCommand::ProjectSubstitute { pattern: pat, replacement: repl, global };
+        if let Some((pat, repl, global, regex)) = parse_substitute_args(args) {
+            return ExCommand::ProjectSubstitute {
+                pattern: pat,
+                replacement: repl,
+                global,
+                regex,
+            };
         }
     }
     if rest == "d" || rest == "delete" {
@@ -157,7 +181,7 @@ fn parse_range(s: &str) -> (ExRange, &str) {
 }
 
 /// Parse `:s/old/new/flags` style args. The first char after `s` is the delimiter.
-fn parse_substitute_args(args: &str) -> Option<(String, String, bool)> {
+fn parse_substitute_args(args: &str) -> Option<(String, String, bool, bool)> {
     let mut chars = args.chars();
     let delim = chars.next()?;
     if delim.is_alphanumeric() {
@@ -185,5 +209,6 @@ fn parse_substitute_args(args: &str) -> Option<(String, String, bool)> {
     let repl = parts.remove(0);
     let flags = parts.into_iter().next().unwrap_or_default();
     let global = flags.contains('g');
-    Some((pat, repl, global))
+    let regex = flags.contains('r');
+    Some((pat, repl, global, regex))
 }

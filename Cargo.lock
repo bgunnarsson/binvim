@@ -42,6 +42,7 @@ dependencies = [
  "arboard",
  "crossterm",
  "ignore",
+ "regex",
  "ropey",
  "serde",
  "serde_json",
