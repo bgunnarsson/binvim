@@ -19,6 +19,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         draw_tab_bar(out, app)?;
     }
     draw_buffer(out, app)?;
+    draw_debug_pane(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
     if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
@@ -1480,18 +1481,53 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     while line_idx < total_lines && app.line_is_folded(line_idx) {
         line_idx += 1;
     }
+    // Canonicalise the buffer's path once for the duration of this draw so
+    // breakpoint + stopped-frame gutter lookups don't do one syscall per
+    // visible row. Fall back to the raw path if canonicalisation fails
+    // (e.g. unsaved or removed file).
+    let canon_buf_path: Option<std::path::PathBuf> = app
+        .buffer
+        .path
+        .as_ref()
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()));
+    // 1-based line number of the currently-stopped top frame, if the
+    // session is paused inside this buffer.
+    let pc_line: Option<usize> = match (&canon_buf_path, app.dap.session.as_ref()) {
+        (Some(bp), Some(session)) if matches!(session.state, crate::dap::SessionState::Stopped { .. }) => {
+            session.frames.first().and_then(|f| {
+                let fs = f.source.as_ref()?;
+                let fs_canon = fs.canonicalize().unwrap_or_else(|_| fs.clone());
+                if &fs_canon == bp { Some(f.line) } else { None }
+            })
+        }
+        _ => None,
+    };
     for row in 0..rows {
         // Clear the row before drawing — guards against terminal-side wrap
         // from the previous row's render leaking onto this one.
         queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
         if line_idx < total_lines {
-            // Diagnostic sign column.
-            let sign = app.worst_diagnostic(line_idx).map(|s| match s {
-                Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }), // Red
-                Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
-                Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }), // Blue
-                Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }), // Sky
-            });
+            // Sign column priority: stopped-at marker > user breakpoint >
+            // worst LSP diagnostic. The debug marks are user-actionable
+            // ground truth and should win when they collide.
+            let line_one_based = line_idx + 1;
+            let pc_here = pc_line == Some(line_one_based);
+            let bp_here = canon_buf_path
+                .as_deref()
+                .map(|p| app.dap.has_breakpoint(p, line_one_based))
+                .unwrap_or(false);
+            let sign = if pc_here {
+                Some(('▶', Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 })) // Peach
+            } else if bp_here {
+                Some(('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 })) // Red
+            } else {
+                app.worst_diagnostic(line_idx).map(|s| match s {
+                    Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }),
+                    Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }),
+                    Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }),
+                    Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }),
+                })
+            };
             if let Some((ch, color)) = sign {
                 queue!(
                     out,
@@ -1940,6 +1976,7 @@ fn mode_color(mode: Mode) -> Color {
         Mode::Search { .. } => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
         Mode::Prompt(_) => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
+        Mode::DebugPane => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach — matches debug pane accent
     }
 }
 
@@ -2012,6 +2049,273 @@ fn truncate_left(s: &str, max: usize) -> String {
     let mut out = String::from("…");
     out.extend(chars[start..].iter());
     out
+}
+
+fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
+    let rows = app.debug_pane_rows();
+    if rows == 0 {
+        return Ok(());
+    }
+    let top = app.debug_pane_top();
+    let width = app.width as usize;
+
+    // Mantle — same shade the tab bar uses, so the pane reads as
+    // chrome rather than another buffer split.
+    let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 };
+    let header_bg = pane_bg;
+    let header_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let body_bg = pane_bg;
+    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };     // Overlay0
+    let accent = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };    // Peach — debug accent
+    let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
+
+    // Header row: " DEBUG  <adapter> · <status> "
+    let label = " DEBUG ";
+    let hint = match app.dap.session.as_ref() {
+        Some(s) => format!(" {} · {} ", s.adapter_key, s.status_line),
+        None => " no session — :debug to start ".to_string(),
+    };
+    queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
+    queue!(
+        out,
+        SetBackgroundColor(accent),
+        SetForegroundColor(base),
+        SetAttribute(Attribute::Bold),
+        Print(label),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(header_bg),
+        SetForegroundColor(muted),
+        Print(&hint),
+    )?;
+    let used = label.chars().count() + hint.chars().count();
+    if width > used {
+        queue!(out, SetBackgroundColor(header_bg), Print(" ".repeat(width - used)))?;
+    }
+    queue!(out, ResetColor)?;
+
+    // Body — split horizontally when the terminal is wide enough. The
+    // left column stacks call stack on top of locals (with a labelled
+    // separator); the right column is the console-output tail.
+    let body_rows = rows.saturating_sub(1);
+    let split_at = if width >= 80 { width / 2 } else { width };
+    let left_w = if split_at < width { split_at.saturating_sub(1) } else { width };
+
+    enum LeftRow<'a> {
+        Empty,
+        Note(&'a str),
+        Frame(String),
+        Separator(&'a str),
+        Local {
+            depth: usize,
+            marker: char,
+            name: &'a str,
+            value: &'a str,
+            selected: bool,
+        },
+    }
+
+    // Flat locals tree — computed once so the key handler and renderer
+    // agree on row order (the renderer's selection highlight has to point
+    // at the same row the cursor's index does).
+    let flat = app
+        .dap
+        .session
+        .as_ref()
+        .map(crate::dap::flat_locals_view)
+        .unwrap_or_default();
+    let pane_focused = app.mode == Mode::DebugPane;
+    let selected_local_idx = if pane_focused && !flat.is_empty() {
+        Some(app.dap_pane_cursor.min(flat.len() - 1))
+    } else {
+        None
+    };
+
+    let mut left_rows: Vec<LeftRow> = Vec::new();
+    if let Some(session) = app.dap.session.as_ref() {
+        if session.frames.is_empty() {
+            // Tag the empty-frames note with the actual state so a
+            // stopped-but-no-frames situation reads as a problem to
+            // diagnose instead of looking identical to "still running".
+            let note = match session.state {
+                crate::dap::SessionState::Stopped { .. } => "(stopped — waiting for stackTrace)",
+                crate::dap::SessionState::Running => "(running — no frames)",
+                crate::dap::SessionState::Initializing => "(initialising)",
+                crate::dap::SessionState::Configuring => "(configuring)",
+                crate::dap::SessionState::Terminated => "(terminated)",
+            };
+            left_rows.push(LeftRow::Note(note));
+        }
+        // Show every frame — overflow is handled by the left column's
+        // scroll position (`dap_left_scroll`), driven by the key handler
+        // and clamped below.
+        for f in &session.frames {
+            let loc = f
+                .source
+                .as_ref()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .map(|n| format!("{}:{}", n, f.line))
+                .unwrap_or_else(|| format!("?:{}", f.line));
+            left_rows.push(LeftRow::Frame(format!("{} — {}", loc, f.name)));
+        }
+        if !flat.is_empty() {
+            left_rows.push(LeftRow::Separator(" Locals "));
+            for (i, row) in flat.iter().enumerate() {
+                let marker = if row.expandable {
+                    if row.expanded { '▼' } else { '▶' }
+                } else {
+                    ' '
+                };
+                left_rows.push(LeftRow::Local {
+                    depth: row.depth,
+                    marker,
+                    name: &row.var.name,
+                    value: &row.var.value,
+                    selected: selected_local_idx == Some(i),
+                });
+            }
+        }
+    }
+
+    // Clamp the user-driven scroll positions to their valid range. The
+    // key handler keeps them in range too, but resizing the terminal or
+    // a fresh log line landing right before the draw can put them
+    // slightly out of bounds — easier to clamp here than to chase every
+    // upstream mutation.
+    let left_scroll = {
+        let max = left_rows.len().saturating_sub(body_rows);
+        app.dap_left_scroll.min(max)
+    };
+
+    // Full flat-mapped output buffer — we need every line because the
+    // user can scroll back through history with `K`. The buffer is
+    // bounded by `OUTPUT_LOG_CAP` so this stays cheap.
+    let output_all: Vec<&str> = app
+        .dap
+        .output_buffer
+        .iter()
+        .flat_map(|line| line.output.lines())
+        .collect();
+    let right_scroll = {
+        let max = output_all.len().saturating_sub(body_rows);
+        app.dap_right_scroll.min(max)
+    };
+    // Visible right-column window: last `body_rows` lines, then walked
+    // back `right_scroll` lines into the past.
+    let total_lines = output_all.len();
+    let end = total_lines.saturating_sub(right_scroll);
+    let start = end.saturating_sub(body_rows);
+    let output_tail: &[&str] = &output_all[start..end];
+
+    for r in 0..body_rows {
+        let y = (top + 1 + r) as u16;
+        queue!(out, MoveTo(0, y), Clear(ClearType::CurrentLine))?;
+        queue!(out, SetBackgroundColor(body_bg))?;
+        // Left column. Apply scroll offset so the user can pan through
+        // a stack deeper than the visible viewport.
+        let row = left_rows.get(r + left_scroll).unwrap_or(&LeftRow::Empty);
+        let inner_w = left_w.saturating_sub(2);
+        match row {
+            LeftRow::Empty => {
+                queue!(out, Print(" ".repeat(left_w)))?;
+            }
+            LeftRow::Note(s) => {
+                queue!(
+                    out,
+                    SetForegroundColor(muted),
+                    Print(format!(" {} ", truncate_left(s, inner_w))),
+                )?;
+                pad_right(out, 2 + s.chars().count(), left_w)?;
+            }
+            LeftRow::Frame(s) => {
+                queue!(
+                    out,
+                    SetForegroundColor(header_fg),
+                    Print(format!(" {} ", truncate_left(s, inner_w))),
+                )?;
+                pad_right(out, 2 + s.chars().count().min(inner_w), left_w)?;
+            }
+            LeftRow::Separator(label) => {
+                let bar_room = inner_w.saturating_sub(label.chars().count());
+                let left_bar = bar_room / 2;
+                let right_bar = bar_room - left_bar;
+                queue!(
+                    out,
+                    SetForegroundColor(muted),
+                    Print(" "),
+                    Print("─".repeat(left_bar)),
+                    SetForegroundColor(header_fg),
+                    Print(*label),
+                    SetForegroundColor(muted),
+                    Print("─".repeat(right_bar)),
+                    Print(" "),
+                )?;
+                pad_right(out, 2 + bar_room + label.chars().count(), left_w)?;
+            }
+            LeftRow::Local {
+                depth,
+                marker,
+                name,
+                value,
+                selected,
+            } => {
+                // Catppuccin Surface2 — visible against body_bg without
+                // shouting.
+                let selection_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 };
+                let row_bg = if *selected { selection_bg } else { body_bg };
+                let indent: String = "  ".repeat(*depth);
+                let entry = format!("{}{} {} = {}", indent, marker, name, value);
+                let max_inner = inner_w.saturating_sub(1);
+                let visible = truncate_left(&entry, max_inner);
+                queue!(
+                    out,
+                    SetBackgroundColor(row_bg),
+                    SetForegroundColor(header_fg),
+                    Print(format!(" {} ", visible)),
+                )?;
+                let used = 2 + visible.chars().count();
+                if left_w > used {
+                    queue!(
+                        out,
+                        SetBackgroundColor(row_bg),
+                        Print(" ".repeat(left_w - used))
+                    )?;
+                }
+                queue!(out, SetBackgroundColor(body_bg))?;
+            }
+        }
+        // Right column (and column divider) — only when the pane is wide
+        // enough to split.
+        if split_at < width {
+            queue!(
+                out,
+                SetForegroundColor(muted),
+                Print("│"),
+                SetForegroundColor(header_fg),
+            )?;
+            let right_w = width.saturating_sub(left_w + 1);
+            let right_text = output_tail
+                .get(r)
+                .map(|s| format!(" {} ", s.trim_end()))
+                .unwrap_or_default();
+            let right_visible: String = right_text.chars().take(right_w).collect();
+            queue!(out, Print(&right_visible))?;
+            if right_visible.chars().count() < right_w {
+                queue!(out, Print(" ".repeat(right_w - right_visible.chars().count())))?;
+            }
+        }
+        queue!(out, ResetColor)?;
+    }
+    Ok(())
+}
+
+/// Pad the current row out to `target` columns by writing spaces. `written`
+/// is how many character columns have already been printed for this row.
+fn pad_right(out: &mut impl Write, written: usize, target: usize) -> Result<()> {
+    if target > written {
+        queue!(out, Print(" ".repeat(target - written)))?;
+    }
+    Ok(())
 }
 
 fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
@@ -2156,6 +2460,13 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     if app.show_start_page
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
+        queue!(out, Hide)?;
+        return Ok(());
+    }
+    // In the debug pane focus mode the selection highlight in the pane
+    // is the user's "cursor" — the editor's terminal cursor would just
+    // distract.
+    if app.mode == Mode::DebugPane {
         queue!(out, Hide)?;
         return Ok(());
     }

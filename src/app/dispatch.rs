@@ -99,6 +99,24 @@ impl super::App {
             Action::LspFindReferences => self.lsp_request_references(),
             Action::LspRename => self.start_rename_prompt(),
             Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
+            Action::Format => self.format_active(),
+            Action::Debug(d) => {
+                use crate::command::DebugSubCmd;
+                use crate::parser::DebugAction;
+                let sub = match d {
+                    DebugAction::Start => DebugSubCmd::Start,
+                    DebugAction::Stop => DebugSubCmd::Stop,
+                    DebugAction::ToggleBreakpoint => DebugSubCmd::Break,
+                    DebugAction::ClearBreakpointsInFile => DebugSubCmd::ClearBreakpointsInFile,
+                    DebugAction::Continue => DebugSubCmd::Continue,
+                    DebugAction::Next => DebugSubCmd::Next,
+                    DebugAction::StepIn => DebugSubCmd::StepIn,
+                    DebugAction::StepOut => DebugSubCmd::StepOut,
+                    DebugAction::PaneToggle => DebugSubCmd::PaneToggle,
+                    DebugAction::FocusPane => DebugSubCmd::FocusPane,
+                };
+                self.dispatch_debug(sub);
+            }
             Action::AddNextOccurrenceSelection => self.add_next_occurrence_selection(),
             Action::SurroundDelete { ch } => {
                 self.history.record(&self.buffer.rope, self.cursor);

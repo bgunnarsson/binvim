@@ -238,11 +238,41 @@ impl super::App {
     }
 
     pub fn buffer_rows(&self) -> usize {
-        // Reserve the status line at the bottom and (when applicable) one
-        // row at the top for the tab bar.
+        // Reserve the status line at the bottom, (when applicable) one row at
+        // the top for the tab bar, and the debug pane rows at the bottom when
+        // a debug session is up or the pane is pinned open.
         (self.height as usize)
             .saturating_sub(1)
             .saturating_sub(self.buffer_top())
+            .saturating_sub(self.debug_pane_rows())
+    }
+
+    /// Number of rows the bottom debug pane occupies. Zero when the pane is
+    /// closed or when the terminal is too short to hold it without squashing
+    /// the editor below a usable threshold — opening the pane on a tiny
+    /// terminal silently becomes a no-op rather than corrupting the layout.
+    pub fn debug_pane_rows(&self) -> usize {
+        if !self.debug_pane_open {
+            return 0;
+        }
+        let h = self.height as usize;
+        let chrome = self.buffer_top() + 1;
+        let avail = h.saturating_sub(chrome);
+        if avail < 10 {
+            return 0;
+        }
+        let target = (h / 3).clamp(8, 20);
+        target.min(avail.saturating_sub(6))
+    }
+
+    /// First terminal row occupied by the debug pane. Sits directly above the
+    /// status line. Caller must check `debug_pane_rows() > 0` first — when the
+    /// pane is closed this returns the status-line row, which is not a valid
+    /// drawing target.
+    pub fn debug_pane_top(&self) -> usize {
+        (self.height as usize)
+            .saturating_sub(1)
+            .saturating_sub(self.debug_pane_rows())
     }
 
     /// True when the tab bar should be painted. Shown whenever any

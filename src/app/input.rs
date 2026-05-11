@@ -78,6 +78,12 @@ impl super::App {
                 }
                 self.hover = None;
                 self.whichkey = None;
+                // IDE-parity debug function keys — work regardless of mode
+                // so F10 / F11 / F5 behave the way the user's muscle
+                // memory expects coming from Visual Studio / Rider.
+                if self.try_handle_debug_function_key(&k) {
+                    return Ok(());
+                }
                 // Macro recording: stop on `q` in normal, otherwise capture every key.
                 if !self.replaying_macro && self.recording_macro.is_some() {
                     let stop = matches!(self.mode, Mode::Normal)
@@ -98,7 +104,8 @@ impl super::App {
                 // `e` after `<space>`) is also allowed so multi-key shortcuts
                 // resolve normally.
                 let leader_pending = self.pending.awaiting_leader
-                    || self.pending.awaiting_buffer_leader;
+                    || self.pending.awaiting_buffer_leader
+                    || self.pending.awaiting_debug_leader;
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
@@ -114,6 +121,9 @@ impl super::App {
                     Mode::Search { .. } => self.handle_search_key(k),
                     Mode::Picker => self.handle_picker_key(k),
                     Mode::Prompt(_) => self.handle_prompt_key(k),
+                    Mode::DebugPane => {
+                        self.handle_debug_pane_key(k);
+                    }
                 }
             }
             crossterm::event::Event::Mouse(me) => {
@@ -353,7 +363,9 @@ impl super::App {
             ParseResult::Action(a) => self.apply_action(a),
         }
         // Track any prefix that's awaiting its next key — drives the which-key timer.
-        let prefix_active = self.pending.awaiting_leader || self.pending.awaiting_buffer_leader;
+        let prefix_active = self.pending.awaiting_leader
+            || self.pending.awaiting_buffer_leader
+            || self.pending.awaiting_debug_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());
@@ -787,6 +799,7 @@ impl super::App {
             }
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
+            ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
                 self.cursor = m.target;

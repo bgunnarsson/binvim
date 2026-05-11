@@ -164,12 +164,12 @@ pub fn leader_entries() -> Vec<(String, String)> {
     vec![
         ("<space>".into(), "Files".into()),
         ("b".into(), "+Buffer".into()),
+        ("d".into(), "+Debug".into()),
         ("g".into(), "Grep".into()),
         ("e".into(), "Yazi".into()),
-        ("o".into(), "Doc symbols".into()),
-        ("S".into(), "Workspace symbols".into()),
         ("a".into(), "Code actions".into()),
         ("r".into(), "Rename".into()),
+        ("f".into(), "Format".into()),
     ]
 }
 
@@ -180,6 +180,23 @@ pub fn buffer_prefix_entries() -> Vec<(String, String)> {
         ("o".into(), "Only (close others)".into()),
         ("n".into(), "Next".into()),
         ("p".into(), "Prev".into()),
+    ]
+}
+
+pub fn debug_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("s".into(), "Start session".into()),
+        ("q".into(), "Stop session".into()),
+        ("b".into(), "Toggle breakpoint".into()),
+        ("B".into(), "Clear breakpoints (file)".into()),
+        ("c".into(), "Continue".into()),
+        ("n".into(), "Step over".into()),
+        ("i".into(), "Step into".into()),
+        ("O".into(), "Step out".into()),
+        ("p".into(), "Toggle pane".into()),
+        ("f".into(), "Focus pane".into()),
+        ("o".into(), "Doc symbols".into()),
+        ("S".into(), "Workspace symbols".into()),
     ]
 }
 

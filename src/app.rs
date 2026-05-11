@@ -21,6 +21,7 @@
 //! - [`health`]: `:health` command output
 
 mod buffers;
+mod dap_glue;
 mod dispatch;
 mod edit;
 mod health;
@@ -52,6 +53,7 @@ use std::time::{Duration, Instant};
 use crate::buffer::Buffer;
 use crate::config::Config;
 use crate::cursor::Cursor;
+use crate::dap::DapManager;
 use crate::editorconfig::EditorConfig;
 use crate::lang::HighlightCache;
 use crate::lsp::{CodeActionItem, InlayHint, LspManager, SignatureHelp};
@@ -100,6 +102,9 @@ pub struct App {
     pub config: Config,
     pub editorconfig: EditorConfig,
     pub lsp: LspManager,
+    /// Debug session manager — owns the user's breakpoint table and the
+    /// currently-active DAP session (if any).
+    pub dap: DapManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
     /// Wall-clock of the last `did_change` flush. Drives the keystroke
@@ -117,6 +122,23 @@ pub struct App {
     /// True when binvim was launched with no path — render the start page in
     /// place of the empty buffer until the user opens something.
     pub show_start_page: bool,
+    /// Bottom debug pane visibility. When open it steals rows from the
+    /// editor area; height is computed from terminal size in `view.rs`.
+    /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
+    pub debug_pane_open: bool,
+    /// Index into the flat locals tree of the currently-selected row when
+    /// `Mode::DebugPane` has focus. Bounded against the live tree at
+    /// access time — vrefs can shift across stops, so the renderer and
+    /// key handler clamp before use.
+    pub dap_pane_cursor: usize,
+    /// Top of the left column's viewport (frames + separator + locals).
+    /// Driven by `j`/`k` (auto-follow the selection) and `Ctrl-Y`/`Ctrl-E`
+    /// (free scroll without moving selection).
+    pub dap_left_scroll: usize,
+    /// Number of "latest" console-output rows hidden below the right
+    /// column's viewport. `0` keeps the latest line glued to the bottom;
+    /// `J`/`K` scrolls into the older history.
+    pub dap_right_scroll: usize,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -215,6 +237,7 @@ impl App {
             config: Config::load(),
             editorconfig: EditorConfig::default(),
             lsp: LspManager::new(),
+            dap: DapManager::new(),
             last_sent_version: HashMap::new(),
             last_lsp_sync_at: Instant::now(),
             completion: None,
@@ -226,6 +249,10 @@ impl App {
                 &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             ),
             show_start_page,
+            debug_pane_open: false,
+            dap_pane_cursor: 0,
+            dap_left_scroll: 0,
+            dap_right_scroll: 0,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             rename_anchor: None,
@@ -284,6 +311,15 @@ impl App {
                 }
                 None => Duration::from_millis(100),
             };
+            // Active debug session — DAP stepping / breakpoint hits
+            // cascade 4-5 request/response round-trips per user action
+            // (stopped → threads → stackTrace → scopes → variables), and
+            // each round-trip waits for the next poll wake-up to drain
+            // the reader channel. Tightening the budget here turns
+            // stepping from "noticeably slow" into "instant".
+            if self.dap.is_active() {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
             // A live yank flash needs us to wake up at its deadline so the
             // highlight clears on time.
             if let Some(h) = self.yank_highlight.as_ref() {
@@ -319,6 +355,11 @@ impl App {
                             title: "Buffer".into(),
                             entries: state::buffer_prefix_entries(),
                         })
+                    } else if self.pending.awaiting_debug_leader {
+                        Some(WhichKeyState {
+                            title: "Debug".into(),
+                            entries: state::debug_prefix_entries(),
+                        })
                     } else {
                         None
                     };
@@ -332,6 +373,18 @@ impl App {
             let (events, _more) = self.lsp.drain();
             if !events.is_empty() {
                 self.handle_lsp_events(events);
+                needs_render = true;
+            }
+            let (dap_events, dap_progress) = self.dap.drain();
+            let had_dap_events = !dap_events.is_empty();
+            if had_dap_events {
+                self.handle_dap_events(dap_events);
+            }
+            // Silent protocol replies (stackTrace / scopes / variables)
+            // mutate visible session state without producing a user-facing
+            // event — render anyway so the pane reflects the new frames
+            // and locals immediately instead of on the next keypress.
+            if had_dap_events || dap_progress {
                 needs_render = true;
             }
             // Drop the yank flash once its deadline has passed so the next

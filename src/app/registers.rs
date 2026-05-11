@@ -50,6 +50,27 @@ impl super::App {
         if key == '_' {
             return None;
         }
+        // For the registers that mirror the OS clipboard, check the
+        // clipboard first — anything the user just copied in another
+        // app should win over our in-memory register, which would
+        // otherwise hold a stale in-editor yank from earlier.
+        if matches!(key, '"' | '+' | '*') {
+            if let Some(text) = get_system_clipboard() {
+                if !text.is_empty() {
+                    // Heuristic for linewise paste: a clipboard payload
+                    // whose final char is `\n` and which contains an
+                    // interior newline almost always came from a
+                    // line-oriented copy. Single-line content with a
+                    // trailing newline (e.g. terminal echo) stays
+                    // charwise so paste-at-cursor doesn't open a
+                    // surprise extra line.
+                    let trimmed_ends_nl = text.ends_with('\n');
+                    let has_interior_nl = text[..text.len().saturating_sub(1)].contains('\n');
+                    let linewise = trimmed_ends_nl && has_interior_nl;
+                    return Some(Register { text, linewise });
+                }
+            }
+        }
         self.registers.get(&key).cloned()
     }
 
@@ -87,6 +108,9 @@ impl super::App {
                 Mode::Search { .. } => self.handle_search_key(k),
                 Mode::Picker => self.handle_picker_key(k),
                 Mode::Prompt(_) => self.handle_prompt_key(k),
+                // Macros don't navigate the debug pane — replay aborts if
+                // the user happened to start recording while focused there.
+                Mode::DebugPane => break,
             }
         }
         self.replaying_macro = false;
@@ -165,4 +189,14 @@ pub fn set_system_clipboard(text: &str) {
     if let Ok(mut cb) = arboard::Clipboard::new() {
         let _ = cb.set_text(text.to_string());
     }
+}
+
+/// Best-effort read of the OS clipboard as UTF-8. Returns `None` when the
+/// clipboard is empty, the platform refuses access, or the contents aren't
+/// text (an image, a file list, etc.). Swallows every failure so a missing
+/// display server / locked clipboard / image payload just makes `p` fall
+/// back to the in-memory register instead of erroring out.
+pub fn get_system_clipboard() -> Option<String> {
+    let mut cb = arboard::Clipboard::new().ok()?;
+    cb.get_text().ok()
 }
