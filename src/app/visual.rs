@@ -10,6 +10,7 @@ impl super::App {
         self.mode = Mode::Normal;
         self.visual_anchor = None;
         self.additional_selections.clear();
+        self.word_drag_origin = None;
     }
 
     /// `Ctrl-N` in Visual-char mode — find the next literal-text match of

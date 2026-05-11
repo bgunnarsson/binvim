@@ -411,6 +411,9 @@ impl super::App {
                 if !self.additional_cursors.is_empty() {
                     self.additional_cursors.clear();
                 }
+                // Any fresh Down resets word-drag tracking; only a
+                // double-click re-arms it below.
+                self.word_drag_origin = None;
                 self.cursor.line = buf_line;
                 self.cursor.col = buf_col;
                 self.cursor.want_col = buf_col;
@@ -420,8 +423,17 @@ impl super::App {
                     self.apply_visual_select_textobj(
                         crate::text_object::TextObjectVerb::Word { inner: true },
                     );
-                    if self.visual_anchor.is_some() {
+                    if let Some(anchor) = self.visual_anchor {
                         self.mode = Mode::Visual(VisualKind::Char);
+                        // Remember the (start, end-exclusive) char range
+                        // of the word so a subsequent drag can extend
+                        // selection word-by-word.
+                        let start = self.buffer.pos_to_char(anchor.line, anchor.col);
+                        let end = self
+                            .buffer
+                            .pos_to_char(self.cursor.line, self.cursor.col)
+                            + 1;
+                        self.word_drag_origin = Some((start, end));
                     }
                     // Clear so a third click within the window doesn't
                     // re-trigger.
@@ -431,16 +443,90 @@ impl super::App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if !matches!(self.mode, Mode::Visual(_)) {
-                    let anchor = self.cursor;
-                    self.mode = Mode::Visual(VisualKind::Char);
-                    self.visual_anchor = Some(anchor);
+                if let Some((origin_start, origin_end)) = self.word_drag_origin {
+                    self.word_drag_extend(buf_line, buf_col, origin_start, origin_end);
+                } else {
+                    if !matches!(self.mode, Mode::Visual(_)) {
+                        let anchor = self.cursor;
+                        self.mode = Mode::Visual(VisualKind::Char);
+                        self.visual_anchor = Some(anchor);
+                    }
+                    self.cursor.line = buf_line;
+                    self.cursor.col = buf_col;
+                    self.cursor.want_col = buf_col;
                 }
-                self.cursor.line = buf_line;
-                self.cursor.col = buf_col;
-                self.cursor.want_col = buf_col;
             }
             _ => {}
+        }
+    }
+
+    /// Word-aware drag after a double-click. Anchors at the side of the
+    /// origin word opposite the drag direction; the cursor snaps to the
+    /// word boundary at the drag position. Dragging through whitespace
+    /// leaves the selection at the previous word boundary so the visible
+    /// span only jumps when a new word is actually entered.
+    fn word_drag_extend(
+        &mut self,
+        buf_line: usize,
+        buf_col: usize,
+        origin_start: usize,
+        origin_end: usize,
+    ) {
+        let line_start = self.buffer.line_start_idx(buf_line);
+        let line_len = self.buffer.line_len(buf_line);
+        let drag_pos = line_start + buf_col;
+
+        // Only resolve a word range when the drag is on a non-whitespace
+        // char — whitespace runs aren't worth selecting on their own and
+        // would make the selection lurch through gaps.
+        let drag_word: Option<(usize, usize)> = if buf_col < line_len {
+            let c = self.buffer.rope.char(drag_pos);
+            if !c.is_whitespace() {
+                let cur = crate::cursor::Cursor {
+                    line: buf_line,
+                    col: buf_col,
+                    want_col: buf_col,
+                };
+                crate::text_object::compute(
+                    &self.buffer,
+                    cur,
+                    crate::text_object::TextObjectVerb::Word { inner: true },
+                )
+                .map(|r| (r.start, r.end))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if !matches!(self.mode, Mode::Visual(_)) {
+            self.mode = Mode::Visual(VisualKind::Char);
+        }
+
+        if drag_pos < origin_start {
+            // Backward drag — anchor pinned to the end of the origin
+            // word, cursor jumps to the start of the word at the drag.
+            let sel_start = drag_word.map(|w| w.0).unwrap_or(origin_start);
+            self.cursor_to_idx(origin_end.saturating_sub(1).max(origin_start));
+            let anchor = self.cursor;
+            self.cursor_to_idx(sel_start);
+            self.visual_anchor = Some(anchor);
+        } else if drag_pos >= origin_end {
+            // Forward drag — anchor pinned to the start of the origin
+            // word, cursor jumps to the last char of the word at the drag.
+            let sel_end = drag_word.map(|w| w.1).unwrap_or(origin_end);
+            self.cursor_to_idx(origin_start);
+            let anchor = self.cursor;
+            let cursor_idx = sel_end.saturating_sub(1).max(origin_start);
+            self.cursor_to_idx(cursor_idx);
+            self.visual_anchor = Some(anchor);
+        } else {
+            // Still inside the origin word — restore the origin selection.
+            self.cursor_to_idx(origin_start);
+            let anchor = self.cursor;
+            self.cursor_to_idx(origin_end.saturating_sub(1).max(origin_start));
+            self.visual_anchor = Some(anchor);
         }
     }
 

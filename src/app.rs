@@ -179,6 +179,12 @@ pub struct App {
     /// click at the same `(line, col)` within `DOUBLE_CLICK_WINDOW` is
     /// treated as a double-click and selects the word under the cursor.
     pub last_click: Option<(Instant, usize, usize)>,
+    /// Char-idx range `(start, end_exclusive)` of the word a double-click
+    /// originated on. While `Some`, left-drag extends the visual selection
+    /// in word increments anchored to this range, snapping to word
+    /// boundaries instead of moving char-by-char. Cleared on next plain
+    /// left-click or on exiting Visual.
+    pub word_drag_origin: Option<(usize, usize)>,
     /// Char-index positions of secondary cursors that mirror Insert-mode
     /// edits at the primary cursor. Empty when only one cursor is active.
     /// Populated by `Ctrl-click` in Insert mode; cleared on Esc.
@@ -284,6 +290,7 @@ impl App {
             last_inlay_request_version: HashMap::new(),
             last_disk_check: Instant::now(),
             last_click: None,
+            word_drag_origin: None,
             additional_cursors: Vec::new(),
             snippet_session: None,
             quickfix: None,
