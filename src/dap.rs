@@ -15,11 +15,13 @@
 //! the `client` and `io` submodules that actually spawn the adapter and
 //! drive the protocol.
 
+mod client;
+mod io;
 mod manager;
 mod specs;
 mod types;
 
-pub use manager::DapManager;
+pub use manager::{DapManager, StepKind};
 #[allow(unused_imports)]
 pub use specs::{adapter_for_workspace, DapAdapterSpec, PrelaunchCommand};
 #[allow(unused_imports)]

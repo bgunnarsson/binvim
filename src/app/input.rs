@@ -98,7 +98,8 @@ impl super::App {
                 // `e` after `<space>`) is also allowed so multi-key shortcuts
                 // resolve normally.
                 let leader_pending = self.pending.awaiting_leader
-                    || self.pending.awaiting_buffer_leader;
+                    || self.pending.awaiting_buffer_leader
+                    || self.pending.awaiting_debug_leader;
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
@@ -353,7 +354,9 @@ impl super::App {
             ParseResult::Action(a) => self.apply_action(a),
         }
         // Track any prefix that's awaiting its next key — drives the which-key timer.
-        let prefix_active = self.pending.awaiting_leader || self.pending.awaiting_buffer_leader;
+        let prefix_active = self.pending.awaiting_leader
+            || self.pending.awaiting_buffer_leader
+            || self.pending.awaiting_debug_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());
@@ -787,15 +790,7 @@ impl super::App {
             }
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
-            ExCommand::DebugPaneToggle => {
-                self.debug_pane_open = !self.debug_pane_open;
-                self.adjust_viewport();
-                self.status_msg = if self.debug_pane_open {
-                    "Debug pane opened".into()
-                } else {
-                    "Debug pane closed".into()
-                };
-            }
+            ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
                 self.cursor = m.target;

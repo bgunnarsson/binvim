@@ -71,6 +71,31 @@ pub enum MarkAction {
     JumpExact,
 }
 
+/// Debugger sub-menu actions reachable via `<leader>d{key}`. Each variant
+/// maps 1:1 onto a `:dap*` ex-command — the leader keys are a convenience
+/// layer on top of the same dispatch.
+#[derive(Debug, Clone, Copy)]
+pub enum DebugAction {
+    /// `<leader>ds` — start a debug session.
+    Start,
+    /// `<leader>dS` — stop the active debug session.
+    Stop,
+    /// `<leader>db` — toggle a breakpoint at the cursor line.
+    ToggleBreakpoint,
+    /// `<leader>dB` — clear every breakpoint set in the active buffer.
+    ClearBreakpointsInFile,
+    /// `<leader>dc` — continue execution.
+    Continue,
+    /// `<leader>dn` — step over (DAP `next`).
+    Next,
+    /// `<leader>di` — step into.
+    StepIn,
+    /// `<leader>do` — step out.
+    StepOut,
+    /// `<leader>dp` — toggle the bottom debug pane.
+    PaneToggle,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum PickerLeader {
     Files,
@@ -134,6 +159,9 @@ pub enum Action {
     /// `<leader>f` — run the buffer's formatter and replace its contents
     /// with the result. Same code path as `:fmt` / `:format`.
     Format,
+    /// `<leader>d…` — debugger sub-menu. The associated `DebugAction`
+    /// picks the specific command; dispatch is in `app/dap_glue.rs`.
+    Debug(DebugAction),
     /// `<leader>R` — literal-string replace-all of the word under the
     /// cursor in the current buffer. Opens a prompt; on Enter applies the
     /// replacement to every occurrence via the same machinery as `:%s`.
@@ -192,6 +220,8 @@ pub struct PendingCmd {
     pub awaiting_macro_play: bool,
     /// Set after `<leader>b` — next char picks a buffer-related action.
     pub awaiting_buffer_leader: bool,
+    /// Set after `<leader>d` — next char picks a debug-related action.
+    pub awaiting_debug_leader: bool,
     /// `ds{char}` — next char names the surround pair to delete.
     pub awaiting_ds: bool,
     /// `cs{old}{new}` — first the old char, then the new char.
@@ -495,6 +525,16 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.awaiting_buffer_leader = true;
                 return ParseResult::Pending;
             }
+            // `d` opens the debugger sub-menu (`<leader>db`, `<leader>dc`, …).
+            if ch == 'd' {
+                state.awaiting_debug_leader = true;
+                return ParseResult::Pending;
+            }
+            // `d` opens the debugger sub-menu.
+            if ch == 'd' {
+                state.awaiting_debug_leader = true;
+                return ParseResult::Pending;
+            }
             let action = match ch {
                 ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
                 '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
@@ -531,6 +571,51 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.reset();
         return match action {
             Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Debugger-prefix dispatch (after `<leader>d`).
+    if state.awaiting_debug_leader {
+        state.awaiting_debug_leader = false;
+        let action = match ch {
+            's' => Some(Action::Debug(DebugAction::Start)),
+            'S' => Some(Action::Debug(DebugAction::Stop)),
+            'b' => Some(Action::Debug(DebugAction::ToggleBreakpoint)),
+            'B' => Some(Action::Debug(DebugAction::ClearBreakpointsInFile)),
+            'c' => Some(Action::Debug(DebugAction::Continue)),
+            'n' => Some(Action::Debug(DebugAction::Next)),
+            'i' => Some(Action::Debug(DebugAction::StepIn)),
+            'o' => Some(Action::Debug(DebugAction::StepOut)),
+            'p' => Some(Action::Debug(DebugAction::PaneToggle)),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Debug-prefix dispatch (after `<leader>d`). Every entry maps onto a
+    // `:dap*` command — same code path, different keymap.
+    if state.awaiting_debug_leader {
+        state.awaiting_debug_leader = false;
+        let action = match ch {
+            's' => Some(DebugAction::Start),
+            'S' => Some(DebugAction::Stop),
+            'b' => Some(DebugAction::ToggleBreakpoint),
+            'B' => Some(DebugAction::ClearBreakpointsInFile),
+            'c' => Some(DebugAction::Continue),
+            'n' => Some(DebugAction::Next),
+            'i' => Some(DebugAction::StepIn),
+            'o' => Some(DebugAction::StepOut),
+            'p' => Some(DebugAction::PaneToggle),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(Action::Debug(a)),
             None => ParseResult::Cancelled,
         };
     }

@@ -30,9 +30,10 @@ pub struct DapAdapterSpec {
     /// adapter. For .NET this is `dotnet build`.
     pub prelaunch: Option<PrelaunchCommand>,
     /// Builds the `launch` request `arguments` JSON for this adapter
-    /// given the resolved workspace root. Phase 2 fills this in for real;
-    /// Phase 1 ships a placeholder so the type carries the shape.
-    pub build_launch_args: fn(root: &Path) -> Value,
+    /// given the resolved workspace root. Returning `Err` aborts the
+    /// session start before the adapter is spawned (avoids leaking a
+    /// process if the build output can't be located).
+    pub build_launch_args: fn(root: &Path) -> Result<Value, String>,
 }
 
 /// A shell command to run before the adapter session starts. `args` are
@@ -63,18 +64,64 @@ const DOTNET: DapAdapterSpec = DapAdapterSpec {
     build_launch_args: dotnet_launch_args,
 };
 
-/// Phase-1 placeholder. Real launch-args resolution (find the built dll
-/// in `bin/Debug/netN.0/`, fill in `program` / `console` / `cwd`) lands
-/// with the session-lifecycle work in Phase 2.
-#[allow(dead_code)]
-fn dotnet_launch_args(root: &Path) -> Value {
+/// Locate the built `*.dll` under `bin/Debug/netN.0/` and build the
+/// `launch` arguments netcoredbg expects. Prefers `<root-name>.dll` and
+/// the most recently modified `net*` subdirectory, so the .NET 10 build
+/// wins when older targets are also present.
+fn dotnet_launch_args(root: &Path) -> Result<Value, String> {
+    let bin = root.join("bin").join("Debug");
+    if !bin.is_dir() {
+        return Err(format!(
+            "no Debug build output at {} — has the project been built?",
+            bin.display()
+        ));
+    }
+    let project_name = root
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let mut frameworks: Vec<std::path::PathBuf> = std::fs::read_dir(&bin)
+        .map_err(|e| format!("cannot read {}: {}", bin.display(), e))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
+    frameworks.sort_by_key(|p| {
+        std::fs::metadata(p)
+            .and_then(|m| m.modified())
+            .ok()
+    });
+    frameworks.reverse();
+
+    for fw in &frameworks {
+        let preferred = fw.join(format!("{}.dll", project_name));
+        if preferred.is_file() {
+            return Ok(dotnet_launch_payload(&preferred, root));
+        }
+    }
+    for fw in &frameworks {
+        let Ok(entries) = std::fs::read_dir(fw) else { continue };
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|s| s.to_str()) == Some("dll") {
+                return Ok(dotnet_launch_payload(&p, root));
+            }
+        }
+    }
+    Err(format!("no *.dll found under {}", bin.display()))
+}
+
+fn dotnet_launch_payload(program: &Path, cwd: &Path) -> Value {
     json!({
         "name": ".NET Core Launch",
         "type": "coreclr",
         "request": "launch",
-        "cwd": root.display().to_string(),
+        "program": program.display().to_string(),
+        "cwd": cwd.display().to_string(),
         "console": "internalConsole",
         "stopAtEntry": false,
+        "justMyCode": true,
     })
 }
 

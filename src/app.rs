@@ -21,6 +21,7 @@
 //! - [`health`]: `:health` command output
 
 mod buffers;
+mod dap_glue;
 mod dispatch;
 mod edit;
 mod health;
@@ -101,9 +102,8 @@ pub struct App {
     pub config: Config,
     pub editorconfig: EditorConfig,
     pub lsp: LspManager,
-    /// Debug session manager. Phase 1 holds only the user's breakpoint
-    /// table; Phase 2 wires actual sessions through this.
-    #[allow(dead_code)]
+    /// Debug session manager — owns the user's breakpoint table and the
+    /// currently-active DAP session (if any).
     pub dap: DapManager,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
@@ -330,6 +330,11 @@ impl App {
                             title: "Buffer".into(),
                             entries: state::buffer_prefix_entries(),
                         })
+                    } else if self.pending.awaiting_debug_leader {
+                        Some(WhichKeyState {
+                            title: "Debug".into(),
+                            entries: state::debug_prefix_entries(),
+                        })
                     } else {
                         None
                     };
@@ -343,6 +348,11 @@ impl App {
             let (events, _more) = self.lsp.drain();
             if !events.is_empty() {
                 self.handle_lsp_events(events);
+                needs_render = true;
+            }
+            let dap_events = self.dap.drain();
+            if !dap_events.is_empty() {
+                self.handle_dap_events(dap_events);
                 needs_render = true;
             }
             // Drop the yank flash once its deadline has passed so the next

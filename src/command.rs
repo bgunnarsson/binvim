@@ -22,8 +22,25 @@ pub enum ExCommand {
     NoHighlight,
     Format,
     Health,
-    DebugPaneToggle,
+    Debug(DebugSubCmd),
     Unknown(String),
+}
+
+/// Debugger sub-commands accessible via `:debug`, `:dapstop`, `:dapbreak`,
+/// `:dapc`, etc. Grouped into one variant so the dispatch in `input.rs`
+/// has a single arm and the parser stays compact.
+#[derive(Debug, Clone, Copy)]
+pub enum DebugSubCmd {
+    Start,
+    Stop,
+    Break,
+    /// Clear every breakpoint in the active buffer.
+    ClearBreakpointsInFile,
+    Continue,
+    Next,
+    StepIn,
+    StepOut,
+    PaneToggle,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -100,7 +117,15 @@ pub fn parse(line: &str) -> ExCommand {
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
-        "dappane" => ExCommand::DebugPaneToggle,
+        "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
+        "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
+        "dapbreak" | "dapb" => ExCommand::Debug(DebugSubCmd::Break),
+        "dapclear" => ExCommand::Debug(DebugSubCmd::ClearBreakpointsInFile),
+        "dapcontinue" | "dapc" => ExCommand::Debug(DebugSubCmd::Continue),
+        "dapnext" | "dapn" => ExCommand::Debug(DebugSubCmd::Next),
+        "dapin" | "dapi" => ExCommand::Debug(DebugSubCmd::StepIn),
+        "dapout" | "dapo" => ExCommand::Debug(DebugSubCmd::StepOut),
+        "dappane" => ExCommand::Debug(DebugSubCmd::PaneToggle),
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

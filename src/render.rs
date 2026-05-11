@@ -1481,18 +1481,53 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     while line_idx < total_lines && app.line_is_folded(line_idx) {
         line_idx += 1;
     }
+    // Canonicalise the buffer's path once for the duration of this draw so
+    // breakpoint + stopped-frame gutter lookups don't do one syscall per
+    // visible row. Fall back to the raw path if canonicalisation fails
+    // (e.g. unsaved or removed file).
+    let canon_buf_path: Option<std::path::PathBuf> = app
+        .buffer
+        .path
+        .as_ref()
+        .map(|p| p.canonicalize().unwrap_or_else(|_| p.clone()));
+    // 1-based line number of the currently-stopped top frame, if the
+    // session is paused inside this buffer.
+    let pc_line: Option<usize> = match (&canon_buf_path, app.dap.session.as_ref()) {
+        (Some(bp), Some(session)) if matches!(session.state, crate::dap::SessionState::Stopped { .. }) => {
+            session.frames.first().and_then(|f| {
+                let fs = f.source.as_ref()?;
+                let fs_canon = fs.canonicalize().unwrap_or_else(|_| fs.clone());
+                if &fs_canon == bp { Some(f.line) } else { None }
+            })
+        }
+        _ => None,
+    };
     for row in 0..rows {
         // Clear the row before drawing — guards against terminal-side wrap
         // from the previous row's render leaking onto this one.
         queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
         if line_idx < total_lines {
-            // Diagnostic sign column.
-            let sign = app.worst_diagnostic(line_idx).map(|s| match s {
-                Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }), // Red
-                Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
-                Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }), // Blue
-                Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }), // Sky
-            });
+            // Sign column priority: stopped-at marker > user breakpoint >
+            // worst LSP diagnostic. The debug marks are user-actionable
+            // ground truth and should win when they collide.
+            let line_one_based = line_idx + 1;
+            let pc_here = pc_line == Some(line_one_based);
+            let bp_here = canon_buf_path
+                .as_deref()
+                .map(|p| app.dap.has_breakpoint(p, line_one_based))
+                .unwrap_or(false);
+            let sign = if pc_here {
+                Some(('▶', Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 })) // Peach
+            } else if bp_here {
+                Some(('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 })) // Red
+            } else {
+                app.worst_diagnostic(line_idx).map(|s| match s {
+                    Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }),
+                    Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }),
+                    Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }),
+                    Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }),
+                })
+            };
             if let Some((ch, color)) = sign {
                 queue!(
                     out,
@@ -2028,21 +2063,25 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let body_bg = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 };   // Surface0
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };     // Overlay0
     let accent = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };    // Peach — debug accent
+    let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
 
-    // Header row: " DEBUG  <status hint> "
+    // Header row: " DEBUG  <adapter> · <status> "
     let label = " DEBUG ";
-    let hint = " no session — :debug to start ";
+    let hint = match app.dap.session.as_ref() {
+        Some(s) => format!(" {} · {} ", s.adapter_key, s.status_line),
+        None => " no session — :debug to start ".to_string(),
+    };
     queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
     queue!(
         out,
         SetBackgroundColor(accent),
-        SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }), // Base
+        SetForegroundColor(base),
         SetAttribute(Attribute::Bold),
         Print(label),
         SetAttribute(Attribute::Reset),
         SetBackgroundColor(header_bg),
         SetForegroundColor(muted),
-        Print(hint),
+        Print(&hint),
     )?;
     let used = label.chars().count() + hint.chars().count();
     if width > used {
@@ -2050,18 +2089,81 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     }
     queue!(out, ResetColor)?;
 
-    // Body rows — filled with the panel background so the editor's cleared
-    // ground doesn't bleed through. Phase 1: empty placeholder.
-    for r in 1..rows {
+    // Body — split horizontally into two columns when there's room: left
+    // shows the call stack, right shows the recent debug-console output.
+    // When the pane is too narrow we drop the call stack column.
+    let body_rows = rows.saturating_sub(1);
+    let split_at = if width >= 80 { width / 2 } else { width };
+    let frames: Vec<String> = app
+        .dap
+        .session
+        .as_ref()
+        .map(|s| {
+            s.frames
+                .iter()
+                .map(|f| {
+                    let loc = f
+                        .source
+                        .as_ref()
+                        .and_then(|p| p.file_name())
+                        .and_then(|n| n.to_str())
+                        .map(|n| format!("{}:{}", n, f.line))
+                        .unwrap_or_else(|| format!("?:{}", f.line));
+                    format!("{} — {}", loc, f.name)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let output_tail: Vec<&str> = {
+        let n = app.dap.output_buffer.len();
+        let take = body_rows.min(n);
+        app.dap.output_buffer[n - take..]
+            .iter()
+            .flat_map(|line| line.output.lines())
+            .collect()
+    };
+
+    for r in 0..body_rows {
+        let y = (top + 1 + r) as u16;
+        queue!(out, MoveTo(0, y), Clear(ClearType::CurrentLine))?;
+        // Left column: frames.
         queue!(
             out,
-            MoveTo(0, (top + r) as u16),
-            Clear(ClearType::CurrentLine),
             SetBackgroundColor(body_bg),
             SetForegroundColor(header_fg),
-            Print(" ".repeat(width)),
-            ResetColor
         )?;
+        let left_w = if split_at < width { split_at.saturating_sub(1) } else { width };
+        let left_text = match (r, frames.get(r)) {
+            (0, None) if app.dap.session.is_some() => " (no frames yet — waiting for stop) ".to_string(),
+            (_, Some(f)) => format!(" {} ", truncate_left(f, left_w.saturating_sub(2))),
+            (_, None) => String::new(),
+        };
+        let visible: String = left_text.chars().take(left_w).collect();
+        queue!(out, Print(&visible))?;
+        if visible.chars().count() < left_w {
+            queue!(out, Print(" ".repeat(left_w - visible.chars().count())))?;
+        }
+        // Separator column.
+        if split_at < width {
+            queue!(
+                out,
+                SetForegroundColor(muted),
+                Print("│"),
+                SetForegroundColor(header_fg),
+            )?;
+            // Right column: console output tail.
+            let right_w = width.saturating_sub(left_w + 1);
+            let right_text = output_tail
+                .get(r)
+                .map(|s| format!(" {} ", s.trim_end()))
+                .unwrap_or_default();
+            let right_visible: String = right_text.chars().take(right_w).collect();
+            queue!(out, Print(&right_visible))?;
+            if right_visible.chars().count() < right_w {
+                queue!(out, Print(" ".repeat(right_w - right_visible.chars().count())))?;
+            }
+        }
+        queue!(out, ResetColor)?;
     }
     Ok(())
 }
