@@ -540,6 +540,38 @@ mod tests {
         }
     }
 
+    /// End-to-end smoke: load the user's actual file from disk via the
+    /// same path the editor takes (`Buffer::from_path`, which strips CRLF)
+    /// and verify that the resulting highlight cache colours the tag and
+    /// attribute names. Skipped on machines that don't have the project.
+    #[test]
+    fn razor_e2e_real_cshtml() {
+        let p = std::path::Path::new(
+            "/Users/bgunnarsson/Development/mms-namsefni/Vettvangur.Site/Views/ProductCategory.cshtml",
+        );
+        if !p.exists() {
+            return;
+        }
+        let buf = crate::buffer::Buffer::from_path(p.to_path_buf()).expect("load");
+        let cfg = Config::default();
+        let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
+        let source = buf.rope.to_string();
+        let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
+        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        let section_idx = source.find("<section").unwrap() + 1;
+        assert_eq!(
+            cache.byte_colors.get(section_idx).copied().flatten(),
+            Some(pink),
+            "tag name `section` should be Pink",
+        );
+        let class_idx = source.find(" class=").unwrap() + 1;
+        assert_eq!(
+            cache.byte_colors.get(class_idx).copied().flatten(),
+            Some(yellow),
+            "attribute `class=` should be Yellow",
+        );
+    }
+
     /// Regression for the screenshot the user shared — even when the
     /// grammar throws ERROR nodes on the Tailwind `class="… pt-[60px]"`
     /// substring, the surrounding `<section>` / `<div>` elements still
