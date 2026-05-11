@@ -25,6 +25,42 @@ pub(super) fn is_completion_trigger(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<' | '-')
 }
 
+/// Reverse of the renderer's `display_w` walk — given a visual column on
+/// `line`, return the buffer char column that visual position sits in. A
+/// click past end-of-line clamps to `line_len.saturating_sub(1)` (matches
+/// Vim's "cursor sits on a char, not past it" rule in Normal mode).
+fn visual_col_to_char_col(
+    buffer: &crate::buffer::Buffer,
+    line: usize,
+    visual_col: usize,
+    line_len: usize,
+) -> usize {
+    if line_len == 0 {
+        return 0;
+    }
+    let slice = buffer.rope.line(line);
+    let mut visual = 0usize;
+    let mut chars = 0usize;
+    for c in slice.chars() {
+        if c == '\n' || c == '\r' {
+            break;
+        }
+        let w = if c == '\t' { crate::render::TAB_WIDTH } else { 1 };
+        // Clicked exactly on this char's first cell — return its index.
+        if visual >= visual_col {
+            break;
+        }
+        // Clicked into the *middle* of a multi-cell char (a tab). Snap to
+        // the char itself rather than overshooting into the next one.
+        if visual + w > visual_col {
+            return chars;
+        }
+        visual += w;
+        chars += 1;
+    }
+    chars.min(line_len - 1)
+}
+
 impl super::App {
     pub(super) fn handle_event(&mut self) -> anyhow::Result<()> {
         match crossterm::event::read()? {
@@ -226,13 +262,14 @@ impl super::App {
             return;
         }
         let line_len = self.buffer.line_len(buf_line);
-        // `raw_col` is what was clicked relative to the gutter; add the
-        // horizontal scroll offset to get the column inside the line. The
-        // existing tab-handling caveat (each char treated as 1 col) carries
-        // over — fixing that is orthogonal to scrolling support.
-        let raw_col = col.saturating_sub(gutter) + self.view_left;
-        let max_col = if line_len == 0 { 0 } else { line_len - 1 };
-        let buf_col = raw_col.min(max_col);
+        // Translate the click's visual column (chars *as displayed*) to a
+        // buffer char column. Tabs render at `TAB_WIDTH` cols but are still
+        // a single buffer char, so a naive `raw_col` calculation lands the
+        // cursor several chars past tab-indented text. We replay the same
+        // width rule the renderer uses (tab = TAB_WIDTH, everything else
+        // = 1) walking the line until we've consumed `visual_col` cells.
+        let visual_col = col.saturating_sub(gutter) + self.view_left;
+        let buf_col = visual_col_to_char_col(&self.buffer, buf_line, visual_col, line_len);
 
         match ev.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -988,5 +1025,69 @@ impl super::App {
         self.write_yank_register(None, reg_text, true);
         self.flash_yank(start, end);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::buffer::Buffer;
+    use ropey::Rope;
+
+    fn buf(text: &str) -> Buffer {
+        Buffer {
+            rope: Rope::from_str(text),
+            path: None,
+            dirty: false,
+            version: 0,
+            disk_mtime: None,
+            display_name: None,
+        }
+    }
+
+    #[test]
+    fn visual_col_to_char_col_no_tabs() {
+        // `hello world` — visual col == char col on plain ASCII.
+        let b = buf("hello world\n");
+        assert_eq!(visual_col_to_char_col(&b, 0, 0, 11), 0);
+        assert_eq!(visual_col_to_char_col(&b, 0, 6, 11), 6);
+        assert_eq!(visual_col_to_char_col(&b, 0, 10, 11), 10);
+        // Click past EOL clamps to the last char.
+        assert_eq!(visual_col_to_char_col(&b, 0, 30, 11), 10);
+    }
+
+    #[test]
+    fn visual_col_to_char_col_with_tabs() {
+        // "\t\tx" — two tabs (4 visual cols each) then `x`. Char positions:
+        //   0 = first tab, 1 = second tab, 2 = 'x'. Visual positions:
+        //   0..4 = first tab, 4..8 = second tab, 8 = 'x'.
+        let b = buf("\t\tx\n");
+        assert_eq!(visual_col_to_char_col(&b, 0, 0, 3), 0);
+        assert_eq!(visual_col_to_char_col(&b, 0, 2, 3), 0); // mid first tab
+        assert_eq!(visual_col_to_char_col(&b, 0, 4, 3), 1); // start of second tab
+        assert_eq!(visual_col_to_char_col(&b, 0, 6, 3), 1); // mid second tab
+        assert_eq!(visual_col_to_char_col(&b, 0, 8, 3), 2); // on `x`
+        // The original bug: clicking at visual col 8 used to land at char 8
+        // (past EOL). Now it clamps to the last char (`x`).
+        assert_eq!(visual_col_to_char_col(&b, 0, 30, 3), 2);
+    }
+
+    #[test]
+    fn visual_col_to_char_col_mixed_tabs_then_text() {
+        // "\t\t<partial …" — clicking on `<` after two tabs should yield
+        // char col 2 (the `<`), not 8 (which would be deep inside the word).
+        let line = "\t\t<partial";
+        let b = buf(&format!("{}\n", line));
+        let line_len = line.chars().count();
+        assert_eq!(visual_col_to_char_col(&b, 0, 8, line_len), 2);
+        // Click 3 cells in (between the two tabs visually) clamps to char 0.
+        assert_eq!(visual_col_to_char_col(&b, 0, 3, line_len), 0);
+    }
+
+    #[test]
+    fn visual_col_to_char_col_empty_line() {
+        let b = buf("\n");
+        assert_eq!(visual_col_to_char_col(&b, 0, 0, 0), 0);
+        assert_eq!(visual_col_to_char_col(&b, 0, 99, 0), 0);
     }
 }
