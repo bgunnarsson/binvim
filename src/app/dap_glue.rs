@@ -5,7 +5,7 @@
 //! stopped frame, surfacing status messages, opening the bottom pane on
 //! session start) live here, not in `dap/manager.rs`.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::command::DebugSubCmd;
 use crate::dap::{adapter_for_workspace, flat_locals_view, DapEvent, SessionState, StepKind};
@@ -115,6 +115,60 @@ impl super::App {
             KeyCode::Char(':') => {
                 self.mode = Mode::Command;
                 self.cmdline.clear();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Visual Studio / Rider-style debug shortcut keys, dispatched
+    /// regardless of editor mode so the muscle memory works during
+    /// editing too. Returns `true` if the key was consumed.
+    ///
+    /// - `F5`        — start session (or continue if already paused)
+    /// - `Shift+F5`  — stop session
+    /// - `F9`        — toggle breakpoint at cursor
+    /// - `F10`       — step over (next)
+    /// - `F11`       — step into
+    /// - `Shift+F11` — step out
+    pub(super) fn try_handle_debug_function_key(&mut self, k: &KeyEvent) -> bool {
+        let shift = k.modifiers.contains(KeyModifiers::SHIFT);
+        let modless = k
+            .modifiers
+            .difference(KeyModifiers::SHIFT)
+            .is_empty();
+        if !modless {
+            return false;
+        }
+        match k.code {
+            KeyCode::F(5) if shift => {
+                self.dispatch_debug(DebugSubCmd::Stop);
+                true
+            }
+            KeyCode::F(5) => {
+                // F5 doubles as "start if there's no session yet" so the
+                // user doesn't have to remember a separate Start binding.
+                if self.dap.is_active() {
+                    self.dispatch_debug(DebugSubCmd::Continue);
+                } else {
+                    self.dispatch_debug(DebugSubCmd::Start);
+                }
+                true
+            }
+            KeyCode::F(9) => {
+                self.dispatch_debug(DebugSubCmd::Break);
+                true
+            }
+            KeyCode::F(10) => {
+                self.dispatch_debug(DebugSubCmd::Next);
+                true
+            }
+            KeyCode::F(11) if shift => {
+                self.dispatch_debug(DebugSubCmd::StepOut);
+                true
+            }
+            KeyCode::F(11) => {
+                self.dispatch_debug(DebugSubCmd::StepIn);
                 true
             }
             _ => false,

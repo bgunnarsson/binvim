@@ -78,6 +78,12 @@ impl super::App {
                 }
                 self.hover = None;
                 self.whichkey = None;
+                // IDE-parity debug function keys — work regardless of mode
+                // so F10 / F11 / F5 behave the way the user's muscle
+                // memory expects coming from Visual Studio / Rider.
+                if self.try_handle_debug_function_key(&k) {
+                    return Ok(());
+                }
                 // Macro recording: stop on `q` in normal, otherwise capture every key.
                 if !self.replaying_macro && self.recording_macro.is_some() {
                     let stop = matches!(self.mode, Mode::Normal)
