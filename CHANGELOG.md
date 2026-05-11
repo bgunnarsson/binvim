@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-11
+
 ### Added
 - **YAML / XML syntax highlighting.** New `Lang::Yaml` and `Lang::Xml`
   variants wired to `tree-sitter-yaml` and `tree-sitter-xml`. XML
