@@ -78,7 +78,7 @@ pub enum MarkAction {
 pub enum DebugAction {
     /// `<leader>ds` — start a debug session.
     Start,
-    /// `<leader>dS` — stop the active debug session.
+    /// `<leader>dq` — stop the active debug session.
     Stop,
     /// `<leader>db` — toggle a breakpoint at the cursor line.
     ToggleBreakpoint,
@@ -90,7 +90,7 @@ pub enum DebugAction {
     Next,
     /// `<leader>di` — step into.
     StepIn,
-    /// `<leader>do` — step out.
+    /// `<leader>dO` — step out.
     StepOut,
     /// `<leader>dp` — toggle the bottom debug pane.
     PaneToggle,
@@ -540,8 +540,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
                 'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
                 'e' => Some(Action::OpenYazi),
-                'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),
-                'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
+                // Doc-symbol / workspace-symbol pickers moved under
+                // `<leader>d` so the debug sub-menu collects every
+                // "navigate around code while debugging" action in one
+                // place; Code actions stays at top level since it's used
+                // independently of any debug flow.
                 'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
                 'r' => Some(Action::LspRename),
                 'R' => Some(Action::ReplaceAllInBuffer),
@@ -575,19 +578,24 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         };
     }
 
-    // Debugger-prefix dispatch (after `<leader>d`).
+    // Debugger-prefix dispatch (after `<leader>d`). `o` and `S` host the
+    // doc-symbol / workspace-symbol pickers — Step out moves to `O`
+    // (capital sibling of step-over `n` / step-in `i`) and Stop session
+    // moves to `q` (matches the `:q` mnemonic).
     if state.awaiting_debug_leader {
         state.awaiting_debug_leader = false;
         let action = match ch {
             's' => Some(Action::Debug(DebugAction::Start)),
-            'S' => Some(Action::Debug(DebugAction::Stop)),
+            'q' => Some(Action::Debug(DebugAction::Stop)),
             'b' => Some(Action::Debug(DebugAction::ToggleBreakpoint)),
             'B' => Some(Action::Debug(DebugAction::ClearBreakpointsInFile)),
             'c' => Some(Action::Debug(DebugAction::Continue)),
             'n' => Some(Action::Debug(DebugAction::Next)),
             'i' => Some(Action::Debug(DebugAction::StepIn)),
-            'o' => Some(Action::Debug(DebugAction::StepOut)),
+            'O' => Some(Action::Debug(DebugAction::StepOut)),
             'p' => Some(Action::Debug(DebugAction::PaneToggle)),
+            'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),
+            'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
             _ => None,
         };
         state.reset();
