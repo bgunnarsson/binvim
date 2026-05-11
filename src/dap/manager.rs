@@ -356,6 +356,55 @@ impl DapManager {
                     s.status_line = "running".into();
                 }
             }
+            // netcoredbg reports per-breakpoint validation in the
+            // response — surface unverified ones to the status line and
+            // output pane so the user spots a missing-PDB / wrong-line
+            // / "bind by pattern" misfire without a silent never-hits.
+            "setBreakpoints" => {
+                let mut unverified: Vec<(u64, String)> = Vec::new();
+                if let Some(arr) = body.get("breakpoints").and_then(|v| v.as_array()) {
+                    for bp in arr {
+                        let verified = bp
+                            .get("verified")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+                        if !verified {
+                            let line = bp.get("line").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let reason = bp
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("not bound (often: line is not an executable statement — try inside the handler body)")
+                                .to_string();
+                            unverified.push((line, reason));
+                        }
+                    }
+                }
+                if !unverified.is_empty() {
+                    let lines = unverified
+                        .iter()
+                        .map(|(l, r)| format!("line {l}: {r}"))
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    let summary = format!(
+                        "{} breakpoint(s) unverified — {}",
+                        unverified.len(),
+                        lines
+                    );
+                    if let Some(s) = self.session.as_mut() {
+                        s.status_line = summary.clone();
+                    }
+                    let line = OutputLine {
+                        category: "console".into(),
+                        output: summary,
+                    };
+                    self.output_buffer.push(line.clone());
+                    if self.output_buffer.len() > OUTPUT_LOG_CAP {
+                        let excess = self.output_buffer.len() - OUTPUT_LOG_CAP;
+                        self.output_buffer.drain(0..excess);
+                    }
+                    events.push(DapEvent::Output(line));
+                }
+            }
             "stackTrace" => {
                 let frames = parse_stack_frames(&body);
                 let top_id = frames.first().map(|f| f.id);
