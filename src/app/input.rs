@@ -215,17 +215,52 @@ impl super::App {
         }
         // Tab-bar click: only on the top row when tabs are showing.
         // Left-click on a tab's close glyph deletes the buffer; click
-        // anywhere else inside the tab switches to it.
+        // anywhere else inside the tab switches to it. Middle-click
+        // anywhere on a tab also deletes it (subject to the same dirty
+        // guard) — faster than aiming for the `×`. Clicking the `‹` /
+        // `›` overflow chevrons walks the active buffer one step in
+        // that direction, which is what shifts the visible slice.
         let buffer_top = self.buffer_top();
         if buffer_top > 0 && row == 0 {
-            if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
-                for slot in crate::render::tab_layout(self) {
+            let total_w = self.width as usize;
+            if matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+            ) {
+                let slots = crate::render::tab_layout(self);
+                let scrolled_left = slots.first().map(|s| s.idx > 0).unwrap_or(false);
+                let truncated_right = slots
+                    .last()
+                    .map(|s| s.idx + 1 < self.buffers.len())
+                    .unwrap_or(false);
+                // Chevron clicks — only on Left, only when the indicator
+                // is actually painted at that column. Middle on a chevron
+                // falls through to no-op.
+                if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
+                    if scrolled_left && col == 0 {
+                        let first_visible = slots.first().map(|s| s.idx).unwrap_or(0);
+                        let _ = self.switch_to(first_visible.saturating_sub(1));
+                        return;
+                    }
+                    if truncated_right && col == total_w.saturating_sub(1) {
+                        let last_visible = slots
+                            .last()
+                            .map(|s| s.idx)
+                            .unwrap_or(self.buffers.len() - 1);
+                        let next = (last_visible + 1).min(self.buffers.len() - 1);
+                        let _ = self.switch_to(next);
+                        return;
+                    }
+                }
+                for slot in &slots {
                     if col >= slot.start_col && col < slot.end_col {
-                        // Any tab interaction dismisses the start page —
-                        // restored sessions show tabs above the welcome
-                        // screen and clicking one is the obvious way in.
                         self.show_start_page = false;
-                        if slot.close_col == Some(col) {
+                        let is_middle = matches!(
+                            ev.kind,
+                            MouseEventKind::Down(MouseButton::Middle)
+                        );
+                        let on_close = slot.close_col == Some(col);
+                        if is_middle || on_close {
                             // Match :bd behaviour: refuse to drop a
                             // dirty buffer. The user can :bd! force or
                             // save first.
@@ -575,6 +610,15 @@ impl super::App {
     /// openers/closers (`{|}`) onto three lines so the cursor lands on a
     /// double-indented middle row ready for the body.
     fn handle_insert_newline(&mut self) {
+        // Multi-cursor: every additional cursor inserts a literal `\n`
+        // alongside the primary's smart-indent newline. Smart indent at
+        // the secondaries is non-trivial — neighbouring context can
+        // disagree across positions — so for v1 we just keep them in
+        // sync with a bare line break. Caller can take it from there.
+        if !self.additional_cursors.is_empty() {
+            self.mirror_insert_char('\n');
+            return;
+        }
         let line = self.cursor.line;
         let col = self.cursor.col;
         let line_len = self.buffer.line_len(line);
@@ -775,17 +819,21 @@ impl super::App {
                     self.status_msg = format!("error: {e}");
                 }
             }
-            ExCommand::Substitute { range, pattern, replacement, global } => {
+            ExCommand::Substitute { range, pattern, replacement, global, regex } => {
                 self.history.record(&self.buffer.rope, self.cursor);
-                let n = self.substitute(range, &pattern, &replacement, global);
-                self.status_msg = if n == 0 {
-                    format!("Pattern not found: {pattern}")
-                } else {
-                    format!("{n} substitution{}", if n == 1 { "" } else { "s" })
-                };
+                match self.substitute(range, &pattern, &replacement, global, regex) {
+                    Ok(0) => self.status_msg = format!("Pattern not found: {pattern}"),
+                    Ok(n) => {
+                        self.status_msg = format!(
+                            "{n} substitution{}",
+                            if n == 1 { "" } else { "s" }
+                        );
+                    }
+                    Err(e) => self.status_msg = format!("s: {e}"),
+                }
             }
-            ExCommand::ProjectSubstitute { pattern, replacement, global } => {
-                self.project_substitute(&pattern, &replacement, global);
+            ExCommand::ProjectSubstitute { pattern, replacement, global, regex } => {
+                self.project_substitute(&pattern, &replacement, global, regex);
             }
             ExCommand::DeleteRange { range } => {
                 self.history.record(&self.buffer.rope, self.cursor);
@@ -869,10 +917,22 @@ impl super::App {
         }
     }
 
-    pub(super) fn substitute(&mut self, range: ExRange, pat: &str, repl: &str, global: bool) -> usize {
+    pub(super) fn substitute(
+        &mut self,
+        range: ExRange,
+        pat: &str,
+        repl: &str,
+        global: bool,
+        regex: bool,
+    ) -> Result<usize, String> {
         if pat.is_empty() {
-            return 0;
+            return Ok(0);
         }
+        let compiled = if regex {
+            Some(regex::Regex::new(pat).map_err(|e| format!("bad regex: {e}"))?)
+        } else {
+            None
+        };
         let (l1, l2) = self.resolve_range(range, true);
         let mut total = 0usize;
         // Iterate bottom-up so edits to lower lines don't shift higher line indices.
@@ -887,7 +947,16 @@ impl super::App {
                 .rope
                 .slice(line_start..(line_start + line_len))
                 .to_string();
-            let (new_text, n) = if global {
+            let (new_text, n) = if let Some(re) = compiled.as_ref() {
+                if global {
+                    let count = re.find_iter(&line_text).count();
+                    (re.replace_all(&line_text, repl).into_owned(), count)
+                } else if re.is_match(&line_text) {
+                    (re.replacen(&line_text, 1, repl).into_owned(), 1)
+                } else {
+                    (line_text.clone(), 0)
+                }
+            } else if global {
                 let count = line_text.matches(pat).count();
                 (line_text.replace(pat, repl), count)
             } else if line_text.contains(pat) {
@@ -907,7 +976,7 @@ impl super::App {
             self.cursor.want_col = 0;
             self.clamp_cursor_normal();
         }
-        total
+        Ok(total)
     }
 
     fn delete_lines(&mut self, range: ExRange) {
@@ -951,17 +1020,21 @@ impl super::App {
     /// substitution across every line, and save. The originally-active
     /// buffer is restored at the end so the user lands back where they
     /// were. No confirmation prompt — the user has git for safety.
-    fn project_substitute(&mut self, pattern: &str, replacement: &str, global: bool) {
+    fn project_substitute(&mut self, pattern: &str, replacement: &str, global: bool, regex: bool) {
         if pattern.is_empty() {
             self.status_msg = "S: empty pattern".into();
             return;
         }
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         // Use ripgrep's --files-with-matches to get the candidate file list.
-        let files_output = std::process::Command::new("rg")
-            .arg("--files-with-matches")
-            .arg("--color=never")
-            .arg("--fixed-strings")
+        let mut rg = std::process::Command::new("rg");
+        rg.arg("--files-with-matches").arg("--color=never");
+        // `r` flag → let ripgrep treat the pattern as a regex (it does
+        // by default), so leave --fixed-strings off in that mode.
+        if !regex {
+            rg.arg("--fixed-strings");
+        }
+        let files_output = rg
             .arg("--")
             .arg(pattern)
             .arg(".")
@@ -995,11 +1068,22 @@ impl super::App {
                 continue;
             }
             self.history.record(&self.buffer.rope, self.cursor);
-            let n = self.substitute(crate::command::ExRange::Whole, pattern, replacement, global);
-            if n > 0 {
-                total_subs += n;
-                files_changed += 1;
-                if self.save_active().is_err() {
+            match self.substitute(
+                crate::command::ExRange::Whole,
+                pattern,
+                replacement,
+                global,
+                regex,
+            ) {
+                Ok(n) if n > 0 => {
+                    total_subs += n;
+                    files_changed += 1;
+                    if self.save_active().is_err() {
+                        errors += 1;
+                    }
+                }
+                Ok(_) => {}
+                Err(_) => {
                     errors += 1;
                 }
             }

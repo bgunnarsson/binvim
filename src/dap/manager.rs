@@ -142,16 +142,25 @@ impl DapManager {
     pub fn start_session(
         &mut self,
         adapter: DapAdapterSpec,
-        root: PathBuf,
+        ctx: super::specs::LaunchContext,
     ) -> Result<(), String> {
         if self.is_active() {
             return Err("debug session already active — :dapstop first".into());
         }
 
+        let root = ctx.root.clone();
+        // Prelaunch runs inside the *project* directory when one was
+        // picked (so `dotnet build` rebuilds the right project), and the
+        // workspace root otherwise.
+        let prelaunch_cwd = ctx
+            .project_path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| root.clone());
         if let Some(pre) = adapter.prelaunch {
             let output = std::process::Command::new(pre.program)
                 .args(pre.args)
-                .current_dir(&root)
+                .current_dir(&prelaunch_cwd)
                 .output()
                 .map_err(|e| format!("{} failed to start: {}", pre.program, e))?;
             if !output.status.success() {
@@ -169,7 +178,7 @@ impl DapManager {
 
         // Resolve launch args before spawning the adapter — if the dll
         // can't be found we avoid leaking an orphan netcoredbg process.
-        let launch_args = (adapter.build_launch_args)(&root)?;
+        let launch_args = (adapter.build_launch_args)(&ctx)?;
 
         let client = DapClient::spawn_spec(&adapter)
             .ok_or_else(|| format!("could not spawn adapter `{}`", adapter.key))?;
@@ -230,6 +239,45 @@ impl DapManager {
             );
         }
         self.session = None;
+    }
+
+    /// Stop the active session and poll the adapter's child until it
+    /// reaps, up to `max_wait`. Used by the auto-restart path in
+    /// `<leader>ds` so the previous `dotnet` debuggee has actually
+    /// released its listening port before a new netcoredbg spawns and
+    /// tries to bind the same port. Returns whether the child exited
+    /// within the budget — caller can fall through either way; this is
+    /// purely best-effort.
+    pub fn stop_session_blocking(&mut self, max_wait: std::time::Duration) -> bool {
+        // Pull the client out before clearing the session so we can keep
+        // polling it after `self.session = None`. The DAP protocol layer
+        // is done with it at this point — only the OS-level child handle
+        // is still useful.
+        let client = self.session.take().map(|s| s.client);
+        if let Some(client) = client {
+            let seq = client.alloc_seq();
+            let _ = client.send_request(
+                seq,
+                "disconnect",
+                json!({
+                    "restart": false,
+                    "terminateDebuggee": true,
+                }),
+            );
+            let start = std::time::Instant::now();
+            while start.elapsed() < max_wait {
+                if client.try_exit_status().is_some() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            // Didn't exit in time — adapter is hung. Drop the client to
+            // close its stdin (some adapters take that as a hint to
+            // exit) and let it become a zombie on the user's machine
+            // rather than blocking the restart.
+            return false;
+        }
+        true
     }
 
     /// One step / continue command targeted at the currently-stopped

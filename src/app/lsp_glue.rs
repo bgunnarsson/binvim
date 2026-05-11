@@ -272,12 +272,15 @@ impl super::App {
             return;
         }
         self.history.record(&self.buffer.rope, self.cursor);
-        let n = self.substitute(
-            crate::command::ExRange::Whole,
-            &original,
-            &new_text,
-            true,
-        );
+        let n = self
+            .substitute(
+                crate::command::ExRange::Whole,
+                &original,
+                &new_text,
+                true,
+                false,
+            )
+            .unwrap_or(0);
         self.status_msg = if n == 0 {
             format!("Pattern not found: {original}")
         } else {

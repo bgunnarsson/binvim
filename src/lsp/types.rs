@@ -49,10 +49,9 @@ pub struct InlayHint {
     pub line: usize,
     pub col: usize,
     pub label: String,
-    /// LSP `InlayHintKind`: 1 = Type, 2 = Parameter. Currently unused by
-    /// the renderer (both shown in the same dim italic) but kept for the
-    /// upcoming "param hints styled differently" pass.
-    #[allow(dead_code)]
+    /// LSP `InlayHintKind`: 1 = Type, 2 = Parameter. Parameter hints
+    /// render in a slightly warmer tone than type hints so the two
+    /// categories scan apart on a line that mixes both.
     pub kind: u8,
 }
 

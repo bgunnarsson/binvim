@@ -6,7 +6,113 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-05-11
+
 ### Added
+- **YAML / XML syntax highlighting.** New `Lang::Yaml` and `Lang::Xml`
+  variants wired to `tree-sitter-yaml` and `tree-sitter-xml`. XML
+  detection covers the MSBuild + .NET family — `.xml`, `.csproj`,
+  `.fsproj`, `.vbproj`, `.props`, `.targets`, `.config`, `.manifest`,
+  `.nuspec`, `.resx`, `.xaml`, `.xhtml`, `.xsd`, `.xsl`, `.xslt`,
+  `.plist`.
+- **`.editorconfig` highlighting.** Byte-level scanner: `#`/`;`
+  comments in Overlay1, `[*.cs]`-style section headers in Pink,
+  `key = value` pairs with the key in Lavender, the `=` in Sky, and
+  the value in Green. TOML grammar can't parse the bracket-pattern
+  section headers so it's a custom pass.
+- **`.gitignore` family highlighting.** Covers `.gitignore`,
+  `.gitattributes`, `.dockerignore`, `.npmignore`. `#` comments,
+  `!`-negation prefix in Mauve, pattern lines in Lavender.
+
+### Changed
+- **CSS highlight query replaces the bundled tree-sitter-css one.**
+  Upstream paints `class_name`, `id_name`, `namespace_name`,
+  `property_name`, and `feature_name` all as `@property` — so in
+  `.foo { color: red; }` the selector `.foo` and the property
+  `color` rendered in the same Lavender. The replacement query
+  splits them: `.class-name` is `@constructor` (Yellow),
+  `#id-name` is `@label` (Sapphire), `property:` stays `@property`
+  (Lavender), `--custom-prop` is `@variable`, at-rules
+  (`@media`/`@keyframes`/…) are `@keyword` (Mauve).
+
+### Added (continued)
+- **DAP multi-project workspace support.** `<leader>ds` works from
+  any file now — not just `.cs`. When the workspace has more than
+  one `.csproj` (or `.fsproj` / `.vbproj`), a picker opens listing
+  every project relative to the cwd. Walking up looks for `.sln` or
+  `.git` first to find the workspace root, then enumerates projects
+  beneath it (skipping `bin/`, `obj/`, `node_modules/`, etc., with
+  a 6-deep bound). The buffer's path doesn't need to be inside the
+  picked project — opens fine from a README at the repo root.
+- **DAP reads `Properties/launchSettings.json`.** Every profile
+  with `commandName == "Project"` (Kestrel hosting via `dotnet run`)
+  becomes a launchable option:
+  - 0 profiles → start with framework defaults (no overrides).
+  - 1 profile → use it directly.
+  - >1 profiles → open the launch-profile picker, one row per
+    profile, displaying the profile name + its applicationUrl
+    (e.g. `Umbraco.Web.UI  (https://localhost:44317, http://…)`).
+  The chosen profile's `applicationUrl` becomes `ASPNETCORE_URLS`
+  on the launched process so the app binds to the user's configured
+  port instead of the framework default `http://localhost:5000` —
+  fixes the "Failed to bind to 127.0.0.1:5000: address already in
+  use" case when another local service squats on :5000. The
+  profile's `environmentVariables` pass through as `env` on the
+  launch payload (e.g. `ASPNETCORE_ENVIRONMENT=Local`).
+- **Picker file-type icons.** Files / Recents / Buffers / Grep /
+  References rows get a Nerd Font icon per row from `Lang::detect`
+  on the basename. Symbol / CodeAction pickers stay unchanged (rows
+  aren't files). Grep / references rows now correctly split off the
+  trailing `:LN:COL:…` suffix instead of treating it as part of the
+  filename.
+- **Picker fuzzy-match char highlighting.** `fuzzy_match` returns
+  match positions alongside the score; matched chars render in
+  Catppuccin Yellow + Bold so it's obvious which query letters
+  produced the row's rank.
+- **Inlay-hint kind styling.** Parameter hints (LSP `kind == 2`)
+  render in a warmer Overlay2 tone; type hints (`kind == 1` or
+  unknown) keep the muted Overlay1 they had — both categories scan
+  apart on a mixed line.
+- **JSX overlay: `{expr}` braces tagged as JSX-template syntax.**
+  JSX expression containers get `@operator` on their braces so they
+  read as JSX-template syntax instead of being mistaken for object
+  literals. (Originally also covered `<>…</>` fragments via a
+  `jsx_fragment` capture, but that node type isn't in
+  tree-sitter-typescript / tree-sitter-javascript 0.23 — adding it
+  made `Query::new` fail and wiped the entire highlight cache for
+  every .tsx / .jsx file. Reverted, regression-tested.)
+- **`<leader>do` / `<leader>dS` for Doc / Workspace symbols.** Moved
+  from top-level `<leader>o` / `<leader>S` so all "navigate around
+  code while debugging" pickers cluster in the debug sub-menu.
+  Existing debug bindings shift: `dq` is Stop session, `dO` is Step
+  out (was `dS` / `do`).
+- **`gt` / `gT` Vim aliases for next / previous buffer.** Same path
+  as `H` / `L`.
+- **Middle-click closes a tab.** Subject to the same dirty-buffer
+  guard as `:bd`. Faster than aiming for the `×`.
+- **Clickable tab-bar overflow chevrons.** `‹` / `›` shift the
+  visible slice by one tab when clicked — sets the active buffer to
+  one step before the first visible tab (`‹`) or one step after the
+  last visible tab (`›`).
+- **Multi-cursor Enter mirroring.** Pressing Enter with additional
+  cursors active inserts a literal `\n` at every cursor. Smart
+  indent at the secondaries is non-trivial (neighbouring context can
+  disagree across positions) so v1 keeps them in basic sync.
+- **Persistent jumplist.** Each `SessionBuffer` now serialises its
+  per-buffer `jumplist` + `jump_idx`; on launch the values restore
+  alongside cursor/viewport. Entries are clamped against the
+  current buffer's bounds so a file shortened since the last session
+  doesn't carry an out-of-range jump.
+- **`:s` / `:S` regex flag.** Add `r` to the flag tail (e.g.
+  `:s/foo.*bar/x/gr` or `:%S/^let /var /r`) to interpret the pattern
+  as a regex. Replacement honours `$1`/`$2`/… capture references. No
+  flag → fixed-string substitution, same as before. Project-wide
+  `:S` also drops `--fixed-strings` from the ripgrep candidate
+  search when `r` is set.
+- **Proper visual-block surround.** `Vb`-selected rectangle now
+  wraps each row's column slice independently — `(c1, c2+1)` on
+  every row in the rectangle — instead of falling back to a coarse
+  anchor-to-cursor span across the whole region.
 - **Razor / `.cshtml` syntax highlighting.** New `Lang::Razor` variant
   routed via `tree-sitter-razor`, paired with the bundled C# highlights
   query plus a Razor overlay that tags every `@`-marker directive

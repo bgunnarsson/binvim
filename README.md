@@ -1,6 +1,6 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting, multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers, sessions, tab bar, persistent undo, code folding, surround operations, smart-indent, system-clipboard yank, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 ## Features
 
@@ -17,12 +17,13 @@ A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting, multi-server
 - **Bracket and HTML-tag matching** — when the cursor is on (or just past) a bracket or anywhere inside an HTML tag, the matching partner highlights with a Surface2 background + bold. Works through arbitrary nesting.
 - **Code folding** — indent-based folds, toggled with `za`/`zo`/`zc`, with `zR`/`zM` to open/close all. Folded blocks render as `⏷ N lines`.
 - **Persistent undo** — undo history is serialised per file under `~/.cache/binvim/undo/<hash>.json` on save and reloaded on the next session, keyed by content hash so external edits invalidate stale history.
-- **System-clipboard yank** — `y`, `yy`, `Y`, `:y`, visual yank, and the implicit yank on `d`/`c`/`x` mirror to the OS clipboard via `arboard` whenever they target the unnamed register. Named registers (`"ay`) stay local.
+- **System-clipboard yank + paste** — `y`, `yy`, `Y`, `:y`, visual yank, and the implicit yank on `d`/`c`/`x` mirror to the OS clipboard via `arboard` whenever they target the unnamed register. `p` / `P` (Normal *and* Visual mode) read from the OS clipboard first — anything you `Cmd-C`'d in another app wins over the in-memory yank. Named registers (`"ay`) stay local.
+- **Visual-mode paste** — `p` / `P` over a selection (word / multi-line / block) swaps the selection with the register's contents. Linewise content over a charwise selection drops its trailing newline so paste doesn't open a stray blank line.
 - **Yank flash** — yanked range flashes a Catppuccin Peach background for 200ms so you see what's been picked up.
 - **Horizontal scrolling** — long lines scroll automatically as the cursor moves past the edge; trackpad / mouse-wheel horizontal events scroll without moving the cursor; Vim-style `zh` / `zl` (1 col) and `zH` / `zL` (half-width) work too.
 - **Double-click to select word** — a second left-click at the same buffer position within 350 ms expands to the inner word and enters Visual-char.
 - **Whitespace markers** — every space, tab, non-breaking space, and end-of-line surface as a muted glyph (`·`, `→`, `⎵`, `¬`). Configurable.
-- **Format on save** — biome for JS / TS / JSX / TSX / JSON / JSONC. `.editorconfig` directives applied on save (final newline, trailing whitespace).
+- **Format on save / on-demand** — `<leader>f` or `:fmt` runs the right tool per extension. biome for JS / TS / JSX / TSX / JSON / JSONC; csharpier for `.cs`; `gofmt`/`goimports` for `.go`; `.editorconfig` indent reflow for `.cshtml`/`.razor` (csharpier rejects those, so we fall through). `.editorconfig` directives applied on every save (final newline, trailing whitespace) regardless of extension.
 - **Auto-reload on disk change** — when an open file changes externally and the buffer isn't dirty, binvim notices via mtime poll and reloads with a status note.
 - **Recents in the file picker** — most-recently-opened files surface at the top of the file picker on an empty query, persisted at `~/.cache/binvim/recents`.
 
@@ -33,7 +34,17 @@ A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting, multi-server
 
 ### Tree-sitter highlighting
 
-Rust, TypeScript / TSX, JavaScript, JSON, Go, HTML, CSS, Markdown, C#, Bash. Pattern-priority resolution so `(method_declaration name: (identifier) @function)` deterministically beats the catch-all `(identifier) @variable`.
+Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
+
+Pattern-priority resolution so `(method_declaration name: (identifier) @function)` deterministically beats the catch-all `(identifier) @variable`.
+
+A few language-specific tweaks on top of the bundled queries:
+
+- **JSX / TSX** — overlay tags lowercase elements (`<div>`) as `@tag` (Pink) and PascalCase components (`<Foo>`, `<Foo.Bar>`) as `@constructor` (Yellow). `{expr}` braces inside JSX get treated as JSX-template syntax (`@operator`) instead of falling through to the object-literal punctuation tone.
+- **Razor** — `@inject` / `@using` / `@{…}` / `@if` / `@(…)` / `@*…*@` etc. paint as `@keyword.directive`; C# inside the blocks is highlighted by the C# query. A byte-level overlay handles HTML tag / attribute names + C# keywords inside broken-parse regions (BOM headers, Tailwind `class="…[16px]…"` bracket attributes, …).
+- **CSS** — replacement query so selectors and properties don't collide: `.class-name` is `@constructor` (Yellow), `#id-name` is `@label` (Sapphire), `property:` is `@property` (Lavender), `--custom-prop` is `@variable`, at-rules (`@media`/`@keyframes`/…) are `@keyword` (Mauve).
+- **`.editorconfig`** — comments, `[*.cs]` section headers in Pink, `key = value` pairs with the key in Lavender, `=` in Sky, value in Green.
+- **`.gitignore` family** — `#` comments, `!`-negation prefix in Mauve, patterns in Lavender.
 
 ### LSP
 
@@ -56,9 +67,36 @@ Per-language servers with `initializationOptions`, project-root detection, and a
 
 **Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, OmniSharp, csharp-ls, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`). csharp-ls is layered onto Razor files so `@code{}` blocks get C# completion even without a dedicated Razor server.
 
+### Debugger (DAP)
+
+Built-in .NET debugger via [netcoredbg](https://github.com/Samsung/netcoredbg). Driven by an adapter-agnostic DAP client — netcoredbg is the first entry in the registry; delve, debugpy, lldb-dap, etc. plug in with one struct.
+
+| Capability               | Binding              | Notes                                                                                                                                                                          |
+|--------------------------|----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Start                    | `<leader>ds` / `F5`  | Walks up from the active buffer looking for `.sln` / `.git`, enumerates every `.csproj` / `.fsproj` / `.vbproj` underneath. 0 → error, 1 → straight through, >1 → project picker. Auto-restarts an active session (collapses the old `dq → ds` round-trip into one keystroke; waits up to 1.5 s for the previous debuggee to release its listening port). |
+| Launch profile           | (after project pick) | Reads `Properties/launchSettings.json`. Profiles with `commandName: "Project"` (Kestrel hosting) are runnable. 0 → framework defaults; 1 → use directly; >1 → profile picker. The chosen profile's `applicationUrl` becomes `ASPNETCORE_URLS`; its `environmentVariables` flow into the launched process env. |
+| Stop                     | `<leader>dq` / `Shift+F5` | Sends `disconnect terminateDebuggee:true`; closes the bottom pane.                                                                                                              |
+| Continue                 | `<leader>dc` / `F5` (while paused) |                                                                                                                                                                                |
+| Step over / into / out   | `<leader>dn` / `di` / `dO` / `F10` / `F11` / `Shift+F11` |                                                                                                                                            |
+| Toggle breakpoint        | `<leader>db` / `F9`  | Gutter `●` marker. Survives across sessions (kept in memory + serialised on `<leader>dB` clears them per-file).                                                                  |
+| Clear breakpoints (file) | `<leader>dB`         | Drops every breakpoint in the active buffer; resends to the adapter if a session's alive.                                                                                       |
+| Toggle pane              | `<leader>dp`         | Bottom split. Frames + locals on the left, debug-console on the right. Auto-opens on session start, auto-closes on session end.                                                  |
+| Focus pane               | `<leader>df`         | Enters `Mode::DebugPane`. `j`/`k`/`g`/`G` move locals selection; Enter/Tab/Space expands a structured value; `Ctrl-Y`/`Ctrl-E` free-scroll the left column; `J`/`K` page the console; `c`/`n`/`i`/`O` step without leaving the pane; `:` enters the command line; `Esc` returns to Normal. |
+| Doc / Workspace symbols  | `<leader>do` / `dS`  | LSP pickers, scoped under the debug menu so "navigate around code while debugging" actions cluster in one place.                                                                 |
+
+**Variable expansion** — structured locals render with `▶`/`▼` markers; expansion lazily fetches `children` per `variables_reference` and caches them across re-renders. All caches clear on `stopped`/`continued` (DAP doesn't promise vref stability between stops).
+
+**Diagnostic surfacing** — adapter stderr (e.g. netcoredbg's `dlopen() error: libdbgshim.dylib not found`) streams into the pane's status_line and output buffer instead of vanishing into `Stdio::null()`. Unverified breakpoints, JIT-rebinding events, and `setBreakpoints` failures show up as console-category output so a never-hits is diagnosable instead of mysterious.
+
 ### Pickers
 
-Fuzzy file picker, live grep, recents, document / workspace symbols, code actions, and references — opened from leader (`<space>`). Mouse wheel inside the picker moves the selection by ±3; PageUp/PageDown jump a page; `Ctrl-U`/`Ctrl-D` jump a half-page; `Home`/`End` jump to first/last; `^J`/`^K` (and arrows) move by one. Each picker is a centered floating popup with the directory part of paths dimmed and the basename bright.
+Fuzzy file picker, live grep, recents, document / workspace symbols, code actions, references, and debug-project / debug-profile prompts — opened from leader (`<space>`).
+
+- **File-type icons** — path-based rows (Files, Recents, Buffers, Grep, References) get a Nerd Font icon per row derived from `Lang::detect` on the basename; unknown extensions fall back to a generic document glyph. Symbol / Code-action pickers stay icon-free (rows aren't files).
+- **Match-character highlighting** — fuzzy-matched chars render in Catppuccin Yellow + Bold so it's obvious which letters of your query produced the row's rank.
+- **Navigation** — mouse wheel moves the selection by ±3; PageUp/PageDown jump a page; `Ctrl-U`/`Ctrl-D` jump a half-page; `Home`/`End` jump to first/last; `^J`/`^K` (and arrows) move by one.
+
+Each picker is a centered floating popup with the directory part of paths dimmed and the basename bright.
 
 ### Catppuccin Mocha defaults
 
@@ -106,25 +144,41 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>?`  | Recent files                          |
 | `<space>g`  | Live grep                             |
 | `<space>e`  | Yazi file manager                     |
-| `<space>o`  | Document symbols                      |
-| `<space>S`  | Workspace symbols                     |
 | `<space>a`  | Code actions                          |
 | `<space>r`  | Rename (LSP-aware)                    |
 | `<space>R`  | Replace all (literal-string in buffer)|
+| `<space>f`  | Format active buffer                  |
 | `<space>bd` | Delete buffer (refuses dirty)         |
 | `<space>bD` | Delete buffer (force)                 |
 | `<space>bo` | Close other buffers                   |
 | `<space>bn` | Next buffer                           |
 | `<space>bp` | Previous buffer                       |
+| `<space>ds` | Start debug session                   |
+| `<space>dq` | Stop debug session                    |
+| `<space>db` | Toggle breakpoint                     |
+| `<space>dB` | Clear breakpoints in active file      |
+| `<space>dc` | Continue                              |
+| `<space>dn` | Step over (next)                      |
+| `<space>di` | Step into                             |
+| `<space>dO` | Step out                              |
+| `<space>dp` | Toggle debug pane                     |
+| `<space>df` | Focus debug pane                      |
+| `<space>do` | Document symbols (LSP)                |
+| `<space>dS` | Workspace symbols (LSP)               |
+
+Hold `<space>` (or `<space>b` / `<space>d`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 
-| Keys              | Action                                  |
-|-------------------|-----------------------------------------|
-| `H` / `L`         | Previous / next buffer (same as `:bp`/`:bn`) |
-| `Ctrl-O` / `Ctrl-I` | Jumplist back / forward                |
-| Click a tab       | Switch to it                            |
-| Click `×` on a tab| Close it (refuses dirty)                |
+| Keys                  | Action                                       |
+|-----------------------|----------------------------------------------|
+| `H` / `L`             | Previous / next buffer (same as `:bp`/`:bn`) |
+| `gt` / `gT`           | Same as `H` / `L` (Vim aliases)              |
+| `Ctrl-O` / `Ctrl-I`   | Jumplist back / forward — persists across sessions per-buffer |
+| Click a tab           | Switch to it                                 |
+| Middle-click a tab    | Close it (refuses dirty, same as `:bd`)      |
+| Click `×` on a tab    | Close it (refuses dirty)                     |
+| Click `‹` / `›`       | Scroll the visible tab slice by one          |
 
 ## Ex commands
 
@@ -133,8 +187,10 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | Command                   | Description                                                                                                                   |
 |---------------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | `:health`                 | Open a scratch buffer summarising version, CPU / RAM share, buffers, attached LSPs (with binary path + running flag), and Tailwind config detection. `:checkhealth` works too. |
-| `:fmt` / `:format`        | Run the configured formatter on the active buffer.                                                                            |
-| `:S/pat/repl/[g]`         | Project-wide substitute. ripgrep enumerates the files containing `pat`, opens each, applies the substitution buffer-wide, saves. |
+| `:fmt` / `:format`        | Run the configured formatter on the active buffer. Same path as `<leader>f`.                                                  |
+| `:s/pat/repl/[gr]`        | Buffer-local substitute. `g` global, `r` interprets `pat` as a regex (`$1`/`$2` capture refs honoured in the replacement). Default is literal text. |
+| `:S/pat/repl/[gr]`        | Project-wide substitute. ripgrep enumerates the files containing `pat`, opens each, applies the substitution buffer-wide, saves. `r` flips ripgrep into regex mode too. |
+| `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 
 ## External tools
@@ -153,6 +209,9 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `csharp-ls`                     | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
 | `OmniSharp`                     | Razor / `.cshtml` IntelliSense (full)    | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
 | `biome` (project-local)         | JSON LSP + JS / TS / JSON formatter      | `npm i -D @biomejs/biome` in the project                                  |
+| `csharpier`                     | `.cs` formatter                          | `dotnet tool install --global csharpier`                                 |
+| `gofmt` / `goimports`           | Go formatter (`goimports` preferred when on `$PATH` — it also organises imports) | Ships with Go; `go install golang.org/x/tools/cmd/goimports@latest` for the imports variant |
+| `netcoredbg`                    | .NET debug adapter (DAP)                 | Build from [github.com/Samsung/netcoredbg](https://github.com/Samsung/netcoredbg). The binary and its `libdbgshim.dylib` / `ManagedPart.dll` / `Microsoft.CodeAnalysis.*.dll` siblings need to live in the same directory — symlink them next to the binary if you copy out of the build's install dir. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |
 
@@ -210,6 +269,7 @@ src/
     dispatch.rs    apply_action — operator / motion / text-object glue
     input.rs       per-mode key handlers, mouse handler, `:`-command dispatch
     lsp_glue.rs    LSP event handling, request helpers, snippet expansion
+    dap_glue.rs    DAP event handling, debug-pane focus mode, project / profile pickers
     picker_glue.rs picker open / handle / refilter, yazi shell-out
     health.rs      `:health` output
   buffer.rs        rope-backed text buffer
@@ -227,6 +287,13 @@ src/
     io.rs          reader-thread loop + JSON-RPC dispatcher
     manager.rs     LspManager — fan-out + response routing
     parse.rs       response parsers
+  dap.rs           slim entry — re-exports public API
+  dap/
+    types.rs       wire-side types — DapIncoming / DapEvent / breakpoint / frame / variable structs
+    specs.rs       adapter registry, project / launchSettings discovery, $PATH lookup
+    client.rs      DapClient — spawn + stdin / stdout / stderr fan-out
+    io.rs          reader-thread loop (Content-Length framing, same as LSP)
+    manager.rs     DapManager — protocol state machine + drain
   mode.rs          modes and operators
   motion.rs        motions
   parser.rs        keystroke → action parser
