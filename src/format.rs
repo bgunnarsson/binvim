@@ -22,6 +22,7 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
             run_biome(path, source)
         }
         "cs" | "cshtml" | "razor" => run_csharpier(path, source),
+        "go" => run_gofmt(source),
         _ => Err(format!("no formatter configured for .{ext}")),
     }
 }
@@ -143,6 +144,73 @@ fn run_csharpier(path: &Path, source: &str) -> Result<String, String> {
     // there's no reason to keep it once we have the bytes.
     let _ = std::fs::remove_file(&temp);
     formatted
+}
+
+/// Format Go source via `gofmt` (or `goimports` when it's on PATH, which
+/// also organises imports). Both read stdin and write formatted text to
+/// stdout, so no temp file is needed — and neither tool consults
+/// project-relative config, so we don't need `path` for resolution.
+fn run_gofmt(source: &str) -> Result<String, String> {
+    let (bin, label) = if let Some(p) = find_on_path("goimports") {
+        (p, "goimports")
+    } else if let Some(p) = find_on_path("gofmt") {
+        (p, "gofmt")
+    } else {
+        return Err(
+            "gofmt not found — install Go (gofmt ships with it) or run `go install golang.org/x/tools/cmd/goimports@latest`"
+                .into(),
+        );
+    };
+
+    let mut child = Command::new(&bin)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn {label}: {e}"))?;
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("{label} stdin missing"))?;
+        stdin
+            .write_all(source.as_bytes())
+            .map_err(|e| format!("write to {label} stdin: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("{label} wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // gofmt's error format: `<stdin>:LINE:COL: message` — keep the
+        // first few lines so the user sees what's wrong.
+        let cleaned: Vec<String> = stderr
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .take(4)
+            .collect();
+        let msg = if cleaned.is_empty() {
+            "(no error output)".to_string()
+        } else {
+            cleaned.join(" / ")
+        };
+        let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        return Err(format!("{label} exit {code}: {msg}"));
+    }
+    String::from_utf8(output.stdout).map_err(|e| format!("{label} stdout not utf-8: {e}"))
+}
+
+/// Resolve a binary by name on `$PATH`. Returns the first match.
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var("PATH").ok()?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
 }
 
 fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<(), String> {
