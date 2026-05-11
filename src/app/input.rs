@@ -25,15 +25,32 @@ pub(super) fn is_completion_trigger(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<' | '-')
 }
 
-/// Reverse of the renderer's `display_w` walk — given a visual column on
-/// `line`, return the buffer char column that visual position sits in. A
-/// click past end-of-line clamps to `line_len.saturating_sub(1)` (matches
-/// Vim's "cursor sits on a char, not past it" rule in Normal mode).
+/// Reverse of the renderer's display walk — given a visual column on
+/// `line`, return the buffer char column that visual position sits in.
+/// Tabs widen by `TAB_WIDTH`; inlay hints anchored at a buffer col take
+/// their full label width *before* the char at that col, so clicking
+/// inside a hint snaps to the buffer position immediately after it.
+/// Click past end-of-line clamps to `line_len.saturating_sub(1)`
+/// (matches Vim's "cursor sits on a char, not past it" Normal-mode rule).
 fn visual_col_to_char_col(
+    app: &super::App,
+    line: usize,
+    visual_col: usize,
+    line_len: usize,
+) -> usize {
+    let hint_widths = crate::render::inlay_hint_widths_for_line(app, line);
+    visual_col_to_char_col_with_hints(&app.buffer, line, visual_col, line_len, &hint_widths)
+}
+
+/// Inner walk — extracted so tests can drive it without spinning up a
+/// full `App`. `hint_widths[i]` is the total cell width of inlay hints
+/// anchored at buffer col `i` on the line; empty slice = no hints.
+fn visual_col_to_char_col_with_hints(
     buffer: &crate::buffer::Buffer,
     line: usize,
     visual_col: usize,
     line_len: usize,
+    hint_widths: &[usize],
 ) -> usize {
     if line_len == 0 {
         return 0;
@@ -45,13 +62,17 @@ fn visual_col_to_char_col(
         if c == '\n' || c == '\r' {
             break;
         }
+        let hw = hint_widths.get(chars).copied().unwrap_or(0);
+        if hw > 0 {
+            if visual + hw > visual_col {
+                return chars;
+            }
+            visual += hw;
+        }
         let w = if c == '\t' { crate::render::TAB_WIDTH } else { 1 };
-        // Clicked exactly on this char's first cell — return its index.
         if visual >= visual_col {
             break;
         }
-        // Clicked into the *middle* of a multi-cell char (a tab). Snap to
-        // the char itself rather than overshooting into the next one.
         if visual + w > visual_col {
             return chars;
         }
@@ -350,7 +371,7 @@ impl super::App {
         // width rule the renderer uses (tab = TAB_WIDTH, everything else
         // = 1) walking the line until we've consumed `visual_col` cells.
         let visual_col = col.saturating_sub(gutter) + self.view_left;
-        let buf_col = visual_col_to_char_col(&self.buffer, buf_line, visual_col, line_len);
+        let buf_col = visual_col_to_char_col(self, buf_line, visual_col, line_len);
 
         match ev.kind {
             MouseEventKind::Down(MouseButton::Left) => {
@@ -1210,11 +1231,11 @@ mod tests {
     fn visual_col_to_char_col_no_tabs() {
         // `hello world` — visual col == char col on plain ASCII.
         let b = buf("hello world\n");
-        assert_eq!(visual_col_to_char_col(&b, 0, 0, 11), 0);
-        assert_eq!(visual_col_to_char_col(&b, 0, 6, 11), 6);
-        assert_eq!(visual_col_to_char_col(&b, 0, 10, 11), 10);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 11, &[]), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[]), 6);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 10, 11, &[]), 10);
         // Click past EOL clamps to the last char.
-        assert_eq!(visual_col_to_char_col(&b, 0, 30, 11), 10);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[]), 10);
     }
 
     #[test]
@@ -1223,14 +1244,14 @@ mod tests {
         //   0 = first tab, 1 = second tab, 2 = 'x'. Visual positions:
         //   0..4 = first tab, 4..8 = second tab, 8 = 'x'.
         let b = buf("\t\tx\n");
-        assert_eq!(visual_col_to_char_col(&b, 0, 0, 3), 0);
-        assert_eq!(visual_col_to_char_col(&b, 0, 2, 3), 0); // mid first tab
-        assert_eq!(visual_col_to_char_col(&b, 0, 4, 3), 1); // start of second tab
-        assert_eq!(visual_col_to_char_col(&b, 0, 6, 3), 1); // mid second tab
-        assert_eq!(visual_col_to_char_col(&b, 0, 8, 3), 2); // on `x`
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 3, &[]), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 2, 3, &[]), 0); // mid first tab
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 3, &[]), 1); // start of second tab
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 3, &[]), 1); // mid second tab
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 3, &[]), 2); // on `x`
         // The original bug: clicking at visual col 8 used to land at char 8
         // (past EOL). Now it clamps to the last char (`x`).
-        assert_eq!(visual_col_to_char_col(&b, 0, 30, 3), 2);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 3, &[]), 2);
     }
 
     #[test]
@@ -1240,16 +1261,43 @@ mod tests {
         let line = "\t\t<partial";
         let b = buf(&format!("{}\n", line));
         let line_len = line.chars().count();
-        assert_eq!(visual_col_to_char_col(&b, 0, 8, line_len), 2);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, line_len, &[]), 2);
         // Click 3 cells in (between the two tabs visually) clamps to char 0.
-        assert_eq!(visual_col_to_char_col(&b, 0, 3, line_len), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, line_len, &[]), 0);
     }
 
     #[test]
     fn visual_col_to_char_col_empty_line() {
         let b = buf("\n");
-        assert_eq!(visual_col_to_char_col(&b, 0, 0, 0), 0);
-        assert_eq!(visual_col_to_char_col(&b, 0, 99, 0), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 0, &[]), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 99, 0, &[]), 0);
+    }
+
+    #[test]
+    fn visual_col_to_char_col_skips_inlay_hints() {
+        // `foo bar` with a 10-cell inlay hint anchored at col 4 (right
+        // before `b`). Visual layout:
+        //   cols 0..3    → "foo"
+        //   col   3      → space
+        //   cols 4..14   → hint (10 cells)
+        //   cols 14..17  → "bar"
+        let b = buf("foo bar\n");
+        let mut hints = vec![0usize; 8]; // line_len + 1 = 7 + 1
+        hints[4] = 10;
+        // Click on `f` (visual col 0) → buffer col 0.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 7, &hints), 0);
+        // Click on the space (visual col 3) → buffer col 3.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, 7, &hints), 3);
+        // Click anywhere inside the hint (visual cols 4..13) → snap to
+        // buffer col 4 (the `b` immediately after the hint), NOT col 5+
+        // which would land inside `bar`.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 7, &hints), 4);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 7, &hints), 4);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 13, 7, &hints), 4);
+        // Click on `b` (visual col 14) → buffer col 4.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 14, 7, &hints), 4);
+        // Click on `r` (visual col 16) → buffer col 6.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 16, 7, &hints), 6);
     }
 
     #[test]

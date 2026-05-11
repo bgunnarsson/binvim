@@ -2685,8 +2685,20 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     let gutter = app.gutter_width();
     let row = (app.cursor.line.saturating_sub(app.view_top) + app.buffer_top()) as u16;
     let line = app.buffer.rope.line(app.cursor.line);
+    // Per-buffer-col inlay-hint widths so the cursor's visual position
+    // accounts for them. Without this, the cursor renders at the visual
+    // column corresponding to its buffer-char count and visually lands
+    // *inside* any hint(s) anchored at or before its col — making
+    // Backspace / typing edit a buffer position that's "ahead" of where
+    // the user thinks the cursor is.
+    let hints_at: Vec<usize> = inlay_hint_widths_for_line(app, app.cursor.line);
     let mut visual = 0usize;
     for (i, c) in line.chars().enumerate() {
+        // Hints anchored at col `i` render *before* char `i`, so add
+        // their width as we cross the boundary.
+        if let Some(w) = hints_at.get(i) {
+            visual += *w;
+        }
         if i >= app.cursor.col {
             break;
         }
@@ -2702,4 +2714,22 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     let col = (gutter + on_screen) as u16;
     queue!(out, MoveTo(col, row))?;
     Ok(())
+}
+
+/// Per-buffer-col total inlay-hint label width on `line`. Index `i`
+/// holds the total cell width of every hint anchored at buffer col `i`
+/// (hints render *before* the char at that col, so the cursor's visual
+/// position needs to skip over them). Length is `line_len + 1` so hints
+/// anchored at end-of-line are included.
+pub(crate) fn inlay_hint_widths_for_line(app: &App, line: usize) -> Vec<usize> {
+    let line_len = app.buffer.line_len(line);
+    let mut out = vec![0usize; line_len + 1];
+    let Some(path) = app.buffer.path.as_ref() else { return out };
+    let Some(hints) = app.inlay_hints.get(path) else { return out };
+    for h in hints {
+        if h.line == line && h.col <= line_len {
+            out[h.col] = out[h.col].saturating_add(h.label.chars().count());
+        }
+    }
+    out
 }
