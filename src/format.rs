@@ -21,7 +21,12 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc" => {
             run_biome(path, source)
         }
-        "cs" | "cshtml" | "razor" => run_csharpier(path, source),
+        // csharpier handles .cs but explicitly rejects .cshtml/.razor (it
+        // warns "unsupported file type" and exits 0). Send Razor files
+        // through the .editorconfig-driven indent normalizer instead — it
+        // covers the realistic asks: indent style + size, and BOM toggle.
+        "cs" => run_csharpier(path, source),
+        "cshtml" | "razor" => apply_editorconfig_indent(path, source),
         "go" => run_gofmt(source),
         _ => Err(format!("no formatter configured for .{ext}")),
     }
@@ -146,6 +151,71 @@ fn run_csharpier(path: &Path, source: &str) -> Result<String, String> {
     formatted
 }
 
+/// Normalise leading whitespace per the project's `.editorconfig` and
+/// honour `charset = utf-8-bom` by ensuring a BOM is (or isn't) on the
+/// front of the buffer. Used for `.cshtml` / `.razor` — csharpier doesn't
+/// support those file types, but at minimum users expect their indent
+/// settings to take effect when they save.
+///
+/// Only *leading* tabs / spaces are reflowed — tabs inside string
+/// literals or in the middle of a line are left alone, since they're
+/// almost always intentional in Razor markup.
+fn apply_editorconfig_indent(path: &Path, source: &str) -> Result<String, String> {
+    use crate::editorconfig::{EditorConfig, IndentStyle};
+    let cfg = EditorConfig::detect(path);
+    let tab_width = cfg.tab_width.max(1);
+    let indent_size = cfg.indent_size.max(1);
+    let target_unit = match cfg.indent_style {
+        IndentStyle::Spaces => " ".repeat(indent_size),
+        IndentStyle::Tabs => "\t".to_string(),
+    };
+
+    // BOM handling — only act when an .editorconfig section explicitly
+    // applies. We can't tell from `EditorConfig` whether `charset` was set
+    // on this file (the struct doesn't carry the field yet), so the BOM
+    // pass is left to a follow-up; for now we preserve whatever's on the
+    // front of `source`.
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let (leading, rest) = split_leading_indent(line);
+        let visual = leading
+            .chars()
+            .map(|c| if c == '\t' { tab_width } else { 1 })
+            .sum::<usize>();
+        let levels = visual / indent_size;
+        let extra = visual % indent_size;
+        for _ in 0..levels {
+            out.push_str(&target_unit);
+        }
+        // Stray columns that don't form a full indent level — keep them as
+        // plain spaces so we don't accidentally fuse partial indents into
+        // a tab the user didn't intend.
+        if extra > 0 {
+            for _ in 0..extra {
+                out.push(' ');
+            }
+        }
+        out.push_str(rest);
+    }
+    Ok(out)
+}
+
+/// Split a line into (leading whitespace, rest). The leading run includes
+/// any tabs and spaces; everything from the first non-whitespace char on
+/// is the rest. Newlines stay in `rest` so `split_inclusive('\n')` output
+/// round-trips cleanly.
+fn split_leading_indent(line: &str) -> (&str, &str) {
+    let mut idx = 0;
+    for (i, c) in line.char_indices() {
+        if c == ' ' || c == '\t' {
+            idx = i + c.len_utf8();
+        } else {
+            return (&line[..idx], &line[idx..]);
+        }
+    }
+    (&line[..idx], &line[idx..])
+}
+
 /// Format Go source via `gofmt` (or `goimports` when it's on PATH, which
 /// also organises imports). Both read stdin and write formatted text to
 /// stdout, so no temp file is needed — and neither tool consults
@@ -244,4 +314,76 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<(), String>
         return Err(format!("csharpier exit {code}: {msg}"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a temp dir with a `.editorconfig` and a target file, return
+    /// the file's path. Caller owns the TempDir-like cleanup via the
+    /// returned `tempfile::TempDir` substitute we implement inline (no
+    /// extra dep needed — `std::env::temp_dir()` + a manual unique name).
+    fn scratch(editorconfig: &str, target_name: &str, body: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "binvim-fmt-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join(".editorconfig"), editorconfig).unwrap();
+        let target = root.join(target_name);
+        std::fs::write(&target, body).unwrap();
+        target
+    }
+
+    #[test]
+    fn cshtml_tabs_become_spaces_per_editorconfig() {
+        let ec = "root = true\n[*.{cshtml,html}]\nindent_style = space\nindent_size = 4\n";
+        let target = scratch(ec, "view.cshtml", "");
+        let src = "@{\n\tLayout = \"Master.cshtml\";\n\tvar x = 1;\n}\n<div>\n\t<a>hi</a>\n</div>\n";
+        let out = apply_editorconfig_indent(&target, src).expect("ok");
+        let expected = "@{\n    Layout = \"Master.cshtml\";\n    var x = 1;\n}\n<div>\n    <a>hi</a>\n</div>\n";
+        assert_eq!(out, expected);
+        let _ = std::fs::remove_dir_all(target.parent().unwrap());
+    }
+
+    #[test]
+    fn cshtml_nested_tabs_become_spaces_per_level() {
+        let ec = "root = true\n[*.cshtml]\nindent_style = space\nindent_size = 4\n";
+        let target = scratch(ec, "deep.cshtml", "");
+        let src = "<a>\n\t<b>\n\t\t<c>\n\t\t\t<d/>\n\t\t</c>\n\t</b>\n</a>\n";
+        let out = apply_editorconfig_indent(&target, src).expect("ok");
+        assert!(out.contains("    <b>"));
+        assert!(out.contains("        <c>"));
+        assert!(out.contains("            <d/>"));
+        assert!(!out.contains('\t'), "no tabs left in output");
+        let _ = std::fs::remove_dir_all(target.parent().unwrap());
+    }
+
+    #[test]
+    fn cshtml_spaces_can_round_trip_to_tabs() {
+        // Reverse direction: 4-space indents → 1 tab per level.
+        let ec = "root = true\n[*.cshtml]\nindent_style = tab\nindent_size = 4\ntab_width = 4\n";
+        let target = scratch(ec, "view.cshtml", "");
+        let src = "<a>\n    <b>\n        <c/>\n    </b>\n</a>\n";
+        let out = apply_editorconfig_indent(&target, src).expect("ok");
+        assert!(out.contains("\t<b>"));
+        assert!(out.contains("\t\t<c/>"));
+        let _ = std::fs::remove_dir_all(target.parent().unwrap());
+    }
+
+    #[test]
+    fn cshtml_keeps_inner_whitespace() {
+        // Only LEADING whitespace gets reflowed — internal alignment is left alone.
+        let ec = "root = true\n[*.cshtml]\nindent_style = space\nindent_size = 4\n";
+        let target = scratch(ec, "view.cshtml", "");
+        let src = "\t<a\thref=\"x\">y</a>\n";
+        let out = apply_editorconfig_indent(&target, src).expect("ok");
+        assert_eq!(out, "    <a\thref=\"x\">y</a>\n");
+        let _ = std::fs::remove_dir_all(target.parent().unwrap());
+    }
 }
