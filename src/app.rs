@@ -311,6 +311,15 @@ impl App {
                 }
                 None => Duration::from_millis(100),
             };
+            // Active debug session — DAP stepping / breakpoint hits
+            // cascade 4-5 request/response round-trips per user action
+            // (stopped → threads → stackTrace → scopes → variables), and
+            // each round-trip waits for the next poll wake-up to drain
+            // the reader channel. Tightening the budget here turns
+            // stepping from "noticeably slow" into "instant".
+            if self.dap.is_active() {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
             // A live yank flash needs us to wake up at its deadline so the
             // highlight clears on time.
             if let Some(h) = self.yank_highlight.as_ref() {
