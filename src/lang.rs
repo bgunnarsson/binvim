@@ -288,6 +288,7 @@ const RAZOR_OVERLAY_QUERY: &str = r#"
 ; them in a regex post-pass instead. Painting the brackets here gives
 ; the structural cue even before that pass runs.
 (element "<" @punctuation.bracket)
+(element "</" @punctuation.bracket)
 (element ">" @punctuation.bracket)
 (element "/>" @punctuation.bracket)
 (element "=" @operator)
