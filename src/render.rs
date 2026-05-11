@@ -1076,8 +1076,11 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
                     | crate::picker::PickerKind::Grep
                     | crate::picker::PickerKind::References,
             );
+            // Matched-char positions are stored per-filtered-row alongside
+            // the indices into items — empty when the picker has no query.
+            let positions = picker.match_positions.get(pos).map(|v| v.as_slice()).unwrap_or(&[]);
             written = paint_picker_row(
-                out, display, body_w, selected, path_fg, name_fg, dim_fg, show_icon,
+                out, display, body_w, selected, path_fg, name_fg, dim_fg, show_icon, positions,
             )?;
         }
         if written < body_w {
@@ -1196,6 +1199,7 @@ fn paint_picker_row(
     name_fg: Color,
     dim_fg: Color,
     show_icon: bool,
+    matched: &[usize],
 ) -> Result<usize> {
     if max_w == 0 {
         return Ok(0);
@@ -1204,10 +1208,8 @@ fn paint_picker_row(
     // peel the trailing `:LN…` so it doesn't break path detection or
     // get mistaken for part of the filename.
     let (display_path, suffix) = split_grep_location(display);
-    let (dir_part, name_part) = match display_path.rfind('/') {
-        Some(i) => (&display_path[..=i], &display_path[i + 1..]),
-        None => ("", display_path),
-    };
+    let dir_end = display_path.rfind('/').map(|i| i + 1).unwrap_or(0);
+    let (dir_part, name_part) = display_path.split_at(dir_end);
 
     // Resolve a file-type icon from the basename — Nerd Font glyphs per
     // detected Lang, with a generic document fallback. Two columns wide
@@ -1232,13 +1234,21 @@ fn paint_picker_row(
     let suffix_len = suffix_chars.len();
     let path_budget = body_w.saturating_sub(suffix_len);
     let total = dir_chars.len() + name_chars.len();
+    let dir_skip;
+    let name_skip;
     let (dir_slice, name_slice) = if total <= path_budget {
+        dir_skip = 0;
+        name_skip = 0;
         (dir_chars.as_slice(), name_chars.as_slice())
     } else if name_chars.len() >= path_budget {
-        let n = &name_chars[name_chars.len() - path_budget..];
+        dir_skip = dir_chars.len();
+        name_skip = name_chars.len() - path_budget;
+        let n = &name_chars[name_skip..];
         (&[][..], n)
     } else {
         let drop = total - path_budget;
+        dir_skip = drop;
+        name_skip = 0;
         let d = &dir_chars[drop..];
         (d, name_chars.as_slice())
     };
@@ -1246,6 +1256,7 @@ fn paint_picker_row(
     let _ = dim_fg;
     let dir_color = if selected { name_fg } else { path_fg };
     let name_color = name_fg;
+    let highlight = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }; // Yellow
     if let Some(ch) = icon {
         queue!(
             out,
@@ -1254,22 +1265,82 @@ fn paint_picker_row(
             Print(' '),
         )?;
     }
-    let dir_str: String = dir_slice.iter().collect();
-    let name_str: String = name_slice.iter().collect();
-    queue!(out, SetForegroundColor(dir_color), Print(&dir_str))?;
-    queue!(out, SetForegroundColor(name_color), Print(&name_str))?;
+    // `matched` indexes the FULL display string (no suffix split). The
+    // dir part is [0..dir_chars.len()), the name part is
+    // [dir_chars.len()..dir_chars.len()+name_chars.len()). After
+    // truncation we apply the slice's own skip so the right chars get
+    // highlighted.
+    let dir_total_offset = 0usize;
+    let name_total_offset = dir_chars.len();
+    paint_chars(
+        out,
+        dir_slice,
+        dir_color,
+        highlight,
+        matched,
+        dir_total_offset + dir_skip,
+    )?;
+    paint_chars(
+        out,
+        name_slice,
+        name_color,
+        highlight,
+        matched,
+        name_total_offset + name_skip,
+    )?;
     let mut written = icon_w + dir_slice.len() + name_slice.len();
     if !suffix.is_empty() && written < max_w {
         let room = max_w - written;
-        let suffix_str: String = if suffix_chars.len() <= room {
-            suffix_chars.iter().collect()
+        let suffix_slice: &[char] = if suffix_chars.len() <= room {
+            &suffix_chars
         } else {
-            suffix_chars[..room].iter().collect()
+            &suffix_chars[..room]
         };
-        queue!(out, SetForegroundColor(path_fg), Print(&suffix_str))?;
-        written += suffix_chars.len().min(room);
+        let suffix_offset = display_path.chars().count();
+        paint_chars(out, suffix_slice, path_fg, highlight, matched, suffix_offset)?;
+        written += suffix_slice.len();
     }
     Ok(written)
+}
+
+/// Paint `slice` one char at a time, switching to `highlight_color` for
+/// chars whose absolute display-string index sits in `matched`. Reset
+/// foreground per char to keep colour leaks contained.
+fn paint_chars(
+    out: &mut impl Write,
+    slice: &[char],
+    base_color: Color,
+    highlight_color: Color,
+    matched: &[usize],
+    abs_start: usize,
+) -> Result<()> {
+    if matched.is_empty() {
+        let s: String = slice.iter().collect();
+        queue!(out, SetForegroundColor(base_color), Print(&s))?;
+        return Ok(());
+    }
+    let mut prev_highlighted = false;
+    queue!(out, SetForegroundColor(base_color))?;
+    for (i, ch) in slice.iter().enumerate() {
+        let highlighted = matched.binary_search(&(abs_start + i)).is_ok();
+        if highlighted != prev_highlighted {
+            queue!(
+                out,
+                SetForegroundColor(if highlighted { highlight_color } else { base_color }),
+            )?;
+            if highlighted {
+                queue!(out, SetAttribute(Attribute::Bold))?;
+            } else {
+                queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            }
+            prev_highlighted = highlighted;
+        }
+        queue!(out, Print(ch))?;
+    }
+    if prev_highlighted {
+        queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+    }
+    Ok(())
 }
 
 /// Peel off a trailing `:LINE:COL:…` (grep) or `:LINE` (references)

@@ -25,6 +25,10 @@ pub struct PickerState {
     pub input: String,
     /// Indices into `items`, sorted by descending score.
     pub filtered: Vec<usize>,
+    /// Per-`filtered` row, the *char* indices in `items[filtered[i]]` that
+    /// matched the query. Used to bold-highlight matched chars in the
+    /// picker UI. Empty when `input` is empty.
+    pub match_positions: Vec<Vec<usize>>,
     pub selected: usize,
 }
 
@@ -50,6 +54,7 @@ impl PickerState {
             payloads,
             input: String::new(),
             filtered,
+            match_positions: Vec::new(),
             selected: 0,
         }
     }
@@ -57,15 +62,19 @@ impl PickerState {
     pub fn refilter(&mut self) {
         if self.input.is_empty() {
             self.filtered = (0..self.items.len()).collect();
+            self.match_positions.clear();
         } else {
-            let mut scored: Vec<(usize, i64)> = self
+            let mut scored: Vec<(usize, i64, Vec<usize>)> = self
                 .items
                 .iter()
                 .enumerate()
-                .filter_map(|(i, item)| fuzzy_match(&self.input, item).map(|s| (i, s)))
+                .filter_map(|(i, item)| {
+                    fuzzy_match(&self.input, item).map(|(s, p)| (i, s, p))
+                })
                 .collect();
             scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-            self.filtered = scored.into_iter().map(|(i, _)| i).collect();
+            self.match_positions = scored.iter().map(|(_, _, p)| p.clone()).collect();
+            self.filtered = scored.into_iter().map(|(i, _, _)| i).collect();
         }
         self.selected = 0;
     }
@@ -101,10 +110,12 @@ impl PickerState {
 }
 
 /// Subsequence fuzzy match. Bonuses for consecutive runs and word-boundary hits.
-/// Returns `None` if not all query chars appear in order.
-fn fuzzy_match(query: &str, item: &str) -> Option<i64> {
+/// Returns `None` if not all query chars appear in order. Returns
+/// `Some((score, positions))` where `positions` is the char indices in
+/// `item` where query chars matched — the renderer bolds those.
+fn fuzzy_match(query: &str, item: &str) -> Option<(i64, Vec<usize>)> {
     if query.is_empty() {
-        return Some(0);
+        return Some((0, Vec::new()));
     }
     let q: Vec<char> = query.to_lowercase().chars().collect();
     let item_lower = item.to_lowercase();
@@ -112,6 +123,7 @@ fn fuzzy_match(query: &str, item: &str) -> Option<i64> {
     let mut qi = 0;
     let mut score: i64 = 0;
     let mut last_idx: i64 = -2;
+    let mut positions = Vec::with_capacity(q.len());
     for (idx, c) in i_chars.iter().enumerate() {
         if qi < q.len() && *c == q[qi] {
             // Bonuses
@@ -128,12 +140,13 @@ fn fuzzy_match(query: &str, item: &str) -> Option<i64> {
             }
             score += 1; // base hit
             last_idx = idx as i64;
+            positions.push(idx);
             qi += 1;
         }
     }
     if qi == q.len() {
         // Length penalty so shorter matches rank higher.
-        Some(score - (i_chars.len() as i64 / 8))
+        Some((score - (i_chars.len() as i64 / 8), positions))
     } else {
         None
     }
@@ -146,6 +159,7 @@ pub fn replace_items(picker: &mut PickerState, items: Vec<(String, PickerPayload
     picker.items = display;
     picker.payloads = payloads;
     picker.filtered = (0..picker.items.len()).collect();
+    picker.match_positions.clear();
     picker.selected = 0;
 }
 
