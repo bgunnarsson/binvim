@@ -10,6 +10,7 @@ mod cursor;
 mod dap;
 mod editorconfig;
 mod format;
+mod git;
 mod lang;
 mod lsp;
 mod mode;

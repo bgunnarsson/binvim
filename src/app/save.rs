@@ -75,6 +75,10 @@ impl super::App {
             self.ensure_final_newline();
         }
         self.buffer.save()?;
+        // Refresh git stripe after a successful write — the index hasn't
+        // moved but the working tree just did, so hunks may have grown,
+        // shrunk, or disappeared entirely.
+        self.refresh_git_hunks();
         // Persist undo so the next session can keep walking history.
         if let Some(path) = self.buffer.path.as_deref() {
             if let Some(cache) = crate::undo::cache_path_for(path) {
@@ -137,6 +141,17 @@ impl super::App {
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
         self.git_branch = detect_git_branch(&start);
+    }
+
+    /// Recompute the active buffer's working-tree diff against the index
+    /// and refresh `self.git_hunks`. Cheap on small files (single
+    /// `git diff -U0` invocation, parsed locally). No-op when the buffer
+    /// has no on-disk path or isn't inside a git repo.
+    pub(super) fn refresh_git_hunks(&mut self) {
+        self.git_hunks = match self.buffer.path.as_ref() {
+            Some(p) => crate::git::diff_against_worktree(p).unwrap_or_default(),
+            None => Vec::new(),
+        };
     }
 }
 

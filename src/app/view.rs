@@ -310,8 +310,18 @@ impl super::App {
     pub fn gutter_width(&self) -> usize {
         let n = self.buffer.line_count();
         let digits = format!("{n}").len();
-        // 1 sign column + digits + 1 trailing space.
-        digits + 2
+        // 1 git-stripe column + 1 sign column + digits + 1 trailing space.
+        digits + 3
+    }
+
+    /// Hunk kind covering `line` (0-indexed), if any. Linear scan over the
+    /// active buffer's `git_hunks` — typical hunk counts are well under
+    /// 100, and we call this per-visible-row at render time only.
+    pub fn git_hunk_kind_at(&self, line: usize) -> Option<crate::git::GitHunkKind> {
+        self.git_hunks
+            .iter()
+            .find(|h| line >= h.start_line && line <= h.end_line)
+            .map(|h| h.kind)
     }
 
     /// Recompute fold ranges if the buffer's version moved past the

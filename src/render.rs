@@ -1658,6 +1658,36 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
         // from the previous row's render leaking onto this one.
         queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
         if line_idx < total_lines {
+            // Git stripe — leftmost gutter column. Mirrors gitsigns /
+            // GitGutter conventions: a coloured vertical block for
+            // added (Green) / modified (Yellow) / a horizontal block
+            // for deleted (Red). Empty when the line is unchanged or
+            // the buffer isn't tracked by git.
+            let git_kind = app.git_hunk_kind_at(line_idx);
+            if let Some(kind) = git_kind {
+                let (glyph, color) = match kind {
+                    crate::git::GitHunkKind::Added => (
+                        '▎',
+                        Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
+                    ),
+                    crate::git::GitHunkKind::Modified => (
+                        '▎',
+                        Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
+                    ),
+                    crate::git::GitHunkKind::Deleted => (
+                        '▁',
+                        Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
+                    ),
+                };
+                queue!(
+                    out,
+                    SetForegroundColor(color),
+                    Print(glyph.to_string()),
+                    ResetColor
+                )?;
+            } else {
+                queue!(out, Print(" "))?;
+            }
             // Sign column priority: stopped-at marker > user breakpoint >
             // worst LSP diagnostic. The debug marks are user-actionable
             // ground truth and should win when they collide.
@@ -1704,7 +1734,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
                     app.cursor.line - line_idx
                 };
                 (
-                    format!("{:>width$} ", dist, width = gutter - 2),
+                    format!("{:>width$} ", dist, width = gutter - 3),
                     Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }, // Overlay0
                 )
             } else {
@@ -1712,7 +1742,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
                 // mode → 1-indexed absolute line number.
                 let bright = app.config.line_numbers.relative;
                 (
-                    format!("{:>width$} ", line_idx + 1, width = gutter - 2),
+                    format!("{:>width$} ", line_idx + 1, width = gutter - 3),
                     if bright {
                         Color::Rgb { r: 0xba, g: 0xc2, b: 0xde } // Subtext1
                     } else {

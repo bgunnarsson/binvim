@@ -7,6 +7,14 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Git gutter (stage 1 of git integration).** A coloured stripe at the
+  leftmost gutter column shows working-tree changes against the index:
+  Green `▎` for added lines, Yellow `▎` for modified lines, Red `▁` for
+  deletions (painted on the line that now sits at the deletion point).
+  Hunks are refreshed on save, on buffer switch, and on initial open.
+  Implementation shells out to `git diff --no-color --unified=0` and
+  parses the hunk headers; no libgit2 dependency. Gutter widens by one
+  column to make room (`digits + 3`).
 - **Word-aware drag after double-click.** Double-click a word to select
   it, then drag forward or backward to extend the visual selection
   word-by-word. The anchor pins to the side of the original word

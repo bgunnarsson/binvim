@@ -32,6 +32,7 @@ impl super::App {
             folds: std::mem::take(&mut self.folds),
             folds_version: std::mem::replace(&mut self.folds_version, u64::MAX),
             closed_folds: std::mem::take(&mut self.closed_folds),
+            git_hunks: std::mem::take(&mut self.git_hunks),
         }
     }
 
@@ -49,6 +50,7 @@ impl super::App {
         self.folds = stash.folds;
         self.folds_version = stash.folds_version;
         self.closed_folds = stash.closed_folds;
+        self.git_hunks = stash.git_hunks;
     }
 
     pub(super) fn switch_to(&mut self, idx: usize) -> Result<()> {
@@ -104,6 +106,7 @@ impl super::App {
         self.switch_to(new_idx)?;
         self.lsp_attach_active();
         self.refresh_git_branch();
+        self.refresh_git_hunks();
         self.refresh_editorconfig();
         self.show_start_page = false;
         self.touch_recent();

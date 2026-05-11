@@ -121,6 +121,10 @@ pub struct App {
     pub whichkey: Option<WhichKeyState>,
     pub leader_pressed_at: Option<Instant>,
     pub git_branch: Option<String>,
+    /// Working-tree diff against the index for the active buffer, parsed
+    /// into per-line hunk markers. Painted as a coloured stripe at column
+    /// 0 of the gutter. Refreshed on save, buffer switch, and `:Gdiff`.
+    pub git_hunks: Vec<crate::git::GitHunk>,
     /// True when binvim was launched with no path — render the start page in
     /// place of the empty buffer until the user opens something.
     pub show_start_page: bool,
@@ -272,6 +276,7 @@ impl App {
             git_branch: save::detect_git_branch(
                 &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             ),
+            git_hunks: Vec::new(),
             show_start_page,
             debug_pane_open: false,
             dap_pane_cursor: 0,
@@ -313,6 +318,7 @@ impl App {
         let mut stdout = io::stdout();
         self.lsp_attach_active();
         self.refresh_editorconfig();
+        self.refresh_git_hunks();
         let mut needs_render = true;
         while !self.should_quit {
             if needs_render {

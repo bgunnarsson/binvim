@@ -52,6 +52,10 @@ pub struct BufferStash {
     /// switch doesn't leave the previous file's byte-color array pointing at
     /// the new file's contents (which would render as scrambled colours).
     pub highlight_cache: Option<HighlightCache>,
+    /// Working-tree diff against the index, parsed into per-line hunk
+    /// markers. Refreshed on save, buffer switch, and explicit `:Gdiff`.
+    /// Drives the git stripe painted in the gutter.
+    pub git_hunks: Vec<crate::git::GitHunk>,
 }
 
 #[derive(Debug, Clone)]
