@@ -2107,7 +2107,17 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let mut left_rows: Vec<LeftRow> = Vec::new();
     if let Some(session) = app.dap.session.as_ref() {
         if session.frames.is_empty() {
-            left_rows.push(LeftRow::Note("(no frames — running)"));
+            // Tag the empty-frames note with the actual state so a
+            // stopped-but-no-frames situation reads as a problem to
+            // diagnose instead of looking identical to "still running".
+            let note = match session.state {
+                crate::dap::SessionState::Stopped { .. } => "(stopped — waiting for stackTrace)",
+                crate::dap::SessionState::Running => "(running — no frames)",
+                crate::dap::SessionState::Initializing => "(initialising)",
+                crate::dap::SessionState::Configuring => "(configuring)",
+                crate::dap::SessionState::Terminated => "(terminated)",
+            };
+            left_rows.push(LeftRow::Note(note));
         }
         for f in &session.frames {
             let loc = f

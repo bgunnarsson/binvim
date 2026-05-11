@@ -408,6 +408,27 @@ impl DapManager {
             "stackTrace" => {
                 let frames = parse_stack_frames(&body);
                 let top_id = frames.first().map(|f| f.id);
+                if frames.is_empty() {
+                    // Some adapters require `threads` first before
+                    // they'll fill out stackTrace; some return empty
+                    // when called with a stale thread id. Surface
+                    // either case so the user sees something in the
+                    // pane instead of an indefinite "(no frames)".
+                    let total = body.get("totalFrames").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let line = OutputLine {
+                        category: "console".into(),
+                        output: format!(
+                            "stackTrace returned 0 frames (totalFrames={}) — adapter may need a threads request first",
+                            total
+                        ),
+                    };
+                    self.output_buffer.push(line.clone());
+                    if self.output_buffer.len() > OUTPUT_LOG_CAP {
+                        let excess = self.output_buffer.len() - OUTPUT_LOG_CAP;
+                        self.output_buffer.drain(0..excess);
+                    }
+                    events.push(DapEvent::Output(line));
+                }
                 if let Some(s) = self.session.as_mut() {
                     s.frames = frames;
                 }
@@ -484,12 +505,20 @@ impl DapManager {
                     s.current_thread = Some(thread_id);
                     s.status_line = format!("stopped — {}", reason);
                 }
-                // Kick off a stackTrace request so the pane has frames to
-                // show as soon as the user reads the "stopped" status.
+                // Ask for the live thread list and the top frame's stack
+                // back-to-back. netcoredbg in particular needs the
+                // `threads` round-trip before it'll produce a populated
+                // stackTrace for the just-stopped thread; without it,
+                // the response comes back with `stackFrames: []` and the
+                // pane stays empty even though execution paused.
                 if let Some(session) = self.session.as_ref() {
-                    let seq = session.client.alloc_seq();
+                    let threads_seq = session.client.alloc_seq();
+                    let _ = session
+                        .client
+                        .send_request(threads_seq, "threads", json!({}));
+                    let stack_seq = session.client.alloc_seq();
                     let _ = session.client.send_request(
-                        seq,
+                        stack_seq,
                         "stackTrace",
                         json!({
                             "threadId": thread_id,
