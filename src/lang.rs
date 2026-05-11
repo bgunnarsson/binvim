@@ -499,6 +499,25 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
+    /// Find the byte offset of a whole-word occurrence of `word` in
+    /// `source` — bounded by non-identifier chars on both sides so
+    /// `if (organization` doesn't accidentally match `notify`.
+    fn find_word(source: &str, word: &str) -> Option<usize> {
+        let is_id = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+        let bytes = source.as_bytes();
+        let mut start = 0;
+        while let Some(off) = source[start..].find(word) {
+            let i = start + off;
+            let left_ok = i == 0 || !is_id(bytes[i - 1]);
+            let right_ok = i + word.len() >= bytes.len() || !is_id(bytes[i + word.len()]);
+            if left_ok && right_ok {
+                return Some(i);
+            }
+            start = i + word.len();
+        }
+        None
+    }
+
     #[test]
     fn razor_detects_cshtml() {
         assert_eq!(
@@ -596,15 +615,20 @@ mod tests {
         );
 
         // `else` inside @if/else body — bare token, no parent node.
-        let else_idx = source.find("\n\telse\n").unwrap() + 2;
+        // The repo's indentation can be either tabs or spaces depending on
+        // whether the user's editorconfig has re-indented since the last
+        // save, so search for the `else` keyword by content rather than
+        // matching a specific leading-whitespace run.
+        let else_idx = find_word(&source, "else").expect("else keyword");
         assert_eq!(
             cache.byte_colors.get(else_idx).copied().flatten(),
             Some(mauve),
             "Razor `else` should pick up keyword Mauve via the byte-level fallback",
         );
 
-        // C# `if` inside the else body.
-        let if_idx = source.find("\t\tif (organization").unwrap() + 2;
+        // C# `if` inside the else body — find the `if (organization` site
+        // specifically so we don't pick up the @if at the top.
+        let if_idx = source.find("if (organization").expect("if (organization");
         assert_eq!(
             cache.byte_colors.get(if_idx).copied().flatten(),
             Some(mauve),

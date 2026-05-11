@@ -21,12 +21,18 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc" => {
             run_biome(path, source)
         }
-        // csharpier handles .cs but explicitly rejects .cshtml/.razor (it
-        // warns "unsupported file type" and exits 0). Send Razor files
-        // through the .editorconfig-driven indent normalizer instead — it
-        // covers the realistic asks: indent style + size, and BOM toggle.
-        "cs" => run_csharpier(path, source),
-        "cshtml" | "razor" => apply_editorconfig_indent(path, source),
+        // csharpier handles .cs cleanly. For .cshtml / .razor csharpier 1.x
+        // says "Is an unsupported file type" and exits 0 — try it anyway
+        // (a future csharpier may add Razor support), then fall back to the
+        // .editorconfig-driven indent reflow if it punted.
+        "cs" => match run_csharpier(path, source)? {
+            Some(formatted) => Ok(formatted),
+            None => Ok(source.to_string()),
+        },
+        "cshtml" | "razor" => match run_csharpier(path, source)? {
+            Some(formatted) => Ok(formatted),
+            None => apply_editorconfig_indent(path, source),
+        },
         "go" => run_gofmt(source),
         _ => Err(format!("no formatter configured for .{ext}")),
     }
@@ -125,7 +131,15 @@ fn find_csharpier() -> Option<PathBuf> {
 /// edits the file in place), read the result back, then unlink. The temp
 /// file name uses a `.binvim-format` infix so it's obvious in directory
 /// listings if a crash ever leaves one behind.
-fn run_csharpier(path: &Path, source: &str) -> Result<String, String> {
+/// Returns:
+/// - `Ok(Some(text))` — csharpier formatted the file; here's the result
+/// - `Ok(None)` — csharpier ran but didn't recognise this file type
+///   (it prints `Warning … - Is an unsupported file type.` and exits 0
+///   for .cshtml / .razor in 1.x). Lets the caller fall back to a
+///   different formatter.
+/// - `Err(msg)` — a real failure: csharpier missing, parse error,
+///   non-zero exit, etc.
+fn run_csharpier(path: &Path, source: &str) -> Result<Option<String>, String> {
     let csharpier = find_csharpier().ok_or_else(|| {
         "csharpier not found — install with `dotnet tool install -g csharpier`".to_string()
     })?;
@@ -141,14 +155,20 @@ fn run_csharpier(path: &Path, source: &str) -> Result<String, String> {
     ));
     std::fs::write(&temp, source).map_err(|e| format!("write temp: {e}"))?;
     let result = csharpier_format_inplace(&csharpier, &temp);
-    let formatted = match &result {
-        Ok(()) => std::fs::read_to_string(&temp).map_err(|e| format!("read temp: {e}")),
+    let outcome = match &result {
+        Ok(CsharpierOutcome::Formatted) => std::fs::read_to_string(&temp)
+            .map(Some)
+            .map_err(|e| format!("read temp: {e}")),
+        Ok(CsharpierOutcome::Unsupported) => Ok(None),
         Err(e) => Err(e.clone()),
     };
-    // Best-effort cleanup — leaving the temp around isn't fatal, but
-    // there's no reason to keep it once we have the bytes.
     let _ = std::fs::remove_file(&temp);
-    formatted
+    outcome
+}
+
+enum CsharpierOutcome {
+    Formatted,
+    Unsupported,
 }
 
 /// Normalise leading whitespace per the project's `.editorconfig` and
@@ -283,7 +303,7 @@ fn find_on_path(name: &str) -> Option<PathBuf> {
     None
 }
 
-fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<(), String> {
+fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOutcome, String> {
     let mut child = Command::new(csharpier)
         .arg("format")
         .arg("--no-cache")
@@ -293,6 +313,10 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<(), String>
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn csharpier: {e}"))?;
+    let mut stdout_buf = String::new();
+    if let Some(mut s) = child.stdout.take() {
+        let _ = s.read_to_string(&mut stdout_buf);
+    }
     let mut stderr_buf = String::new();
     if let Some(mut s) = child.stderr.take() {
         let _ = s.read_to_string(&mut stderr_buf);
@@ -301,6 +325,7 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<(), String>
     if !status.success() {
         let cleaned: Vec<String> = stderr_buf
             .lines()
+            .chain(stdout_buf.lines())
             .map(|l| l.trim().to_string())
             .filter(|l| !l.is_empty())
             .take(4)
@@ -313,7 +338,16 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<(), String>
         let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
         return Err(format!("csharpier exit {code}: {msg}"));
     }
-    Ok(())
+    // csharpier 1.x prints `Warning <path> - Is an unsupported file type.`
+    // and exits 0 when it doesn't recognise the file (everything besides
+    // .cs in this version). That's the only signal we get that the run
+    // was a no-op — forward it so the caller can pick a fallback path.
+    if stdout_buf.contains("Is an unsupported file type")
+        || stderr_buf.contains("Is an unsupported file type")
+    {
+        return Ok(CsharpierOutcome::Unsupported);
+    }
+    Ok(CsharpierOutcome::Formatted)
 }
 
 #[cfg(test)]
