@@ -61,6 +61,42 @@ fn visual_col_to_char_col(
     chars.min(line_len - 1)
 }
 
+/// Find the char column to delete back to for an Alt/Ctrl-Backspace on
+/// `line` from cursor column `col`. Matches the macOS Option-Delete
+/// convention: first eat any whitespace immediately before the cursor,
+/// then eat one contiguous run of word chars (alphanumeric + `_`) or one
+/// run of non-word, non-whitespace punctuation. Returns the column the
+/// cursor should land on after the delete (`0` for "back to line start").
+fn previous_word_boundary(buffer: &crate::buffer::Buffer, line: usize, col: usize) -> usize {
+    if col == 0 {
+        return 0;
+    }
+    let slice = buffer.rope.line(line);
+    let chars: Vec<char> = slice.chars().take_while(|c| *c != '\n').collect();
+    let mut i = col.min(chars.len());
+    // Step 1: skip trailing whitespace.
+    while i > 0 && chars[i - 1].is_whitespace() {
+        i -= 1;
+    }
+    if i == 0 {
+        return 0;
+    }
+    // Step 2: peel one homogeneous run — word chars OR punctuation.
+    let is_word_char = |c: char| c.is_alphanumeric() || c == '_';
+    let last_is_word = is_word_char(chars[i - 1]);
+    while i > 0 {
+        let c = chars[i - 1];
+        if c.is_whitespace() {
+            break;
+        }
+        if is_word_char(c) != last_is_word {
+            break;
+        }
+        i -= 1;
+    }
+    i
+}
+
 impl super::App {
     pub(super) fn handle_event(&mut self) -> anyhow::Result<()> {
         match crossterm::event::read()? {
@@ -523,8 +559,36 @@ impl super::App {
             KeyCode::Enter => self.handle_insert_newline(),
             KeyCode::Backspace => {
                 let popup_was_open = self.completion.is_some();
+                // macOS-convention modifier shortcuts:
+                //   Alt / Option + Backspace → delete previous word
+                //   Cmd / Super  + Backspace → delete to start of line
+                //   Ctrl + Backspace         → also delete previous word
+                //                              (terminal / Linux alias)
+                // Multi-cursor + a modifier falls back to plain mirror
+                // for v1; per-cursor word/line semantics would need more
+                // careful indexing and isn't urgent.
+                let mods = key.modifiers;
+                let word_back = mods.contains(KeyModifiers::ALT)
+                    || mods.contains(KeyModifiers::CONTROL);
+                let line_back = mods.contains(KeyModifiers::SUPER)
+                    || mods.contains(KeyModifiers::META);
                 if !self.additional_cursors.is_empty() {
                     self.mirror_backspace();
+                } else if line_back && self.cursor.col > 0 {
+                    let line_start = self.buffer.line_start_idx(self.cursor.line);
+                    let cursor_idx =
+                        self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                    self.buffer.delete_range(line_start, cursor_idx);
+                    self.cursor.col = 0;
+                    self.cursor.want_col = 0;
+                } else if word_back && self.cursor.col > 0 {
+                    let new_col = previous_word_boundary(&self.buffer, self.cursor.line, self.cursor.col);
+                    let line_start = self.buffer.line_start_idx(self.cursor.line);
+                    let cursor_idx = line_start + self.cursor.col;
+                    let to_idx = line_start + new_col;
+                    self.buffer.delete_range(to_idx, cursor_idx);
+                    self.cursor.col = new_col;
+                    self.cursor.want_col = new_col;
                 } else if self.cursor.col > 0 {
                     // If the cursor sits between an auto-inserted pair like {|},
                     // wipe out both characters in one stroke.
@@ -1186,5 +1250,44 @@ mod tests {
         let b = buf("\n");
         assert_eq!(visual_col_to_char_col(&b, 0, 0, 0), 0);
         assert_eq!(visual_col_to_char_col(&b, 0, 99, 0), 0);
+    }
+
+    #[test]
+    fn previous_word_eats_word_run() {
+        let b = buf("hello world\n");
+        // From end of "world" (col 11) → after the trailing word run is
+        // gone, the cursor lands at col 6 (just before "world").
+        assert_eq!(previous_word_boundary(&b, 0, 11), 6);
+    }
+
+    #[test]
+    fn previous_word_skips_trailing_whitespace_then_eats_word() {
+        let b = buf("hello    \n");
+        // From col 9 (after trailing spaces) → eat the spaces, then the
+        // word "hello", landing at col 0.
+        assert_eq!(previous_word_boundary(&b, 0, 9), 0);
+    }
+
+    #[test]
+    fn previous_word_peels_punctuation_separately() {
+        let b = buf("foo->bar\n");
+        // From end (col 8) → cursor is on a word char, eats "bar".
+        assert_eq!(previous_word_boundary(&b, 0, 8), 5);
+        // From col 5 (just after `->`) → cursor is on punctuation, eats
+        // the `->` run.
+        assert_eq!(previous_word_boundary(&b, 0, 5), 3);
+    }
+
+    #[test]
+    fn previous_word_at_line_start_is_a_noop() {
+        let b = buf("hello\n");
+        assert_eq!(previous_word_boundary(&b, 0, 0), 0);
+    }
+
+    #[test]
+    fn previous_word_with_only_whitespace_lands_at_zero() {
+        let b = buf("    \n");
+        // From col 4 (after all the spaces) → eat them, land at 0.
+        assert_eq!(previous_word_boundary(&b, 0, 4), 0);
     }
 }
