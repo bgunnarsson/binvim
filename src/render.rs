@@ -2694,13 +2694,19 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     let hints_at: Vec<usize> = inlay_hint_widths_for_line(app, app.cursor.line);
     let mut visual = 0usize;
     for (i, c) in line.chars().enumerate() {
-        // Hints anchored at col `i` render *before* char `i`, so add
-        // their width as we cross the boundary.
-        if let Some(w) = hints_at.get(i) {
-            visual += *w;
-        }
+        // Stop *before* adding the hint at col i — the cursor sits at
+        // buffer position N which means "between buffer chars N-1 and
+        // N". A hint anchored at col N renders between those same two
+        // chars, conceptually *after* the cursor (it annotates what's
+        // behind the cursor, e.g. `var view│: string` where `│` is
+        // the cursor and `: string` is a trailing type hint). Adding
+        // the col-N hint here would push the cursor past it visually
+        // and a backspace would feel like it ate from the next token.
         if i >= app.cursor.col {
             break;
+        }
+        if let Some(w) = hints_at.get(i) {
+            visual += *w;
         }
         if c == '\t' {
             visual += TAB_WIDTH;
