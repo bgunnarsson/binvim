@@ -62,6 +62,7 @@ pub fn diff_against_worktree(path: &Path) -> Option<Vec<GitHunk>> {
         .arg("diff")
         .arg("--no-color")
         .arg("--unified=0")
+        .arg("--diff-algorithm=histogram")
         .arg("--")
         .arg(rel)
         .output()
@@ -145,6 +146,7 @@ pub fn hunk_text_for_line(path: &Path, target_line: usize) -> Option<String> {
         .arg("diff")
         .arg("--no-color")
         .arg("--unified=3")
+        .arg("--diff-algorithm=histogram")
         .arg("--")
         .arg(rel)
         .output()
@@ -193,7 +195,12 @@ pub fn unidiff_zero_hunk_for_line(
     let root = find_repo_root(start)?;
     let rel = path.strip_prefix(&root).ok()?.to_path_buf();
     let mut cmd = Command::new("git");
-    cmd.arg("-C").arg(&root).arg("diff").arg("--no-color").arg("--unified=0");
+    cmd.arg("-C")
+        .arg(&root)
+        .arg("diff")
+        .arg("--no-color")
+        .arg("--unified=0")
+        .arg("--diff-algorithm=histogram");
     if cached {
         cmd.arg("--cached");
     }

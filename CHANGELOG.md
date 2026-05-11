@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Git gutter: stripe landed on the wrong block when adding a duplicate
+  alongside an existing one.** Adding a structurally-similar block (e.g.
+  a second `defineField({...})` next to an existing one) made the green
+  Added stripe paint on the *original* block instead of the new one.
+  This was Myers diff being clever — two equally-valid edit scripts
+  produce the same final file, and Myers tie-breaks toward the earlier
+  position. Switched all three `git diff` invocations to
+  `--diff-algorithm=histogram`, which anchors hunks on landmark lines
+  and lines up with what humans expect for additions like this.
+
 ### Added
 - **Git gutter (stage 1 of git integration).** A coloured stripe at the
   leftmost gutter column shows working-tree changes against the index:
