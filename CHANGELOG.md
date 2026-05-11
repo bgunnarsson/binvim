@@ -16,6 +16,13 @@ follows [Semantic Versioning](https://semver.org/).
   single tab rather than `[No Name] | foo.rs`.
 
 ### Fixed
+- **Pure-TypeScript syntax highlighting regression.** The JSX overlay
+  query referenced `jsx_*` node types that don't exist in
+  tree-sitter-typescript's pure-TS grammar (only TSX has them), so
+  `Query::new` errored out and the whole `.ts` highlight cache came
+  back empty — every token rendered as plain text. The overlay is now
+  only layered onto TSX and plain JS, leaving pure TS to its JS+TS
+  query stack as before.
 - **JSX / TSX tag highlighting.** Tree-sitter-javascript's bundled
   highlight query categorises every JSX element name as a generic
   identifier, leaving `<div>` / `<main>` / `<span>` indistinguishable

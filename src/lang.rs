@@ -92,14 +92,19 @@ impl Lang {
     fn highlights_query(self) -> String {
         match self {
             Lang::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY.into(),
-            // tree-sitter-typescript ships only a TS-specific overlay (5 captures).
-            // Combine with the tree-sitter-javascript query for full coverage,
-            // then append a JSX overlay so HTML-style tags (`<div>` etc.) get
-            // tagged as `@tag` and component-style tags (`<Foo>`) as
-            // `@constructor`. The bundled JS query categorises both as plain
-            // identifiers, which renders them indistinguishable from
-            // surrounding variables.
-            Lang::TypeScript | Lang::Tsx => format!(
+            // tree-sitter-typescript ships only a TS-specific overlay (5
+            // captures). Combine with the tree-sitter-javascript query for
+            // full coverage. *Pure* TypeScript's grammar has no JSX nodes,
+            // so the JSX overlay would fail `Query::new` and wipe the cache.
+            Lang::TypeScript => format!(
+                "{}\n{}",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
+            ),
+            // TSX + JS both have JSX nodes — layer the JSX overlay so HTML
+            // tags get `@tag` and component-style tags get `@constructor`
+            // instead of the bundled query's catch-all `@variable`.
+            Lang::Tsx => format!(
                 "{}\n{}\n{}",
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
