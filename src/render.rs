@@ -2142,7 +2142,24 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
             };
             left_rows.push(LeftRow::Note(note));
         }
-        for f in &session.frames {
+        // When locals are present, cap the frame list so the user-relevant
+        // top frames + the separator + at least a few locals all fit in
+        // the body. Deep ASP.NET / framework stacks otherwise eat the
+        // whole left column and locals disappear off-screen.
+        let frames_cap = if flat.is_empty() {
+            session.frames.len()
+        } else {
+            // Leave room for: separator (1) + at least 3 locals rows.
+            body_rows
+                .saturating_sub(4)
+                .min(session.frames.len())
+                .max(3)
+                .min(session.frames.len())
+        };
+        let visible_frames = frames_cap.min(session.frames.len());
+        let hidden = session.frames.len().saturating_sub(visible_frames);
+        let take = if hidden > 0 { visible_frames.saturating_sub(1) } else { visible_frames };
+        for f in session.frames.iter().take(take) {
             let loc = f
                 .source
                 .as_ref()
@@ -2151,6 +2168,12 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 .map(|n| format!("{}:{}", n, f.line))
                 .unwrap_or_else(|| format!("?:{}", f.line));
             left_rows.push(LeftRow::Frame(format!("{} — {}", loc, f.name)));
+        }
+        if hidden > 0 {
+            // Note row holds a hint that more frames exist — gives the
+            // user the count without us having to wire a scroll model.
+            let hidden_total = session.frames.len() - take;
+            left_rows.push(LeftRow::Frame(format!("    … +{} more frame(s)", hidden_total)));
         }
         if !flat.is_empty() {
             left_rows.push(LeftRow::Separator(" Locals "));
