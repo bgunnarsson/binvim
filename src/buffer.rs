@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use ropey::Rope;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufWriter, Read};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -41,11 +41,18 @@ impl Buffer {
 
     pub fn from_path(path: PathBuf) -> Result<Self> {
         if path.exists() {
-            let file = File::open(&path)
+            let mut file = File::open(&path)
                 .with_context(|| format!("opening {}", path.display()))?;
             let mtime = file.metadata().ok().and_then(|m| m.modified().ok());
-            let rope = Rope::from_reader(BufReader::new(file))
+            // Normalize CRLF → LF on load. ropey preserves bytes verbatim, so a
+            // stray `\r` left in a line would reach the renderer and reset the
+            // terminal cursor to column 0 — clobbering inline diagnostics and
+            // any subsequent same-row content.
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)
                 .with_context(|| format!("reading {}", path.display()))?;
+            let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+            let rope = Rope::from_str(&text);
             Ok(Self {
                 rope,
                 path: Some(path),

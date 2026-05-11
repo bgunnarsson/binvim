@@ -142,8 +142,10 @@ impl super::App {
             Some(prev) if disk_mtime <= prev => return,
             _ => {}
         }
-        // Reload.
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        // Reload. Normalize CRLF → LF (matches Buffer::from_path) so reloaded
+        // CRLF files don't leak `\r` chars into the rope.
+        let Ok(raw) = std::fs::read_to_string(&path) else { return };
+        let text = raw.replace("\r\n", "\n");
         let new_rope = Rope::from_str(&text);
         let total = self.buffer.total_chars();
         self.buffer.delete_range(0, total);

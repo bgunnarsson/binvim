@@ -1551,6 +1551,12 @@ fn draw_line_with_selection(
     if text.ends_with('\n') {
         text.pop();
     }
+    // Belt-and-suspenders: even though file load normalises CRLF, a stray `\r`
+    // could still arrive via paste or an LSP-applied edit. Printing it would
+    // reset the terminal cursor to column 0 and clobber the inline diagnostic.
+    if text.ends_with('\r') {
+        text.pop();
+    }
     let sel = app.line_selection(line_idx);
     let extra_sels = app.line_extra_selections(line_idx);
     let search_matches = app.line_search_matches(line_idx);
