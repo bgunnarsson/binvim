@@ -306,6 +306,23 @@ impl super::App {
     }
 
     fn dap_start_session(&mut self) {
+        // If a session is already alive (typically: paused on an
+        // unhandled exception or a stale breakpoint), tear it down
+        // first. Same effect as `<leader>dq` + `<leader>ds`, just
+        // collapsed into the single keystroke — common workflow when
+        // a transient first-run error (warm-up race, external service
+        // not ready, …) wants a quick retry.
+        //
+        // The blocking variant waits up to 1.5s for the previous
+        // adapter's debuggee to actually exit so its listening port is
+        // released before the new launch tries to bind it. Manual dq+ds
+        // worked because of the human pause between keystrokes; this
+        // reproduces that pause programmatically.
+        if self.dap.is_active() {
+            self.status_msg = "debug: stopping previous session…".into();
+            let _ =
+                self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
+        }
         // Start from the active buffer's directory when it's path-backed
         // (typical Normal-mode launch), otherwise the workspace cwd. Non-
         // .cs files are fine — adapter resolution walks up looking for a

@@ -241,6 +241,45 @@ impl DapManager {
         self.session = None;
     }
 
+    /// Stop the active session and poll the adapter's child until it
+    /// reaps, up to `max_wait`. Used by the auto-restart path in
+    /// `<leader>ds` so the previous `dotnet` debuggee has actually
+    /// released its listening port before a new netcoredbg spawns and
+    /// tries to bind the same port. Returns whether the child exited
+    /// within the budget — caller can fall through either way; this is
+    /// purely best-effort.
+    pub fn stop_session_blocking(&mut self, max_wait: std::time::Duration) -> bool {
+        // Pull the client out before clearing the session so we can keep
+        // polling it after `self.session = None`. The DAP protocol layer
+        // is done with it at this point — only the OS-level child handle
+        // is still useful.
+        let client = self.session.take().map(|s| s.client);
+        if let Some(client) = client {
+            let seq = client.alloc_seq();
+            let _ = client.send_request(
+                seq,
+                "disconnect",
+                json!({
+                    "restart": false,
+                    "terminateDebuggee": true,
+                }),
+            );
+            let start = std::time::Instant::now();
+            while start.elapsed() < max_wait {
+                if client.try_exit_status().is_some() {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            // Didn't exit in time — adapter is hung. Drop the client to
+            // close its stdin (some adapters take that as a hint to
+            // exit) and let it become a zombie on the user's machine
+            // rather than blocking the restart.
+            return false;
+        }
+        true
+    }
+
     /// One step / continue command targeted at the currently-stopped
     /// thread. Silently does nothing if the session isn't in a stopped
     /// state — the calling key/command handler decides whether to warn.
