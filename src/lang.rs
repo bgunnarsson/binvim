@@ -356,126 +356,138 @@ pub fn compute_byte_colors(lang: Lang, source: &str, config: &Config) -> Option<
         }
     }
     if lang == Lang::Razor {
-        apply_razor_html_overlay(&tree, source.as_bytes(), &mut colors, config);
+        apply_razor_overlay(source.as_bytes(), &mut colors, config);
     }
     Some(colors)
 }
 
-/// HTML tag and attribute names are produced by anonymous lexer rules in
-/// tree-sitter-razor (`_tag_name`, `_html_attribute_name`), so they don't
-/// appear as queryable nodes — only their surrounding `<`/`>`/`=` do.
-/// Walk the parsed tree, find each `element`, and colour the tag name (the
-/// run of `[A-Za-z0-9_:-]+` right after `<` or `</`) plus every attribute
-/// name (a run before `=`). Only paints over uncoloured bytes so any nested
-/// Razor expression already coloured by the main query stays put.
-fn apply_razor_html_overlay(
-    tree: &tree_sitter::Tree,
-    source: &[u8],
-    colors: &mut [Option<Color>],
-    config: &Config,
-) {
+/// Byte-level scan that fills in the colours tree-sitter-razor can't reach.
+/// The grammar uses anonymous lexer rules for `_tag_name` /
+/// `_html_attribute_name`, and on real-world Razor files (Tailwind brackets
+/// in `class` values, BOM headers, etc.) parse errors cascade and leave
+/// whole `<div>` openers as loose `<` / `=` / `>` tokens inside an ERROR
+/// node — no `element` wrapper to query against. A pure byte-level pass
+/// catches both cases uniformly, and only paints bytes the main query
+/// left uncoloured, so anything tree-sitter *did* reach keeps its colour.
+fn apply_razor_overlay(source: &[u8], colors: &mut [Option<Color>], config: &Config) {
     let tag_color = config.color_for_capture("tag");
     let attr_color = config.color_for_capture("attribute");
-    if tag_color.is_none() && attr_color.is_none() {
-        return;
-    }
-    let mut stack = vec![tree.root_node()];
-    while let Some(node) = stack.pop() {
-        if node.kind() == "element" {
-            colour_element_names(node, source, colors, tag_color, attr_color);
-            // Nested elements still need their own pass — keep walking.
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            stack.push(child);
-        }
-    }
-}
+    let kw_color = config.color_for_capture("keyword");
+    let str_color = config.color_for_capture("string");
 
-fn colour_element_names(
-    node: tree_sitter::Node,
-    source: &[u8],
-    colors: &mut [Option<Color>],
-    tag_color: Option<Color>,
-    attr_color: Option<Color>,
-) {
-    let start = node.start_byte();
-    let end = node.end_byte().min(source.len());
-    if end <= start {
-        return;
-    }
-    // Build the set of byte ranges that belong to direct child nodes — for
-    // an `element`, those are nested elements, Razor expressions, the
-    // `_end_tag` etc. We want to paint within `element`'s direct text only,
-    // skipping any descendant's bytes so we never overwrite C#/Razor colours.
-    let mut child_ranges: Vec<(usize, usize)> = Vec::new();
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        // The literal `<`/`>`/`/>`/`=` tokens are 1-2 bytes and contain no
-        // identifier we'd want to colour — keeping them in `child_ranges`
-        // would just create gaps in the scan, so allow them.
-        let kind = child.kind();
-        // `</` is the closing-tag opener — exclude it from the skip set
-        // along with the other structural tokens so the scanner reaches
-        // the tag name that follows it (`</div>` → colour `div`).
-        if matches!(kind, "<" | "</" | ">" | "/>" | "=" | "\"") {
-            continue;
+    let paint = |colors: &mut [Option<Color>], s: usize, e: usize, c: Option<Color>| {
+        if let Some(c) = c {
+            for k in s..e {
+                if colors[k].is_none() {
+                    colors[k] = Some(c);
+                }
+            }
         }
-        child_ranges.push((child.start_byte(), child.end_byte().min(source.len())));
-    }
-    child_ranges.sort_by_key(|r| r.0);
-    let in_child = |pos: usize| -> bool {
-        child_ranges.iter().any(|(s, e)| pos >= *s && pos < *e)
     };
-    let is_name_byte = |b: u8| -> bool {
-        b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':')
-    };
-    // Tag name: right after a `<` or `</`, skipping descendant bytes.
-    let mut i = start;
-    while i < end {
-        if in_child(i) {
-            i += 1;
-            continue;
-        }
+    let is_name = |b: u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b':');
+    let is_word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+
+    // C# / Razor control-flow keywords we want coloured even when the
+    // parse is broken enough that the C# query never reaches them.
+    // Type-name keywords (`int`, `string`, …) and modifiers (`public`,
+    // `static`, …) are included so an entire C# block reads consistently
+    // in regions where the grammar gave up.
+    const KEYWORDS: &[&[u8]] = &[
+        b"if", b"else", b"for", b"foreach", b"while", b"do",
+        b"try", b"catch", b"finally", b"switch", b"case", b"default",
+        b"return", b"break", b"continue", b"throw", b"new", b"yield",
+        b"var", b"null", b"true", b"false", b"this", b"base",
+        b"public", b"private", b"protected", b"internal",
+        b"static", b"readonly", b"const", b"async", b"await",
+        b"using", b"namespace", b"class", b"interface", b"struct", b"record",
+        b"void", b"int", b"long", b"short", b"byte", b"string",
+        b"bool", b"double", b"float", b"decimal", b"object", b"dynamic",
+        b"override", b"virtual", b"abstract", b"sealed", b"partial",
+        b"is", b"as", b"in", b"out", b"ref", b"params", b"typeof",
+        b"get", b"set", b"add", b"remove",
+    ];
+
+    let mut i = 0;
+    while i < source.len() {
         let b = source[i];
-        if b == b'<' {
+
+        // `<tagname` or `</tagname`. Paint the run after `<` (or `</`) as a
+        // tag name. Doesn't check whether the `<` itself is uncoloured —
+        // the C# query captures `<` as @operator everywhere it appears,
+        // so the gate would skip every tag opener.
+        if b == b'<' && i + 1 < source.len() {
             let mut j = i + 1;
-            if j < end && source[j] == b'/' {
+            if source[j] == b'/' {
                 j += 1;
             }
             let name_start = j;
-            while j < end && !in_child(j) && is_name_byte(source[j]) {
+            while j < source.len() && is_name(source[j]) {
                 j += 1;
             }
             if j > name_start {
-                if let Some(color) = tag_color {
-                    for k in name_start..j {
-                        if colors[k].is_none() {
-                            colors[k] = Some(color);
-                        }
-                    }
-                }
+                paint(colors, name_start, j, tag_color);
+                i = j;
+                continue;
             }
-            i = j.max(i + 1);
-            continue;
         }
-        // Attribute name: a run of name chars immediately followed by `=`.
-        if is_name_byte(b) {
-            let name_start = i;
-            let mut j = i;
-            while j < end && !in_child(j) && is_name_byte(source[j]) {
+
+        // String literal `"…"` — colour the whole run including quotes.
+        // Useful for HTML attribute values, which are anonymous in the
+        // grammar and so don't get captured as `(string_literal) @string`.
+        // The scan stops at a newline to avoid over-running on broken
+        // unterminated strings.
+        if b == b'"' && colors[i].is_none() {
+            let mut j = i + 1;
+            while j < source.len() && source[j] != b'"' && source[j] != b'\n' {
                 j += 1;
             }
-            if j < end && !in_child(j) && source[j] == b'=' {
-                if let Some(color) = attr_color {
-                    for k in name_start..j {
-                        if colors[k].is_none() {
-                            colors[k] = Some(color);
-                        }
+            if j < source.len() && source[j] == b'"' {
+                paint(colors, i, j + 1, str_color);
+                i = j + 1;
+                continue;
+            }
+        }
+
+        // Word starts: identifier run that's not glued to a preceding word
+        // char. We try, in order: attribute name (`word="`), then C#
+        // keyword. Anything else just advances past the word.
+        let at_word_start = is_name(b) && (i == 0 || !is_name(source[i - 1]));
+        if at_word_start {
+            let name_start = i;
+            let mut j = i;
+            while j < source.len() && is_name(source[j]) {
+                j += 1;
+            }
+            // `word="` — attribute name. Require `=` *and* an immediately
+            // following `"` to avoid mis-painting C# assignments
+            // (`x = 5`), which have whitespace or non-`"` chars after `=`.
+            if j + 1 < source.len() && source[j] == b'=' && source[j + 1] == b'"' {
+                paint(colors, name_start, j, attr_color);
+                i = j;
+                continue;
+            }
+            // C# keyword. Strict word boundaries on both sides — already
+            // ensured on the left by `at_word_start`; check the right by
+            // requiring the word to be terminated by a non-name byte
+            // (rules out `if-loaded` matching the `if` keyword).
+            let word_end_clean = j == source.len() || !is_name(source[j]);
+            if word_end_clean {
+                let word = &source[name_start..j];
+                // Strip a trailing `-`/`:` — `is_name` lets those run,
+                // but C# tokens never contain them, so trim before the
+                // keyword lookup.
+                let word_clean = {
+                    let mut e = word.len();
+                    while e > 0 && !is_word(word[e - 1]) {
+                        e -= 1;
                     }
+                    &word[..e]
+                };
+                if !word_clean.is_empty() && KEYWORDS.contains(&word_clean) {
+                    paint(colors, name_start, name_start + word_clean.len(), kw_color);
                 }
             }
-            i = j.max(i + 1);
+            i = j;
             continue;
         }
         i += 1;
@@ -548,6 +560,58 @@ mod tests {
     /// same path the editor takes (`Buffer::from_path`, which strips CRLF)
     /// and verify that the resulting highlight cache colours the tag and
     /// attribute names. Skipped on machines that don't have the project.
+    /// MMSHeader.cshtml has a BOM and class attribute values that include
+    /// `[12px]` brackets — both push the Razor grammar into long ERROR
+    /// regions, so `<div class="…">` openers and the `else` / `if`
+    /// keywords inside `@if/else` bodies never become proper tokens.
+    /// The byte-level overlay should still paint them.
+    #[test]
+    fn razor_e2e_mmsheader_broken_regions() {
+        let p = std::path::Path::new(
+            "/Users/bgunnarsson/Development/mms-namsefni/Vettvangur.Site/Views/Partials/MMS/Components/Header/MMSHeader.cshtml",
+        );
+        if !p.exists() {
+            return;
+        }
+        let buf = crate::buffer::Buffer::from_path(p.to_path_buf()).expect("load");
+        let cfg = Config::default();
+        let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
+        let source = buf.rope.to_string();
+        let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
+        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+
+        // The first broken `<div class="…px-[12px]…">` opener.
+        let div_idx = source.find("<div class=\"mms-header px-").unwrap() + 1;
+        assert_eq!(
+            cache.byte_colors.get(div_idx).copied().flatten(),
+            Some(pink),
+            "broken `<div` tag name should be Pink",
+        );
+        let class_idx = div_idx + 4; // skip `div `
+        assert_eq!(
+            cache.byte_colors.get(class_idx).copied().flatten(),
+            Some(yellow),
+            "broken `class` attribute name should be Yellow",
+        );
+
+        // `else` inside @if/else body — bare token, no parent node.
+        let else_idx = source.find("\n\telse\n").unwrap() + 2;
+        assert_eq!(
+            cache.byte_colors.get(else_idx).copied().flatten(),
+            Some(mauve),
+            "Razor `else` should pick up keyword Mauve via the byte-level fallback",
+        );
+
+        // C# `if` inside the else body.
+        let if_idx = source.find("\t\tif (organization").unwrap() + 2;
+        assert_eq!(
+            cache.byte_colors.get(if_idx).copied().flatten(),
+            Some(mauve),
+            "C# `if` in broken region should also be Mauve",
+        );
+    }
+
     #[test]
     fn razor_e2e_real_cshtml() {
         let p = std::path::Path::new(
