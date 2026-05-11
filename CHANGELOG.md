@@ -7,6 +7,49 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Razor / `.cshtml` syntax highlighting.** New `Lang::Razor` variant
+  routed via `tree-sitter-razor`, paired with the bundled C# highlights
+  query plus a Razor overlay that tags every `@`-marker directive
+  (`@inject`, `@using`, `@{`, `@if`, `@(expr)`, `@Identifier`, `@*…*@`,
+  …) as `@keyword.directive` and HTML element delimiters as
+  `@punctuation.bracket`. Tag names and attribute names — anonymous
+  lexer rules in the grammar — get coloured by a byte-level overlay so
+  they still light up when the grammar's parser produces ERROR nodes
+  (typical for Tailwind `class="…[16px]…"` attribute values, BOM
+  headers, etc.). C# keywords inside broken regions get a regex-based
+  fallback paint so an `else { if (x) {…} }` block keeps its colour
+  even when the tree-sitter pass can't reach the tokens.
+- **`<leader>f` formats the active buffer.** Same path as `:fmt` /
+  `:format`. Picks the right tool per extension:
+- **csharpier integration for `.cs` (and `.cshtml` / `.razor` once a
+  future csharpier supports them).** Resolved from `$PATH` or
+  `~/.dotnet/tools/csharpier`. The buffer goes through a sibling temp
+  file so the project's `.csharpierrc` / `.editorconfig` resolution
+  still works. csharpier 1.x prints `Is an unsupported file type` and
+  exits 0 for Razor; the dispatch detects that signal and falls back.
+- **`.editorconfig`-driven indent normaliser for `.cshtml` / `.razor`.**
+  Reflows leading whitespace per `indent_style` and `indent_size` —
+  tabs → spaces, spaces → tabs, with intermediate columns preserved.
+  Inner whitespace (column-aligned attributes, mid-line tabs) is left
+  alone. Wired into the csharpier fallback so saving a Razor file
+  applies the indent settings even though csharpier itself doesn't
+  format it.
+- **gofmt / goimports for `.go`.** Prefers `goimports` when on `$PATH`
+  (formats + organises imports), falls back to plain `gofmt`. Both read
+  stdin and write to stdout so no temp file is needed.
+- **Visual-mode `p` / `P` replaces the selection.** Previously only
+  Normal-mode parsed the put keys. Now `viw` → `p`, `V<motion>` →
+  `p`, and block-select → `p` all swap the visual span with the
+  register's contents. Block paste deletes the rectangle and inserts
+  at the corner; charwise + linewise behave like Vim's `cpoptions-=>`
+  with a linewise-over-charwise trim.
+- **Paste from the OS clipboard.** `p` / `P` against the unnamed /
+  `+` / `*` registers consult the clipboard first — anything you
+  copied in another app wins over the in-memory yank. Falls back to
+  the in-memory register when the clipboard is empty, locked, or
+  non-text. Linewise heuristic: trailing newline *and* interior
+  newline → linewise paste; single line with trailing newline stays
+  charwise.
 - **.NET Core debugger via DAP.** New `src/dap/` module spawns Samsung's
   netcoredbg (looked up on `$PATH`), drives the full Debug Adapter
   Protocol handshake (initialize → launch → setBreakpoints →
@@ -72,6 +115,30 @@ follows [Semantic Versioning](https://semver.org/).
   in the chrome layer.
 
 ### Fixed
+- **CRLF files clobbered inline diagnostics.** `Buffer::from_path` kept
+  every line's trailing `\r`; the renderer stripped only `\n`, so the
+  `\r` reached the terminal and reset the cursor to column 0 right
+  before the Error-Lens inline diagnostic painted on top of the
+  source. Files with CRLF on the line a diagnostic landed on (common
+  in Vettvangur's mixed-line-ending `.cs` files) rendered as
+  `● Unnecessary using directive.PublishedContent;` with the leading
+  source obliterated. Now normalises `\r\n` → `\n` on load + on
+  disk-watch reload, with a defensive trailing-`\r` strip in the
+  renderer as belt-and-suspenders for paste / LSP-applied edits.
+- **Mouse clicks on tab-indented lines landed past the click.** The
+  click handler treated the post-gutter screen column as the buffer
+  char column directly. A tab takes `TAB_WIDTH` visual cells but one
+  buffer char, so two leading tabs (visual col 8) used to map to char
+  8 — well past `<partial` on the line. The handler now replays the
+  renderer's display-width walk to translate visual position back to
+  char position; drag selection shares the same mapping.
+- **Razor closing-tag names rendered uncoloured.** The post-pass's
+  child-node skip set listed `<`, `>`, `/>`, `=`, `"` but missed
+  `</`, so the scanner treated the closing-tag opener as a nested
+  child and stopped before reaching `section` / `div`. Added `</`
+  to the skip set so opening and closing tag names match in colour,
+  plus an overlay capture so the `</` token itself paints with the
+  punctuation tone like `<` / `>` / `/>`.
 - **Stale frames + locals after step / breakpoint hit.** `stackTrace`,
   `scopes`, and `variables` responses mutated session state but didn't
   emit a user-facing `DapEvent`, so the main loop's `events.is_empty()`
