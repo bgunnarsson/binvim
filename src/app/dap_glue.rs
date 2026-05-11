@@ -71,6 +71,13 @@ impl super::App {
         }
         self.dap.stop_session();
         self.status_msg = "debug: session terminated".into();
+        // Close the bottom pane on stop — the session is gone, there's
+        // nothing useful to look at, and reclaiming the rows snaps the
+        // editor back to its usual height.
+        if self.debug_pane_open {
+            self.debug_pane_open = false;
+            self.adjust_viewport();
+        }
     }
 
     fn dap_toggle_breakpoint(&mut self) {
@@ -81,12 +88,10 @@ impl super::App {
         let abs = path.canonicalize().unwrap_or(path);
         // Cursor.line is 0-based; DAP / the user-visible line number is 1-based.
         let line = self.cursor.line + 1;
-        let added = self.dap.toggle_breakpoint(&abs, line);
-        self.status_msg = if added {
-            format!("breakpoint set at {}:{}", abs.display(), line)
-        } else {
-            format!("breakpoint cleared at {}:{}", abs.display(), line)
-        };
+        // Toggle the breakpoint silently — the gutter dot is the
+        // user-visible confirmation, so a status-line notification is
+        // redundant noise on every press.
+        let _ = self.dap.toggle_breakpoint(&abs, line);
     }
 
     fn dap_clear_breakpoints_in_file(&mut self) {
@@ -147,6 +152,10 @@ impl super::App {
                 DapEvent::Terminated => {
                     self.status_msg = "debug: session ended".into();
                     self.dap.session = None;
+                    if self.debug_pane_open {
+                        self.debug_pane_open = false;
+                        self.adjust_viewport();
+                    }
                 }
                 DapEvent::AdapterError(msg) => {
                     self.status_msg = format!("debug error: {msg}");
