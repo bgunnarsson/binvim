@@ -14,6 +14,8 @@ pub struct Config {
     pub start_page: StartPageConfig,
     #[serde(default)]
     pub whitespace: WhitespaceConfig,
+    #[serde(default)]
+    pub line_numbers: LineNumberConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -43,6 +45,27 @@ impl Default for WhitespaceConfig {
     }
 }
 
+/// Gutter line-number behaviour. Relative numbering (Vim's
+/// `set relativenumber`) shows the absolute line on the cursor's row
+/// and the *distance* from the cursor on every other row — useful with
+/// Vim count-prefixed motions (`5j`, `12k`, `3dd`, …). On by default;
+/// set `relative = false` to fall back to plain 1-indexed numbers.
+#[derive(Debug, Deserialize)]
+pub struct LineNumberConfig {
+    #[serde(default = "default_line_numbers_relative")]
+    pub relative: bool,
+}
+
+fn default_line_numbers_relative() -> bool {
+    true
+}
+
+impl Default for LineNumberConfig {
+    fn default() -> Self {
+        Self { relative: true }
+    }
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -54,6 +77,7 @@ impl Default for Config {
             colors: HashMap::new(),
             start_page: StartPageConfig::default(),
             whitespace: WhitespaceConfig::default(),
+            line_numbers: LineNumberConfig::default(),
         }
     }
 }

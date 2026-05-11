@@ -238,6 +238,9 @@ lines = [
 
 [whitespace]
 show = true   # space=`·`, tab=`→ `, nbsp=`⎵`, eol=`¬`. On by default.
+
+[line_numbers]
+relative = true   # cursor row shows absolute, others show distance. On by default.
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head (`keyword.return` overrides `keyword`).
@@ -245,6 +248,8 @@ show = true   # space=`·`, tab=`→ `, nbsp=`⎵`, eol=`¬`. On by default.
 **`[start_page]`** — `lines` overrides the baked-in ASCII logo shown when binvim is launched with no path. Each entry renders on its own row, horizontally centered; the block as a whole is vertically centered. Omit it (or leave it empty) to keep the default logo.
 
 **`[whitespace]`** — `show = true` (the default) renders every space as `·`, every tab as `→` plus space-fill to the tab width, every non-breaking space (U+00A0) as `⎵`, and the end-of-line as `¬`. All in the muted overlay colour. Set `show = false` to disable.
+
+**`[line_numbers]`** — `relative = true` (the default) renders the gutter Vim-style: the cursor's row shows its absolute (1-indexed) line in a brighter Subtext1 tone, every other row shows the count of lines away from the cursor. Pairs naturally with count-prefixed motions like `5j` / `12k` / `3dd`. Set `relative = false` to fall back to plain 1-indexed numbering on every row.
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 

@@ -1689,12 +1689,38 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
             } else {
                 queue!(out, Print(" "))?;
             }
-            queue!(
-                out,
-                SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
-                Print(format!("{:>width$} ", line_idx + 1, width = gutter - 2)),
-                ResetColor
-            )?;
+            // Relative numbers (Vim convention): every row except the
+            // cursor's shows its distance from the cursor; the cursor's
+            // own row shows the absolute (1-indexed) line. Useful with
+            // count-prefixed motions like `5j` / `12k` / `3dd`. The
+            // cursor row gets a brighter Subtext1 tone so the eye can
+            // anchor on it; other rows stay the muted Overlay0.
+            let (label, label_color) = if app.config.line_numbers.relative
+                && line_idx != app.cursor.line
+            {
+                let dist = if line_idx > app.cursor.line {
+                    line_idx - app.cursor.line
+                } else {
+                    app.cursor.line - line_idx
+                };
+                (
+                    format!("{:>width$} ", dist, width = gutter - 2),
+                    Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }, // Overlay0
+                )
+            } else {
+                // Cursor row in relative mode, or every row in absolute
+                // mode → 1-indexed absolute line number.
+                let bright = app.config.line_numbers.relative;
+                (
+                    format!("{:>width$} ", line_idx + 1, width = gutter - 2),
+                    if bright {
+                        Color::Rgb { r: 0xba, g: 0xc2, b: 0xde } // Subtext1
+                    } else {
+                        Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 } // Overlay0
+                    },
+                )
+            };
+            queue!(out, SetForegroundColor(label_color), Print(label), ResetColor)?;
             draw_line_with_selection(out, app, line_idx, avail)?;
             // Fold-start placeholder: append `… N lines` after the line's
             // own content so the user sees what's collapsed.
