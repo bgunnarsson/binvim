@@ -6,6 +6,36 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-11
+
+### Added
+- **Alt / Ctrl + Backspace deletes a word; Cmd / Super + Backspace
+  deletes to start of line.** Insert-mode Backspace now reads
+  `key.modifiers` and routes to one of three paths: SUPER/META wipes
+  from `line_start` to the cursor; ALT/CONTROL peels trailing
+  whitespace then one homogeneous run (word chars or punctuation),
+  matching macOS Option-Delete; otherwise the existing single-char
+  delete with auto-pair / line-join logic. None of the three span
+  lines, so an accidental Cmd-Backspace can't eat into the row above.
+
+### Fixed
+- **Cursor placement skewed by inlay hints.** `place_cursor` walked
+  only buffer chars + tab widths, so when an inlay hint took N visual
+  cells before the cursor's buffer column, the terminal cursor landed
+  N cells short of where the buffer actually sat. Backspace then
+  removed a char that visually looked like it was "ahead" of the
+  cursor. Mouse-click mapping had the inverse error: clicks inside a
+  hint label scattered into the next visible token. A shared helper
+  `inlay_hint_widths_for_line` now feeds both: cursor placement adds
+  hint widths for cols *strictly before* `cursor.col` (the at-cursor
+  hint renders on the cursor's far side so the cursor sits on the
+  near edge of the hint), and click mapping snaps clicks-inside-a-hint
+  to the buffer col at the hint's anchor.
+- **C# / Razor file-type icon was tofu on Nerd Fonts v3.** The
+  previous codepoint `\u{f81a}` was a v2-only glyph. Switched to
+  `\u{e648}` (`nf-seti-c_sharp`), stable across v2 and v3. Affects
+  both the picker icon and the status-line "razor" tag.
+
 ## [0.1.3] - 2026-05-11
 
 ### Added
