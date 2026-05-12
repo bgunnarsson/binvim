@@ -57,13 +57,23 @@ impl super::App {
         if matches!(key, '"' | '+' | '*') {
             if let Some(text) = get_system_clipboard() {
                 if !text.is_empty() {
-                    // Heuristic for linewise paste: a clipboard payload
-                    // whose final char is `\n` and which contains an
-                    // interior newline almost always came from a
-                    // line-oriented copy. Single-line content with a
-                    // trailing newline (e.g. terminal echo) stays
-                    // charwise so paste-at-cursor doesn't open a
-                    // surprise extra line.
+                    // If the clipboard matches our last in-app yank,
+                    // the clipboard came from binvim — trust the
+                    // linewise flag we recorded then. Without this,
+                    // `yy` of a single line round-trips through the
+                    // clipboard and the heuristic below demotes it to
+                    // charwise (no interior newline) — `P` then pastes
+                    // inline instead of opening a new line.
+                    if let Some(reg) = self.registers.get(&'"') {
+                        if reg.text == text {
+                            return Some(reg.clone());
+                        }
+                    }
+                    // Otherwise the clipboard was filled by another
+                    // app. Linewise heuristic: trailing `\n` AND an
+                    // interior newline. Single-line payloads (e.g.
+                    // terminal echo) stay charwise so paste-at-cursor
+                    // doesn't open a surprise extra line.
                     let trimmed_ends_nl = text.ends_with('\n');
                     let has_interior_nl = text[..text.len().saturating_sub(1)].contains('\n');
                     let linewise = trimmed_ends_nl && has_interior_nl;
