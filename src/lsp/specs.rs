@@ -29,12 +29,6 @@ pub struct ServerSpec {
 /// `tailwind.config.*` file is reachable from the buffer's directory and the
 /// file's extension is one Tailwind cares about (CSS family + every web
 /// framework Tailwind supports out of the box).
-///
-/// For Razor (.cshtml/.razor) files, csharp-ls is layered on as an
-/// auxiliary so the user gets C# identifier completions inside `@{}`
-/// and `@code{}` blocks even when OmniSharp isn't installed. The
-/// primary is OmniSharp when present, falling back to the html LSP
-/// for markup-only completions.
 pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
     let mut specs = Vec::new();
     if let Some(primary) = primary_spec_for_path(path) {
@@ -42,12 +36,6 @@ pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
     }
     if let Some(tw) = tailwind_spec_for_path(path) {
         specs.push(tw);
-    }
-    if let Some(cs) = csharp_aux_spec_for_path(path) {
-        // Avoid duplicate-key collision with a primary that's already csharp-ls.
-        if specs.iter().all(|s| s.key != cs.key) {
-            specs.push(cs);
-        }
     }
     specs
 }
@@ -270,36 +258,6 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
         }
         _ => None,
     }
-}
-
-/// csharp-ls layered on top of the primary Razor server (OmniSharp or
-/// html LSP) so users get C# completion in `@{}` / `@code{}` blocks even
-/// when OmniSharp isn't installed. Skipped for plain .cs since csharp-ls
-/// is already the primary there — `specs_for_path` deduplicates by key
-/// in that case.
-fn csharp_aux_spec_for_path(path: &Path) -> Option<ServerSpec> {
-    let ext = path.extension().and_then(|s| s.to_str())?.to_ascii_lowercase();
-    if ext != "cshtml" && ext != "razor" {
-        return None;
-    }
-    let home = std::env::var("HOME").ok()?;
-    let dotnet_tools = format!("{}/.dotnet/tools/csharp-ls", home);
-    let candidates = vec!["csharp-ls".into(), dotnet_tools];
-    if resolve_command(&candidates).is_none() {
-        return None;
-    }
-    Some(ServerSpec {
-        key: "csharp-ls".into(),
-        language_id: "csharp".into(),
-        cmd_candidates: candidates,
-        args: vec![],
-        root_markers: vec![
-            "*.sln".into(),
-            "*.csproj".into(),
-            ".git".into(),
-        ],
-        initialization_options: Value::Null,
-    })
 }
 
 /// Tailwind augments completions and diagnostics on top of the primary

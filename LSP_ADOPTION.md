@@ -4,8 +4,7 @@
 
 binvim today wires up primary LSPs for **Rust, TS/JS/JSX/TSX, JSON (Biome), Go,
 HTML, CSS/SCSS/LESS, C# (.cs), Razor (.cshtml/.razor), Astro**, plus Tailwind
-and csharp-ls as auxiliaries. Tree-sitter grammars cover the same set plus
-Markdown.
+as an auxiliary. Tree-sitter grammars cover the same set plus Markdown.
 
 For binvim to reach the broader "could be my daily driver" audience —
 particularly developers eyeing it as a Neovim/VS Code alternative — the

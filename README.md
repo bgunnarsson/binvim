@@ -68,7 +68,7 @@ Per-language servers with `initializationOptions`, project-root detection, and a
 | Rename                      | `<leader>r`              | LSP-aware. Prompt pre-fills the current word; submission applies the `WorkspaceEdit` across every affected file.                        |
 | Diagnostics                 | inline + sign column     | Undercurl on the offending range, severity glyph in the gutter.                                                                        |
 
-**Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, OmniSharp, csharp-ls, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`). csharp-ls is layered onto Razor files so `@code{}` blocks get C# completion even without a dedicated Razor server.
+**Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, OmniSharp, csharp-ls, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`).
 
 ### Debugger (DAP)
 
