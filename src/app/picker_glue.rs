@@ -267,7 +267,10 @@ impl super::App {
     pub(super) fn open_yazi(&mut self) {
         use crossterm::{
             cursor::{Hide, Show},
-            event::{DisableMouseCapture, EnableMouseCapture},
+            event::{
+                DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+                PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+            },
             execute,
             terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
         };
@@ -286,8 +289,10 @@ impl super::App {
         let _ = std::fs::remove_file(&chooser);
 
         let mut stdout = io::stdout();
-        // Hand the terminal over to yazi: disable our mouse capture and raw
+        // Hand the terminal over to yazi: pop the kitty keyboard protocol
+        // (yazi needs vanilla keys), disable our mouse capture and raw
         // mode, leave the alternate screen so yazi has a clean canvas.
+        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show);
         let _ = disable_raw_mode();
 
@@ -301,6 +306,10 @@ impl super::App {
         // otherwise clicks stop working in the editor after yazi exits.
         let _ = enable_raw_mode();
         let _ = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide);
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        );
 
         match status {
             Err(_) => {

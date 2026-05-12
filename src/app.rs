@@ -466,13 +466,23 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enable() -> Result<Self> {
         use crossterm::{
-            event::EnableMouseCapture,
+            event::{
+                EnableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+            },
             execute,
             terminal::{enable_raw_mode, EnterAlternateScreen},
         };
         enable_raw_mode()?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        // Kitty keyboard protocol — terminals that support it now report
+        // SUPER/META as a modifier (so Cmd-Backspace etc. arrive with the
+        // right `KeyModifiers`). Non-supporting terminals silently ignore
+        // the CSI sequence, so this is safe to push unconditionally.
+        let _ = execute!(
+            stdout,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        );
         Ok(TerminalGuard)
     }
 }
@@ -481,11 +491,12 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         use crossterm::{
             cursor::{SetCursorStyle, Show},
-            event::DisableMouseCapture,
+            event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
             execute,
             terminal::{disable_raw_mode, LeaveAlternateScreen},
         };
         let mut stdout = io::stdout();
+        let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(
             stdout,
             DisableMouseCapture,
