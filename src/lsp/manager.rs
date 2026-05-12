@@ -153,8 +153,17 @@ impl LspManager {
                 match msg {
                     LspIncoming::Diagnostics(d) => {
                         if let Some(path) = uri_to_path(&d.uri) {
-                            self.diagnostics.insert(path, d.diagnostics);
-                            diagnostics_changed = true;
+                            // OmniSharp's classic Razor mode doesn't run the
+                            // Razor source generator, so every `.cshtml` /
+                            // `.razor` file parses as raw C# and emits a
+                            // cascade of bogus errors ("name does not exist",
+                            // "Unexpected character '@'", …). Drop its
+                            // diagnostics for those extensions; completions
+                            // and hover still flow through.
+                            if !suppress_diagnostics_from(client_key, &path) {
+                                self.diagnostics.insert(path, d.diagnostics);
+                                diagnostics_changed = true;
+                            }
                         }
                     }
                     LspIncoming::Response { id, result } => {
@@ -460,6 +469,22 @@ impl LspManager {
             .insert((client.name.clone(), id), PendingRequest::SignatureHelp);
         true
     }
+}
+
+/// Diagnostics from specific (server, file-ext) pairs that we know are
+/// unreliable enough to be net-negative. Currently just OmniSharp + Razor
+/// — its legacy `OmniSharp.Razor` extension is abandoned and the bundled
+/// `--languageserver` build typically lacks the Razor source generator,
+/// so every directive becomes a spurious error.
+fn suppress_diagnostics_from(client_key: &str, path: &Path) -> bool {
+    if client_key != "omnisharp" {
+        return false;
+    }
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    matches!(ext.as_deref(), Some("cshtml") | Some("razor"))
 }
 
 fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
