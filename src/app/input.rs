@@ -20,9 +20,10 @@ use super::state::LastEdit;
 /// Identifier chars catch the typing-a-name case; the symbol set covers the
 /// trigger characters servers care about most: member access (`.`), Rust paths
 /// and Tailwind variants (`:`), Razor/decorator anchors (`@`), JSX/HTML opens
-/// (`<`), and CSS property/utility separators (`-`).
+/// (`<`), CSS property/utility separators (`-`), and Emmet abbreviation
+/// anchors (`!` for the HTML5 boilerplate, `#` for id shorthand).
 pub(super) fn is_completion_trigger(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<' | '-')
+    c.is_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '<' | '-' | '!' | '#')
 }
 
 /// Reverse of the renderer's display walk — given a visual column on
@@ -700,7 +701,7 @@ impl super::App {
                     // Punctuation triggers (`.`, `:`, etc.) get sent to the
                     // server as triggerCharacter so it returns member-access
                     // completions; identifier chars are an Invoked refresh.
-                    let trigger = if matches!(c, '.' | ':' | '@' | '<') {
+                    let trigger = if matches!(c, '.' | ':' | '@' | '<' | '!' | '#') {
                         Some(c)
                     } else {
                         None
