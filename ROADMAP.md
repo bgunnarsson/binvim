@@ -8,15 +8,16 @@ lives in the "Per-LSP change shape" section below.
 Each language gets the full stack: **LSP** (completion / hover /
 goto-def / diagnostics / rename / code actions / references / inlay
 hints / signature help / symbols), **tree-sitter highlighting**, and a
-**format-on-save formatter** dispatched from `src/format.rs`. Skipping
-the formatter is only acceptable when no canonical one exists for the
-language (e.g. YAML).
+**format-on-save formatter** dispatched from `src/format.rs`. Prettier
+covers the file types biome doesn't (HTML, CSS preprocessor variants,
+Markdown, YAML, GraphQL, Vue, Svelte) — install it globally
+(`npm i -g prettier`) or per project.
 
 Today's coverage: **Rust, TS/JS/JSX/TSX, JSON (Biome), Go, Python,
 C / C++, Bash, Lua, Java, Ruby, PHP, TOML, Vue, Svelte, Markdown,
-Zig, Nix, Elixir, Kotlin, Dockerfile, SQL, HTML, CSS/SCSS/LESS,
-C# (.cs), Razor (.cshtml / .razor), Astro, YAML (LSP + highlight, no
-formatter)**, plus Tailwind and Emmet as auxiliaries. Tree-sitter
+Zig, Nix, Elixir, Kotlin, Dockerfile, SQL, HTML, CSS/SCSS/LESS, YAML,
+C# (.cs), Razor (.cshtml / .razor), Astro**, plus Tailwind and Emmet
+as auxiliaries. Tree-sitter
 grammars cover everything except Vue (no usable crate) and Kotlin
 (crate ships the parser but no highlights query) plus XML,
 `.editorconfig`, and `.gitignore`.
@@ -41,8 +42,8 @@ reason for a new user opening any file on day one. Shipped:
 - **Bash / Shell** — `bash-language-server start`, formatter via
   `shfmt -filename=...`. Tree-sitter was already wired.
 - **YAML** — `yaml-language-server --stdio`. Tree-sitter already wired.
-  **No formatter** — no canonical YAML formatter exists outside of
-  Prettier, which requires a node_modules install.
+  Formatter via Prettier (global install or project-local
+  `node_modules/.bin/prettier`).
 - **Lua** — `lua-language-server`, `tree-sitter-lua`, formatter via
   `stylua --search-parent-directories`. Critical for Neovim refugees.
 

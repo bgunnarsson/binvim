@@ -41,7 +41,13 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         }
         "sh" | "bash" | "zsh" | "ksh" => run_shfmt(path, source),
         "lua" => run_stylua(path, source),
-        "md" | "markdown" | "vue" | "svelte" => run_prettier(path, source),
+        // Prettier covers the file types biome doesn't (yet): Markdown,
+        // Vue, Svelte, HTML, CSS preprocessor variants (biome 2.x only
+        // formats plain CSS), YAML, GraphQL. Project-local
+        // `node_modules/.bin/prettier` wins over the global install
+        // when present.
+        "md" | "markdown" | "mdx" | "vue" | "svelte" | "html" | "htm" | "css" | "scss"
+        | "less" | "yaml" | "yml" | "graphql" | "gql" => run_prettier(path, source),
         "toml" => run_taplo(path, source),
         "rb" | "rake" | "gemspec" => run_rufo(source),
         "php" => run_php_cs_fixer(path, source),
