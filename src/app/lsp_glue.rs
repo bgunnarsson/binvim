@@ -467,7 +467,7 @@ impl super::App {
     pub(super) fn lsp_attach_active(&mut self) {
         let Some(path) = self.buffer.path.clone() else { return; };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        if self.lsp.ensure_for_path(&path, &cwd).is_none() {
+        if !self.lsp.ensure_for_path(&path, &cwd) {
             return;
         }
         let text = self.buffer.rope.to_string();
@@ -489,7 +489,7 @@ impl super::App {
             return;
         }
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        if self.lsp.ensure_for_path(&path, &cwd).is_none() {
+        if !self.lsp.ensure_for_path(&path, &cwd) {
             return;
         }
         let text = self.buffer.rope.to_string();

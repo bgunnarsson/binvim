@@ -53,13 +53,18 @@ impl LspManager {
     }
 
     /// Spawn every spec that applies to `path` (primary + auxiliary) and
-    /// return the primary client. The primary is the first entry from
-    /// `specs_for_path`; auxiliaries (like Tailwind) are kept inside the
-    /// manager so they receive didOpen/didChange and contribute to
-    /// completions, but they don't take over hover/goto-def.
-    pub fn ensure_for_path(&mut self, path: &Path, fallback_root: &Path) -> Option<&LspClient> {
+    /// return whether at least one client ended up running. Previously
+    /// returned the primary client specifically — that produced a None
+    /// result whenever the primary's binary wasn't installed, which
+    /// then short-circuited `lsp_sync_active` and prevented `didOpen`
+    /// from going out to the auxiliaries either. Now reports success if
+    /// *any* matching client is alive, so emmet-ls / Tailwind / etc.
+    /// still get the document even when the primary binary is missing.
+    pub fn ensure_for_path(&mut self, path: &Path, fallback_root: &Path) -> bool {
         let specs = specs_for_path(path);
-        let primary_key = specs.first().map(|s| s.key.clone())?;
+        if specs.is_empty() {
+            return false;
+        }
         for spec in &specs {
             if self.clients.contains_key(&spec.key) {
                 continue;
@@ -73,7 +78,7 @@ impl LspManager {
                 self.clients.insert(spec.key.clone(), client);
             }
         }
-        self.clients.get(&primary_key)
+        specs.iter().any(|s| self.clients.contains_key(&s.key))
     }
 
     /// What `:health` should say about the active buffer's LSP attachments.
