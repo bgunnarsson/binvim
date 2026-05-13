@@ -572,7 +572,23 @@ impl super::App {
         }
         match key.code {
             KeyCode::Esc => {
-                if self.cursor.col > 0 {
+                // Vim convention: if the cursor's line is all whitespace
+                // on Esc-out-of-Insert, strip it. This is almost always
+                // auto-indent that the user landed on but never put real
+                // content on — leaving the whitespace behind clutters the
+                // file and trips trailing-whitespace formatters on save.
+                let line_idx = self.cursor.line;
+                let line_len = self.buffer.line_len(line_idx);
+                let all_ws = line_len > 0
+                    && (0..line_len).all(|c| {
+                        matches!(self.buffer.char_at(line_idx, c), Some(' ') | Some('\t'))
+                    });
+                if all_ws {
+                    let line_start = self.buffer.line_start_idx(line_idx);
+                    self.buffer.delete_range(line_start, line_start + line_len);
+                    self.cursor.col = 0;
+                    self.cursor.want_col = 0;
+                } else if self.cursor.col > 0 {
                     self.cursor.col -= 1;
                     self.cursor.want_col = self.cursor.col;
                 }
