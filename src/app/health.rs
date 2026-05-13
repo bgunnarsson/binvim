@@ -7,8 +7,10 @@
 //! owns the data structures and the snapshot builder.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
-use crate::lsp::{ActiveBufferLspStatus, LspHealth};
+use crate::git::GitStatusSummary;
+use crate::lsp::{ActiveBufferLspStatus, LspHealth, Severity};
 
 /// Everything `draw_health_page` needs to paint the dashboard. Built
 /// fresh per frame so the user sees live CPU / RAM / LSP-pending
@@ -17,8 +19,8 @@ use crate::lsp::{ActiveBufferLspStatus, LspHealth};
 pub struct HealthSnapshot {
     pub version: &'static str,
     pub pid: u32,
+    pub uptime: Duration,
     pub cwd: String,
-    pub git_branch: String,
     pub config_path: String,
     pub config_loaded: bool,
     pub cpu: Option<f64>,
@@ -26,15 +28,42 @@ pub struct HealthSnapshot {
     pub ram_mb: Option<f64>,
     pub buffers: Vec<HealthBuffer>,
     pub lsps: Vec<LspHealth>,
-    pub active_buffer_path: Option<PathBuf>,
-    pub active_buffer_status: Vec<ActiveBufferLspStatus>,
+    pub active_buffer: Option<HealthActiveBuffer>,
     pub tailwind: Option<PathBuf>,
+    pub git: Option<GitStatusSummary>,
 }
 
 pub struct HealthBuffer {
     pub label: String,
     pub active: bool,
     pub dirty: bool,
+}
+
+/// Per-buffer rollup for the ACTIVE BUFFER panel. Populated only when
+/// the user has a real file open (no entry for `[No Name]`).
+pub struct HealthActiveBuffer {
+    pub display_path: String,
+    pub language: Option<String>,
+    pub lines: usize,
+    pub indent: String,
+    pub cursor_line: usize,
+    pub cursor_col: usize,
+    pub statuses: Vec<ActiveBufferLspStatus>,
+    pub diagnostics: DiagnosticsCounts,
+}
+
+#[derive(Default, Clone, Copy)]
+pub struct DiagnosticsCounts {
+    pub errors: usize,
+    pub warnings: usize,
+    pub info: usize,
+    pub hints: usize,
+}
+
+impl DiagnosticsCounts {
+    pub fn total(&self) -> usize {
+        self.errors + self.warnings + self.info + self.hints
+    }
 }
 
 impl super::App {
@@ -60,10 +89,8 @@ impl super::App {
     pub fn build_health_snapshot(&self) -> HealthSnapshot {
         let pid = std::process::id();
         let (cpu, ram_pct, ram_mb) = read_process_stats(pid);
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| ".".into());
-        let git_branch = self.git_branch.clone().unwrap_or_else(|| "—".into());
+        let cwd_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let cwd = cwd_path.display().to_string();
         let config_path = std::env::var("HOME")
             .map(|h| format!("{h}/.config/binvim/config.toml"))
             .unwrap_or_default();
@@ -80,10 +107,7 @@ impl super::App {
                 let label = buf
                     .path
                     .as_ref()
-                    .and_then(|p| {
-                        let cwd = std::env::current_dir().ok()?;
-                        p.strip_prefix(&cwd).ok().map(|p| p.display().to_string())
-                    })
+                    .and_then(|p| p.strip_prefix(&cwd_path).ok().map(|p| p.display().to_string()))
                     .or_else(|| buf.path.as_ref().map(|p| p.display().to_string()))
                     .or_else(|| buf.display_name.clone())
                     .unwrap_or_else(|| "[No Name]".into());
@@ -97,21 +121,63 @@ impl super::App {
 
         let lsps = self.lsp.health_summary();
 
-        let (active_buffer_path, active_buffer_status) = match self.buffer.path.as_ref() {
-            Some(p) => (Some(p.clone()), self.lsp.active_buffer_status(p)),
-            None => (None, Vec::new()),
-        };
+        let active_buffer = self.buffer.path.as_ref().map(|p| {
+            let display_path = p
+                .strip_prefix(&cwd_path)
+                .ok()
+                .map(|rel| rel.display().to_string())
+                .unwrap_or_else(|| p.display().to_string());
+            let language = crate::lang::Lang::detect(p).map(|l| format!("{l:?}").to_lowercase());
+            let lines = self.buffer.line_count();
+            let indent = match self.editorconfig.indent_style {
+                crate::editorconfig::IndentStyle::Spaces => {
+                    format!("spaces × {}", self.editorconfig.indent_size)
+                }
+                crate::editorconfig::IndentStyle::Tabs => {
+                    format!("tabs (width {})", self.editorconfig.tab_width)
+                }
+            };
+            let cursor_line = self.cursor.line + 1;
+            let cursor_col = self.cursor.col + 1;
+            let statuses = self.lsp.active_buffer_status(p);
+            let diagnostics = self
+                .lsp
+                .diagnostics_for(p)
+                .map(|diags| {
+                    let mut c = DiagnosticsCounts::default();
+                    for d in diags {
+                        match d.severity {
+                            Severity::Error => c.errors += 1,
+                            Severity::Warning => c.warnings += 1,
+                            Severity::Info => c.info += 1,
+                            Severity::Hint => c.hints += 1,
+                        }
+                    }
+                    c
+                })
+                .unwrap_or_default();
 
-        let tailwind = {
-            let start = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            crate::lsp::find_tailwind_config(&start)
-        };
+            HealthActiveBuffer {
+                display_path,
+                language,
+                lines,
+                indent,
+                cursor_line,
+                cursor_col,
+                statuses,
+                diagnostics,
+            }
+        });
+
+        let tailwind = crate::lsp::find_tailwind_config(&cwd_path);
+
+        let git = crate::git::status_summary(&cwd_path);
 
         HealthSnapshot {
             version: env!("CARGO_PKG_VERSION"),
             pid,
+            uptime: self.app_start_time.elapsed(),
             cwd,
-            git_branch,
             config_path,
             config_loaded,
             cpu,
@@ -119,9 +185,9 @@ impl super::App {
             ram_mb,
             buffers,
             lsps,
-            active_buffer_path,
-            active_buffer_status,
+            active_buffer,
             tailwind,
+            git,
         }
     }
 }

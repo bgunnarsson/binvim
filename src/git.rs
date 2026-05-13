@@ -33,6 +33,78 @@ pub struct GitHunk {
 /// `save::detect_git_branch` but returns the directory rather than the
 /// branch label, so hunk + branch detection can share the same traversal
 /// in a future refactor.
+/// Working-tree summary for the dashboard.
+#[derive(Debug, Clone, Default)]
+pub struct GitStatusSummary {
+    pub branch: Option<String>,
+    pub upstream: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
+    pub modified: usize,
+    pub untracked: usize,
+}
+
+/// Run `git status --porcelain=v1 -b` and pull out branch / upstream /
+/// ahead-behind / modified / untracked counts. Returns `None` when the
+/// directory isn't in a git repo or git isn't on `$PATH`.
+///
+/// Light-touch parser — `## main...origin/main [ahead 2, behind 1]`
+/// on the first line, then one short-status line per affected file.
+/// `?? ` prefix is untracked; anything else with a non-blank prefix
+/// counts as modified for the dashboard's purpose.
+pub fn status_summary(start: &Path) -> Option<GitStatusSummary> {
+    let root = find_repo_root(start)?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&root)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("-b")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut out = GitStatusSummary::default();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("## ") {
+            // `<branch>` or `<branch>...<upstream> [ahead N, behind N]`.
+            let (head, track) = match rest.find(' ') {
+                Some(i) => (&rest[..i], Some(&rest[i + 1..])),
+                None => (rest, None),
+            };
+            let (branch, upstream) = match head.find("...") {
+                Some(i) => (&head[..i], Some(head[i + 3..].to_string())),
+                None => (head, None),
+            };
+            out.branch = Some(branch.to_string());
+            out.upstream = upstream;
+            if let Some(t) = track {
+                if let Some(idx) = t.find("ahead ") {
+                    out.ahead = parse_count(&t[idx + 6..]);
+                }
+                if let Some(idx) = t.find("behind ") {
+                    out.behind = parse_count(&t[idx + 7..]);
+                }
+            }
+        } else if line.starts_with("?? ") {
+            out.untracked += 1;
+        } else if !line.is_empty() {
+            out.modified += 1;
+        }
+    }
+    Some(out)
+}
+
+fn parse_count(s: &str) -> usize {
+    s.chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0)
+}
+
 pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
     let mut dir = start.canonicalize().ok()?;
     loop {
