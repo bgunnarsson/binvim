@@ -1547,48 +1547,33 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
 
     y = y.saturating_add(1).min(max_y);
 
+    // Body width budget — leave a 2-col margin on the right too.
+    let body_w = total_w.saturating_sub(left + 2).max(40);
+
     // --- ACTIVE BUFFER section ----------------------------------------
-    y = draw_section_header(out, left, y, max_y, "ACTIVE BUFFER", p.teal)?;
+    let mut active_lines: Vec<SectionLine> = Vec::new();
     match &snap.active_buffer {
         Some(ab) => {
-            // First indented row: path
-            y = draw_indented(out, left, y, max_y, &ab.display_path, p.lavender, total_w)?;
-            // Stat strip: lang · lines · indent · cursor
-            let lang_part = ab
-                .language
-                .clone()
-                .unwrap_or_else(|| "plain".into());
-            let stats = format!(
-                "{} · {} lines · {} · cursor {}:{}",
-                lang_part, ab.lines, ab.indent, ab.cursor_line, ab.cursor_col,
-            );
-            y = draw_indented(out, left, y, max_y, &stats, p.subtext1, total_w)?;
-            // Diagnostics row.
+            active_lines.push(SectionLine::plain(&ab.display_path, p.lavender));
+            let lang_part = ab.language.clone().unwrap_or_else(|| "plain".into());
+            active_lines.push(SectionLine::plain(
+                &format!(
+                    "{} · {} lines · {} · cursor {}:{}",
+                    lang_part, ab.lines, ab.indent, ab.cursor_line, ab.cursor_col,
+                ),
+                p.subtext1,
+            ));
             let d = &ab.diagnostics;
-            if d.total() == 0 {
-                y = draw_indented(
-                    out,
-                    left,
-                    y,
-                    max_y,
-                    "diagnostics: clean",
-                    p.overlay1,
-                    total_w,
-                )?;
+            active_lines.push(if d.total() == 0 {
+                SectionLine::plain("diagnostics: clean", p.overlay1)
             } else {
-                y = draw_diagnostics_row(out, left, y, max_y, d, &p, total_w)?;
-            }
-            // Attached LSPs — one row each. Compact: glyph + key (+ binary tail when not running).
+                diagnostics_chip_row(d, &p)
+            });
             if ab.statuses.is_empty() {
-                y = draw_indented(
-                    out,
-                    left,
-                    y,
-                    max_y,
+                active_lines.push(SectionLine::plain(
                     "(no LSP specs match this extension)",
                     p.overlay1,
-                    total_w,
-                )?;
+                ));
             } else {
                 for st in &ab.statuses {
                     let (glyph, colour) = match (st.running, st.resolved_binary.is_some()) {
@@ -1596,73 +1581,64 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
                         (false, true) => ('!', p.yellow),
                         (false, false) => ('✗', p.red),
                     };
-                    let bin_note = match (st.running, st.resolved_binary.as_deref()) {
+                    let suffix = match (st.running, st.resolved_binary.as_deref()) {
                         (true, _) => String::new(),
                         (false, Some(bin)) => {
                             format!("  installed but not running ({})", home_relative_path(bin))
                         }
                         (false, None) => "  NOT INSTALLED".into(),
                     };
-                    let row = format!("{} {:<18} {:<16}{}", glyph, st.key, st.language_id, bin_note);
-                    y = draw_indented(out, left, y, max_y, &row, colour, total_w)?;
+                    active_lines.push(SectionLine::plain(
+                        &format!("{} {:<18} {:<16}{}", glyph, st.key, st.language_id, suffix),
+                        colour,
+                    ));
                 }
             }
         }
         None => {
-            y = draw_indented(
-                out,
-                left,
-                y,
-                max_y,
+            active_lines.push(SectionLine::plain(
                 "[No Name] — save the buffer to attach an LSP",
                 p.overlay1,
-                total_w,
-            )?;
+            ));
         }
     }
-
+    y = draw_section_box(
+        out, left, y, body_w, max_y, "ACTIVE BUFFER", p.teal, &active_lines, &p,
+    )?;
     y = y.saturating_add(1).min(max_y);
 
     // --- LSP SERVERS section ------------------------------------------
-    let lsp_title = format!("LSP SERVERS ({} running)", snap.lsps.len());
-    y = draw_section_header(out, left, y, max_y, &lsp_title, p.lavender)?;
+    let mut lsp_lines: Vec<SectionLine> = Vec::new();
     if snap.lsps.is_empty() {
-        y = draw_indented(out, left, y, max_y, "(no servers running)", p.overlay1, total_w)?;
+        lsp_lines.push(SectionLine::plain("(no servers running)", p.overlay1));
     } else {
         for h in &snap.lsps {
-            if y >= max_y {
-                break;
-            }
             let root = display_lsp_root(&h.root_uri, 40);
             let pending_colour = if h.pending_requests > 0 { p.peach } else { p.overlay1 };
-            // Hand-paint so the pending count gets its own colour.
-            let prefix = format!("  • {:<18} {:<16} {:<40} ", h.key, h.language_id, root);
-            queue!(
-                out,
-                MoveTo(left as u16, y as u16),
-                SetForegroundColor(p.text),
-                Print(truncate(&prefix, total_w.saturating_sub(left))),
-                SetForegroundColor(pending_colour),
-                Print(format!("{} pending", h.pending_requests)),
-                ResetColor,
-            )?;
-            y += 1;
+            lsp_lines.push(SectionLine::Custom {
+                parts: vec![
+                    (format!("• {:<18} ", h.key), p.text),
+                    (format!("{:<16} ", h.language_id), p.subtext1),
+                    (format!("{:<40} ", root), p.overlay1),
+                    (format!("{} pending", h.pending_requests), pending_colour),
+                ],
+            });
         }
     }
-
+    let lsp_title = format!("LSP SERVERS ({} running)", snap.lsps.len());
+    y = draw_section_box(
+        out, left, y, body_w, max_y, &lsp_title, p.lavender, &lsp_lines, &p,
+    )?;
     y = y.saturating_add(1).min(max_y);
 
     // --- GIT section ---------------------------------------------------
-    y = draw_section_header(out, left, y, max_y, "GIT", p.peach)?;
+    let mut git_lines: Vec<SectionLine> = Vec::new();
     match &snap.git {
         Some(g) => {
-            let branch_disp = g
-                .branch
-                .clone()
-                .unwrap_or_else(|| "—".into());
-            let mut bits: Vec<String> = vec![format!("branch {}", branch_disp)];
+            let branch = g.branch.clone().unwrap_or_else(|| "—".into());
+            let mut bits: Vec<String> = vec![format!("branch {branch}")];
             if let Some(up) = &g.upstream {
-                bits.push(format!("upstream {}", up));
+                bits.push(format!("upstream {up}"));
             }
             if g.ahead > 0 {
                 bits.push(format!("ahead {}", g.ahead));
@@ -1684,94 +1660,66 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             {
                 bits.push("clean".into());
             }
-            y = draw_indented(out, left, y, max_y, &bits.join(" · "), p.subtext1, total_w)?;
+            git_lines.push(SectionLine::plain(&bits.join(" · "), p.subtext1));
         }
         None => {
-            y = draw_indented(out, left, y, max_y, "(not a git repository)", p.overlay1, total_w)?;
+            git_lines.push(SectionLine::plain("(not a git repository)", p.overlay1));
         }
     }
-
+    y = draw_section_box(out, left, y, body_w, max_y, "GIT", p.peach, &git_lines, &p)?;
     y = y.saturating_add(1).min(max_y);
 
     // --- BUFFERS section ----------------------------------------------
-    let buf_title = format!("BUFFERS ({})", snap.buffers.len());
-    y = draw_section_header(out, left, y, max_y, &buf_title, p.blue)?;
+    let mut buf_lines: Vec<SectionLine> = Vec::new();
     if snap.buffers.is_empty() {
-        y = draw_indented(out, left, y, max_y, "(none)", p.overlay1, total_w)?;
+        buf_lines.push(SectionLine::plain("(none)", p.overlay1));
     } else {
         for (i, b) in snap.buffers.iter().enumerate() {
-            if y >= max_y {
-                break;
-            }
-            let mut tags: Vec<(String, Color)> = Vec::new();
+            let mut parts: Vec<(String, Color)> =
+                vec![(format!("{:>3}  ", i + 1), p.overlay0), (b.label.clone(), p.text)];
             if b.active {
-                tags.push(("[active]".into(), p.green));
+                parts.push((" ".into(), p.text));
+                parts.push(("[active]".into(), p.green));
             }
             if b.dirty {
-                tags.push(("[dirty]".into(), p.peach));
+                parts.push((" ".into(), p.text));
+                parts.push(("[dirty]".into(), p.peach));
             }
-            let idx_str = format!("  {:>3}  ", i + 1);
-            let label_room = total_w
-                .saturating_sub(idx_str.chars().count() + left)
-                .saturating_sub(tags.iter().map(|(s, _)| s.chars().count() + 1).sum::<usize>());
-            let label = truncate(&b.label, label_room);
-            queue!(
-                out,
-                MoveTo(left as u16, y as u16),
-                SetForegroundColor(p.overlay0),
-                Print(idx_str),
-                SetForegroundColor(p.text),
-                Print(&label),
-            )?;
-            for (tag, colour) in &tags {
-                queue!(
-                    out,
-                    Print(' '),
-                    SetForegroundColor(*colour),
-                    Print(tag),
-                )?;
-            }
-            queue!(out, ResetColor)?;
-            y += 1;
+            buf_lines.push(SectionLine::Custom { parts });
         }
     }
-
+    let buf_title = format!("BUFFERS ({})", snap.buffers.len());
+    y = draw_section_box(
+        out, left, y, body_w, max_y, &buf_title, p.blue, &buf_lines, &p,
+    )?;
     y = y.saturating_add(1).min(max_y);
 
     // --- TAILWIND section ---------------------------------------------
-    y = draw_section_header(out, left, y, max_y, "TAILWIND", p.teal)?;
-    match &snap.tailwind {
+    let tw_lines: Vec<SectionLine> = match &snap.tailwind {
         Some(p_) => {
             let label = if p_.file_name().and_then(|s| s.to_str()) == Some("package.json") {
                 "v4 — `tailwindcss` listed in package.json"
             } else {
                 "v3 — tailwind.config.* present"
             };
-            let disp = home_relative_path(&p_.display().to_string());
-            let after = draw_indented(out, left, y, max_y, &disp, p.text, total_w)?;
-            let _ = draw_indented(out, left, after, max_y, label, p.subtext1, total_w)?;
+            vec![
+                SectionLine::plain(&home_relative_path(&p_.display().to_string()), p.text),
+                SectionLine::plain(label, p.subtext1),
+            ]
         }
-        None => {
-            let after = draw_indented(
-                out,
-                left,
-                y,
-                max_y,
+        None => vec![
+            SectionLine::plain(
                 "(not detected — Tailwind LSP will not attach)",
                 p.overlay1,
-                total_w,
-            )?;
-            let _ = draw_indented(
-                out,
-                left,
-                after,
-                max_y,
+            ),
+            SectionLine::plain(
                 "add tailwind.config.* or list `tailwindcss` in package.json",
                 p.overlay0,
-                total_w,
-            )?;
-        }
-    }
+            ),
+        ],
+    };
+    y = draw_section_box(out, left, y, body_w, max_y, "TAILWIND", p.teal, &tw_lines, &p)?;
+    let _ = y;
 
     // --- Footer (anchored to bottom of buffer area) -------------------
     if max_y > top + 1 {
@@ -1787,100 +1735,148 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-/// Paint one all-caps section header, returning the next row. Headers
-/// run flush left (no chrome) with a colour distinct from body text so
-/// the eye can hop from section to section without scanning every line.
-fn draw_section_header(
+/// One row inside a dashboard section box.
+enum SectionLine {
+    /// Single coloured run. `truncate(text, inner_w - 2)` applied at draw time.
+    Plain { text: String, colour: Color },
+    /// Hand-laid coloured segments — used when a row needs more than
+    /// one colour run (LSP rows with their pending counter, diagnostics
+    /// chip strip, attached-LSP rows with status-coloured glyphs).
+    Custom { parts: Vec<(String, Color)> },
+}
+
+impl SectionLine {
+    fn plain(text: &str, colour: Color) -> SectionLine {
+        SectionLine::Plain {
+            text: text.to_string(),
+            colour,
+        }
+    }
+}
+
+/// Paint one boxed section: top border with the title inline, the
+/// content rows (each padded to the inner width), bottom border.
+/// Returns the row index just after the closing border.
+fn draw_section_box(
     out: &mut impl Write,
     x: usize,
-    y: usize,
+    y_in: usize,
+    width: usize,
     max_y: usize,
     title: &str,
-    colour: Color,
+    title_colour: Color,
+    lines: &[SectionLine],
+    palette: &DashboardPalette,
 ) -> Result<usize> {
-    if y >= max_y {
-        return Ok(y);
+    if y_in >= max_y {
+        return Ok(y_in);
     }
+    let mut y = y_in;
+    let inner_w = width.saturating_sub(2);
+    let body_w = inner_w.saturating_sub(2); // 1-col padding each side
+
+    // Top border with inline title.
+    let title_marked = format!(" {} ", title);
+    let title_visible = title_marked.chars().count();
+    let dashes = inner_w.saturating_sub(title_visible + 1);
     queue!(
         out,
         MoveTo(x as u16, y as u16),
-        SetForegroundColor(colour),
+        SetForegroundColor(palette.border),
+        Print("┌─"),
+        SetForegroundColor(title_colour),
         SetAttribute(crossterm::style::Attribute::Bold),
-        Print(title),
+        Print(&title_marked),
         SetAttribute(crossterm::style::Attribute::Reset),
+        SetForegroundColor(palette.border),
+        Print("─".repeat(dashes)),
+        Print('┐'),
         ResetColor,
     )?;
-    Ok(y + 1)
-}
+    y += 1;
 
-/// One indented body row. The dashboard uses 2-space indent under every
-/// section header.
-fn draw_indented(
-    out: &mut impl Write,
-    x: usize,
-    y: usize,
-    max_y: usize,
-    text: &str,
-    colour: Color,
-    total_w: usize,
-) -> Result<usize> {
-    if y >= max_y {
-        return Ok(y);
+    for line in lines {
+        if y >= max_y.saturating_sub(1) {
+            // Reserve the row for the bottom border.
+            break;
+        }
+        queue!(
+            out,
+            MoveTo(x as u16, y as u16),
+            SetForegroundColor(palette.border),
+            Print('│'),
+            SetForegroundColor(palette.text),
+            Print(' '),
+        )?;
+        let painted = match line {
+            SectionLine::Plain { text, colour } => {
+                let trimmed = truncate(text, body_w);
+                let w = trimmed.chars().count();
+                queue!(out, SetForegroundColor(*colour), Print(trimmed))?;
+                w
+            }
+            SectionLine::Custom { parts } => {
+                let mut painted = 0usize;
+                for (segment, colour) in parts {
+                    let avail = body_w.saturating_sub(painted);
+                    if avail == 0 {
+                        break;
+                    }
+                    let trimmed = truncate(segment, avail);
+                    let w = trimmed.chars().count();
+                    queue!(out, SetForegroundColor(*colour), Print(trimmed))?;
+                    painted += w;
+                }
+                painted
+            }
+        };
+        let pad = body_w.saturating_sub(painted);
+        queue!(
+            out,
+            SetForegroundColor(palette.text),
+            Print(" ".repeat(pad + 1)),
+            SetForegroundColor(palette.border),
+            Print('│'),
+            ResetColor,
+        )?;
+        y += 1;
     }
-    queue!(
-        out,
-        MoveTo(x as u16, y as u16),
-        SetForegroundColor(colour),
-        Print("  "),
-        Print(truncate(text, total_w.saturating_sub(x + 2))),
-        ResetColor,
-    )?;
-    Ok(y + 1)
+
+    if y < max_y {
+        queue!(
+            out,
+            MoveTo(x as u16, y as u16),
+            SetForegroundColor(palette.border),
+            Print('└'),
+            Print("─".repeat(inner_w)),
+            Print('┘'),
+            ResetColor,
+        )?;
+        y += 1;
+    }
+    Ok(y)
 }
 
-/// Diagnostics summary row — one chip per severity, dim when zero,
-/// bright when non-zero, hot colours for higher severities.
-fn draw_diagnostics_row(
-    out: &mut impl Write,
-    x: usize,
-    y: usize,
-    max_y: usize,
+/// Pre-build the diagnostics chip row as a `SectionLine::Custom`.
+fn diagnostics_chip_row(
     counts: &crate::app::DiagnosticsCounts,
     palette: &DashboardPalette,
-    total_w: usize,
-) -> Result<usize> {
-    if y >= max_y {
-        return Ok(y);
-    }
+) -> SectionLine {
+    let mut parts: Vec<(String, Color)> = vec![("diagnostics  ".into(), palette.subtext1)];
     let chips: [(&str, usize, Color); 4] = [
         ("errors", counts.errors, palette.red),
         ("warnings", counts.warnings, palette.yellow),
         ("info", counts.info, palette.blue),
         ("hints", counts.hints, palette.teal),
     ];
-    queue!(
-        out,
-        MoveTo(x as u16, y as u16),
-        SetForegroundColor(palette.subtext1),
-        Print("  diagnostics  "),
-    )?;
-    let mut painted: usize = "  diagnostics  ".chars().count();
     for (i, (label, n, colour)) in chips.iter().enumerate() {
         let chip_colour = if *n > 0 { *colour } else { palette.overlay1 };
-        let chip = format!("{} {}", label, n);
-        let to_paint = if i + 1 < chips.len() {
-            format!("{} · ", chip)
-        } else {
-            chip
-        };
-        let room = total_w.saturating_sub(painted + x);
-        let chunk = truncate(&to_paint, room);
-        let w = chunk.chars().count();
-        queue!(out, SetForegroundColor(chip_colour), Print(chunk))?;
-        painted += w;
+        parts.push((format!("{label} {n}"), chip_colour));
+        if i + 1 < chips.len() {
+            parts.push((" · ".into(), palette.overlay0));
+        }
     }
-    queue!(out, ResetColor)?;
-    Ok(y + 1)
+    SectionLine::Custom { parts }
 }
 
 /// Catppuccin Mocha palette grouped for dashboard reuse.
@@ -1889,6 +1885,7 @@ struct DashboardPalette {
     subtext1: Color,
     overlay0: Color,
     overlay1: Color,
+    border: Color,
     lavender: Color,
     mauve: Color,
     blue: Color,
@@ -1906,6 +1903,7 @@ impl Default for DashboardPalette {
             subtext1: Color::Rgb { r: 0xba, g: 0xc2, b: 0xde },
             overlay0: Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },
             overlay1: Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c },
+            border: Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }, // Surface2
             lavender: Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe },
             mauve: Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 },
             blue: Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },
