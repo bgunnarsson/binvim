@@ -6,7 +6,114 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Tier 1 language coverage — Python, C / C++, Bash, YAML, Lua.** Each
+  gets the full stack: LSP (`pyright`-langserver with `basedpyright`
+  fallback, `clangd` with `language_id` flipping on extension,
+  `bash-language-server`, `yaml-language-server`, `lua-language-server`),
+  tree-sitter highlighting (Python, C, C++, Lua — Bash and YAML
+  grammars were already wired), and a format-on-save formatter
+  (`ruff format` with `black` fallback, `clang-format`, `shfmt`,
+  `stylua`). YAML LSP + highlight only at this point; formatter
+  landed in the prettier-coverage commit below.
+- **Tier 2 language coverage — Vue, Svelte, Markdown, TOML, Ruby, PHP,
+  Java.** LSPs (`vue-language-server`, `svelteserver`, `marksman`,
+  `taplo lsp stdio`, `ruby-lsp`, `intelephense`, `jdtls` with a
+  per-project workspace data dir hashed under
+  `~/.cache/binvim/jdtls/<hash>`). Tree-sitter via `tree-sitter-java`,
+  `tree-sitter-ruby`, `tree-sitter-php` (`LANGUAGE_PHP` —
+  `<?php … ?>`-inside-HTML shape), `tree-sitter-toml-ng` (the `-ng`
+  fork — upstream `tree-sitter-toml` is archived),
+  `tree-sitter-svelte-ng` (same situation). Vue grammar skipped —
+  `tree-sitter-vue` 0.0.3 is alpha. Formatters via Prettier (Markdown
+  / Vue / Svelte), `taplo format`, `rufo`, `php-cs-fixer` (temp-file
+  dance — no stdin mode), `google-java-format`.
+- **Tier 3 language coverage — Zig, Nix, Elixir, Kotlin, Dockerfile /
+  Containerfile, SQL.** LSPs (`zls`, `nil` with `nixd` fallback,
+  `elixir-ls` with `language_server.sh` fallback,
+  `kotlin-language-server`, `docker-langserver`, `sqls`). Dockerfile
+  is filename-based: `Dockerfile`, `Containerfile`,
+  `Dockerfile.<suffix>`, `Containerfile.<suffix>`, or `*.dockerfile`.
+  Tree-sitter via `tree-sitter-zig`, `tree-sitter-nix`,
+  `tree-sitter-elixir`, `tree-sitter-containerfile` (the maintained
+  successor to `tree-sitter-dockerfile`, which is stuck on
+  tree-sitter 0.20), `tree-sitter-sequel` (successor to
+  `tree-sitter-sql`); Kotlin's parser via `tree-sitter-kotlin-ng` but
+  the crate ships no highlights query so `.kt` files render as plain
+  text (LSP carries semantic info). Formatters via `zig fmt`,
+  `nixfmt` with `alejandra` fallback, `mix format`, `ktfmt`
+  (temp-file dance), `sql-formatter`.
+- **Emmet auxiliary LSP.** `emmet-ls` layers alongside the primary
+  server for HTML / CSS / JSX / TSX / Vue / Svelte / Astro / Razor
+  buffers. Typing `ul>li*3>a[href]` and accepting the completion
+  expands to the nested markup; mirrors the auxiliary shape used for
+  Tailwind. Razor reports as `html` since emmet-ls has no Razor
+  mode — the markup half of a Razor file is HTML.
+- **Snippet continuation-line indent.** Multi-line LSP snippet bodies
+  (emmet expansions, function templates, …) arrive with continuation
+  lines starting at column 0 — the server has no view of where the
+  buffer sits. Prepend the current line's leading whitespace to every
+  line after the first, mirroring VS Code / Neovim. Tab stops shift
+  forward for each indent inserted before them, so cycling lands at
+  the right column.
+- **`Ctrl-J` / `Ctrl-K` move lines down / up.** Single line in Normal
+  mode, the full selected line range in Visual mode (any kind).
+  Cursor and visual anchor follow the moving block so the selection
+  stays attached to the same content across the shift. Count prefix
+  works: `3<C-J>`. File-boundary clamps prevent the cursor from
+  drifting past row 0 / EOF; trailing-newline correctness preserves
+  whether the file ends with `\n` or not. Ropey's phantom empty
+  trailing line is detected and skipped so the last real line doesn't
+  produce a stray blank row when moved down at the edge.
+- **Esc strips whitespace-only lines on Insert→Normal.** Vim
+  convention: after Enter on an indented line you land at an
+  auto-indented column; if you Esc without typing content, the
+  indent is left behind. Now stripped — cursor parks at column 0
+  rather than the standard col-1 step-back.
+- **Notification box auto-dismisses after 10 seconds.** Status
+  messages (save confirms, format results, LSP errors, hunk-op
+  outcomes) used to linger until the next keypress. Keypress still
+  dismisses instantly; the timeout is a fallback for the no-input
+  case. Tracked via a new `status_msg_at: Option<Instant>` field;
+  the event loop's poll budget shrinks to the deadline so the box
+  clears on time without any input.
+- **Prettier as the cross-format fallback.** Format-on-save dispatch
+  routes everything biome doesn't yet cover to Prettier — Markdown,
+  MDX, Vue, Svelte, HTML, CSS preprocessor variants (`.scss`,
+  `.less`), YAML, GraphQL. Project-local
+  `node_modules/.bin/prettier` wins over a global install, but
+  global works too (no node_modules required), so a `.yaml` or
+  `.md` file in any random project gets the same canonical
+  formatter on `<leader>f`.
+
+### Changed
+- **`:w` status shows the basename, not the full path.** The save
+  confirmation used to render the buffer's absolute path
+  (`"/Users/…/binvim/CLAUDE.md" 51L written`), which wrapped the
+  notification box across multiple rows on any deep tree. Now prints
+  just the basename — disambiguating between two same-named files
+  isn't this message's job; the tab bar already carries that signal.
+- **Notifications park below the tab bar.** `draw_notification`
+  hard-coded `top = 0`, which sat the box on top of the active tab's
+  label. Now uses `app.buffer_top()` (which is 1 when tabs are
+  showing, 0 otherwise) so the notification anchors to the first row
+  of buffer content instead of overlapping tab labels.
+
 ### Fixed
+- **CSS custom properties rendered identical to regular properties.**
+  The CSS query's `((property_name) @variable (#match? @variable
+  "^--"))` override was meant to flip `--color-primary` away from the
+  Lavender `@property` tone toward the default-text `@variable`. But
+  `@variable` resolves to `None` colour in `config.rs`, and the
+  highlight priority loop only updated `byte_priority` inside the
+  `if let Some(color) = …` branch — a more-specific later match
+  meaning "this should be uncoloured" silently failed to clear the
+  earlier general match's colour. Resolve the colour outside the
+  `Option` branch; `None` captures now also bump priority, so the
+  override visibly takes effect. Safe because the queries we use
+  follow the standard "general first, specific later" convention
+  (the one outlier — the JSON bundled query — already got rewritten
+  inline when this priority system was introduced).
 - **Git gutter: stripe landed on the wrong block when adding a duplicate
   alongside an existing one.** Adding a structurally-similar block (e.g.
   a second `defineField({...})` next to an existing one) made the green
@@ -17,7 +124,7 @@ follows [Semantic Versioning](https://semver.org/).
   `--diff-algorithm=histogram`, which anchors hunks on landmark lines
   and lines up with what humans expect for additions like this.
 
-### Added
+### Added (earlier in cycle)
 - **Git gutter (stage 1 of git integration).** A coloured stripe at the
   leftmost gutter column shows working-tree changes against the index:
   Green `▎` for added lines, Yellow `▎` for modified lines, Red `▁` for
