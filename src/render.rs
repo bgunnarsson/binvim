@@ -1433,6 +1433,434 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
+/// Full-screen `:health` dashboard. Replaces the active buffer's
+/// content while `app.show_health_page` is set. Two-column layout
+/// when the terminal is wide enough; collapses to one column under
+/// `DASHBOARD_TWO_COL_MIN`. Esc / `q` / `:q` dismiss (handled in
+/// `app/input.rs`).
+fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
+    const DASHBOARD_TWO_COL_MIN: usize = 110;
+    const GAP: usize = 2;
+
+    let total_w = app.width as usize;
+    let rows = app.buffer_rows();
+    let top = app.buffer_top();
+    if rows == 0 || total_w < 30 {
+        return Ok(());
+    }
+
+    // Clear the buffer area first so leftover frame content can't bleed
+    // around the dashboard boxes.
+    for row in 0..rows {
+        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
+    }
+
+    let snap = app.build_health_snapshot();
+
+    // Catppuccin Mocha palette (subset used by the dashboard).
+    let text = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 };
+    let subtext1 = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde };
+    let overlay0 = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };
+    let overlay1 = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c };
+    let lavender = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
+    let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+    let blue = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
+    let teal = Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 };
+    let green = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
+    let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+    let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+    let red = Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 };
+
+    // Width budget: leave a 2-col margin on each side.
+    let body_w = total_w.saturating_sub(4);
+    let mut y = top;
+    let body_left = 2;
+
+    // --- Header line: version · pid · cwd · branch -----------------------
+    let header = format!(
+        "  binvim {} · pid {} · {} · {}",
+        snap.version, snap.pid, abbreviate_path(&snap.cwd, body_w / 2), snap.git_branch
+    );
+    queue!(
+        out,
+        MoveTo(0, y as u16),
+        SetForegroundColor(mauve),
+        Print(truncate(&header, total_w)),
+        ResetColor,
+    )?;
+    y += 1;
+    let cfg_line = format!(
+        "  config: {} [{}]",
+        if snap.config_path.is_empty() { "—".to_string() } else { snap.config_path.clone() },
+        if snap.config_loaded { "loaded" } else { "missing" }
+    );
+    let cfg_colour = if snap.config_loaded { subtext1 } else { overlay1 };
+    queue!(
+        out,
+        MoveTo(0, y as u16),
+        SetForegroundColor(cfg_colour),
+        Print(truncate(&cfg_line, total_w)),
+        ResetColor,
+    )?;
+    y += 2;
+
+    // --- Top row: Resources + Active buffer (two columns when wide) -----
+    let two_col = body_w >= DASHBOARD_TWO_COL_MIN;
+    let (col_l_w, col_r_w) = if two_col {
+        let half = (body_w - GAP) / 2;
+        (half, body_w - GAP - half)
+    } else {
+        (body_w, body_w)
+    };
+
+    // Resources box content
+    let cpu_str = snap
+        .cpu
+        .map(|v| format!("{v:.1} %"))
+        .unwrap_or_else(|| "—".into());
+    let ram_str = match (snap.ram_mb, snap.ram_pct) {
+        (Some(mb), Some(pct)) => format!("{mb:.0} MB · {pct:.1} %"),
+        (Some(mb), None) => format!("{mb:.0} MB"),
+        (None, Some(pct)) => format!("{pct:.1} %"),
+        (None, None) => "—".into(),
+    };
+    let resources_lines: Vec<BoxLine> = vec![
+        BoxLine::pair("CPU", &cpu_str, subtext1, text),
+        BoxLine::pair("RAM", &ram_str, subtext1, text),
+    ];
+
+    // Active buffer box content
+    let mut active_lines: Vec<BoxLine> = Vec::new();
+    match &snap.active_buffer_path {
+        Some(p) => {
+            active_lines.push(BoxLine::single(&abbreviate_path(&p.display().to_string(), col_r_w.saturating_sub(4)), lavender));
+            if snap.active_buffer_status.is_empty() {
+                active_lines.push(BoxLine::single("(no LSP specs match this extension)", overlay1));
+            } else {
+                for st in &snap.active_buffer_status {
+                    let (glyph, colour) = match (st.running, st.resolved_binary.is_some()) {
+                        (true, _) => ('✓', green),
+                        (false, true) => ('!', yellow),
+                        (false, false) => ('✗', red),
+                    };
+                    let bin = st
+                        .resolved_binary
+                        .as_deref()
+                        .map(|p| abbreviate_path(p, 32))
+                        .unwrap_or_else(|| "NOT INSTALLED".into());
+                    let label = format!(
+                        "{glyph} {:<14} {:<14} {}",
+                        st.key,
+                        st.language_id,
+                        bin
+                    );
+                    active_lines.push(BoxLine::single(&label, colour));
+                }
+            }
+        }
+        None => active_lines.push(BoxLine::single(
+            "[No Name] — save the buffer to attach an LSP",
+            overlay1,
+        )),
+    }
+
+    if two_col {
+        y = draw_two_col_boxes(
+            out,
+            body_left,
+            y,
+            ("RESOURCES", &resources_lines, blue, col_l_w),
+            ("ACTIVE BUFFER", &active_lines, teal, col_r_w),
+            GAP,
+        )?;
+    } else {
+        y = draw_box(out, body_left, y, body_w, "RESOURCES", &resources_lines, blue)?;
+        y += 1;
+        y = draw_box(out, body_left, y, body_w, "ACTIVE BUFFER", &active_lines, teal)?;
+    }
+    y += 1;
+
+    // --- LSP servers (full width) ---------------------------------------
+    let mut lsp_lines: Vec<BoxLine> = Vec::new();
+    if snap.lsps.is_empty() {
+        lsp_lines.push(BoxLine::single("(no servers running)", overlay1));
+    } else {
+        for h in &snap.lsps {
+            let pending_colour = if h.pending_requests > 0 { peach } else { overlay1 };
+            let inner_w = body_w.saturating_sub(4);
+            let head = format!("• {:<16} {:<10}", h.key, h.language_id);
+            let pending = format!(" {} pending", h.pending_requests);
+            let root_room = inner_w
+                .saturating_sub(head.chars().count() + pending.chars().count() + 2);
+            let root = abbreviate_path(&h.root_uri, root_room);
+            let pad = inner_w
+                .saturating_sub(head.chars().count() + pending.chars().count() + root.chars().count() + 1);
+            lsp_lines.push(BoxLine::Custom {
+                parts: vec![
+                    (head, text),
+                    (root, overlay1),
+                    (" ".repeat(pad), text),
+                    (pending, pending_colour),
+                ],
+            });
+        }
+    }
+    let lsp_title = format!("LSP SERVERS ({} running)", snap.lsps.len());
+    y = draw_box(out, body_left, y, body_w, &lsp_title, &lsp_lines, lavender)?;
+    y += 1;
+
+    // --- Buffers (full width) -------------------------------------------
+    let mut buf_lines: Vec<BoxLine> = Vec::new();
+    if snap.buffers.is_empty() {
+        buf_lines.push(BoxLine::single("(none)", overlay1));
+    } else {
+        let inner_w = body_w.saturating_sub(4);
+        for (i, b) in snap.buffers.iter().enumerate() {
+            let mut tags: Vec<(&'static str, Color)> = Vec::new();
+            if b.active {
+                tags.push(("active", green));
+            }
+            if b.dirty {
+                tags.push(("dirty", peach));
+            }
+            let idx = format!("{:>3}  ", i + 1);
+            let label_room = inner_w
+                .saturating_sub(idx.chars().count())
+                .saturating_sub(tags.iter().map(|(s, _)| s.chars().count() + 3).sum::<usize>());
+            let label = abbreviate_path(&b.label, label_room);
+            let mut parts: Vec<(String, Color)> =
+                vec![(idx, overlay0), (label, text)];
+            for (tag, colour) in &tags {
+                parts.push((" ".into(), text));
+                parts.push((format!("[{tag}]"), *colour));
+            }
+            buf_lines.push(BoxLine::Custom { parts });
+        }
+    }
+    let buf_title = format!("BUFFERS ({})", snap.buffers.len());
+    y = draw_box(out, body_left, y, body_w, &buf_title, &buf_lines, blue)?;
+    y += 1;
+
+    // --- Tailwind (full width) ------------------------------------------
+    let tw_lines: Vec<BoxLine> = match &snap.tailwind {
+        Some(p) => {
+            let label = if p.file_name().and_then(|s| s.to_str()) == Some("package.json") {
+                "v4 — `tailwindcss` listed in package.json"
+            } else {
+                "v3 — tailwind.config.* present"
+            };
+            vec![
+                BoxLine::single(&abbreviate_path(&p.display().to_string(), body_w.saturating_sub(6)), text),
+                BoxLine::single(label, subtext1),
+            ]
+        }
+        None => vec![
+            BoxLine::single("(not detected — Tailwind LSP will not attach)", overlay1),
+            BoxLine::single("add tailwind.config.* or list `tailwindcss` in package.json", overlay0),
+        ],
+    };
+    y = draw_box(out, body_left, y, body_w, "TAILWIND", &tw_lines, teal)?;
+
+    // --- Footer ---------------------------------------------------------
+    if y + 1 < top + rows {
+        let footer = "  Esc · q · :q to dismiss";
+        queue!(
+            out,
+            MoveTo(0, (y + 1) as u16),
+            SetForegroundColor(overlay0),
+            Print(truncate(footer, total_w)),
+            ResetColor,
+        )?;
+    }
+    Ok(())
+}
+
+/// One row inside a dashboard box.
+enum BoxLine {
+    /// `key                              value`
+    Pair {
+        key: String,
+        key_colour: Color,
+        value: String,
+        value_colour: Color,
+    },
+    /// One coloured run, padded to the box width.
+    Single { text: String, colour: Color },
+    /// Hand-laid coloured segments for complex rows.
+    Custom { parts: Vec<(String, Color)> },
+}
+
+impl BoxLine {
+    fn pair(key: &str, value: &str, key_colour: Color, value_colour: Color) -> BoxLine {
+        BoxLine::Pair {
+            key: key.to_string(),
+            key_colour,
+            value: value.to_string(),
+            value_colour,
+        }
+    }
+    fn single(text: &str, colour: Color) -> BoxLine {
+        BoxLine::Single {
+            text: text.to_string(),
+            colour,
+        }
+    }
+}
+
+/// Draw one boxed section: top border with the title inline, padded
+/// rows for each line, bottom border. Returns the row index *after* the
+/// closing border so the caller can stack the next box below.
+fn draw_box(
+    out: &mut impl Write,
+    x: usize,
+    y_in: usize,
+    width: usize,
+    title: &str,
+    lines: &[BoxLine],
+    title_colour: Color,
+) -> Result<usize> {
+    let mut y = y_in;
+    let inner_w = width.saturating_sub(2);
+    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let text = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 };
+
+    // Top border with inline title:  ┌─ TITLE ──────────────────┐
+    let title_marked = format!(" {} ", title);
+    let title_visible = title_marked.chars().count();
+    let dashes = inner_w.saturating_sub(title_visible + 1);
+    queue!(
+        out,
+        MoveTo(x as u16, y as u16),
+        SetForegroundColor(border),
+        Print("┌─"),
+        SetForegroundColor(title_colour),
+        Print(&title_marked),
+        SetForegroundColor(border),
+        Print("─".repeat(dashes)),
+        Print("┐"),
+        ResetColor,
+    )?;
+    y += 1;
+
+    for line in lines {
+        queue!(
+            out,
+            MoveTo(x as u16, y as u16),
+            SetForegroundColor(border),
+            Print('│'),
+            SetForegroundColor(text),
+            Print(' '),
+        )?;
+        let painted = match line {
+            BoxLine::Pair { key, key_colour, value, value_colour } => {
+                let key_w = key.chars().count();
+                let val_w = value.chars().count();
+                let inner_avail = inner_w.saturating_sub(2); // padding both sides
+                let gap = inner_avail.saturating_sub(key_w + val_w);
+                queue!(
+                    out,
+                    SetForegroundColor(*key_colour),
+                    Print(key),
+                    Print(" ".repeat(gap)),
+                    SetForegroundColor(*value_colour),
+                    Print(value),
+                )?;
+                key_w + gap + val_w
+            }
+            BoxLine::Single { text: line_text, colour } => {
+                let trimmed = truncate(line_text, inner_w.saturating_sub(2));
+                let w = trimmed.chars().count();
+                queue!(
+                    out,
+                    SetForegroundColor(*colour),
+                    Print(trimmed),
+                )?;
+                w
+            }
+            BoxLine::Custom { parts } => {
+                let mut painted = 0usize;
+                for (segment, colour) in parts {
+                    let avail = inner_w.saturating_sub(2).saturating_sub(painted);
+                    if avail == 0 {
+                        break;
+                    }
+                    let trimmed = truncate(segment, avail);
+                    let w = trimmed.chars().count();
+                    queue!(out, SetForegroundColor(*colour), Print(trimmed))?;
+                    painted += w;
+                }
+                painted
+            }
+        };
+        let inner_avail = inner_w.saturating_sub(2);
+        let pad = inner_avail.saturating_sub(painted);
+        queue!(
+            out,
+            SetForegroundColor(text),
+            Print(" ".repeat(pad + 1)),
+            SetForegroundColor(border),
+            Print('│'),
+            ResetColor,
+        )?;
+        y += 1;
+    }
+
+    queue!(
+        out,
+        MoveTo(x as u16, y as u16),
+        SetForegroundColor(border),
+        Print('└'),
+        Print("─".repeat(inner_w)),
+        Print('┘'),
+        ResetColor,
+    )?;
+    Ok(y + 1)
+}
+
+/// Side-by-side draw for two boxes that should top-align. Returns the
+/// row index after the taller of the two.
+#[allow(clippy::too_many_arguments)]
+fn draw_two_col_boxes(
+    out: &mut impl Write,
+    x: usize,
+    y_in: usize,
+    left: (&str, &[BoxLine], Color, usize),
+    right: (&str, &[BoxLine], Color, usize),
+    gap: usize,
+) -> Result<usize> {
+    let (l_title, l_lines, l_colour, l_w) = left;
+    let (r_title, r_lines, r_colour, r_w) = right;
+    let l_y = draw_box(out, x, y_in, l_w, l_title, l_lines, l_colour)?;
+    let r_y = draw_box(out, x + l_w + gap, y_in, r_w, r_title, r_lines, r_colour)?;
+    Ok(l_y.max(r_y))
+}
+
+/// Cut a string down to `width` display chars, appending `…` when
+/// truncation removes content.
+fn truncate(s: &str, width: usize) -> String {
+    let count = s.chars().count();
+    if count <= width {
+        return s.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    let mut out: String = s.chars().take(width.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// Shorten a file-system path / URI to fit a column. Drops `file://`
+/// prefix when present, then keeps the right-hand component if the
+/// whole path is too long.
+fn abbreviate_path(path: &str, width: usize) -> String {
+    let stripped = path.strip_prefix("file://").unwrap_or(path);
+    if stripped.chars().count() <= width {
+        return stripped.to_string();
+    }
+    truncate(stripped, width)
+}
+
 /// One drawable tab on the bar. Tab body layout (left → right):
 ///
 ///   ` <label>[ +]  <×> `
@@ -1622,6 +2050,9 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
 }
 
 fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
+    if app.show_health_page {
+        return draw_health_page(out, app);
+    }
     if app.show_start_page {
         return draw_start_page(out, app);
     }
@@ -2788,7 +3219,7 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
 fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // On the start page, no buffer cursor — only the cmdline/picker overlays
     // ever steal focus from the logo.
-    if app.show_start_page
+    if (app.show_start_page || app.show_health_page)
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
         queue!(out, Hide)?;

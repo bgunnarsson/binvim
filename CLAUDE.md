@@ -36,7 +36,7 @@ binvim is a single-binary modal TUI editor. `main.rs` does almost nothing — it
 
 ### Adding a new LSP
 
-The five-file change is always: new arm in `primary_spec_for_path` (`lsp/specs.rs`), `Lang` variant + extension/basename entry in `Lang::detect()` and matching `ts_language()` / `highlights_query()` arms (`lang.rs`) — skip this only if you don't want tree-sitter highlighting, icon + lang_name in the two exhaustive `Lang` matches (`render.rs`), formatter arm in `format_buffer` (`format.rs`) plus `tree-sitter-<lang>` crate in `Cargo.toml`, README install table rows for the LSP and the formatter. There is no plugin system — every server is hard-wired in `lsp/specs.rs`. `ROADMAP.md` is the running ledger of what's shipped per tier.
+The five-file change is always: new arm in `primary_spec_for_path` (`lsp/specs.rs`), `Lang` variant + extension/basename entry in `Lang::detect()` and matching `ts_language()` / `highlights_query()` arms (`lang.rs`) — skip this only if you don't want tree-sitter highlighting, icon + lang_name in the two exhaustive `Lang` matches (`render.rs`), formatter arm in `format_buffer` (`format.rs`) plus `tree-sitter-<lang>` crate in `Cargo.toml`, README install table rows for the LSP and the formatter. There is no plugin system — every server is hard-wired in `lsp/specs.rs`.
 
 ### Adding tree-sitter highlighting for an existing LSP
 

@@ -146,6 +146,12 @@ pub struct App {
     /// True when binvim was launched with no path — render the start page in
     /// place of the empty buffer until the user opens something.
     pub show_start_page: bool,
+    /// When true, the buffer area is replaced by the `:health` dashboard
+    /// instead of the active buffer's contents. Dismissed by Esc / `q`
+    /// / `:q`. Drawn by `render::draw_health_page`; the data behind it
+    /// is freshly sampled per frame (cheap — no LSP traffic, just one
+    /// `ps` shell-out).
+    pub show_health_page: bool,
     /// Bottom debug pane visibility. When open it steals rows from the
     /// editor area; height is computed from terminal size in `view.rs`.
     /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
@@ -299,6 +305,7 @@ impl App {
             blame_visible: false,
             blame: Vec::new(),
             show_start_page,
+            show_health_page: false,
             debug_pane_open: false,
             dap_pane_cursor: 0,
             dap_left_scroll: 0,

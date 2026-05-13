@@ -20,6 +20,6 @@ mod types;
 pub use manager::LspManager;
 pub use specs::{find_node_modules_bin, find_tailwind_config};
 pub use types::{
-    CodeActionItem, CompletionItem, Diagnostic, InlayHint, LocationItem, LspEvent, Severity,
-    SignatureHelp, SymbolItem, uri_to_path,
+    ActiveBufferLspStatus, CodeActionItem, CompletionItem, Diagnostic, InlayHint, LocationItem,
+    LspEvent, LspHealth, Severity, SignatureHelp, SymbolItem, uri_to_path,
 };

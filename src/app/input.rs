@@ -197,6 +197,33 @@ impl super::App {
                 {
                     return Ok(());
                 }
+                // While the health dashboard is up, only Esc / `q` (in
+                // Normal mode) / `:` to enter the cmdline pass through.
+                // `:q` then dismisses via the ExCommand::Quit handler
+                // above. Other keys are swallowed so the user can't
+                // accidentally type into the underlying buffer.
+                if self.show_health_page {
+                    match k.code {
+                        KeyCode::Esc => {
+                            self.show_health_page = false;
+                            return Ok(());
+                        }
+                        KeyCode::Char('q')
+                            if matches!(self.mode, Mode::Normal)
+                                && !k.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            self.show_health_page = false;
+                            return Ok(());
+                        }
+                        KeyCode::Char(':') if matches!(self.mode, Mode::Normal) => {
+                            // Fall through to the normal cmdline-entry path.
+                        }
+                        _ if matches!(self.mode, Mode::Command) => {
+                            // Cmdline is in flight — let it handle keys (incl. `:q` Enter).
+                        }
+                        _ => return Ok(()),
+                    }
+                }
                 match self.mode {
                     Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
                     Mode::Insert => self.handle_insert_key(k),
@@ -1029,7 +1056,9 @@ impl super::App {
                 }
             }
             ExCommand::Quit => {
-                if self.buffer.dirty {
+                if self.show_health_page {
+                    self.show_health_page = false;
+                } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
                     self.should_quit = true;
