@@ -380,11 +380,31 @@ impl super::App {
         // Snippet items go through the placeholder expander so `${1:foo}`
         // doesn't end up as literal text in the buffer. Plain items insert
         // verbatim.
-        let (text, stop_offsets) = if item.is_snippet {
+        let (mut text, mut stop_offsets) = if item.is_snippet {
             expand_snippet(&item.insert_text)
         } else {
             (item.insert_text.clone(), Vec::new())
         };
+        // Multi-line snippet bodies (emmet's `ul>li*3`, language-server
+        // function templates) carry no indent on the continuation lines —
+        // the server doesn't know what column the buffer is sitting at.
+        // VS Code / Neovim prepend the current line's leading whitespace
+        // to every line after the first; without it, `</ul>` lands at
+        // column 0 even though `<ul>` is nested several levels deep.
+        if text.contains('\n') {
+            let line_idx = self.buffer.rope.char_to_line(start);
+            let line_start = self.buffer.rope.line_to_char(line_idx);
+            let indent: String = self
+                .buffer
+                .rope
+                .slice(line_start..)
+                .chars()
+                .take_while(|c| *c == ' ' || *c == '\t')
+                .collect();
+            if !indent.is_empty() {
+                text = indent_continuation_lines(&text, &mut stop_offsets, &indent);
+            }
+        }
         self.buffer.insert_at_idx(start, &text);
         let inserted = text.chars().count();
         let landing = match stop_offsets.first() {
@@ -972,6 +992,36 @@ pub(super) fn expand_snippet(template: &str) -> (String, Vec<usize>) {
     (out, stop_offsets)
 }
 
+/// Prepend `indent` after every newline in `text` and shift `stops` to
+/// match. Stops at or before a given newline don't move; stops strictly
+/// after shift forward by `indent.chars().count()` for that newline.
+///
+/// LSP servers emit snippet bodies as if they're being pasted at column 0
+/// (`<ul>\n\t<li>…\n</ul>`). The buffer is usually nested deeper than
+/// that, so continuation lines need the caller's indent applied for the
+/// closing tag (and inner siblings) to line up.
+pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent: &str) -> String {
+    let indent_chars = indent.chars().count();
+    if indent_chars == 0 || !text.contains('\n') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + indent.len() * 4);
+    let mut i = 0usize;
+    for c in text.chars() {
+        out.push(c);
+        if c == '\n' {
+            for stop in stops.iter_mut() {
+                if *stop > i {
+                    *stop += indent_chars;
+                }
+            }
+            out.push_str(indent);
+        }
+        i += 1;
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::expand_snippet;
@@ -1036,6 +1086,40 @@ mod tests {
         let (_text, stops) = expand_snippet("$1.foo($1, $1)");
         assert_eq!(stops.len(), 1);
         assert_eq!(stops[0], 0);
+    }
+
+    #[test]
+    fn indent_lines_prepends_after_each_newline_and_shifts_stops() {
+        // Emmet-shape snippet: parent at the cursor's indent, children
+        // already indented one extra level, closing tag at column 0.
+        // The continuation indent should make the closer line up with
+        // the opener.
+        let mut stops = vec![13]; // position of the `$1` inside <li>
+        let out = super::indent_continuation_lines(
+            "<ul>\n\t<li>x</li>\n</ul>",
+            &mut stops,
+            "\t",
+        );
+        assert_eq!(out, "<ul>\n\t\t<li>x</li>\n\t</ul>");
+        // The stop at original char 13 (the 'x') is after the first
+        // newline, so it shifts by one (the inserted tab).
+        assert_eq!(stops, vec![14]);
+    }
+
+    #[test]
+    fn indent_lines_noop_without_newline() {
+        let mut stops = vec![0];
+        let out = super::indent_continuation_lines("foo", &mut stops, "\t");
+        assert_eq!(out, "foo");
+        assert_eq!(stops, vec![0]);
+    }
+
+    #[test]
+    fn indent_lines_noop_with_empty_indent() {
+        let mut stops = vec![5];
+        let out = super::indent_continuation_lines("a\nb\nc", &mut stops, "");
+        assert_eq!(out, "a\nb\nc");
+        assert_eq!(stops, vec![5]);
     }
 }
 
