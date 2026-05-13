@@ -153,6 +153,11 @@ pub enum Action {
     /// `Ctrl-A` (delta = +1) / `Ctrl-X` (delta = -1) — adjust the next number
     /// at or after the cursor on the current line. Multiplied by `count`.
     AdjustNumber { delta: i64, count: usize },
+    /// `Ctrl-J` (down = true) / `Ctrl-K` (down = false) — move the current
+    /// line (Normal mode) or the selected line range (Visual mode) up or
+    /// down by `count` positions. Cursor and visual anchor follow the
+    /// block; the selection stays attached to the moving lines.
+    MoveLine { down: bool, count: usize },
     OpenPicker { kind: PickerLeader },
     OpenYazi,
     LspGotoDefinition,
@@ -408,6 +413,16 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'n' | 'N' if matches!(ctx, ParseCtx::Visual) => {
                 state.reset();
                 ParseResult::Action(Action::AddNextOccurrenceSelection)
+            }
+            'j' | 'J' => {
+                let count = state.total_count();
+                state.reset();
+                ParseResult::Action(Action::MoveLine { down: true, count })
+            }
+            'k' | 'K' => {
+                let count = state.total_count();
+                state.reset();
+                ParseResult::Action(Action::MoveLine { down: false, count })
             }
             _ => ParseResult::Pending,
         };
@@ -1109,6 +1124,37 @@ mod tests {
                 assert_eq!(count, 5);
             }
             _ => panic!("5 Ctrl-X did not emit AdjustNumber"),
+        }
+    }
+
+    #[test]
+    fn ctrl_j_emits_move_line_down() {
+        let mut state = PendingCmd::default();
+        let k = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL);
+        match parse(&mut state, k, ParseCtx::Normal) {
+            ParseResult::Action(Action::MoveLine { down, count }) => {
+                assert!(down);
+                assert_eq!(count, 1);
+            }
+            _ => panic!("Ctrl-J did not emit MoveLine"),
+        }
+    }
+
+    #[test]
+    fn ctrl_k_with_count_emits_move_line_up_n() {
+        let mut state = PendingCmd::default();
+        let _ = parse(
+            &mut state,
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
+            ParseCtx::Normal,
+        );
+        let k = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        match parse(&mut state, k, ParseCtx::Normal) {
+            ParseResult::Action(Action::MoveLine { down, count }) => {
+                assert!(!down);
+                assert_eq!(count, 3);
+            }
+            _ => panic!("3 Ctrl-K did not emit MoveLine"),
         }
     }
 

@@ -60,6 +60,7 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.adjust_number(delta, count);
             }
+            Action::MoveLine { down, count } => self.move_lines(down, count),
             Action::ToggleCase { count } => {
                 self.history.record(&self.buffer.rope, self.cursor);
                 self.toggle_case(count);

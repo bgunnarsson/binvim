@@ -320,6 +320,66 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
+    /// Ctrl-J / Ctrl-K — move the cursor's line (Normal mode) or the
+    /// selected line range (Visual mode) up or down by `count` positions.
+    /// Cursor and visual anchor follow the moving block so a Visual
+    /// selection stays attached to the same content after the shift.
+    /// Clamped at file boundaries — moving past them is a no-op rather
+    /// than scrolling content off the edge.
+    pub(super) fn move_lines(&mut self, down: bool, count: usize) {
+        let count = count.max(1);
+        let total = self.buffer.line_count();
+        if total == 0 {
+            return;
+        }
+
+        let (mut start_line, mut end_line) = match (self.mode, self.visual_anchor) {
+            (crate::mode::Mode::Visual(_), Some(anchor)) => {
+                let a = anchor.line.min(self.cursor.line);
+                let b = anchor.line.max(self.cursor.line);
+                (a, b)
+            }
+            _ => (self.cursor.line, self.cursor.line),
+        };
+
+        // Effective last line excludes ropey's phantom trailing empty
+        // entry when the file ends in `\n`.
+        let last_real = if is_phantom_trailing_line(&self.buffer, total.saturating_sub(1)) {
+            total.saturating_sub(2)
+        } else {
+            total.saturating_sub(1)
+        };
+        let step = if down {
+            let headroom = last_real.saturating_sub(end_line);
+            count.min(headroom)
+        } else {
+            count.min(start_line)
+        };
+        if step == 0 {
+            return;
+        }
+
+        self.history.record(&self.buffer.rope, self.cursor);
+        for _ in 0..step {
+            if down {
+                shift_block_down_by_one(&mut self.buffer, start_line, end_line);
+                start_line += 1;
+                end_line += 1;
+            } else {
+                shift_block_up_by_one(&mut self.buffer, start_line, end_line);
+                start_line -= 1;
+                end_line -= 1;
+            }
+        }
+
+        let delta = step as isize * if down { 1 } else { -1 };
+        self.cursor.line = (self.cursor.line as isize + delta).max(0) as usize;
+        if let Some(anchor) = self.visual_anchor.as_mut() {
+            anchor.line = (anchor.line as isize + delta).max(0) as usize;
+        }
+        self.clamp_cursor_normal();
+    }
+
     pub(super) fn join_lines(&mut self, count: usize) {
         let times = count.max(1);
         for _ in 0..times {
@@ -851,4 +911,164 @@ fn format_number(orig: &ParsedNumber, new_value: i64) -> String {
         ""
     };
     format!("{sign}{prefix}{padded}")
+}
+
+/// True if `line` is the phantom empty trailing entry ropey adds when
+/// the file ends with `\n`. ropey reports `line_count() = N+1` for a
+/// file with N user-visible lines that ends in `\n`; the extra index
+/// is an empty line that shouldn't participate in line-move ops.
+fn is_phantom_trailing_line(buffer: &crate::buffer::Buffer, line: usize) -> bool {
+    let total = buffer.line_count();
+    if line + 1 != total {
+        return false;
+    }
+    let len = buffer.rope.len_chars();
+    len > 0 && buffer.rope.char(len - 1) == '\n' && buffer.line_len(line) == 0
+}
+
+/// Swap the block `[start_line..=end_line]` with the single line at
+/// `end_line + 1`. Trailing-newline edge case: if the swap target is
+/// the file's last line (no trailing `\n`), the target gains one and
+/// the block (now last) loses one, preserving the "final newline" or
+/// "no final newline" property of the file as a whole.
+pub(super) fn shift_block_down_by_one(buffer: &mut crate::buffer::Buffer, start_line: usize, end_line: usize) {
+    let total = buffer.line_count();
+    if end_line + 1 >= total {
+        return;
+    }
+    // Skip the phantom empty trailing line ropey adds when the file
+    // ends with `\n` — moving the last real line down into it would
+    // produce a stray blank row.
+    if is_phantom_trailing_line(buffer, end_line + 1) {
+        return;
+    }
+    let block_first = buffer.rope.line_to_char(start_line);
+    let block_end = buffer.rope.line_to_char(end_line + 1);
+    let region_end = if end_line + 2 < total {
+        buffer.rope.line_to_char(end_line + 2)
+    } else {
+        buffer.rope.len_chars()
+    };
+
+    let block_text: String = buffer.rope.slice(block_first..block_end).to_string();
+    let target_text: String = buffer.rope.slice(block_end..region_end).to_string();
+
+    let new_content = if target_text.ends_with('\n') {
+        format!("{}{}", target_text, block_text)
+    } else {
+        let block_stripped = block_text.strip_suffix('\n').unwrap_or(&block_text);
+        format!("{}\n{}", target_text, block_stripped)
+    };
+
+    buffer.delete_range(block_first, region_end);
+    buffer.insert_at_idx(block_first, &new_content);
+}
+
+/// Mirror of `shift_block_down_by_one` — swap the block with the line
+/// at `start_line - 1`. Handles the symmetric last-line edge case when
+/// the moving block contains the file's final line.
+pub(super) fn shift_block_up_by_one(buffer: &mut crate::buffer::Buffer, start_line: usize, end_line: usize) {
+    if start_line == 0 {
+        return;
+    }
+    let total = buffer.line_count();
+    let target_first = buffer.rope.line_to_char(start_line - 1);
+    let block_first = buffer.rope.line_to_char(start_line);
+    let block_end = if end_line + 1 < total {
+        buffer.rope.line_to_char(end_line + 1)
+    } else {
+        buffer.rope.len_chars()
+    };
+
+    let target_text: String = buffer.rope.slice(target_first..block_first).to_string();
+    let block_text: String = buffer.rope.slice(block_first..block_end).to_string();
+
+    let new_content = if block_text.ends_with('\n') {
+        format!("{}{}", block_text, target_text)
+    } else {
+        let target_stripped = target_text.strip_suffix('\n').unwrap_or(&target_text);
+        format!("{}\n{}", block_text, target_stripped)
+    };
+
+    buffer.delete_range(target_first, block_end);
+    buffer.insert_at_idx(target_first, &new_content);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{shift_block_down_by_one, shift_block_up_by_one};
+    use crate::buffer::Buffer;
+    use ropey::Rope;
+
+    fn buf(text: &str) -> Buffer {
+        Buffer {
+            rope: Rope::from_str(text),
+            path: None,
+            dirty: false,
+            version: 0,
+            disk_mtime: None,
+            display_name: None,
+        }
+    }
+
+    #[test]
+    fn shift_single_line_down_in_middle() {
+        let mut b = buf("a\nb\nc\n");
+        shift_block_down_by_one(&mut b, 0, 0); // move "a" down past "b"
+        assert_eq!(b.rope.to_string(), "b\na\nc\n");
+    }
+
+    #[test]
+    fn shift_single_line_up_in_middle() {
+        let mut b = buf("a\nb\nc\n");
+        shift_block_up_by_one(&mut b, 1, 1); // move "b" up past "a"
+        assert_eq!(b.rope.to_string(), "b\na\nc\n");
+    }
+
+    #[test]
+    fn shift_down_into_last_line_preserves_no_trailing_newline() {
+        let mut b = buf("a\nb"); // no trailing newline — `b` is the last line
+        shift_block_down_by_one(&mut b, 0, 0);
+        // `a` now becomes the last line and should lose its trailing \n;
+        // `b` becomes mid-file and gains one. File-level "no final newline"
+        // is preserved.
+        assert_eq!(b.rope.to_string(), "b\na");
+    }
+
+    #[test]
+    fn shift_up_from_last_line_preserves_no_trailing_newline() {
+        let mut b = buf("a\nb");
+        shift_block_up_by_one(&mut b, 1, 1);
+        assert_eq!(b.rope.to_string(), "b\na");
+    }
+
+    #[test]
+    fn shift_block_down_keeps_block_intact() {
+        let mut b = buf("a\nb\nc\nd\ne\n");
+        // Move block [b, c] down by one — should swap with d.
+        shift_block_down_by_one(&mut b, 1, 2);
+        assert_eq!(b.rope.to_string(), "a\nd\nb\nc\ne\n");
+    }
+
+    #[test]
+    fn shift_block_up_keeps_block_intact() {
+        let mut b = buf("a\nb\nc\nd\ne\n");
+        // Move block [c, d] up by one — should swap with b.
+        shift_block_up_by_one(&mut b, 2, 3);
+        assert_eq!(b.rope.to_string(), "a\nc\nd\nb\ne\n");
+    }
+
+    #[test]
+    fn shift_down_at_last_position_is_noop() {
+        let mut b = buf("a\nb\nc\n");
+        shift_block_down_by_one(&mut b, 2, 2); // c is line 2; there's no line 3
+        assert_eq!(b.rope.to_string(), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn shift_up_at_first_position_is_noop() {
+        let mut b = buf("a\nb\nc\n");
+        shift_block_up_by_one(&mut b, 0, 0); // a is line 0; there's no line -1
+        assert_eq!(b.rope.to_string(), "a\nb\nc\n");
+    }
 }
