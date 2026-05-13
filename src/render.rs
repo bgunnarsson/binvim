@@ -1590,9 +1590,15 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             let inner_w = body_w.saturating_sub(4);
             let head = format!("• {:<16} {:<10}", h.key, h.language_id);
             let pending = format!(" {} pending", h.pending_requests);
-            let root_room = inner_w
-                .saturating_sub(head.chars().count() + pending.chars().count() + 2);
-            let root = abbreviate_path(&h.root_uri, root_room);
+            // Show the workspace root compactly — basename when the
+            // full path doesn't add disambiguating info, last-two
+            // segments otherwise. Full paths blow the column and the
+            // language_id chip + buffer's own path already cover the
+            // "which file" question.
+            let root_budget = inner_w
+                .saturating_sub(head.chars().count() + pending.chars().count() + 2)
+                .min(40);
+            let root = display_lsp_root(&h.root_uri, root_budget);
             let pad = inner_w
                 .saturating_sub(head.chars().count() + pending.chars().count() + root.chars().count() + 1);
             lsp_lines.push(BoxLine::Custom {
@@ -1855,10 +1861,128 @@ fn truncate(s: &str, width: usize) -> String {
 /// whole path is too long.
 fn abbreviate_path(path: &str, width: usize) -> String {
     let stripped = path.strip_prefix("file://").unwrap_or(path);
-    if stripped.chars().count() <= width {
-        return stripped.to_string();
+    let home_relative = home_relative_path(stripped);
+    if home_relative.chars().count() <= width {
+        return home_relative;
     }
-    truncate(stripped, width)
+    truncate(&home_relative, width)
+}
+
+/// Compact display for an LSP server's workspace root. Strips
+/// `file://`, replaces `$HOME` with `~`, and if the result is still
+/// wider than `width` keeps the trailing two path segments behind a
+/// leading `…/`. Falls back to the basename when even two segments
+/// don't fit.
+fn display_lsp_root(uri: &str, width: usize) -> String {
+    let stripped = uri.strip_prefix("file://").unwrap_or(uri);
+    let home_relative = home_relative_path(stripped);
+    if home_relative.chars().count() <= width {
+        return home_relative;
+    }
+    // Take the trailing components, prepending `…/` to signal the trim.
+    let segments: Vec<&str> = home_relative
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    for take in (1..=segments.len().min(2)).rev() {
+        let tail: String = segments[segments.len() - take..].join("/");
+        let candidate = if take < segments.len() {
+            format!("…/{tail}")
+        } else {
+            tail
+        };
+        if candidate.chars().count() <= width {
+            return candidate;
+        }
+    }
+    // Last resort — straight truncation of the basename.
+    let basename = segments.last().copied().unwrap_or(stripped);
+    truncate(basename, width)
+}
+
+/// Replace a leading `$HOME` prefix with `~` so the dashboard's
+/// long paths read cleanly. `$HOME` resolution best-effort — falls
+/// back to the input unchanged when the env var is missing.
+fn home_relative_path(path: &str) -> String {
+    let Some(home) = std::env::var_os("HOME") else {
+        return path.to_string();
+    };
+    let home_str = home.to_string_lossy();
+    home_relative_with(path, &home_str)
+}
+
+/// Pure variant of `home_relative_path` — caller supplies the home
+/// dir explicitly, so tests don't depend on the process environment.
+fn home_relative_with(path: &str, home: &str) -> String {
+    if home.is_empty() {
+        return path.to_string();
+    }
+    if let Some(rest) = path.strip_prefix(home) {
+        if rest.is_empty() {
+            return "~".to_string();
+        }
+        if let Some(rest) = rest.strip_prefix('/') {
+            return format!("~/{rest}");
+        }
+    }
+    path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{display_lsp_root, home_relative_with, truncate};
+
+    #[test]
+    fn home_relative_strips_home_prefix() {
+        assert_eq!(
+            home_relative_with("/Users/bg/Dev/binvim", "/Users/bg"),
+            "~/Dev/binvim"
+        );
+    }
+
+    #[test]
+    fn home_relative_handles_home_itself() {
+        assert_eq!(home_relative_with("/Users/bg", "/Users/bg"), "~");
+    }
+
+    #[test]
+    fn home_relative_passthrough_when_no_match() {
+        assert_eq!(
+            home_relative_with("/opt/cache", "/Users/bg"),
+            "/opt/cache"
+        );
+    }
+
+    #[test]
+    fn display_lsp_root_uses_full_path_when_short() {
+        // `file://` strip + tilde substitution would still keep us
+        // within budget, so display_lsp_root keeps the whole thing.
+        let out = display_lsp_root("file:///x/y", 40);
+        assert_eq!(out, "/x/y");
+    }
+
+    #[test]
+    fn display_lsp_root_trims_to_tail_segments_when_too_wide() {
+        // 60-char input, 25-char budget — keeps the last two segments
+        // behind a `…/` so the project context survives the trim.
+        let long =
+            "file:///Users/bg/Development/bgunnarsson/comp/packages/ui-apps/src";
+        let out = display_lsp_root(long, 25);
+        assert!(out.starts_with("…/"), "expected leading ellipsis, got {out:?}");
+        assert!(out.ends_with("ui-apps/src"), "expected ui-apps/src tail, got {out:?}");
+        assert!(out.chars().count() <= 25, "exceeded budget: {out:?}");
+    }
+
+    #[test]
+    fn truncate_appends_ellipsis_when_over_width() {
+        assert_eq!(truncate("hello world", 5), "hell…");
+    }
+
+    #[test]
+    fn truncate_passthrough_when_within_width() {
+        assert_eq!(truncate("hello", 5), "hello");
+        assert_eq!(truncate("hi", 5), "hi");
+    }
 }
 
 /// One drawable tab on the bar. Tab body layout (left → right):
