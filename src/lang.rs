@@ -39,6 +39,14 @@ pub enum Lang {
     /// glob pattern lists. Byte-level scanner: `#` comments, `!`-negation
     /// prefix, the bare patterns themselves.
     GitIgnore,
+    /// `.py` / `.pyi` — tree-sitter-python with the bundled query.
+    Python,
+    /// `.c` / `.h` — tree-sitter-c.
+    C,
+    /// `.cc` / `.cpp` / `.cxx` / `.hh` / `.hpp` / `.hxx` — tree-sitter-cpp.
+    Cpp,
+    /// `.lua` — tree-sitter-lua.
+    Lua,
 }
 
 impl Lang {
@@ -57,6 +65,12 @@ impl Lang {
                 "md" | "markdown" => return Some(Lang::Markdown),
                 "cs" => return Some(Lang::CSharp),
                 "sh" | "bash" | "zsh" | "ksh" => return Some(Lang::Bash),
+                "py" | "pyi" => return Some(Lang::Python),
+                "c" | "h" => return Some(Lang::C),
+                "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => {
+                    return Some(Lang::Cpp);
+                }
+                "lua" => return Some(Lang::Lua),
                 "yml" | "yaml" => return Some(Lang::Yaml),
                 // XML family — the project-file flavours all use the
                 // same MSBuild XML schema. Covers .NET (csproj/fsproj/
@@ -111,6 +125,10 @@ impl Lang {
             "markdown" | "md" => Some(Lang::Markdown),
             "csharp" | "cs" | "c#" => Some(Lang::CSharp),
             "bash" | "sh" | "shell" | "zsh" | "ksh" => Some(Lang::Bash),
+            "python" | "py" => Some(Lang::Python),
+            "c" => Some(Lang::C),
+            "cpp" | "c++" | "cxx" | "cc" | "hpp" | "hh" => Some(Lang::Cpp),
+            "lua" => Some(Lang::Lua),
             "yaml" | "yml" => Some(Lang::Yaml),
             "xml" | "csproj" | "fsproj" | "vbproj" | "xaml" => Some(Lang::Xml),
             "editorconfig" | "ini" => Some(Lang::EditorConfig),
@@ -135,6 +153,10 @@ impl Lang {
             Lang::Bash => tree_sitter_bash::LANGUAGE.into(),
             Lang::Yaml => tree_sitter_yaml::LANGUAGE.into(),
             Lang::Xml => tree_sitter_xml::LANGUAGE_XML.into(),
+            Lang::Python => tree_sitter_python::LANGUAGE.into(),
+            Lang::C => tree_sitter_c::LANGUAGE.into(),
+            Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            Lang::Lua => tree_sitter_lua::LANGUAGE.into(),
             // EditorConfig / GitIgnore have no real tree-sitter
             // grammar; we use bash's lexer as a stand-in because it
             // gets us comment tokenisation for free. The actual
@@ -235,6 +257,17 @@ impl Lang {
             Lang::Bash => tree_sitter_bash::HIGHLIGHT_QUERY.into(),
             Lang::Yaml => tree_sitter_yaml::HIGHLIGHTS_QUERY.into(),
             Lang::Xml => tree_sitter_xml::XML_HIGHLIGHT_QUERY.into(),
+            Lang::Python => tree_sitter_python::HIGHLIGHTS_QUERY.into(),
+            Lang::C => tree_sitter_c::HIGHLIGHT_QUERY.into(),
+            // tree-sitter-cpp's bundled query only contains C++-specific
+            // captures; layer the C query underneath so common tokens
+            // (preprocessor directives, types, keywords) still light up.
+            Lang::Cpp => format!(
+                "{}\n{}",
+                tree_sitter_c::HIGHLIGHT_QUERY,
+                tree_sitter_cpp::HIGHLIGHT_QUERY,
+            ),
+            Lang::Lua => tree_sitter_lua::HIGHLIGHTS_QUERY.into(),
             // Empty query — tree-sitter pass is a no-op; the actual
             // colouring comes from byte-level scanners in
             // `compute_byte_colors`.
@@ -989,6 +1022,46 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn python_highlights_def_and_string() {
+        let src = "def greet(name: str) -> str:\n    return f\"hello {name}\"\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Python, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("def").unwrap()].is_some(), "python `def` keyword should be coloured");
+        assert!(colors[src.find("greet").unwrap()].is_some(), "python function name should be coloured");
+        assert!(colors[src.find("hello").unwrap()].is_some(), "python f-string body should be coloured");
+    }
+
+    #[test]
+    fn c_highlights_include_and_function() {
+        let src = "#include <stdio.h>\nint main(void) { return 0; }\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::C, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("#include").unwrap()].is_some(), "C preprocessor should be coloured");
+        assert!(colors[src.find("int").unwrap()].is_some(), "C type `int` should be coloured");
+        assert!(colors[src.find("return").unwrap()].is_some(), "C `return` keyword should be coloured");
+    }
+
+    #[test]
+    fn cpp_highlights_namespace_and_template() {
+        let src = "#include <vector>\nnamespace ns { template<typename T> T id(T x) { return x; } }\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Cpp, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("namespace").unwrap()].is_some(), "C++ `namespace` should be coloured");
+        assert!(colors[src.find("template").unwrap()].is_some(), "C++ `template` should be coloured");
+        assert!(colors[src.find("typename").unwrap()].is_some(), "C++ `typename` should be coloured");
+    }
+
+    #[test]
+    fn lua_highlights_function_and_string() {
+        let src = "local function greet(name)\n  return \"hello \" .. name\nend\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Lua, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("local").unwrap()].is_some(), "Lua `local` should be coloured");
+        assert!(colors[src.find("function").unwrap()].is_some(), "Lua `function` should be coloured");
+        assert!(colors[src.find("\"hello").unwrap()].is_some(), "Lua string literal should be coloured");
     }
 
     #[test]

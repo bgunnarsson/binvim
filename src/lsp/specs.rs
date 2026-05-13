@@ -204,6 +204,78 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             root_markers: vec!["astro.config.mjs".into(), "astro.config.ts".into(), "package.json".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
+        "py" | "pyi" => Some(ServerSpec {
+            key: "pyright".into(),
+            language_id: "python".into(),
+            // basedpyright is a maintained fork some users prefer — try
+            // both binaries so either install works without config.
+            cmd_candidates: vec![
+                "pyright-langserver".into(),
+                "basedpyright-langserver".into(),
+            ],
+            args: stdio(),
+            root_markers: vec![
+                "pyproject.toml".into(),
+                "setup.py".into(),
+                "setup.cfg".into(),
+                "requirements.txt".into(),
+                "Pipfile".into(),
+                "Pipfile.lock".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => {
+            // clangd handles both C and C++ — language id flips per
+            // extension so the server interprets the buffer correctly.
+            let language_id = match ext {
+                "c" | "h" => "c",
+                _ => "cpp",
+            };
+            Some(ServerSpec {
+                key: "clangd".into(),
+                language_id: language_id.into(),
+                cmd_candidates: vec!["clangd".into()],
+                args: vec![],
+                root_markers: vec![
+                    "compile_commands.json".into(),
+                    "compile_flags.txt".into(),
+                    "CMakeLists.txt".into(),
+                    "Makefile".into(),
+                    ".git".into(),
+                ],
+                initialization_options: Value::Null,
+            })
+        }
+        "sh" | "bash" | "zsh" | "ksh" => Some(ServerSpec {
+            key: "bashls".into(),
+            language_id: "shellscript".into(),
+            cmd_candidates: vec!["bash-language-server".into()],
+            args: vec!["start".into()],
+            root_markers: vec![".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "yml" | "yaml" => Some(ServerSpec {
+            key: "yamlls".into(),
+            language_id: "yaml".into(),
+            cmd_candidates: vec!["yaml-language-server".into()],
+            args: stdio(),
+            root_markers: vec![".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "lua" => Some(ServerSpec {
+            key: "lua-ls".into(),
+            language_id: "lua".into(),
+            cmd_candidates: vec!["lua-language-server".into()],
+            args: vec![],
+            root_markers: vec![
+                ".luarc.json".into(),
+                ".luarc.jsonc".into(),
+                "init.lua".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
         "cs" | "vb" => {
             // Roslyn-based `csharp-ls` is preferred — it returns local
             // variables and parameters in completion immediately, where

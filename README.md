@@ -1,6 +1,6 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Lua, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 See [`ROADMAP.md`](./ROADMAP.md) for upcoming language support.
 
@@ -39,7 +39,7 @@ See [`ROADMAP.md`](./ROADMAP.md) for upcoming language support.
 
 ### Tree-sitter highlighting
 
-Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
+Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, **Python**, **C / C++**, **Lua**, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
 
 Pattern-priority resolution so `(method_declaration name: (identifier) @function)` deterministically beats the catch-all `(identifier) @variable`.
 
@@ -207,6 +207,11 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `rust-analyzer`                 | Rust LSP                                 | `rustup component add rust-analyzer`                                     |
 | `typescript-language-server`    | JS / TS / JSX / TSX LSP                  | `npm i -g typescript-language-server typescript`                         |
 | `gopls`                         | Go LSP                                   | `go install golang.org/x/tools/gopls@latest`                             |
+| `pyright-langserver`            | Python LSP (`basedpyright-langserver` is tried as a fallback) | `npm i -g pyright` (or `npm i -g basedpyright`)                          |
+| `clangd`                        | C / C++ LSP                              | `brew install llvm` / `apt install clangd`                               |
+| `bash-language-server`          | Bash / shell LSP                         | `npm i -g bash-language-server`                                          |
+| `yaml-language-server`          | YAML LSP                                 | `npm i -g yaml-language-server`                                          |
+| `lua-language-server`           | Lua LSP                                  | `brew install lua-language-server`                                       |
 | `vscode-css-language-server`    | CSS / SCSS / Less LSP                    | `npm i -g vscode-langservers-extracted`                                  |
 | `vscode-html-language-server`   | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
 | `tailwindcss-language-server`   | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (the unscoped npm package is an empty stub — use the scoped one) |

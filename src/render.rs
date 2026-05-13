@@ -2265,6 +2265,10 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Xml => '\u{e619}',
         Lang::EditorConfig => '\u{e652}',
         Lang::GitIgnore => '\u{f1d3}',
+        Lang::Python => '\u{e606}',
+        Lang::C => '\u{e61e}',
+        Lang::Cpp => '\u{e61d}',
+        Lang::Lua => '\u{e620}',
     }
 }
 
@@ -2286,6 +2290,10 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::Xml => "xml",
         Lang::EditorConfig => "editorconfig",
         Lang::GitIgnore => "gitignore",
+        Lang::Python => "python",
+        Lang::C => "c",
+        Lang::Cpp => "cpp",
+        Lang::Lua => "lua",
     }
 }
 
