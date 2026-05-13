@@ -126,6 +126,7 @@ impl super::App {
             {
                 if !matches!(self.mode, Mode::Command) {
                     self.status_msg.clear();
+                    self.status_msg_at = None;
                 }
                 // Hover popup intercepts scroll keys; everything else dismisses it.
                 if self.hover.is_some() {

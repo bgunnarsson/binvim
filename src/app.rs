@@ -46,6 +46,12 @@ pub use state::{
 
 use state::WHICHKEY_DELAY;
 
+/// How long a `status_msg` notification lingers before auto-dismissing.
+/// The next keypress still clears it instantly (matches Vim's `:messages`
+/// behaviour); the timeout is for the case where the user doesn't touch
+/// the keyboard after a save / error / status update.
+const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
+
 use anyhow::Result;
 use crossterm::event::KeyEvent;
 use std::collections::HashMap;
@@ -77,6 +83,11 @@ pub struct App {
     pub registers: HashMap<char, Register>,
     pub cmdline: String,
     pub status_msg: String,
+    /// When the current `status_msg` was first observed non-empty.
+    /// Drives the 10-second auto-dismiss timer; cleared whenever the
+    /// message itself is cleared (either by the next keypress, the
+    /// timeout firing, or a fresh message replacing it).
+    pub status_msg_at: Option<Instant>,
     pub view_top: usize,
     /// Visual columns hidden off the left edge of the buffer area.
     pub view_left: usize,
@@ -248,6 +259,7 @@ impl App {
             registers: HashMap::new(),
             cmdline: String::new(),
             status_msg: String::new(),
+            status_msg_at: None,
             view_top: 0,
             view_left: 0,
             width: w,
@@ -382,6 +394,15 @@ impl App {
                     .unwrap_or(Duration::from_millis(0));
                 poll_dur = poll_dur.min(until);
             }
+            // Active notification — wake at the 10s deadline so the box
+            // disappears on time even if the user never touches the
+            // keyboard.
+            if let Some(at) = self.status_msg_at {
+                let until = (at + NOTIFICATION_TIMEOUT)
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                poll_dur = poll_dur.min(until);
+            }
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
@@ -441,6 +462,23 @@ impl App {
             if let Some(h) = self.yank_highlight.as_ref() {
                 if Instant::now() >= h.expires_at {
                     self.yank_highlight = None;
+                    needs_render = true;
+                }
+            }
+            // Notification timer bookkeeping. Sync first so any message
+            // set during the iteration (save confirm, LSP error, …) gets
+            // a freshly-anchored expiry; then drop the message if its
+            // 10 s have elapsed.
+            if self.status_msg.is_empty() {
+                self.status_msg_at = None;
+            } else if self.status_msg_at.is_none() {
+                self.status_msg_at = Some(Instant::now());
+                needs_render = true;
+            }
+            if let Some(at) = self.status_msg_at {
+                if Instant::now() >= at + NOTIFICATION_TIMEOUT {
+                    self.status_msg.clear();
+                    self.status_msg_at = None;
                     needs_render = true;
                 }
             }
