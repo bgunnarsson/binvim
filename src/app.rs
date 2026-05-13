@@ -52,6 +52,12 @@ use state::WHICHKEY_DELAY;
 /// the keyboard after a save / error / status update.
 const NOTIFICATION_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// How often the `:health` dashboard re-snapshots its resource / LSP /
+/// buffer counts. One-second cadence gives the user a live view (so
+/// they can watch CPU drop after a busy moment) without paying for a
+/// `ps` shell-out at the input poll's full speed.
+const HEALTH_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
+
 use anyhow::Result;
 use crossterm::event::KeyEvent;
 use std::collections::HashMap;
@@ -152,6 +158,11 @@ pub struct App {
     /// is freshly sampled per frame (cheap — no LSP traffic, just one
     /// `ps` shell-out).
     pub show_health_page: bool,
+    /// Wall clock of the last frame painted while `show_health_page` is
+    /// up. Paired with `HEALTH_REFRESH_INTERVAL` in the event loop so
+    /// the dashboard re-snapshots resources / LSP-pending counts on a
+    /// fixed cadence rather than freezing at the open-time reading.
+    pub health_last_refresh: Instant,
     /// Bottom debug pane visibility. When open it steals rows from the
     /// editor area; height is computed from terminal size in `view.rs`.
     /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
@@ -306,6 +317,7 @@ impl App {
             blame: Vec::new(),
             show_start_page,
             show_health_page: false,
+            health_last_refresh: Instant::now(),
             debug_pane_open: false,
             dap_pane_cursor: 0,
             dap_left_scroll: 0,
@@ -410,6 +422,15 @@ impl App {
                     .unwrap_or(Duration::from_millis(0));
                 poll_dur = poll_dur.min(until);
             }
+            // Health dashboard refresh tick — wake at the next 1s mark so
+            // the resource numbers actually update while the user looks
+            // at them.
+            if self.show_health_page {
+                let until = (self.health_last_refresh + HEALTH_REFRESH_INTERVAL)
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                poll_dur = poll_dur.min(until);
+            }
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
@@ -494,6 +515,16 @@ impl App {
                 if Instant::now() >= due {
                     needs_render = true;
                 }
+            }
+            // Health dashboard refresh cadence — flip needs_render once
+            // per `HEALTH_REFRESH_INTERVAL` so the dashboard's resource
+            // numbers reflect current state instead of freezing at the
+            // open-time snapshot.
+            if self.show_health_page
+                && Instant::now() >= self.health_last_refresh + HEALTH_REFRESH_INTERVAL
+            {
+                needs_render = true;
+                self.health_last_refresh = Instant::now();
             }
         }
         // Clean shutdown — persist the session so the next launch in this

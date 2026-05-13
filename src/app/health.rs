@@ -49,6 +49,10 @@ impl super::App {
         self.hover = None;
         self.signature_help = None;
         self.whichkey = None;
+        // Reset the refresh clock so the first auto-tick lines up one
+        // full interval after the user opens the dashboard, not from
+        // whenever the App was constructed.
+        self.health_last_refresh = std::time::Instant::now();
     }
 
     /// Sample every piece of state the dashboard needs. Called from
