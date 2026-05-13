@@ -964,16 +964,22 @@ impl super::App {
         match command::parse(line) {
             ExCommand::Write => match self.save_active() {
                 Ok(format_note) => {
-                    let path = self
+                    // Show the basename only — full paths blow up the
+                    // notification box for deep working trees. Disambiguating
+                    // between two `index.ts` files isn't this message's job;
+                    // the tab bar already carries that signal.
+                    let name = self
                         .buffer
                         .path
                         .as_ref()
-                        .map(|p| p.display().to_string())
+                        .and_then(|p| p.file_name())
+                        .and_then(|s| s.to_str())
+                        .map(|s| s.to_string())
                         .unwrap_or_else(|| "[No Name]".into());
                     let lines = self.buffer.line_count();
                     self.status_msg = match format_note {
-                        Some(note) => format!("\"{path}\" {lines}L written ({note})"),
-                        None => format!("\"{path}\" {lines}L written"),
+                        Some(note) => format!("\"{name}\" {lines}L written ({note})"),
+                        None => format!("\"{name}\" {lines}L written"),
                     };
                 }
                 Err(e) => self.status_msg = format!("error: {e}"),
