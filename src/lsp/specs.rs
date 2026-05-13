@@ -37,6 +37,9 @@ pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
     if let Some(tw) = tailwind_spec_for_path(path) {
         specs.push(tw);
     }
+    if let Some(em) = emmet_spec_for_path(path) {
+        specs.push(em);
+    }
     specs
 }
 
@@ -398,6 +401,41 @@ fn tailwind_spec_for_path(path: &Path) -> Option<ServerSpec> {
                 }
             }
         }),
+    })
+}
+
+/// Emmet abbreviation expansion as an LSP. Layers on top of the primary
+/// server for any markup-flavoured buffer — typing `div` then accepting the
+/// completion item expands to `<div></div>`, `ul>li*3` builds the nested
+/// list, `.foo` becomes `<div class="foo">…</div>`, and so on.
+///
+/// We send the closest core language id emmet-ls recognises (`html`, `css`,
+/// `scss`, `less`, `sass`, `javascriptreact`, `typescriptreact`, `vue`,
+/// `svelte`, `astro`). Razor / cshtml report as `html` — emmet-ls has no
+/// explicit razor mode, but the markup half of a Razor file is HTML, so
+/// HTML emmet completions fire wherever the cursor is in an HTML context.
+fn emmet_spec_for_path(path: &Path) -> Option<ServerSpec> {
+    let ext = path.extension().and_then(|s| s.to_str())?.to_ascii_lowercase();
+    let language_id = match ext.as_str() {
+        "html" | "htm" | "cshtml" | "razor" => "html",
+        "css" => "css",
+        "scss" => "scss",
+        "less" => "less",
+        "sass" => "sass",
+        "jsx" => "javascriptreact",
+        "tsx" => "typescriptreact",
+        "vue" => "vue",
+        "svelte" => "svelte",
+        "astro" => "astro",
+        _ => return None,
+    };
+    Some(ServerSpec {
+        key: "emmet".into(),
+        language_id: language_id.into(),
+        cmd_candidates: vec!["emmet-ls".into(), "emmet-language-server".into()],
+        args: vec!["--stdio".into()],
+        root_markers: vec![".git".into()],
+        initialization_options: Value::Null,
     })
 }
 

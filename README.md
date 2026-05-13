@@ -215,6 +215,7 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `vscode-css-language-server`    | CSS / SCSS / Less LSP                    | `npm i -g vscode-langservers-extracted`                                  |
 | `vscode-html-language-server`   | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
 | `tailwindcss-language-server`   | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (the unscoped npm package is an empty stub — use the scoped one) |
+| `emmet-ls`                      | Emmet abbreviation completion in HTML / CSS / JSX / TSX / Vue / Svelte / Astro / Razor buffers | `npm i -g emmet-ls`                                                      |
 | `astro-ls`                      | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
 | `csharp-ls`                     | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
 | `OmniSharp`                     | Razor / `.cshtml` IntelliSense (full)    | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
