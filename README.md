@@ -1,6 +1,6 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Lua, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 See [`ROADMAP.md`](./ROADMAP.md) for upcoming language support.
 
@@ -39,7 +39,7 @@ See [`ROADMAP.md`](./ROADMAP.md) for upcoming language support.
 
 ### Tree-sitter highlighting
 
-Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, **Python**, **C / C++**, **Lua**, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
+Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, **Python**, **C / C++**, **Java**, **Ruby**, **PHP**, **Lua**, **TOML**, **Svelte**, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
 
 Pattern-priority resolution so `(method_declaration name: (identifier) @function)` deterministically beats the catch-all `(identifier) @variable`.
 
@@ -212,6 +212,13 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `bash-language-server`          | Bash / shell LSP                         | `npm i -g bash-language-server`                                          |
 | `yaml-language-server`          | YAML LSP                                 | `npm i -g yaml-language-server`                                          |
 | `lua-language-server`           | Lua LSP                                  | `brew install lua-language-server`                                       |
+| `vue-language-server`           | Vue LSP                                  | `npm i -g @vue/language-server`                                          |
+| `svelteserver`                  | Svelte LSP                               | `npm i -g svelte-language-server`                                        |
+| `marksman`                      | Markdown LSP                             | `brew install marksman` (single Go binary)                               |
+| `taplo`                         | TOML LSP + formatter                     | `cargo install taplo-cli --features lsp`                                 |
+| `ruby-lsp`                      | Ruby LSP                                 | `gem install ruby-lsp`                                                   |
+| `intelephense`                  | PHP LSP                                  | `npm i -g intelephense`                                                  |
+| `jdtls`                         | Java LSP (Eclipse JDT-LS)                | `brew install jdtls` — binvim hashes the buffer's parent dir into `~/.cache/binvim/jdtls/<hash>` as the workspace data dir so projects don't trample each other |
 | `vscode-css-language-server`    | CSS / SCSS / Less LSP                    | `npm i -g vscode-langservers-extracted`                                  |
 | `vscode-html-language-server`   | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
 | `tailwindcss-language-server`   | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (the unscoped npm package is an empty stub — use the scoped one) |
@@ -226,6 +233,10 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `clang-format`                  | C / C++ formatter                        | `brew install llvm` / `apt install clang-format`                          |
 | `shfmt`                         | Shell-script formatter                   | `brew install shfmt` / `go install mvdan.cc/sh/v3/cmd/shfmt@latest`       |
 | `stylua`                        | Lua formatter                            | `cargo install stylua` / `brew install stylua`                            |
+| `prettier`                      | Markdown / Vue / Svelte formatter (project-local preferred, walks up to `node_modules/.bin/prettier`; falls back to global) | `npm i -D prettier` (Svelte additionally needs `prettier-plugin-svelte`) |
+| `rufo`                          | Ruby formatter                           | `gem install rufo`                                                       |
+| `php-cs-fixer`                  | PHP formatter                            | `composer global require friendsofphp/php-cs-fixer`                       |
+| `google-java-format`            | Java formatter                           | `brew install google-java-format`                                        |
 | `netcoredbg`                    | .NET debug adapter (DAP)                 | Build from [github.com/Samsung/netcoredbg](https://github.com/Samsung/netcoredbg). The binary and its `libdbgshim.dylib` / `ManagedPart.dll` / `Microsoft.CodeAnalysis.*.dll` siblings need to live in the same directory — symlink them next to the binary if you copy out of the build's install dir. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |

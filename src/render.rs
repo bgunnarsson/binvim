@@ -2269,6 +2269,11 @@ fn lang_icon(lang: Lang) -> char {
         Lang::C => '\u{e61e}',
         Lang::Cpp => '\u{e61d}',
         Lang::Lua => '\u{e620}',
+        Lang::Java => '\u{e738}',
+        Lang::Ruby => '\u{e21e}',
+        Lang::Php => '\u{e608}',
+        Lang::Toml => '\u{e6b2}',
+        Lang::Svelte => '\u{e697}',
     }
 }
 
@@ -2294,6 +2299,11 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::C => "c",
         Lang::Cpp => "cpp",
         Lang::Lua => "lua",
+        Lang::Java => "java",
+        Lang::Ruby => "ruby",
+        Lang::Php => "php",
+        Lang::Toml => "toml",
+        Lang::Svelte => "svelte",
     }
 }
 

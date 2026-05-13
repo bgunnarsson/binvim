@@ -41,6 +41,11 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         }
         "sh" | "bash" | "zsh" | "ksh" => run_shfmt(path, source),
         "lua" => run_stylua(path, source),
+        "md" | "markdown" | "vue" | "svelte" => run_prettier(path, source),
+        "toml" => run_taplo(path, source),
+        "rb" | "rake" | "gemspec" => run_rufo(source),
+        "php" => run_php_cs_fixer(path, source),
+        "java" => run_google_java_format(source),
         _ => Err(format!("no formatter configured for .{ext}")),
     }
 }
@@ -153,6 +158,110 @@ fn run_stylua(path: &Path, source: &str) -> Result<String, String> {
         source,
         "stylua",
     )
+}
+
+/// Format Markdown / Vue / Svelte via Prettier. Walks up from the file
+/// looking for `node_modules/.bin/prettier` (the same resolution biome
+/// uses), falling back to a global install on `$PATH`. Svelte needs
+/// `prettier-plugin-svelte` in the project's node_modules — Prettier
+/// auto-loads it when the plugin is installed.
+fn run_prettier(path: &Path, source: &str) -> Result<String, String> {
+    let start = path.parent().unwrap_or(Path::new("."));
+    let prettier_bin = find_node_modules_bin(start, "prettier")
+        .map(PathBuf::from)
+        .or_else(|| find_on_path("prettier"))
+        .ok_or_else(|| {
+            "prettier not found — install with `npm i -D prettier` in the project (or `npm i -g prettier`)"
+                .to_string()
+        })?;
+    let stdin_filepath = format!("--stdin-filepath={}", path.to_string_lossy());
+    run_stdin_pipe(&prettier_bin, &[&stdin_filepath], source, "prettier")
+}
+
+/// Format TOML via `taplo format -`. `-` is taplo's stdin sigil; it
+/// writes the formatted source to stdout. taplo walks up from the cwd
+/// looking for `.taplo.toml` / `taplo.toml` itself, so no extra args
+/// are needed for project-specific style overrides.
+fn run_taplo(path: &Path, source: &str) -> Result<String, String> {
+    let taplo = find_on_path("taplo").ok_or_else(|| {
+        "taplo not found — install with `cargo install taplo-cli --features lsp`".to_string()
+    })?;
+    // `--stdin-filepath` tells taplo which file the stdin payload
+    // belongs to so project-relative config resolves correctly.
+    let stdin_filepath = format!("--stdin-filepath={}", path.to_string_lossy());
+    run_stdin_pipe(&taplo, &["format", &stdin_filepath, "-"], source, "taplo")
+}
+
+/// Format Ruby via `rufo -x`. `-x` is rufo's stdin mode — reads source
+/// on stdin, writes the formatted result on stdout. Rubocop is the more
+/// dominant Ruby tool overall, but its stdin output format mixes
+/// diagnostics with the corrected source; rufo's narrower scope (pure
+/// formatting, no linting) is a better fit for the editor save path.
+fn run_rufo(source: &str) -> Result<String, String> {
+    let rufo = find_on_path("rufo")
+        .ok_or_else(|| "rufo not found — install with `gem install rufo`".to_string())?;
+    run_stdin_pipe(&rufo, &["-x"], source, "rufo")
+}
+
+/// Format Java via `google-java-format -`. The bare `-` reads stdin
+/// and writes the formatted source on stdout. Picks up
+/// `--aosp` / `--skip-javadoc-formatting` etc. from environment if the
+/// project's build config sets them, but for the editor save path we
+/// pass nothing and let the defaults stand.
+fn run_google_java_format(source: &str) -> Result<String, String> {
+    let bin = find_on_path("google-java-format").ok_or_else(|| {
+        "google-java-format not found — install with `brew install google-java-format`".to_string()
+    })?;
+    run_stdin_pipe(&bin, &["-"], source, "google-java-format")
+}
+
+/// Format PHP via `php-cs-fixer`. The tool has no stdin mode and
+/// always edits files in place, so we use the same temp-file dance as
+/// csharpier: write the buffer next to the real file so project-level
+/// `.php-cs-fixer.dist.php` config resolves, run the fixer against the
+/// temp file, read the result back, unlink.
+fn run_php_cs_fixer(path: &Path, source: &str) -> Result<String, String> {
+    let bin = find_on_path("php-cs-fixer")
+        .ok_or_else(|| "php-cs-fixer not found — install with `composer global require friendsofphp/php-cs-fixer`".to_string())?;
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("buffer");
+    let temp = parent.join(format!(
+        ".{stem}.binvim-format.{pid}.php",
+        pid = std::process::id(),
+    ));
+    std::fs::write(&temp, source).map_err(|e| format!("write temp: {e}"))?;
+    let result = Command::new(&bin)
+        .arg("fix")
+        .arg("--quiet")
+        .arg("--using-cache=no")
+        .arg(&temp)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    let outcome = match result {
+        Ok(o) if o.status.success() => std::fs::read_to_string(&temp)
+            .map_err(|e| format!("read temp: {e}")),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let cleaned: Vec<String> = stderr
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .take(4)
+                .collect();
+            let msg = if cleaned.is_empty() {
+                "(no error output)".to_string()
+            } else {
+                cleaned.join(" / ")
+            };
+            let code = o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+            Err(format!("php-cs-fixer exit {code}: {msg}"))
+        }
+        Err(e) => Err(format!("failed to spawn php-cs-fixer: {e}")),
+    };
+    let _ = std::fs::remove_file(&temp);
+    outcome
 }
 
 /// Run biome against `source`, telling it the buffer's real path so it can

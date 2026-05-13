@@ -47,6 +47,18 @@ pub enum Lang {
     Cpp,
     /// `.lua` — tree-sitter-lua.
     Lua,
+    /// `.java` — tree-sitter-java.
+    Java,
+    /// `.rb` / `.rake` / `.gemspec` — tree-sitter-ruby.
+    Ruby,
+    /// `.php` — tree-sitter-php's `LANGUAGE_PHP` (handles the
+    /// `<?php … ?>`-in-HTML shape that real PHP files use).
+    Php,
+    /// `.toml` — tree-sitter-toml-ng (the upstream `tree-sitter-toml` is
+    /// unmaintained; the `-ng` fork is the canonical successor).
+    Toml,
+    /// `.svelte` — tree-sitter-svelte-ng.
+    Svelte,
 }
 
 impl Lang {
@@ -71,6 +83,11 @@ impl Lang {
                     return Some(Lang::Cpp);
                 }
                 "lua" => return Some(Lang::Lua),
+                "java" => return Some(Lang::Java),
+                "rb" | "rake" | "gemspec" => return Some(Lang::Ruby),
+                "php" => return Some(Lang::Php),
+                "toml" => return Some(Lang::Toml),
+                "svelte" => return Some(Lang::Svelte),
                 "yml" | "yaml" => return Some(Lang::Yaml),
                 // XML family — the project-file flavours all use the
                 // same MSBuild XML schema. Covers .NET (csproj/fsproj/
@@ -102,6 +119,13 @@ impl Lang {
         ) {
             return Some(Lang::GitIgnore);
         }
+        // Ruby bare-name files (Bundler / Rake / Homebrew / Capistrano).
+        if matches!(
+            name,
+            "Gemfile" | "Rakefile" | "Brewfile" | "Guardfile" | "Capfile" | "Vagrantfile"
+        ) {
+            return Some(Lang::Ruby);
+        }
         None
     }
 
@@ -129,6 +153,11 @@ impl Lang {
             "c" => Some(Lang::C),
             "cpp" | "c++" | "cxx" | "cc" | "hpp" | "hh" => Some(Lang::Cpp),
             "lua" => Some(Lang::Lua),
+            "java" => Some(Lang::Java),
+            "ruby" | "rb" => Some(Lang::Ruby),
+            "php" => Some(Lang::Php),
+            "toml" => Some(Lang::Toml),
+            "svelte" => Some(Lang::Svelte),
             "yaml" | "yml" => Some(Lang::Yaml),
             "xml" | "csproj" | "fsproj" | "vbproj" | "xaml" => Some(Lang::Xml),
             "editorconfig" | "ini" => Some(Lang::EditorConfig),
@@ -157,6 +186,15 @@ impl Lang {
             Lang::C => tree_sitter_c::LANGUAGE.into(),
             Lang::Cpp => tree_sitter_cpp::LANGUAGE.into(),
             Lang::Lua => tree_sitter_lua::LANGUAGE.into(),
+            Lang::Java => tree_sitter_java::LANGUAGE.into(),
+            Lang::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            // LANGUAGE_PHP handles the `<?php … ?>`-inside-HTML shape that
+            // most real PHP files have. PHP-only files (`.phps`, internal
+            // libs) would prefer LANGUAGE_PHP_ONLY but the mixed grammar
+            // parses them fine too.
+            Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
+            Lang::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
+            Lang::Svelte => tree_sitter_svelte_ng::LANGUAGE.into(),
             // EditorConfig / GitIgnore have no real tree-sitter
             // grammar; we use bash's lexer as a stand-in because it
             // gets us comment tokenisation for free. The actual
@@ -268,6 +306,11 @@ impl Lang {
                 tree_sitter_cpp::HIGHLIGHT_QUERY,
             ),
             Lang::Lua => tree_sitter_lua::HIGHLIGHTS_QUERY.into(),
+            Lang::Java => tree_sitter_java::HIGHLIGHTS_QUERY.into(),
+            Lang::Ruby => tree_sitter_ruby::HIGHLIGHTS_QUERY.into(),
+            Lang::Php => tree_sitter_php::HIGHLIGHTS_QUERY.into(),
+            Lang::Toml => tree_sitter_toml_ng::HIGHLIGHTS_QUERY.into(),
+            Lang::Svelte => tree_sitter_svelte_ng::HIGHLIGHTS_QUERY.into(),
             // Empty query — tree-sitter pass is a no-op; the actual
             // colouring comes from byte-level scanners in
             // `compute_byte_colors`.
@@ -1052,6 +1095,58 @@ mod tests {
         assert!(colors[src.find("namespace").unwrap()].is_some(), "C++ `namespace` should be coloured");
         assert!(colors[src.find("template").unwrap()].is_some(), "C++ `template` should be coloured");
         assert!(colors[src.find("typename").unwrap()].is_some(), "C++ `typename` should be coloured");
+    }
+
+    #[test]
+    fn java_highlights_class_and_method() {
+        let src = "public class Foo {\n  public static int main(String[] args) { return 0; }\n}\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Java, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("public").unwrap()].is_some(), "Java `public` should be coloured");
+        assert!(colors[src.find("class").unwrap()].is_some(), "Java `class` should be coloured");
+        assert!(colors[src.find("String").unwrap()].is_some(), "Java type `String` should be coloured");
+    }
+
+    #[test]
+    fn ruby_highlights_def_and_string() {
+        let src = "class Greeter\n  def hello(name)\n    \"Hello, #{name}!\"\n  end\nend\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Ruby, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("class").unwrap()].is_some(), "Ruby `class` should be coloured");
+        assert!(colors[src.find("def").unwrap()].is_some(), "Ruby `def` should be coloured");
+        assert!(colors[src.find("\"Hello").unwrap()].is_some(), "Ruby string should be coloured");
+    }
+
+    #[test]
+    fn php_highlights_function_and_variable() {
+        let src = "<?php\nfunction greet($name) {\n  return \"Hello, $name\";\n}\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Php, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("function").unwrap()].is_some(), "PHP `function` should be coloured");
+        assert!(colors[src.find("return").unwrap()].is_some(), "PHP `return` should be coloured");
+        assert!(colors[src.find("$name").unwrap()].is_some(), "PHP variable should be coloured");
+    }
+
+    #[test]
+    fn toml_highlights_table_and_string() {
+        let src = "[package]\nname = \"binvim\"\nversion = \"0.1.4\"\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Toml, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("[package]").unwrap()].is_some(), "TOML table header should be coloured");
+        assert!(colors[src.find("name").unwrap()].is_some(), "TOML key should be coloured");
+        assert!(colors[src.find("\"binvim\"").unwrap()].is_some(), "TOML string should be coloured");
+    }
+
+    #[test]
+    fn svelte_highlights_script_and_markup() {
+        let src = "<script>\n  let count = 0;\n</script>\n<button>{count}</button>\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Svelte, src, &cfg).expect("highlight ok");
+        // Svelte's tree-sitter grammar tags the tag names and the
+        // attribute/expression delimiters; we just confirm we got
+        // *some* coverage so a future grammar change can't silently
+        // wipe the cache.
+        assert!(colors.iter().any(|c| c.is_some()), "Svelte highlights produced no colour");
     }
 
     #[test]

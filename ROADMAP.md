@@ -14,10 +14,11 @@ the formatter is only acceptable when no canonical one exists for the
 language (e.g. YAML).
 
 Today's coverage: **Rust, TS/JS/JSX/TSX, JSON (Biome), Go, Python,
-C / C++, Bash, Lua, HTML, CSS/SCSS/LESS, C# (.cs), Razor (.cshtml /
-.razor), Astro, YAML (LSP + highlight, no formatter)**, plus Tailwind
-and Emmet as auxiliaries. Tree-sitter grammars cover the same set plus
-Markdown, XML, `.editorconfig`, and `.gitignore`.
+C / C++, Bash, Lua, Java, Ruby, PHP, TOML, Vue, Svelte, Markdown,
+HTML, CSS/SCSS/LESS, C# (.cs), Razor (.cshtml / .razor), Astro, YAML
+(LSP + highlight, no formatter)**, plus Tailwind and Emmet as
+auxiliaries. Tree-sitter grammars cover the same set minus Vue plus
+XML, `.editorconfig`, and `.gitignore`.
 
 ---
 
@@ -48,30 +49,40 @@ Smoke tests for each new tree-sitter grammar live in `lang::tests` —
 they assert that common tokens (`def`, `template`, `local function`,
 etc.) come back coloured.
 
-## Milestone 2 — High-leverage additions (Tier 2)
+## Milestone 2 — High-leverage additions (Tier 2) — **shipped**
 
-Goal: cover the next-most-common stacks, mostly framework / DSL gaps.
-Ship in **follow-up PRs based on user demand**, not a single batch.
-**Each language gets a formatter alongside its LSP** — pin the
-formatter choice when picking up the work.
+Covered the next-most-common stacks plus the heaviest of the LSPs.
+Shipped:
 
-- **Vue** — `@vue/language-server`. Formatter: Prettier (via
-  `node_modules/.bin/prettier`, same resolution pattern as biome).
-  Already a Tailwind language ID in
-  `lsp/specs.rs::tailwind_spec_for_path`; no primary today.
-- **Svelte** — `svelte-language-server --stdio`. Formatter: Prettier
-  (with the `prettier-plugin-svelte` plugin).
-- **Markdown** — `marksman` (single Go binary). Formatter: Prettier or
-  `dprint`. Tree-sitter highlight already wired.
-- **TOML** — `taplo lsp stdio` (single Rust binary). Formatter: `taplo
-  format` (same binary, different subcommand) — easy double dip.
-- **Ruby** — `ruby-lsp stdio` (Shopify-maintained). Formatter: `rubocop
-  --stdin` or `rufo`.
-- **PHP** — `intelephense --stdio`. Formatter: `php-cs-fixer fix` or
-  `phpcbf`.
-- **Java** — `jdtls`. Formatter: `google-java-format` (single jar / brew
-  formula). Heavy: jdtls needs `-data <workspace_dir>` and a JVM — worth
-  the friction but defer until requested.
+- **Vue** — `vue-language-server --stdio` (the `@vue/language-server`
+  npm package). Formatter via Prettier. Tree-sitter grammar skipped —
+  `tree-sitter-vue` is at 0.0.3 and not production-ready; the LSP
+  carries highlighting alone. Tailwind already attached as auxiliary
+  for `.vue`.
+- **Svelte** — `svelteserver --stdio`. Formatter via Prettier (the
+  project's `node_modules` needs `prettier-plugin-svelte` alongside
+  Prettier itself). Tree-sitter via `tree-sitter-svelte-ng` 1.0 (the
+  maintained fork — upstream `tree-sitter-svelte` is stale).
+- **Markdown** — `marksman server`. Formatter via Prettier.
+  Tree-sitter already wired.
+- **TOML** — `taplo lsp stdio` + `taplo format -` for the formatter
+  (same binary, different subcommand — single Rust dep). Tree-sitter
+  via `tree-sitter-toml-ng` 0.7 (upstream `tree-sitter-toml` is
+  archived; the `-ng` fork is canonical now).
+- **Ruby** — `ruby-lsp stdio` (Shopify-maintained). Formatter via
+  `rufo -x` (rubocop's stdin output format mixes diagnostics with
+  source — rufo's narrower scope makes it a cleaner fit for the
+  save path). Tree-sitter via `tree-sitter-ruby` 0.23. Detects
+  `Gemfile` / `Rakefile` / `Brewfile` / `Guardfile` / `Capfile` /
+  `Vagrantfile` as Ruby.
+- **PHP** — `intelephense --stdio`. Formatter via `php-cs-fixer fix`
+  (no stdin mode, so the temp-file dance from csharpier is reused).
+  Tree-sitter via `tree-sitter-php` 0.24's `LANGUAGE_PHP` (handles
+  the `<?php … ?>`-inside-HTML shape).
+- **Java** — `jdtls -data <workspace>`. Each project gets its own
+  hashed slot under `~/.cache/binvim/jdtls/` so workspace state
+  doesn't bleed between unrelated projects. Formatter via
+  `google-java-format -`. Tree-sitter via `tree-sitter-java` 0.23.
 
 ## Milestone 3 — Niche but binvim-aligned (Tier 3)
 

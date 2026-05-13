@@ -279,6 +279,107 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             ],
             initialization_options: Value::Null,
         }),
+        "vue" => Some(ServerSpec {
+            key: "vue".into(),
+            language_id: "vue".into(),
+            cmd_candidates: vec!["vue-language-server".into()],
+            args: stdio(),
+            root_markers: vec![
+                "vue.config.js".into(),
+                "vue.config.ts".into(),
+                "vite.config.ts".into(),
+                "vite.config.js".into(),
+                "package.json".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "svelte" => Some(ServerSpec {
+            key: "svelte".into(),
+            language_id: "svelte".into(),
+            cmd_candidates: vec!["svelteserver".into()],
+            args: stdio(),
+            root_markers: vec![
+                "svelte.config.js".into(),
+                "svelte.config.ts".into(),
+                "package.json".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "md" | "markdown" => Some(ServerSpec {
+            key: "marksman".into(),
+            language_id: "markdown".into(),
+            cmd_candidates: vec!["marksman".into()],
+            // marksman defaults to `server` which is the LSP mode; the
+            // bare invocation works too on recent versions, but pass it
+            // explicitly so an older install doesn't drop into help.
+            args: vec!["server".into()],
+            root_markers: vec![
+                ".marksman.toml".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "toml" => Some(ServerSpec {
+            key: "taplo".into(),
+            language_id: "toml".into(),
+            cmd_candidates: vec!["taplo".into(), cargo_bin("taplo")],
+            args: vec!["lsp".into(), "stdio".into()],
+            root_markers: vec![".taplo.toml".into(), "taplo.toml".into(), ".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "rb" | "rake" | "gemspec" => Some(ServerSpec {
+            key: "ruby-lsp".into(),
+            language_id: "ruby".into(),
+            cmd_candidates: vec!["ruby-lsp".into()],
+            args: vec!["stdio".into()],
+            root_markers: vec![
+                "Gemfile".into(),
+                ".ruby-version".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "php" => Some(ServerSpec {
+            key: "intelephense".into(),
+            language_id: "php".into(),
+            cmd_candidates: vec!["intelephense".into()],
+            args: stdio(),
+            root_markers: vec!["composer.json".into(), ".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "java" => {
+            // jdtls insists on a per-project workspace data dir or it
+            // pollutes a default location and silently fails to load
+            // changed files between projects. Hash the file's parent
+            // path so each project gets its own slot under
+            // `~/.cache/binvim/jdtls/`.
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let project_key = path
+                .parent()
+                .map(|p| {
+                    let mut h = DefaultHasher::new();
+                    p.canonicalize().unwrap_or_else(|_| p.to_path_buf()).hash(&mut h);
+                    format!("{:x}", h.finish())
+                })
+                .unwrap_or_else(|| "default".into());
+            let workspace = format!("{}/.cache/binvim/jdtls/{}", home, project_key);
+            Some(ServerSpec {
+                key: "jdtls".into(),
+                language_id: "java".into(),
+                cmd_candidates: vec!["jdtls".into()],
+                args: vec!["-data".into(), workspace],
+                root_markers: vec![
+                    "pom.xml".into(),
+                    "build.gradle".into(),
+                    "build.gradle.kts".into(),
+                    ".git".into(),
+                ],
+                initialization_options: Value::Null,
+            })
+        }
         "cs" | "vb" => {
             // Roslyn-based `csharp-ls` is preferred — it returns local
             // variables and parameters in completion immediately, where
