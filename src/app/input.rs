@@ -701,7 +701,18 @@ impl super::App {
                     // Punctuation triggers (`.`, `:`, etc.) get sent to the
                     // server as triggerCharacter so it returns member-access
                     // completions; identifier chars are an Invoked refresh.
-                    let trigger = if matches!(c, '.' | ':' | '@' | '<' | '!' | '#') {
+                    // `.`, `:`, `@`, `<` are commonly declared as the
+                    // server's `triggerCharacters` (member-access, Rust
+                    // paths, Razor / decorator anchors, JSX/HTML opens) —
+                    // sending them as triggerCharacter unlocks the
+                    // member-access flavour of completion. `!` and `#`
+                    // (Emmet abbreviation anchors) aren't typically in any
+                    // server's declared trigger list, so emmet-ls would
+                    // ignore them as "irrelevant" triggers and return
+                    // nothing. Fall back to Invoked (`triggerKind=1`) for
+                    // those so the server treats it as a manual request
+                    // and returns its abbreviation matches.
+                    let trigger = if matches!(c, '.' | ':' | '@' | '<') {
                         Some(c)
                     } else {
                         None
