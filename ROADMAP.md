@@ -2,9 +2,8 @@
 
 Forward-looking plan for binvim. Scope is mostly **language coverage** —
 that is the gap between binvim today and a credible Neovim / VS Code
-replacement for a general audience. See
-[`LSP_ADOPTION.md`](./LSP_ADOPTION.md) for the per-language wiring
-recipe; this file is the schedule and ordering on top of it.
+replacement for a general audience. The per-language wiring recipe
+lives in the "Per-LSP change shape" section below.
 
 Each language gets the full stack: **LSP** (completion / hover /
 goto-def / diagnostics / rename / code actions / references / inlay

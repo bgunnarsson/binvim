@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```sh
 cargo build --release          # release binary lands at target/release/binvim
-cargo test                     # ~45 unit tests, all in `mod tests` blocks beside the code they cover
+cargo test                     # ~112 unit tests, all in `mod tests` blocks beside the code they cover
 cargo test motion::tests       # run a single module's tests
 cargo test motion::tests::word_forward_basic   # single test
 cargo run -- path/to/file      # debug-build run; `binvim [path]` once installed
@@ -31,12 +31,12 @@ binvim is a single-binary modal TUI editor. `main.rs` does almost nothing — it
 - **`picker.rs`** is one fuzzy-picker engine reused for files, buffers, grep results, document symbols, workspace symbols, code actions, and references. The variant is `PickerKind`; the payload of the selected item is `PickerPayload`.
 - **`config.rs`** loads `~/.config/binvim/config.toml`. Capture-name → colour resolution is dotted-prefix aware (`keyword.return` → `keyword`).
 - **`editorconfig.rs`** parses `.editorconfig` and applies on-save transforms (final newline, trailing whitespace).
-- **`format.rs`** dispatches biome on save for JS/TS/JSON variants.
+- **`format.rs`** dispatches one formatter per extension (biome for JS/TS/JSON, csharpier for C#, gofmt/goimports for Go, ruff/black for Python, clang-format for C/C++, shfmt for shell, stylua for Lua, prettier for Markdown/Vue/Svelte, taplo for TOML, rufo for Ruby, php-cs-fixer for PHP, google-java-format for Java, zig fmt for Zig, nixfmt/alejandra for Nix, mix format for Elixir, ktfmt for Kotlin, sql-formatter for SQL, plus `.editorconfig` indent reflow for Razor). Tools without stdin support (csharpier, php-cs-fixer, ktfmt) go through a temp-file dance; everything else uses the shared `run_stdin_pipe` helper.
 - **`command.rs`** parses ex-mode (`:`) commands into `ExCommand` / `ExRange` which `app/input.rs` then executes.
 
 ### Adding a new LSP
 
-`LSP_ADOPTION.md` is the authoritative recipe and stays in sync with the code. The four-file change is always: new arm in `primary_spec_for_path` (`lsp/specs.rs`), extension → `Lang` mapping (`lang.rs`), `tree-sitter-<lang>` crate in `Cargo.toml` (only if you also want highlighting), README install table row. There is no plugin system — every server is hard-wired in `lsp/specs.rs`.
+The five-file change is always: new arm in `primary_spec_for_path` (`lsp/specs.rs`), `Lang` variant + extension/basename entry in `Lang::detect()` and matching `ts_language()` / `highlights_query()` arms (`lang.rs`) — skip this only if you don't want tree-sitter highlighting, icon + lang_name in the two exhaustive `Lang` matches (`render.rs`), formatter arm in `format_buffer` (`format.rs`) plus `tree-sitter-<lang>` crate in `Cargo.toml`, README install table rows for the LSP and the formatter. There is no plugin system — every server is hard-wired in `lsp/specs.rs`. `ROADMAP.md` is the running ledger of what's shipped per tier.
 
 ### Adding tree-sitter highlighting for an existing LSP
 
