@@ -550,7 +550,11 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
         + 2; // padding inside borders
     let box_w = inner_w + 2;
     let left = total_w.saturating_sub(box_w + 1);
-    let top = 0usize;
+    // Sit immediately below the tab bar when it's visible so the
+    // notification doesn't overlap any tab labels. `buffer_top()` is
+    // 1 when tabs are showing, 0 otherwise — same offset the buffer
+    // body uses.
+    let top = app.buffer_top();
 
     let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Catppuccin Text
