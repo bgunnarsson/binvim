@@ -7,7 +7,6 @@
 //! owns the data structures and the snapshot builder.
 
 use std::path::PathBuf;
-use std::time::Duration;
 
 use crate::git::GitStatusSummary;
 use crate::lsp::{ActiveBufferLspStatus, LspHealth, Severity};
@@ -19,7 +18,6 @@ use crate::lsp::{ActiveBufferLspStatus, LspHealth, Severity};
 pub struct HealthSnapshot {
     pub version: &'static str,
     pub pid: u32,
-    pub uptime: Duration,
     pub cwd: String,
     pub config_path: String,
     pub config_loaded: bool,
@@ -176,7 +174,6 @@ impl super::App {
         HealthSnapshot {
             version: env!("CARGO_PKG_VERSION"),
             pid,
-            uptime: self.app_start_time.elapsed(),
             cwd,
             config_path,
             config_loaded,

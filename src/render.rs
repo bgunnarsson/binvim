@@ -1465,8 +1465,12 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     let p = DashboardPalette::default();
 
     let left = 2usize;
-    let mut y = top;
     let max_y = top + rows;
+    // Body width budget — leave a 2-col margin on the right too.
+    let body_w = total_w.saturating_sub(left + 2).max(40);
+
+    // One blank row of breathing room above the banner.
+    let mut y = top + 1;
 
     // --- Banner --------------------------------------------------------
     let banner_fits = total_w >= 50;
@@ -1486,69 +1490,92 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
 
-    // Version + pid + uptime stripe immediately below the banner.
-    if y < max_y {
-        let cwd_short = home_relative_path(&snap.cwd);
-        let git_label = snap
-            .git
-            .as_ref()
-            .and_then(|g| g.branch.clone())
-            .unwrap_or_else(|| "—".into());
-        let cpu_str = snap.cpu.map(|v| format!("{v:.1}%")).unwrap_or_else(|| "—".into());
-        let ram_str = match (snap.ram_mb, snap.ram_pct) {
-            (Some(mb), Some(pct)) => format!("{mb:.0} MB · {pct:.1}%"),
-            (Some(mb), None) => format!("{mb:.0} MB"),
-            (None, Some(pct)) => format!("{pct:.1}%"),
-            (None, None) => "—".into(),
-        };
-        let header = format!(
-            "binvim {} · pid {} · up {} · {} · {} · CPU {} · RAM {}",
-            snap.version,
-            snap.pid,
-            format_uptime(snap.uptime),
-            truncate(&cwd_short, total_w / 3),
-            git_label,
-            cpu_str,
-            ram_str,
-        );
-        queue!(
-            out,
-            MoveTo(left as u16, y as u16),
-            SetForegroundColor(p.subtext1),
-            Print(truncate(&header, total_w.saturating_sub(left))),
-            ResetColor,
-        )?;
-        y += 1;
-    }
-
-    // Config row (smaller, dimmer).
-    if y < max_y && !snap.config_path.is_empty() {
-        let cfg_path = home_relative_path(&snap.config_path);
-        let (status, status_colour) = if snap.config_loaded {
-            ("loaded", p.green)
-        } else {
-            ("missing", p.overlay1)
-        };
-        let line = format!(
-            "config: {} [{}]",
-            truncate(&cfg_path, total_w.saturating_sub(20)),
-            status,
-        );
-        queue!(out, MoveTo(left as u16, y as u16), SetForegroundColor(p.overlay1))?;
-        if snap.config_loaded {
-            queue!(out, Print(line), ResetColor)?;
-        } else {
-            // Just the `[missing]` tag gets the dimmer colour difference.
-            queue!(out, Print(line), ResetColor)?;
-            let _ = status_colour; // kept for future per-segment tinting
-        }
-        y += 1;
-    }
-
+    // Breathing room between banner and first box row.
     y = y.saturating_add(1).min(max_y);
 
-    // Body width budget — leave a 2-col margin on the right too.
-    let body_w = total_w.saturating_sub(left + 2).max(40);
+    // --- PROCESS + RESOURCES (two columns) ----------------------------
+    let cpu_str = snap
+        .cpu
+        .map(|v| format!("{v:.1} %"))
+        .unwrap_or_else(|| "—".into());
+    let ram_str = match (snap.ram_mb, snap.ram_pct) {
+        (Some(mb), Some(pct)) => format!("{mb:.0} MB · {pct:.1} %"),
+        (Some(mb), None) => format!("{mb:.0} MB"),
+        (None, Some(pct)) => format!("{pct:.1} %"),
+        (None, None) => "—".into(),
+    };
+    let process_lines = vec![
+        SectionLine::Custom {
+            parts: vec![
+                ("version  ".into(), p.subtext1),
+                (snap.version.to_string(), p.text),
+            ],
+        },
+        SectionLine::Custom {
+            parts: vec![
+                ("pid      ".into(), p.subtext1),
+                (snap.pid.to_string(), p.text),
+            ],
+        },
+    ];
+    let resource_lines = vec![
+        SectionLine::Custom {
+            parts: vec![("CPU      ".into(), p.subtext1), (cpu_str, p.text)],
+        },
+        SectionLine::Custom {
+            parts: vec![("RAM      ".into(), p.subtext1), (ram_str, p.text)],
+        },
+    ];
+    let gap = 2usize;
+    let half = body_w.saturating_sub(gap) / 2;
+    let left_w = half;
+    let right_w = body_w.saturating_sub(gap + half);
+    let y_l = draw_section_box(
+        out, left, y, left_w, max_y, "PROCESS", p.mauve, &process_lines, &p,
+    )?;
+    let y_r = draw_section_box(
+        out,
+        left + left_w + gap,
+        y,
+        right_w,
+        max_y,
+        "RESOURCES",
+        p.blue,
+        &resource_lines,
+        &p,
+    )?;
+    y = y_l.max(y_r);
+    y = y.saturating_add(1).min(max_y);
+
+    // --- ENVIRONMENT (cwd + config in one box) ------------------------
+    let cwd_disp = home_relative_path(&snap.cwd);
+    let cfg_path_disp = if snap.config_path.is_empty() {
+        "—".to_string()
+    } else {
+        home_relative_path(&snap.config_path)
+    };
+    let (cfg_status_label, cfg_status_colour) = if snap.config_loaded {
+        ("[loaded]", p.green)
+    } else {
+        ("[missing]", p.overlay1)
+    };
+    let env_lines = vec![
+        SectionLine::Custom {
+            parts: vec![("cwd     ".into(), p.subtext1), (cwd_disp, p.text)],
+        },
+        SectionLine::Custom {
+            parts: vec![
+                ("config  ".into(), p.subtext1),
+                (cfg_path_disp, p.text),
+                ("  ".into(), p.subtext1),
+                (cfg_status_label.into(), cfg_status_colour),
+            ],
+        },
+    ];
+    y = draw_section_box(
+        out, left, y, body_w, max_y, "ENVIRONMENT", p.peach, &env_lines, &p,
+    )?;
+    y = y.saturating_add(1).min(max_y);
 
     // --- ACTIVE BUFFER section ----------------------------------------
     let mut active_lines: Vec<SectionLine> = Vec::new();
@@ -1916,32 +1943,6 @@ impl Default for DashboardPalette {
     }
 }
 
-/// `Duration` → short human label: `45s`, `12 min`, `1 h 4 m`, `2 d 3 h`.
-fn format_uptime(d: std::time::Duration) -> String {
-    let secs = d.as_secs();
-    if secs < 60 {
-        return format!("{secs}s");
-    }
-    let mins = secs / 60;
-    if mins < 60 {
-        let s = secs % 60;
-        return if s == 0 { format!("{mins} min") } else { format!("{mins} min {s}s") };
-    }
-    let hours = mins / 60;
-    if hours < 24 {
-        let m = mins % 60;
-        return if m == 0 { format!("{hours} h") } else { format!("{hours} h {m} m") };
-    }
-    let days = hours / 24;
-    let h = hours % 24;
-    if h == 0 {
-        format!("{days} d")
-    } else {
-        format!("{days} d {h} h")
-    }
-}
-
-
 /// Cut a string down to `width` display chars, appending `…` when
 /// truncation removes content.
 fn truncate(s: &str, width: usize) -> String {
@@ -2019,34 +2020,7 @@ fn home_relative_with(path: &str, home: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_lsp_root, format_uptime, home_relative_with, truncate};
-    use std::time::Duration;
-
-    #[test]
-    fn format_uptime_seconds() {
-        assert_eq!(format_uptime(Duration::from_secs(5)), "5s");
-        assert_eq!(format_uptime(Duration::from_secs(59)), "59s");
-    }
-
-    #[test]
-    fn format_uptime_minutes() {
-        assert_eq!(format_uptime(Duration::from_secs(60)), "1 min");
-        assert_eq!(format_uptime(Duration::from_secs(125)), "2 min 5s");
-        assert_eq!(format_uptime(Duration::from_secs(3540)), "59 min");
-    }
-
-    #[test]
-    fn format_uptime_hours() {
-        assert_eq!(format_uptime(Duration::from_secs(3600)), "1 h");
-        assert_eq!(format_uptime(Duration::from_secs(3660)), "1 h 1 m");
-        assert_eq!(format_uptime(Duration::from_secs(86_399)), "23 h 59 m");
-    }
-
-    #[test]
-    fn format_uptime_days() {
-        assert_eq!(format_uptime(Duration::from_secs(86_400)), "1 d");
-        assert_eq!(format_uptime(Duration::from_secs(90_000)), "1 d 1 h");
-    }
+    use super::{display_lsp_root, home_relative_with, truncate};
 
     #[test]
     fn home_relative_strips_home_prefix() {

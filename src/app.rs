@@ -164,10 +164,6 @@ pub struct App {
     /// the dashboard re-snapshots resources / LSP-pending counts on a
     /// fixed cadence rather than freezing at the open-time reading.
     pub health_last_refresh: Instant,
-    /// When this `App` was constructed — drives the `:health` uptime
-    /// row. Pinned at startup so it survives any time-zone or
-    /// system-clock jitter mid-session.
-    pub app_start_time: Instant,
     /// Bottom debug pane visibility. When open it steals rows from the
     /// editor area; height is computed from terminal size in `view.rs`.
     /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
@@ -323,7 +319,6 @@ impl App {
             show_start_page,
             show_health_page: false,
             health_last_refresh: Instant::now(),
-            app_start_time: Instant::now(),
             debug_pane_open: false,
             dap_pane_cursor: 0,
             dap_left_scroll: 0,
