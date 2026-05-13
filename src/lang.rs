@@ -629,15 +629,21 @@ pub fn compute_byte_colors(lang: Lang, source: &str, config: &Config) -> Option<
         let priority = (m.pattern_index as u16).saturating_add(1);
         for capture in m.captures {
             let name = capture_names[capture.index as usize];
-            if let Some(color) = config.color_for_capture(name) {
-                let node = capture.node;
-                let s = node.start_byte().min(total_bytes);
-                let e = node.end_byte().min(total_bytes);
-                for i in s..e {
-                    if priority >= byte_priority[i] {
-                        colors[i] = Some(color);
-                        byte_priority[i] = priority;
-                    }
+            // Resolve the capture's colour first — None is a valid result
+            // and must still bump byte_priority. A more-specific later
+            // pattern that resolves to None (e.g. CSS's `--*` override to
+            // `@variable`) needs to clear the earlier general match's
+            // colour, not silently no-op. Skipping the priority update for
+            // None captures (the previous behaviour) made every targeted
+            // "this is uncoloured" override invisible.
+            let color = config.color_for_capture(name);
+            let node = capture.node;
+            let s = node.start_byte().min(total_bytes);
+            let e = node.end_byte().min(total_bytes);
+            for i in s..e {
+                if priority >= byte_priority[i] {
+                    colors[i] = color;
+                    byte_priority[i] = priority;
                 }
             }
         }
@@ -1384,6 +1390,34 @@ export function Page() {
         assert!(
             colors[src.find("<div").unwrap() + 1].is_some(),
             "JSX `<div>` should be coloured"
+        );
+    }
+
+    /// Regression: `--color-primary` was rendering identical to `color`
+    /// because the `((property_name) @variable (#match? "^--"))` override
+    /// resolved to `@variable` (None colour) but the priority loop only
+    /// updated `byte_priority` when the capture had a colour. The earlier
+    /// `(property_name) @property` Lavender match stayed put. Now None
+    /// captures *do* clear earlier colours, so the override visibly takes
+    /// effect — custom properties read as plain text, regular ones stay
+    /// Lavender.
+    #[test]
+    fn css_custom_properties_read_distinct_from_regular_properties() {
+        let src = "@theme {\n  --color-primary: #8985ff;\n  color: red;\n}\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Css, src, &cfg).expect("highlight ok");
+        let lavender = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
+        let custom_idx = src.find("--color-primary").unwrap();
+        let regular_idx = src.find("color:").unwrap();
+        assert_eq!(
+            colors[custom_idx], None,
+            "custom property `--color-primary` should render as plain text, got {:?}",
+            colors[custom_idx],
+        );
+        assert_eq!(
+            colors[regular_idx],
+            Some(lavender),
+            "regular property `color` should stay Lavender",
         );
     }
 
