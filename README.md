@@ -222,6 +222,10 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `biome` (project-local)         | JSON LSP + JS / TS / JSON formatter      | `npm i -D @biomejs/biome` in the project                                  |
 | `csharpier`                     | `.cs` formatter                          | `dotnet tool install --global csharpier`                                 |
 | `gofmt` / `goimports`           | Go formatter (`goimports` preferred when on `$PATH` — it also organises imports) | Ships with Go; `go install golang.org/x/tools/cmd/goimports@latest` for the imports variant |
+| `ruff` (or `black`)             | Python formatter (ruff preferred, black as fallback) | `pipx install ruff` / `pipx install black`                                |
+| `clang-format`                  | C / C++ formatter                        | `brew install llvm` / `apt install clang-format`                          |
+| `shfmt`                         | Shell-script formatter                   | `brew install shfmt` / `go install mvdan.cc/sh/v3/cmd/shfmt@latest`       |
+| `stylua`                        | Lua formatter                            | `cargo install stylua` / `brew install stylua`                            |
 | `netcoredbg`                    | .NET debug adapter (DAP)                 | Build from [github.com/Samsung/netcoredbg](https://github.com/Samsung/netcoredbg). The binary and its `libdbgshim.dylib` / `ManagedPart.dll` / `Microsoft.CodeAnalysis.*.dll` siblings need to live in the same directory — symlink them next to the binary if you copy out of the build's install dir. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |

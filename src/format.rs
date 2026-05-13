@@ -1,7 +1,8 @@
 //! Buffer-level formatters. Pipes the buffer through an external tool
-//! (biome for JS/TS/JSON, csharpier for C# / Razor) and returns the
-//! formatted text. The caller is responsible for replacing the buffer and
-//! bookkeeping the history.
+//! (biome for JS/TS/JSON, csharpier for C# / Razor, gofmt / goimports for
+//! Go, ruff or black for Python, clang-format for C/C++, shfmt for shell,
+//! stylua for Lua) and returns the formatted text. The caller is
+//! responsible for replacing the buffer and bookkeeping the history.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -34,8 +35,124 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
             None => apply_editorconfig_indent(path, source),
         },
         "go" => run_gofmt(source),
+        "py" | "pyi" => run_python(path, source),
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => {
+            run_clang_format(path, source)
+        }
+        "sh" | "bash" | "zsh" | "ksh" => run_shfmt(path, source),
+        "lua" => run_stylua(path, source),
         _ => Err(format!("no formatter configured for .{ext}")),
     }
+}
+
+/// Run a stdin→stdout formatter and return its stdout. Used for the
+/// "single binary, reads source on stdin, writes formatted source on
+/// stdout" tools where there's no project-specific resolution to do.
+/// Errors carry a few lines of stderr so the status line shows what
+/// the tool actually complained about.
+fn run_stdin_pipe(
+    bin: &Path,
+    args: &[&str],
+    source: &str,
+    label: &str,
+) -> Result<String, String> {
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn {label}: {e}"))?;
+    {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| format!("{label} stdin missing"))?;
+        stdin
+            .write_all(source.as_bytes())
+            .map_err(|e| format!("write to {label} stdin: {e}"))?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("{label} wait: {e}"))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let cleaned: Vec<String> = stderr
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .take(4)
+            .collect();
+        let msg = if cleaned.is_empty() {
+            "(no error output)".to_string()
+        } else {
+            cleaned.join(" / ")
+        };
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into());
+        return Err(format!("{label} exit {code}: {msg}"));
+    }
+    String::from_utf8(output.stdout).map_err(|e| format!("{label} stdout not utf-8: {e}"))
+}
+
+/// Format Python via `ruff format` (preferred — single Rust binary,
+/// fast, picks up `pyproject.toml` / `ruff.toml` automatically) with
+/// `black` as a fallback when ruff isn't installed. Both read stdin
+/// when given `-` and write the formatted source on stdout.
+fn run_python(path: &Path, source: &str) -> Result<String, String> {
+    let stdin_filename = path.to_string_lossy().to_string();
+    if let Some(ruff) = find_on_path("ruff") {
+        return run_stdin_pipe(
+            &ruff,
+            &["format", "-", &format!("--stdin-filename={stdin_filename}")],
+            source,
+            "ruff",
+        );
+    }
+    if let Some(black) = find_on_path("black") {
+        return run_stdin_pipe(&black, &["-q", "-"], source, "black");
+    }
+    Err("no Python formatter found — install `ruff` (preferred) or `black`".into())
+}
+
+/// Format C / C++ via `clang-format`. Walks up from the source file to
+/// find `.clang-format` itself (`-assume-filename` is what tells it
+/// which file the stdin payload belongs to).
+fn run_clang_format(path: &Path, source: &str) -> Result<String, String> {
+    let clang = find_on_path("clang-format")
+        .ok_or_else(|| "clang-format not found — install with `brew install llvm` or `apt install clang-format`".to_string())?;
+    let assume = format!("-assume-filename={}", path.to_string_lossy());
+    run_stdin_pipe(&clang, &[&assume], source, "clang-format")
+}
+
+/// Format shell scripts via `shfmt`. The `-filename` flag tells shfmt
+/// which dialect to expect (bash / posix / mksh / bats) based on the
+/// extension — without it, .bash scripts get parsed in posix mode and
+/// reject bashisms.
+fn run_shfmt(path: &Path, source: &str) -> Result<String, String> {
+    let shfmt = find_on_path("shfmt").ok_or_else(|| {
+        "shfmt not found — install with `brew install shfmt` or `go install mvdan.cc/sh/v3/cmd/shfmt@latest`".to_string()
+    })?;
+    let filename = format!("-filename={}", path.to_string_lossy());
+    run_stdin_pipe(&shfmt, &[&filename], source, "shfmt")
+}
+
+/// Format Lua via `stylua`. `--search-parent-directories` lets it find
+/// `stylua.toml` walking up from the source file, the same way the LSP
+/// resolves project config.
+fn run_stylua(path: &Path, source: &str) -> Result<String, String> {
+    let stylua = find_on_path("stylua")
+        .ok_or_else(|| "stylua not found — install with `cargo install stylua` or `brew install stylua`".to_string())?;
+    let stdin_filepath = format!("--stdin-filepath={}", path.to_string_lossy());
+    run_stdin_pipe(
+        &stylua,
+        &["--search-parent-directories", &stdin_filepath, "-"],
+        source,
+        "stylua",
+    )
 }
 
 /// Run biome against `source`, telling it the buffer's real path so it can
