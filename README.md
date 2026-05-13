@@ -1,6 +1,6 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters (csharpier, gofmt/goimports, biome, `.editorconfig` reflow), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 See [`ROADMAP.md`](./ROADMAP.md) for upcoming language support.
 
@@ -39,7 +39,7 @@ See [`ROADMAP.md`](./ROADMAP.md) for upcoming language support.
 
 ### Tree-sitter highlighting
 
-Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, **Python**, **C / C++**, **Java**, **Ruby**, **PHP**, **Lua**, **TOML**, **Svelte**, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
+Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, **Python**, **C / C++**, **Java**, **Ruby**, **PHP**, **Lua**, **TOML**, **Svelte**, **Zig**, **Nix**, **Elixir**, **Dockerfile** / **Containerfile**, **SQL**, HTML, CSS, Markdown, C#, **Razor** (`.cshtml` / `.razor`), **YAML**, **XML** (including `.csproj` / `.fsproj` / `.vbproj` / `.props` / `.targets` / `.config` / `.manifest` / `.nuspec` / `.resx` / `.xaml`), Bash, **`.editorconfig`**, **`.gitignore`** family (`.gitignore`, `.gitattributes`, `.dockerignore`, `.npmignore`).
 
 Pattern-priority resolution so `(method_declaration name: (identifier) @function)` deterministically beats the catch-all `(identifier) @variable`.
 
@@ -219,6 +219,12 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `ruby-lsp`                      | Ruby LSP                                 | `gem install ruby-lsp`                                                   |
 | `intelephense`                  | PHP LSP                                  | `npm i -g intelephense`                                                  |
 | `jdtls`                         | Java LSP (Eclipse JDT-LS)                | `brew install jdtls` — binvim hashes the buffer's parent dir into `~/.cache/binvim/jdtls/<hash>` as the workspace data dir so projects don't trample each other |
+| `zls`                           | Zig LSP                                  | `brew install zls`                                                       |
+| `nil` (or `nixd`)               | Nix LSP                                  | `nix profile install nixpkgs#nil` (nixd via `nix profile install nixpkgs#nixd`) |
+| `elixir-ls`                     | Elixir LSP                               | `brew install elixir-ls` (binvim probes `language_server.sh` as a fallback if the package only ships the shim) |
+| `kotlin-language-server`        | Kotlin LSP                               | `brew install kotlin-language-server` (JVM-backed; same friction profile as jdtls) |
+| `docker-langserver`             | Dockerfile LSP                           | `npm i -g dockerfile-language-server-nodejs`                              |
+| `sqls`                          | SQL LSP                                  | `go install github.com/sqls-server/sqls@latest`                          |
 | `vscode-css-language-server`    | CSS / SCSS / Less LSP                    | `npm i -g vscode-langservers-extracted`                                  |
 | `vscode-html-language-server`   | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
 | `tailwindcss-language-server`   | Tailwind class-name completion           | `npm i -g @tailwindcss/language-server` (the unscoped npm package is an empty stub — use the scoped one) |
@@ -237,6 +243,11 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `rufo`                          | Ruby formatter                           | `gem install rufo`                                                       |
 | `php-cs-fixer`                  | PHP formatter                            | `composer global require friendsofphp/php-cs-fixer`                       |
 | `google-java-format`            | Java formatter                           | `brew install google-java-format`                                        |
+| `zig fmt`                       | Zig formatter (ships with the toolchain) | `brew install zig`                                                       |
+| `nixfmt` (or `alejandra`)       | Nix formatter                            | `nix profile install nixpkgs#nixfmt-rfc-style` (alejandra via `nix profile install nixpkgs#alejandra`) |
+| `mix format`                    | Elixir formatter (ships with the toolchain) | `brew install elixir`                                                  |
+| `ktfmt`                         | Kotlin formatter                         | `brew install ktfmt`                                                     |
+| `sql-formatter`                 | SQL formatter (multi-dialect)            | `npm i -g sql-formatter`                                                 |
 | `netcoredbg`                    | .NET debug adapter (DAP)                 | Build from [github.com/Samsung/netcoredbg](https://github.com/Samsung/netcoredbg). The binary and its `libdbgshim.dylib` / `ManagedPart.dll` / `Microsoft.CodeAnalysis.*.dll` siblings need to live in the same directory — symlink them next to the binary if you copy out of the build's install dir. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |

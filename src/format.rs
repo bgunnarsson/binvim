@@ -46,6 +46,11 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         "rb" | "rake" | "gemspec" => run_rufo(source),
         "php" => run_php_cs_fixer(path, source),
         "java" => run_google_java_format(source),
+        "zig" => run_zig_fmt(source),
+        "nix" => run_nixfmt(source),
+        "ex" | "exs" => run_mix_format(source),
+        "kt" | "kts" => run_ktfmt(path, source),
+        "sql" => run_sql_formatter(source),
         _ => Err(format!("no formatter configured for .{ext}")),
     }
 }
@@ -213,6 +218,95 @@ fn run_google_java_format(source: &str) -> Result<String, String> {
         "google-java-format not found — install with `brew install google-java-format`".to_string()
     })?;
     run_stdin_pipe(&bin, &["-"], source, "google-java-format")
+}
+
+/// Format Zig via `zig fmt --stdin`. Ships with the Zig toolchain so
+/// any user with `zig` on PATH already has the formatter.
+fn run_zig_fmt(source: &str) -> Result<String, String> {
+    let zig = find_on_path("zig")
+        .ok_or_else(|| "zig not found — install the Zig toolchain".to_string())?;
+    run_stdin_pipe(&zig, &["fmt", "--stdin"], source, "zig fmt")
+}
+
+/// Format Nix via `nixfmt` (RFC 166's reference implementation) with
+/// `alejandra` as a fallback. Both read from stdin and write to stdout
+/// with no extra arguments.
+fn run_nixfmt(source: &str) -> Result<String, String> {
+    if let Some(nixfmt) = find_on_path("nixfmt") {
+        return run_stdin_pipe(&nixfmt, &[], source, "nixfmt");
+    }
+    if let Some(alejandra) = find_on_path("alejandra") {
+        return run_stdin_pipe(&alejandra, &["--quiet", "-"], source, "alejandra");
+    }
+    Err("no Nix formatter found — install `nixfmt` or `alejandra`".into())
+}
+
+/// Format Elixir via `mix format -`. The bare `-` is mix's stdin sigil.
+/// `mix format` walks up from the cwd to find `.formatter.exs`, so
+/// project-level style choices apply.
+fn run_mix_format(source: &str) -> Result<String, String> {
+    let mix = find_on_path("mix")
+        .ok_or_else(|| "mix not found — install the Elixir toolchain".to_string())?;
+    run_stdin_pipe(&mix, &["format", "-"], source, "mix format")
+}
+
+/// Format Kotlin via `ktfmt`. ktfmt has no stdin mode; we use the same
+/// temp-file dance as csharpier and php-cs-fixer. ktlint is the
+/// dominant Kotlin linter but its `--format` mode emits diagnostics
+/// alongside the source, so ktfmt's narrower scope is the cleaner fit.
+fn run_ktfmt(path: &Path, source: &str) -> Result<String, String> {
+    let ktfmt = find_on_path("ktfmt").ok_or_else(|| {
+        "ktfmt not found — install with `brew install ktfmt` or grab the jar from GitHub".to_string()
+    })?;
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("buffer");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("kt");
+    let temp = parent.join(format!(
+        ".{stem}.binvim-format.{pid}.{ext}",
+        pid = std::process::id(),
+    ));
+    std::fs::write(&temp, source).map_err(|e| format!("write temp: {e}"))?;
+    let result = Command::new(&ktfmt)
+        .arg(&temp)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    let outcome = match result {
+        Ok(o) if o.status.success() => std::fs::read_to_string(&temp)
+            .map_err(|e| format!("read temp: {e}")),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let cleaned: Vec<String> = stderr
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .take(4)
+                .collect();
+            let msg = if cleaned.is_empty() {
+                "(no error output)".to_string()
+            } else {
+                cleaned.join(" / ")
+            };
+            let code = o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+            Err(format!("ktfmt exit {code}: {msg}"))
+        }
+        Err(e) => Err(format!("failed to spawn ktfmt: {e}")),
+    };
+    let _ = std::fs::remove_file(&temp);
+    outcome
+}
+
+/// Format SQL via `sql-formatter` (the npm tool). Reads stdin, writes
+/// stdout. SQL is a multi-dialect mess and the right formatter varies
+/// by team; `sql-formatter` is just the most broadly applicable
+/// default. Users who want pgFormatter / sleek can swap by editing
+/// `format.rs`.
+fn run_sql_formatter(source: &str) -> Result<String, String> {
+    let bin = find_on_path("sql-formatter").ok_or_else(|| {
+        "sql-formatter not found — install with `npm i -g sql-formatter`".to_string()
+    })?;
+    run_stdin_pipe(&bin, &[], source, "sql-formatter")
 }
 
 /// Format PHP via `php-cs-fixer`. The tool has no stdin mode and

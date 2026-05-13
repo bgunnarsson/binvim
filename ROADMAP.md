@@ -15,10 +15,12 @@ language (e.g. YAML).
 
 Today's coverage: **Rust, TS/JS/JSX/TSX, JSON (Biome), Go, Python,
 C / C++, Bash, Lua, Java, Ruby, PHP, TOML, Vue, Svelte, Markdown,
-HTML, CSS/SCSS/LESS, C# (.cs), Razor (.cshtml / .razor), Astro, YAML
-(LSP + highlight, no formatter)**, plus Tailwind and Emmet as
-auxiliaries. Tree-sitter grammars cover the same set minus Vue plus
-XML, `.editorconfig`, and `.gitignore`.
+Zig, Nix, Elixir, Kotlin, Dockerfile, SQL, HTML, CSS/SCSS/LESS,
+C# (.cs), Razor (.cshtml / .razor), Astro, YAML (LSP + highlight, no
+formatter)**, plus Tailwind and Emmet as auxiliaries. Tree-sitter
+grammars cover everything except Vue (no usable crate) and Kotlin
+(crate ships the parser but no highlights query) plus XML,
+`.editorconfig`, and `.gitignore`.
 
 ---
 
@@ -84,24 +86,37 @@ Shipped:
   doesn't bleed between unrelated projects. Formatter via
   `google-java-format -`. Tree-sitter via `tree-sitter-java` 0.23.
 
-## Milestone 3 — Niche but binvim-aligned (Tier 3)
+## Milestone 3 — Niche but binvim-aligned (Tier 3) — **shipped**
 
-Goal: serve the small, devoted communities that overlap heavily with
-terminal-editor users. **Community contributions or one-off requests.**
-Formatter still expected per language unless none is canonical.
+Covered the small-but-devoted communities that overlap heavily with
+terminal-editor users. Shipped:
 
-- **Zig** — `zls`. Formatter: `zig fmt` (ships with the toolchain).
-- **Nix** — `nil` (or `nixd`). Formatter: `nixfmt` or `alejandra`.
-- **Elixir** — `elixir-ls` via `language_server.sh`. Formatter: `mix
-  format -` (reads stdin when given `-`).
-- **Kotlin** — `kotlin-language-server` (JVM, similar friction to
-  jdtls). Formatter: `ktfmt` or `ktlint`.
-- **Dockerfile** — `docker-langserver`. Needs filename-pattern
-  detection (`Dockerfile`, `Dockerfile.*`) distinct from extension
-  matching. Formatter: none widely adopted — skip.
-- **SQL** — `sqls`. Quality varies by dialect; treat as optional.
-  Formatter: `sql-formatter` (npm) when SQL files are common enough to
-  matter.
+- **Zig** — `zls`. Formatter via `zig fmt --stdin` (ships with the
+  toolchain). Tree-sitter via `tree-sitter-zig` 1.1.
+- **Nix** — `nil` primary with `nixd` as a fallback in
+  `cmd_candidates`. Formatter via `nixfmt` (RFC 166's reference
+  implementation), falling back to `alejandra` when nixfmt isn't on
+  PATH. Tree-sitter via `tree-sitter-nix` 0.3.
+- **Elixir** — `elixir-ls` primary with `language_server.sh` as a
+  fallback (some package managers ship only the shim). Formatter via
+  `mix format -` (stdin sigil). Tree-sitter via `tree-sitter-elixir`
+  0.3.
+- **Kotlin** — `kotlin-language-server`. Formatter via `ktfmt`
+  (temp-file dance — no stdin mode). Tree-sitter via
+  `tree-sitter-kotlin-ng` 1.1 for the parser; the crate ships no
+  highlights query so `.kt` files render as plain text, with the LSP
+  carrying semantic info.
+- **Dockerfile** — `docker-langserver` (the
+  `dockerfile-language-server-nodejs` npm package). Filename-based
+  detection: `Dockerfile`, `Containerfile`, `Dockerfile.<suffix>`,
+  `Containerfile.<suffix>`, or `*.dockerfile`. No canonical formatter
+  — skipped intentionally. Tree-sitter via `tree-sitter-containerfile`
+  0.8 (the original `tree-sitter-dockerfile` is stuck on an ancient
+  tree-sitter ABI; the containerfile fork is the canonical successor).
+- **SQL** — `sqls`. Formatter via `sql-formatter` (the npm tool — SQL
+  is dialect-soup, this is the most broadly applicable default).
+  Tree-sitter via `tree-sitter-sequel` 0.3 (the maintained successor
+  to `tree-sitter-sql`, which never made it past 0.0.2).
 
 ---
 

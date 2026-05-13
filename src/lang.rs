@@ -59,6 +59,25 @@ pub enum Lang {
     Toml,
     /// `.svelte` — tree-sitter-svelte-ng.
     Svelte,
+    /// `.zig` — tree-sitter-zig.
+    Zig,
+    /// `.nix` — tree-sitter-nix.
+    Nix,
+    /// `.ex` / `.exs` — tree-sitter-elixir.
+    Elixir,
+    /// `.kt` / `.kts` — tree-sitter-kotlin-ng. The grammar parses
+    /// fine but the crate ships no highlights query, so syntax
+    /// highlighting falls through to plain text. The LSP carries
+    /// semantic info.
+    Kotlin,
+    /// `Dockerfile` / `Containerfile` / `Dockerfile.<suffix>` /
+    /// `.dockerfile` — tree-sitter-containerfile (the maintained
+    /// successor to tree-sitter-dockerfile, which was stuck on an
+    /// ancient tree-sitter ABI).
+    Dockerfile,
+    /// `.sql` — tree-sitter-sequel (the maintained successor to
+    /// `tree-sitter-sql`).
+    Sql,
 }
 
 impl Lang {
@@ -88,6 +107,12 @@ impl Lang {
                 "php" => return Some(Lang::Php),
                 "toml" => return Some(Lang::Toml),
                 "svelte" => return Some(Lang::Svelte),
+                "zig" => return Some(Lang::Zig),
+                "nix" => return Some(Lang::Nix),
+                "ex" | "exs" => return Some(Lang::Elixir),
+                "kt" | "kts" => return Some(Lang::Kotlin),
+                "sql" => return Some(Lang::Sql),
+                "dockerfile" => return Some(Lang::Dockerfile),
                 "yml" | "yaml" => return Some(Lang::Yaml),
                 // XML family — the project-file flavours all use the
                 // same MSBuild XML schema. Covers .NET (csproj/fsproj/
@@ -126,6 +151,15 @@ impl Lang {
         ) {
             return Some(Lang::Ruby);
         }
+        // Dockerfile / Containerfile — exact match or `Dockerfile.<suffix>`
+        // / `Containerfile.<suffix>` (e.g. Dockerfile.dev, Dockerfile.prod).
+        if name == "Dockerfile"
+            || name == "Containerfile"
+            || name.starts_with("Dockerfile.")
+            || name.starts_with("Containerfile.")
+        {
+            return Some(Lang::Dockerfile);
+        }
         None
     }
 
@@ -158,6 +192,12 @@ impl Lang {
             "php" => Some(Lang::Php),
             "toml" => Some(Lang::Toml),
             "svelte" => Some(Lang::Svelte),
+            "zig" => Some(Lang::Zig),
+            "nix" => Some(Lang::Nix),
+            "elixir" | "ex" | "exs" => Some(Lang::Elixir),
+            "kotlin" | "kt" | "kts" => Some(Lang::Kotlin),
+            "dockerfile" | "docker" => Some(Lang::Dockerfile),
+            "sql" => Some(Lang::Sql),
             "yaml" | "yml" => Some(Lang::Yaml),
             "xml" | "csproj" | "fsproj" | "vbproj" | "xaml" => Some(Lang::Xml),
             "editorconfig" | "ini" => Some(Lang::EditorConfig),
@@ -195,6 +235,12 @@ impl Lang {
             Lang::Php => tree_sitter_php::LANGUAGE_PHP.into(),
             Lang::Toml => tree_sitter_toml_ng::LANGUAGE.into(),
             Lang::Svelte => tree_sitter_svelte_ng::LANGUAGE.into(),
+            Lang::Zig => tree_sitter_zig::LANGUAGE.into(),
+            Lang::Nix => tree_sitter_nix::LANGUAGE.into(),
+            Lang::Elixir => tree_sitter_elixir::LANGUAGE.into(),
+            Lang::Kotlin => tree_sitter_kotlin_ng::LANGUAGE.into(),
+            Lang::Dockerfile => tree_sitter_containerfile::LANGUAGE.into(),
+            Lang::Sql => tree_sitter_sequel::LANGUAGE.into(),
             // EditorConfig / GitIgnore have no real tree-sitter
             // grammar; we use bash's lexer as a stand-in because it
             // gets us comment tokenisation for free. The actual
@@ -311,6 +357,15 @@ impl Lang {
             Lang::Php => tree_sitter_php::HIGHLIGHTS_QUERY.into(),
             Lang::Toml => tree_sitter_toml_ng::HIGHLIGHTS_QUERY.into(),
             Lang::Svelte => tree_sitter_svelte_ng::HIGHLIGHTS_QUERY.into(),
+            Lang::Zig => tree_sitter_zig::HIGHLIGHTS_QUERY.into(),
+            Lang::Nix => tree_sitter_nix::HIGHLIGHTS_QUERY.into(),
+            Lang::Elixir => tree_sitter_elixir::HIGHLIGHTS_QUERY.into(),
+            // tree-sitter-kotlin-ng ships no highlights query — the parser
+            // alone gets us nothing visible. The LSP carries semantic info
+            // for any user who installs `kotlin-language-server`.
+            Lang::Kotlin => String::new(),
+            Lang::Dockerfile => tree_sitter_containerfile::HIGHLIGHTS_QUERY.into(),
+            Lang::Sql => tree_sitter_sequel::HIGHLIGHTS_QUERY.into(),
             // Empty query — tree-sitter pass is a no-op; the actual
             // colouring comes from byte-level scanners in
             // `compute_byte_colors`.
@@ -1135,6 +1190,63 @@ mod tests {
         assert!(colors[src.find("[package]").unwrap()].is_some(), "TOML table header should be coloured");
         assert!(colors[src.find("name").unwrap()].is_some(), "TOML key should be coloured");
         assert!(colors[src.find("\"binvim\"").unwrap()].is_some(), "TOML string should be coloured");
+    }
+
+    #[test]
+    fn zig_highlights_pub_and_string() {
+        let src = "const std = @import(\"std\");\npub fn main() void { std.debug.print(\"hi\", .{}); }\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Zig, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("const").unwrap()].is_some(), "Zig `const` should be coloured");
+        assert!(colors[src.find("pub").unwrap()].is_some(), "Zig `pub` should be coloured");
+        assert!(colors[src.find("\"std\"").unwrap()].is_some(), "Zig string should be coloured");
+    }
+
+    #[test]
+    fn nix_highlights_let_and_string() {
+        let src = "{ pkgs ? import <nixpkgs> {} }:\nlet name = \"binvim\"; in pkgs.hello\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Nix, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("let").unwrap()].is_some(), "Nix `let` should be coloured");
+        assert!(colors[src.find("\"binvim\"").unwrap()].is_some(), "Nix string should be coloured");
+    }
+
+    #[test]
+    fn elixir_highlights_defmodule_and_string() {
+        let src = "defmodule Greeter do\n  def hello(name), do: \"Hello, #{name}\"\nend\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Elixir, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("defmodule").unwrap()].is_some(), "Elixir `defmodule` should be coloured");
+        assert!(colors[src.find("def ").unwrap()].is_some(), "Elixir `def` should be coloured");
+    }
+
+    #[test]
+    fn dockerfile_highlights_from_and_run() {
+        let src = "FROM rust:1.95 AS build\nWORKDIR /app\nCOPY . .\nRUN cargo build --release\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Dockerfile, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("FROM").unwrap()].is_some(), "Dockerfile `FROM` should be coloured");
+        assert!(colors[src.find("RUN").unwrap()].is_some(), "Dockerfile `RUN` should be coloured");
+    }
+
+    #[test]
+    fn sql_highlights_select_and_from() {
+        let src = "SELECT id, name FROM users WHERE active = true;\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::Sql, src, &cfg).expect("highlight ok");
+        assert!(colors[src.find("SELECT").unwrap()].is_some(), "SQL `SELECT` should be coloured");
+        assert!(colors[src.find("FROM").unwrap()].is_some(), "SQL `FROM` should be coloured");
+    }
+
+    #[test]
+    fn dockerfile_detects_basename_variants() {
+        use std::path::Path;
+        assert_eq!(Lang::detect(Path::new("Dockerfile")), Some(Lang::Dockerfile));
+        assert_eq!(Lang::detect(Path::new("Containerfile")), Some(Lang::Dockerfile));
+        assert_eq!(Lang::detect(Path::new("Dockerfile.dev")), Some(Lang::Dockerfile));
+        assert_eq!(Lang::detect(Path::new("Dockerfile.prod-1")), Some(Lang::Dockerfile));
+        assert_eq!(Lang::detect(Path::new("app.dockerfile")), Some(Lang::Dockerfile));
+        assert_eq!(Lang::detect(Path::new("not-a-dockerfile")), None);
     }
 
     #[test]

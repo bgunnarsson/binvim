@@ -2274,6 +2274,12 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Php => '\u{e608}',
         Lang::Toml => '\u{e6b2}',
         Lang::Svelte => '\u{e697}',
+        Lang::Zig => '\u{e6a9}',
+        Lang::Nix => '\u{f313}',
+        Lang::Elixir => '\u{e62d}',
+        Lang::Kotlin => '\u{e634}',
+        Lang::Dockerfile => '\u{f308}',
+        Lang::Sql => '\u{e7c4}',
     }
 }
 
@@ -2304,6 +2310,12 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::Php => "php",
         Lang::Toml => "toml",
         Lang::Svelte => "svelte",
+        Lang::Zig => "zig",
+        Lang::Nix => "nix",
+        Lang::Elixir => "elixir",
+        Lang::Kotlin => "kotlin",
+        Lang::Dockerfile => "dockerfile",
+        Lang::Sql => "sql",
     }
 }
 

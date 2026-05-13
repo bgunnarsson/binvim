@@ -50,12 +50,33 @@ pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
 /// We only special-case `~/.cargo/bin` for rust-analyzer because that's the Rust toolchain
 /// convention (and not tied to any other tool's package manager).
 fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
-    let ext = path.extension().and_then(|s| s.to_str())?;
     let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
     let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
     let go_bin = |bin: &str| format!("{}/go/bin/{}", home, bin);
     let local_bin = |sub: &str, bin: &str| format!("{}/.local/bin/{}/{}", home, sub, bin);
     let stdio = || vec!["--stdio".to_string()];
+
+    // Filename-based detection (no extension). Dockerfile is the
+    // canonical case: `Dockerfile`, `Containerfile`, `Dockerfile.dev`,
+    // etc. all map to one LSP regardless of suffix.
+    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+        if name == "Dockerfile"
+            || name == "Containerfile"
+            || name.starts_with("Dockerfile.")
+            || name.starts_with("Containerfile.")
+        {
+            return Some(ServerSpec {
+                key: "docker-langserver".into(),
+                language_id: "dockerfile".into(),
+                cmd_candidates: vec!["docker-langserver".into()],
+                args: stdio(),
+                root_markers: vec![".git".into()],
+                initialization_options: Value::Null,
+            });
+        }
+    }
+
+    let ext = path.extension().and_then(|s| s.to_str())?;
 
     let ts_markers = || {
         vec![
@@ -347,6 +368,70 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             cmd_candidates: vec!["intelephense".into()],
             args: stdio(),
             root_markers: vec!["composer.json".into(), ".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "zig" => Some(ServerSpec {
+            key: "zls".into(),
+            language_id: "zig".into(),
+            cmd_candidates: vec!["zls".into()],
+            args: vec![],
+            root_markers: vec!["build.zig".into(), "build.zig.zon".into(), ".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "nix" => Some(ServerSpec {
+            key: "nil".into(),
+            language_id: "nix".into(),
+            // `nil` is the dominant Nix LSP; `nixd` is a maintained
+            // alternative some users prefer. Try nil first, fall through
+            // to nixd if it isn't installed.
+            cmd_candidates: vec!["nil".into(), "nixd".into()],
+            args: vec![],
+            root_markers: vec![
+                "flake.nix".into(),
+                "shell.nix".into(),
+                "default.nix".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "ex" | "exs" => Some(ServerSpec {
+            key: "elixir-ls".into(),
+            language_id: "elixir".into(),
+            // elixir-ls ships a `language_server.sh` launcher; some
+            // packages expose it as `elixir-ls` directly.
+            cmd_candidates: vec!["elixir-ls".into(), "language_server.sh".into()],
+            args: vec![],
+            root_markers: vec!["mix.exs".into(), ".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "kt" | "kts" => Some(ServerSpec {
+            key: "kotlin-ls".into(),
+            language_id: "kotlin".into(),
+            cmd_candidates: vec!["kotlin-language-server".into()],
+            args: vec![],
+            root_markers: vec![
+                "build.gradle.kts".into(),
+                "build.gradle".into(),
+                "pom.xml".into(),
+                "settings.gradle.kts".into(),
+                ".git".into(),
+            ],
+            initialization_options: Value::Null,
+        }),
+        "sql" => Some(ServerSpec {
+            key: "sqls".into(),
+            language_id: "sql".into(),
+            cmd_candidates: vec!["sqls".into(), go_bin("sqls")],
+            args: vec![],
+            root_markers: vec![".git".into()],
+            initialization_options: Value::Null,
+        }),
+        "dockerfile" => Some(ServerSpec {
+            key: "docker-langserver".into(),
+            language_id: "dockerfile".into(),
+            cmd_candidates: vec!["docker-langserver".into()],
+            args: stdio(),
+            root_markers: vec![".git".into()],
             initialization_options: Value::Null,
         }),
         "java" => {
