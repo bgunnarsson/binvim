@@ -118,6 +118,30 @@ fn previous_word_boundary(buffer: &crate::buffer::Buffer, line: usize, col: usiz
     i
 }
 
+/// Should an Enter pressed at the cursor split a paired opener / closer
+/// onto three lines with an indented middle row?
+///
+/// Triggered by `{|}` / `[|]` / `(|)`, and by `<tag>|</tag>` (cursor
+/// between an open-tag close `>` and a `</…>` close tag). HTML / JSX /
+/// TSX / Razor / Vue / Svelte / Astro / XML all benefit from this since
+/// the auto-pair inserter already lands the cursor in that exact spot
+/// when the user types `>` after a tag name. Anchored on the full `</`
+/// (not bare `<`) so generic-type / comparison usages like `Foo<Bar>`
+/// don't false-positive.
+fn should_split_pair_on_enter(
+    prev_non_ws: Option<char>,
+    next_non_ws: Option<char>,
+    next_next: Option<char>,
+) -> bool {
+    if matches!(
+        (prev_non_ws, next_non_ws),
+        (Some('{'), Some('}')) | (Some('['), Some(']')) | (Some('('), Some(')'))
+    ) {
+        return true;
+    }
+    prev_non_ws == Some('>') && next_non_ws == Some('<') && next_next == Some('/')
+}
+
 impl super::App {
     pub(super) fn handle_event(&mut self) -> anyhow::Result<()> {
         match crossterm::event::read()? {
@@ -858,9 +882,10 @@ impl super::App {
             Some('{') | Some('[') | Some('(') | Some(':')
         ) || prev_two.ends_with("=>")
             || prev_two.ends_with("->");
-        let split_pair = matches!(
-            (prev_non_ws, next_non_ws),
-            (Some('{'), Some('}')) | (Some('['), Some(']')) | (Some('('), Some(')'))
+        let split_pair = should_split_pair_on_enter(
+            prev_non_ws,
+            next_non_ws,
+            chars.get(col + 1).copied(),
         );
 
         if split_pair {
@@ -1471,5 +1496,46 @@ mod tests {
         let b = buf("    \n");
         // From col 4 (after all the spaces) → eat them, land at 0.
         assert_eq!(previous_word_boundary(&b, 0, 4), 0);
+    }
+
+    // --- smart-Enter split-pair predicate ----------------------------
+
+    #[test]
+    fn enter_splits_curly_brace_pair() {
+        assert!(should_split_pair_on_enter(Some('{'), Some('}'), None));
+    }
+
+    #[test]
+    fn enter_splits_square_bracket_pair() {
+        assert!(should_split_pair_on_enter(Some('['), Some(']'), None));
+    }
+
+    #[test]
+    fn enter_splits_parenthesis_pair() {
+        assert!(should_split_pair_on_enter(Some('('), Some(')'), None));
+    }
+
+    #[test]
+    fn enter_splits_html_tag_pair() {
+        // `<div>|</div>` — prev_non_ws='>', next_non_ws='<', next_next='/'.
+        assert!(should_split_pair_on_enter(Some('>'), Some('<'), Some('/')));
+    }
+
+    #[test]
+    fn enter_does_not_split_generic_type_followed_by_less_than() {
+        // `Foo<Bar>|<other` — prev='>', next='<', next_next is a name
+        // char rather than `/`. Should NOT split (it's just two
+        // generic-type / comparison sites next to each other).
+        assert!(!should_split_pair_on_enter(Some('>'), Some('<'), Some('o')));
+    }
+
+    #[test]
+    fn enter_does_not_split_unmatched_pairs() {
+        // No closer to the right → no split.
+        assert!(!should_split_pair_on_enter(Some('{'), Some(')'), None));
+        assert!(!should_split_pair_on_enter(Some('('), Some(']'), None));
+        // No opener to the left → no split.
+        assert!(!should_split_pair_on_enter(None, Some('}'), None));
+        assert!(!should_split_pair_on_enter(Some('a'), Some(')'), None));
     }
 }
