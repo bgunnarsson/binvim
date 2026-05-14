@@ -6,6 +6,25 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-05-14
+
+### Added
+- **Replace selected text across the current buffer.** Visual-select
+  the literal text, `<leader>R`, type the replacement in the prompt,
+  Enter. The selection text pre-fills the cmdline so you can edit
+  instead of retyping; the prompt's top border carries a "Replace in
+  buffer" title. Multi-line selections are rejected with a status
+  hint (the underlying substitute is a single-line literal match);
+  empty selections show "replace: empty selection". Leader chord
+  also now activates in Visual mode generally, not just Normal —
+  other actions (file picker, format, rename) work from Visual too.
+
+### Changed
+- **`/` search is case-insensitive.** `/foo` matches `Foo` / `FOO` /
+  `fOo` / etc. Applies to `n`, `N`, `*`, `#` and the search-result
+  highlight painter as well; positions stay correct on Unicode text
+  because the lowercase fold is ASCII-only (only A-Z get touched).
+
 ## [0.1.5] - 2026-05-14
 
 ### Added
