@@ -157,24 +157,28 @@ impl super::App {
             return None;
         }
         let rope = &self.buffer.rope;
-        let text = rope.to_string();
+        // Case-insensitive comparison: lowercase both haystack and needle.
+        // `to_ascii_lowercase` only touches A-Z, so byte lengths are
+        // preserved and byte offsets in `text` map 1:1 back to rope chars.
+        let text = rope.to_string().to_ascii_lowercase();
+        let needle = query.to_ascii_lowercase();
         let total = rope.len_chars();
         let from_byte = rope.char_to_byte(from_char.min(total));
         if forward {
-            if let Some(b) = text.get(from_byte..).and_then(|s| s.find(query)) {
+            if let Some(b) = text.get(from_byte..).and_then(|s| s.find(needle.as_str())) {
                 return Some(rope.byte_to_char(from_byte + b));
             }
             if wrap {
-                if let Some(b) = text.get(..from_byte).and_then(|s| s.find(query)) {
+                if let Some(b) = text.get(..from_byte).and_then(|s| s.find(needle.as_str())) {
                     return Some(rope.byte_to_char(b));
                 }
             }
         } else {
-            if let Some(b) = text.get(..from_byte).and_then(|s| s.rfind(query)) {
+            if let Some(b) = text.get(..from_byte).and_then(|s| s.rfind(needle.as_str())) {
                 return Some(rope.byte_to_char(b));
             }
             if wrap {
-                if let Some(b) = text.get(from_byte..).and_then(|s| s.rfind(query)) {
+                if let Some(b) = text.get(from_byte..).and_then(|s| s.rfind(needle.as_str())) {
                     return Some(rope.byte_to_char(from_byte + b));
                 }
             }
@@ -338,22 +342,27 @@ impl super::App {
             return Vec::new();
         }
         let line_start = self.buffer.line_start_idx(line);
-        let text: String = self
+        // Case-insensitive — lowercase both sides. ASCII-only lowercase
+        // preserves byte lengths, so positions in `text_lower` map
+        // straight back to char columns in the original line.
+        let text_lower: String = self
             .buffer
             .rope
             .slice(line_start..(line_start + line_len))
-            .to_string();
-        let qlen = q.chars().count();
+            .to_string()
+            .to_ascii_lowercase();
+        let needle = q.to_ascii_lowercase();
+        let qlen = needle.chars().count();
         let mut out = Vec::new();
         let mut byte = 0usize;
-        while byte <= text.len() {
-            let Some(rel) = text[byte..].find(q.as_str()) else {
+        while byte <= text_lower.len() {
+            let Some(rel) = text_lower[byte..].find(needle.as_str()) else {
                 break;
             };
             let abs_byte = byte + rel;
-            let char_start = text[..abs_byte].chars().count();
+            let char_start = text_lower[..abs_byte].chars().count();
             out.push((char_start, char_start + qlen));
-            byte = abs_byte + q.len().max(1);
+            byte = abs_byte + needle.len().max(1);
         }
         out
     }
