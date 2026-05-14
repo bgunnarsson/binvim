@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Scroll the `:health` dashboard.** `j`/`k` (or arrow keys) scroll
+  one row, `Ctrl-D`/`Ctrl-U` half a page, `Ctrl-F`/`Ctrl-B` and
+  PageDown/PageUp a full page, `g`/`G` (or Home/End) jump to top /
+  bottom, mouse wheel also scrolls. Footer now hints what's clipped:
+  "more above" / "more below" / "↑ k ↓ j to scroll" when both
+  directions have content offscreen. Useful on short terminals where
+  the LSP / BUFFERS / TAILWIND sections used to fall off the bottom.
+
 ## [0.1.6] - 2026-05-14
 
 ### Added
