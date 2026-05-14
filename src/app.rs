@@ -39,7 +39,7 @@ mod state;
 mod view;
 mod visual;
 
-pub use health::DiagnosticsCounts;
+pub use health::{DiagnosticsCounts, HealthSnapshot};
 pub use state::{
     BufferStash, CompletionState, FindRecord, FoldRange, HoverCodeBlock, HoverLine, HoverState,
     LastEdit, Register, WhichKeyState, YankHighlight, HOVER_MAX_HEIGHT,
@@ -164,6 +164,15 @@ pub struct App {
     /// the dashboard re-snapshots resources / LSP-pending counts on a
     /// fixed cadence rather than freezing at the open-time reading.
     pub health_last_refresh: Instant,
+    /// Number of dashboard rows scrolled off the top while
+    /// `show_health_page` is up. Clamped against
+    /// `health_content_height` by the input handlers.
+    pub health_scroll: usize,
+    /// Total virtual rows the dashboard occupied on the last render.
+    /// Used by the input handlers to clamp `health_scroll` so the user
+    /// can't scroll past the bottom. `Cell` because `render::draw`
+    /// borrows `App` immutably.
+    pub health_content_height: std::cell::Cell<usize>,
     /// Bottom debug pane visibility. When open it steals rows from the
     /// editor area; height is computed from terminal size in `view.rs`.
     /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
@@ -319,6 +328,8 @@ impl App {
             show_start_page,
             show_health_page: false,
             health_last_refresh: Instant::now(),
+            health_scroll: 0,
+            health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
             dap_pane_cursor: 0,
             dap_left_scroll: 0,

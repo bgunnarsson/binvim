@@ -1466,33 +1466,81 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     let p = DashboardPalette::default();
 
     let left = 2usize;
-    let max_y = top + rows;
+    // Reserve the bottom row of the buffer area for the always-on
+    // footer so the keybinding hint stays visible while scrolling.
+    let viewport_rows = rows.saturating_sub(1);
     // Body width budget — leave a 2-col margin on the right too.
     let body_w = total_w.saturating_sub(left + 2).max(40);
 
-    // One blank row of breathing room above the banner.
-    let mut y = top + 1;
+    // Build the dashboard as a flat list of virtual rows first so we
+    // can both measure its total height (for the input handler's
+    // clamp) and paint just the slice the user has scrolled to.
+    let banner_fits = total_w >= 50 && rows > 10;
+    let mut rows_buf: Vec<DashRow> = Vec::new();
+    build_health_rows(&mut rows_buf, &snap, &p, left, body_w, banner_fits);
 
-    // --- Banner --------------------------------------------------------
-    let banner_fits = total_w >= 50;
-    if banner_fits && rows > 10 {
+    // Stash the total content height so input handlers can clamp the
+    // scroll without re-running the snapshot.
+    app.health_content_height.set(rows_buf.len());
+
+    let scroll = app
+        .health_scroll
+        .min(rows_buf.len().saturating_sub(viewport_rows));
+
+    for (i, row) in rows_buf
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(viewport_rows)
+    {
+        let screen_y = (top + (i - scroll)) as u16;
+        row.paint(out, screen_y, &p)?;
+    }
+
+    // --- Footer (anchored to bottom of buffer area) -------------------
+    let has_more_below = scroll + viewport_rows < rows_buf.len();
+    let has_more_above = scroll > 0;
+    let footer = match (has_more_above, has_more_below) {
+        (false, false) => "Esc · q · :q to dismiss",
+        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
+        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
+        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
+    };
+    queue!(
+        out,
+        MoveTo(left as u16, (top + rows - 1) as u16),
+        SetForegroundColor(p.overlay0),
+        Print(truncate(footer, total_w.saturating_sub(left))),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+/// Layout the dashboard into a flat list of `DashRow`s. Splitting the
+/// build out from the paint loop lets us measure the total height once
+/// (for scroll clamping) and paint only the visible window.
+fn build_health_rows(
+    rows: &mut Vec<DashRow>,
+    snap: &crate::app::HealthSnapshot,
+    p: &DashboardPalette,
+    left: usize,
+    body_w: usize,
+    banner_fits: bool,
+) {
+    // One blank row of breathing room above the banner.
+    rows.push(DashRow::Blank);
+
+    if banner_fits {
         for line in HEALTH_BANNER {
-            if y >= max_y {
-                break;
-            }
-            queue!(
-                out,
-                MoveTo(left as u16, y as u16),
-                SetForegroundColor(p.mauve),
-                Print(line),
-                ResetColor,
-            )?;
-            y += 1;
+            rows.push(DashRow::Banner {
+                x: left,
+                text: (*line).to_string(),
+                colour: p.mauve,
+            });
         }
     }
 
-    // Breathing room between banner and first box row.
-    y = y.saturating_add(1).min(max_y);
+    rows.push(DashRow::Blank);
 
     // --- PROCESS + RESOURCES (two columns) ----------------------------
     let cpu_str = snap
@@ -1531,22 +1579,12 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     let half = body_w.saturating_sub(gap) / 2;
     let left_w = half;
     let right_w = body_w.saturating_sub(gap + half);
-    let y_l = draw_section_box(
-        out, left, y, left_w, max_y, "PROCESS", p.mauve, &process_lines, &p,
-    )?;
-    let y_r = draw_section_box(
-        out,
-        left + left_w + gap,
-        y,
-        right_w,
-        max_y,
-        "RESOURCES",
-        p.blue,
-        &resource_lines,
-        &p,
-    )?;
-    y = y_l.max(y_r);
-    y = y.saturating_add(1).min(max_y);
+    push_two_section_boxes(
+        rows,
+        (left, left_w, "PROCESS", p.mauve, &process_lines),
+        (left + left_w + gap, right_w, "RESOURCES", p.blue, &resource_lines),
+    );
+    rows.push(DashRow::Blank);
 
     // --- ENVIRONMENT (cwd + config in one box) ------------------------
     let cwd_disp = home_relative_path(&snap.cwd);
@@ -1573,10 +1611,8 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             ],
         },
     ];
-    y = draw_section_box(
-        out, left, y, body_w, max_y, "ENVIRONMENT", p.peach, &env_lines, &p,
-    )?;
-    y = y.saturating_add(1).min(max_y);
+    push_section_box(rows, left, body_w, "ENVIRONMENT", p.peach, &env_lines);
+    rows.push(DashRow::Blank);
 
     // --- ACTIVE BUFFER section ----------------------------------------
     let mut active_lines: Vec<SectionLine> = Vec::new();
@@ -1595,7 +1631,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             active_lines.push(if d.total() == 0 {
                 SectionLine::plain("diagnostics: clean", p.overlay1)
             } else {
-                diagnostics_chip_row(d, &p)
+                diagnostics_chip_row(d, p)
             });
             if ab.statuses.is_empty() {
                 active_lines.push(SectionLine::plain(
@@ -1630,10 +1666,8 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             ));
         }
     }
-    y = draw_section_box(
-        out, left, y, body_w, max_y, "ACTIVE BUFFER", p.teal, &active_lines, &p,
-    )?;
-    y = y.saturating_add(1).min(max_y);
+    push_section_box(rows, left, body_w, "ACTIVE BUFFER", p.teal, &active_lines);
+    rows.push(DashRow::Blank);
 
     // --- LSP SERVERS section ------------------------------------------
     let mut lsp_lines: Vec<SectionLine> = Vec::new();
@@ -1654,10 +1688,8 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let lsp_title = format!("LSP SERVERS ({} running)", snap.lsps.len());
-    y = draw_section_box(
-        out, left, y, body_w, max_y, &lsp_title, p.lavender, &lsp_lines, &p,
-    )?;
-    y = y.saturating_add(1).min(max_y);
+    push_section_box(rows, left, body_w, &lsp_title, p.lavender, &lsp_lines);
+    rows.push(DashRow::Blank);
 
     // --- GIT section ---------------------------------------------------
     let mut git_lines: Vec<SectionLine> = Vec::new();
@@ -1694,8 +1726,8 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             git_lines.push(SectionLine::plain("(not a git repository)", p.overlay1));
         }
     }
-    y = draw_section_box(out, left, y, body_w, max_y, "GIT", p.peach, &git_lines, &p)?;
-    y = y.saturating_add(1).min(max_y);
+    push_section_box(rows, left, body_w, "GIT", p.peach, &git_lines);
+    rows.push(DashRow::Blank);
 
     // --- BUFFERS section ----------------------------------------------
     let mut buf_lines: Vec<SectionLine> = Vec::new();
@@ -1717,10 +1749,8 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let buf_title = format!("BUFFERS ({})", snap.buffers.len());
-    y = draw_section_box(
-        out, left, y, body_w, max_y, &buf_title, p.blue, &buf_lines, &p,
-    )?;
-    y = y.saturating_add(1).min(max_y);
+    push_section_box(rows, left, body_w, &buf_title, p.blue, &buf_lines);
+    rows.push(DashRow::Blank);
 
     // --- TAILWIND section ---------------------------------------------
     let tw_lines: Vec<SectionLine> = match &snap.tailwind {
@@ -1746,21 +1776,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             ),
         ],
     };
-    y = draw_section_box(out, left, y, body_w, max_y, "TAILWIND", p.teal, &tw_lines, &p)?;
-    let _ = y;
-
-    // --- Footer (anchored to bottom of buffer area) -------------------
-    if max_y > top + 1 {
-        let footer = "Esc · q · :q to dismiss";
-        queue!(
-            out,
-            MoveTo(left as u16, (max_y - 1) as u16),
-            SetForegroundColor(p.overlay0),
-            Print(truncate(footer, total_w.saturating_sub(left))),
-            ResetColor,
-        )?;
-    }
-    Ok(())
+    push_section_box(rows, left, body_w, "TAILWIND", p.teal, &tw_lines);
 }
 
 /// One row inside a dashboard section box.
@@ -1782,34 +1798,107 @@ impl SectionLine {
     }
 }
 
-/// Paint one boxed section: top border with the title inline, the
-/// content rows (each padded to the inner width), bottom border.
-/// Returns the row index just after the closing border.
-fn draw_section_box(
-    out: &mut impl Write,
+/// One virtual row of the health dashboard. Built up by
+/// `build_health_rows` and painted by `draw_health_page` after
+/// scrolling has been applied. Splitting build from paint lets us
+/// measure the total height in a single pass without rendering
+/// off-screen rows.
+enum DashRow {
+    /// Empty row used for vertical breathing space between sections.
+    Blank,
+    /// A line of ASCII-art banner text.
+    Banner { x: usize, text: String, colour: Color },
+    /// Top border of a single boxed section (with inline title).
+    BoxTop {
+        x: usize,
+        width: usize,
+        title: String,
+        title_colour: Color,
+    },
+    /// Content row inside a boxed section.
+    BoxContent {
+        x: usize,
+        width: usize,
+        line: SectionLine,
+    },
+    /// Bottom border of a boxed section.
+    BoxBottom { x: usize, width: usize },
+    /// Top borders of two side-by-side boxes painted on the same row.
+    BoxTopPair {
+        a: (usize, usize, String, Color), // x, width, title, colour
+        b: (usize, usize, String, Color),
+    },
+    /// Content rows of two side-by-side boxes painted on the same row.
+    /// Each option is independent — an absent side leaves that column
+    /// untouched (e.g. when one box has more content than the other).
+    BoxContentPair {
+        a: Option<(usize, usize, SectionLine)>,
+        b: Option<(usize, usize, SectionLine)>,
+    },
+    /// Bottom borders of two side-by-side boxes painted on the same row.
+    BoxBottomPair { a: (usize, usize), b: (usize, usize) },
+}
+
+impl DashRow {
+    fn paint<W: Write>(&self, out: &mut W, y: u16, palette: &DashboardPalette) -> Result<()> {
+        match self {
+            DashRow::Blank => Ok(()),
+            DashRow::Banner { x, text, colour } => {
+                queue!(
+                    out,
+                    MoveTo(*x as u16, y),
+                    SetForegroundColor(*colour),
+                    Print(text),
+                    ResetColor,
+                )?;
+                Ok(())
+            }
+            DashRow::BoxTop { x, width, title, title_colour } => {
+                paint_box_top(out, *x, y, *width, title, *title_colour, palette)
+            }
+            DashRow::BoxContent { x, width, line } => {
+                paint_box_content(out, *x, y, *width, line, palette)
+            }
+            DashRow::BoxBottom { x, width } => paint_box_bottom(out, *x, y, *width, palette),
+            DashRow::BoxTopPair { a, b } => {
+                paint_box_top(out, a.0, y, a.1, &a.2, a.3, palette)?;
+                paint_box_top(out, b.0, y, b.1, &b.2, b.3, palette)?;
+                Ok(())
+            }
+            DashRow::BoxContentPair { a, b } => {
+                if let Some((x, w, line)) = a {
+                    paint_box_content(out, *x, y, *w, line, palette)?;
+                }
+                if let Some((x, w, line)) = b {
+                    paint_box_content(out, *x, y, *w, line, palette)?;
+                }
+                Ok(())
+            }
+            DashRow::BoxBottomPair { a, b } => {
+                paint_box_bottom(out, a.0, y, a.1, palette)?;
+                paint_box_bottom(out, b.0, y, b.1, palette)?;
+                Ok(())
+            }
+        }
+    }
+}
+
+fn paint_box_top<W: Write>(
+    out: &mut W,
     x: usize,
-    y_in: usize,
+    y: u16,
     width: usize,
-    max_y: usize,
     title: &str,
     title_colour: Color,
-    lines: &[SectionLine],
     palette: &DashboardPalette,
-) -> Result<usize> {
-    if y_in >= max_y {
-        return Ok(y_in);
-    }
-    let mut y = y_in;
+) -> Result<()> {
     let inner_w = width.saturating_sub(2);
-    let body_w = inner_w.saturating_sub(2); // 1-col padding each side
-
-    // Top border with inline title.
     let title_marked = format!(" {} ", title);
     let title_visible = title_marked.chars().count();
     let dashes = inner_w.saturating_sub(title_visible + 1);
     queue!(
         out,
-        MoveTo(x as u16, y as u16),
+        MoveTo(x as u16, y),
         SetForegroundColor(palette.border),
         Print("┌─"),
         SetForegroundColor(title_colour),
@@ -1821,68 +1910,140 @@ fn draw_section_box(
         Print('┐'),
         ResetColor,
     )?;
-    y += 1;
+    Ok(())
+}
 
-    for line in lines {
-        if y >= max_y.saturating_sub(1) {
-            // Reserve the row for the bottom border.
-            break;
+fn paint_box_content<W: Write>(
+    out: &mut W,
+    x: usize,
+    y: u16,
+    width: usize,
+    line: &SectionLine,
+    palette: &DashboardPalette,
+) -> Result<()> {
+    let inner_w = width.saturating_sub(2);
+    let body_w = inner_w.saturating_sub(2); // 1-col padding each side
+    queue!(
+        out,
+        MoveTo(x as u16, y),
+        SetForegroundColor(palette.border),
+        Print('│'),
+        SetForegroundColor(palette.text),
+        Print(' '),
+    )?;
+    let painted = match line {
+        SectionLine::Plain { text, colour } => {
+            let trimmed = truncate(text, body_w);
+            let w = trimmed.chars().count();
+            queue!(out, SetForegroundColor(*colour), Print(trimmed))?;
+            w
         }
-        queue!(
-            out,
-            MoveTo(x as u16, y as u16),
-            SetForegroundColor(palette.border),
-            Print('│'),
-            SetForegroundColor(palette.text),
-            Print(' '),
-        )?;
-        let painted = match line {
-            SectionLine::Plain { text, colour } => {
-                let trimmed = truncate(text, body_w);
+        SectionLine::Custom { parts } => {
+            let mut painted = 0usize;
+            for (segment, colour) in parts {
+                let avail = body_w.saturating_sub(painted);
+                if avail == 0 {
+                    break;
+                }
+                let trimmed = truncate(segment, avail);
                 let w = trimmed.chars().count();
                 queue!(out, SetForegroundColor(*colour), Print(trimmed))?;
-                w
+                painted += w;
             }
-            SectionLine::Custom { parts } => {
-                let mut painted = 0usize;
-                for (segment, colour) in parts {
-                    let avail = body_w.saturating_sub(painted);
-                    if avail == 0 {
-                        break;
-                    }
-                    let trimmed = truncate(segment, avail);
-                    let w = trimmed.chars().count();
-                    queue!(out, SetForegroundColor(*colour), Print(trimmed))?;
-                    painted += w;
-                }
-                painted
-            }
-        };
-        let pad = body_w.saturating_sub(painted);
-        queue!(
-            out,
-            SetForegroundColor(palette.text),
-            Print(" ".repeat(pad + 1)),
-            SetForegroundColor(palette.border),
-            Print('│'),
-            ResetColor,
-        )?;
-        y += 1;
-    }
+            painted
+        }
+    };
+    let pad = body_w.saturating_sub(painted);
+    queue!(
+        out,
+        SetForegroundColor(palette.text),
+        Print(" ".repeat(pad + 1)),
+        SetForegroundColor(palette.border),
+        Print('│'),
+        ResetColor,
+    )?;
+    Ok(())
+}
 
-    if y < max_y {
-        queue!(
-            out,
-            MoveTo(x as u16, y as u16),
-            SetForegroundColor(palette.border),
-            Print('└'),
-            Print("─".repeat(inner_w)),
-            Print('┘'),
-            ResetColor,
-        )?;
-        y += 1;
+fn paint_box_bottom<W: Write>(
+    out: &mut W,
+    x: usize,
+    y: u16,
+    width: usize,
+    palette: &DashboardPalette,
+) -> Result<()> {
+    let inner_w = width.saturating_sub(2);
+    queue!(
+        out,
+        MoveTo(x as u16, y),
+        SetForegroundColor(palette.border),
+        Print('└'),
+        Print("─".repeat(inner_w)),
+        Print('┘'),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+/// Append one boxed section to the dashboard row list: top border with
+/// inline title, one row per `SectionLine`, then a bottom border.
+fn push_section_box(
+    rows: &mut Vec<DashRow>,
+    x: usize,
+    width: usize,
+    title: &str,
+    title_colour: Color,
+    lines: &[SectionLine],
+) {
+    rows.push(DashRow::BoxTop {
+        x,
+        width,
+        title: title.to_string(),
+        title_colour,
+    });
+    for line in lines {
+        rows.push(DashRow::BoxContent {
+            x,
+            width,
+            line: clone_section_line(line),
+        });
     }
-    Ok(y)
+    rows.push(DashRow::BoxBottom { x, width });
+}
+
+/// Two side-by-side boxes on the same set of rows. When their content
+/// lengths differ we pad the shorter side with empty content rows so
+/// both bottom borders line up.
+fn push_two_section_boxes(
+    rows: &mut Vec<DashRow>,
+    a: (usize, usize, &str, Color, &[SectionLine]),
+    b: (usize, usize, &str, Color, &[SectionLine]),
+) {
+    let (ax, aw, at, ac, al) = a;
+    let (bx, bw, bt, bc, bl) = b;
+    rows.push(DashRow::BoxTopPair {
+        a: (ax, aw, at.to_string(), ac),
+        b: (bx, bw, bt.to_string(), bc),
+    });
+    let n = al.len().max(bl.len());
+    for i in 0..n {
+        let row_a = al.get(i).map(|l| (ax, aw, clone_section_line(l)));
+        let row_b = bl.get(i).map(|l| (bx, bw, clone_section_line(l)));
+        rows.push(DashRow::BoxContentPair { a: row_a, b: row_b });
+    }
+    rows.push(DashRow::BoxBottomPair { a: (ax, aw), b: (bx, bw) });
+}
+
+fn clone_section_line(line: &SectionLine) -> SectionLine {
+    match line {
+        SectionLine::Plain { text, colour } => SectionLine::Plain {
+            text: text.clone(),
+            colour: *colour,
+        },
+        SectionLine::Custom { parts } => SectionLine::Custom {
+            parts: parts.clone(),
+        },
+    }
 }
 
 /// Pre-build the diagnostics chip row as a `SectionLine::Custom`.

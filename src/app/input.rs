@@ -203,19 +203,68 @@ impl super::App {
                 // above. Other keys are swallowed so the user can't
                 // accidentally type into the underlying buffer.
                 if self.show_health_page {
+                    let normal = matches!(self.mode, Mode::Normal);
+                    let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
+                    let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
                     match k.code {
                         KeyCode::Esc => {
                             self.show_health_page = false;
                             return Ok(());
                         }
-                        KeyCode::Char('q')
-                            if matches!(self.mode, Mode::Normal)
-                                && !k.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('q') if normal && no_ctrl => {
                             self.show_health_page = false;
                             return Ok(());
                         }
-                        KeyCode::Char(':') if matches!(self.mode, Mode::Normal) => {
+                        // Scroll the dashboard. j/k by one row, Ctrl-D/U by
+                        // half a page, PgDn/PgUp by a full page, g/G to
+                        // jump to top / bottom.
+                        KeyCode::Char('j') | KeyCode::Down if normal && no_ctrl => {
+                            self.health_scroll_by(1);
+                            return Ok(());
+                        }
+                        KeyCode::Char('k') | KeyCode::Up if normal && no_ctrl => {
+                            self.health_scroll_by(-1);
+                            return Ok(());
+                        }
+                        KeyCode::Char('d') if normal && ctrl => {
+                            let step = (self.buffer_rows() / 2).max(1) as isize;
+                            self.health_scroll_by(step);
+                            return Ok(());
+                        }
+                        KeyCode::Char('u') if normal && ctrl => {
+                            let step = (self.buffer_rows() / 2).max(1) as isize;
+                            self.health_scroll_by(-step);
+                            return Ok(());
+                        }
+                        KeyCode::Char('f') if normal && ctrl => {
+                            let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                            self.health_scroll_by(step);
+                            return Ok(());
+                        }
+                        KeyCode::Char('b') if normal && ctrl => {
+                            let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                            self.health_scroll_by(-step);
+                            return Ok(());
+                        }
+                        KeyCode::PageDown if normal => {
+                            let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                            self.health_scroll_by(step);
+                            return Ok(());
+                        }
+                        KeyCode::PageUp if normal => {
+                            let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                            self.health_scroll_by(-step);
+                            return Ok(());
+                        }
+                        KeyCode::Char('g') | KeyCode::Home if normal && no_ctrl => {
+                            self.health_scroll = 0;
+                            return Ok(());
+                        }
+                        KeyCode::Char('G') | KeyCode::End if normal => {
+                            self.health_scroll = self.health_max_scroll();
+                            return Ok(());
+                        }
+                        KeyCode::Char(':') if normal => {
                             // Fall through to the normal cmdline-entry path.
                         }
                         _ if matches!(self.mode, Mode::Command) => {
@@ -289,6 +338,8 @@ impl super::App {
                     if let Some(p) = self.picker.as_mut() {
                         p.move_by(-3);
                     }
+                } else if self.show_health_page {
+                    self.health_scroll_by(-3);
                 } else {
                     self.scroll_view(-3);
                 }
@@ -301,6 +352,8 @@ impl super::App {
                     if let Some(p) = self.picker.as_mut() {
                         p.move_by(3);
                     }
+                } else if self.show_health_page {
+                    self.health_scroll_by(3);
                 } else {
                     self.scroll_view(3);
                 }

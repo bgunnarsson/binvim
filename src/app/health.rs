@@ -80,6 +80,31 @@ impl super::App {
         // full interval after the user opens the dashboard, not from
         // whenever the App was constructed.
         self.health_last_refresh = std::time::Instant::now();
+        // Always open at the top, even if the user had scrolled the
+        // previous session.
+        self.health_scroll = 0;
+    }
+
+    /// Maximum value `health_scroll` may take given the most recently
+    /// measured content height and the buffer-area viewport. Falls
+    /// back to 0 before the first render measures the dashboard.
+    pub(super) fn health_max_scroll(&self) -> usize {
+        let rows = self.buffer_rows();
+        // The footer row is reserved at the bottom; content scrolls
+        // within everything above it.
+        let viewport = rows.saturating_sub(1);
+        self.health_content_height
+            .get()
+            .saturating_sub(viewport)
+    }
+
+    /// Move the dashboard viewport by `delta` rows, clamping to
+    /// `[0, health_max_scroll()]`. Negative deltas scroll up.
+    pub(super) fn health_scroll_by(&mut self, delta: isize) {
+        let max = self.health_max_scroll();
+        let cur = self.health_scroll as isize;
+        let next = (cur + delta).max(0) as usize;
+        self.health_scroll = next.min(max);
     }
 
     /// Sample every piece of state the dashboard needs. Called from
