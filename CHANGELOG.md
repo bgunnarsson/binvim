@@ -16,8 +16,12 @@ follows [Semantic Versioning](https://semver.org/).
     follow whitespace.
   - **Code-fence chrome.** ` ```rust ` (or ` ~~~ `) opener now
     hides the fence chars and styles the language tag in
-    bold-Peach so the block is labeled at a glance. The closing
-    fence row collapses to a blank line.
+    bold-Peach. Opener + body + closer rows all paint with a
+    Mantle background extended to the right edge so the block
+    reads as a unified dark slab; the closer row hides its
+    backticks and shows as a solid bottom-of-block bar. EOL
+    `¬` whitespace markers are suppressed inside the slab so
+    the dark background isn't broken by chrome glyphs.
   - **Setext headings.** `Title\n=====` becomes a bold-Lavender
     H1; `Title\n-----` becomes bold-Lavender H2. The underline
     row collapses. CommonMark's prose-only constraint is honoured

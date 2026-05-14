@@ -2903,9 +2903,21 @@ fn draw_line_with_selection(
                 )?;
                 return Ok(());
             }
-            crate::markdown_render::MarkdownLineKind::Default => {}
+            crate::markdown_render::MarkdownLineKind::Default
+            | crate::markdown_render::MarkdownLineKind::CodeBlock => {}
         }
     }
+    // Code-fence rows (opener + body + closer) all share the Mantle
+    // background so the block reads as a single dark slab. The bg is
+    // applied per-char inside the loop and as a trailing fill after
+    // the chars run out.
+    let code_block_bg: Option<Color> = md_meta.and_then(|m| {
+        if m.kind == crate::markdown_render::MarkdownLineKind::CodeBlock {
+            Some(Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }) // Mantle
+        } else {
+            None
+        }
+    });
     let mut conceal_active: Option<&crate::markdown_render::MarkdownTransform> = None;
     for (col, c) in chars.iter().enumerate() {
         // Markdown conceal: exit a transform we just walked past.
@@ -3099,6 +3111,18 @@ fn draw_line_with_selection(
         } else if let Some(fg) = syntax_color {
             queue!(out, SetForegroundColor(fg))?;
         }
+        // Code-fence rows want a Mantle background across the full
+        // line width. Apply it whenever no other branch already set
+        // a per-char bg (selection / search / yank / multi-cursor /
+        // match-pair). The reset at end-of-cell would otherwise wipe
+        // it; that's OK because we re-apply it per char.
+        if let Some(bg) = code_block_bg {
+            let bg_already_set =
+                in_sel || in_search || in_yank_flash || is_multi_cursor || in_match_pair;
+            if !bg_already_set {
+                queue!(out, SetBackgroundColor(bg))?;
+            }
+        }
         // Markdown style overlay — bold / italic / underline + colour
         // override on top of whatever the syntax pass picked. Suppressed
         // when the cell is already speaking for itself (selection,
@@ -3256,7 +3280,13 @@ fn draw_line_with_selection(
     // can see where lines actually end (vs. trailing whitespace). Only when
     // the entire line content fit; if we clipped right we're already at the
     // edge, and the marker wouldn't be at the line's actual end anyway.
-    if show_hidden && !clipped_right && visual_used + 1 <= avail {
+    // Suppressed inside code-fence rows so the dark slab isn't broken by
+    // a chrome glyph rendered with the terminal-default bg.
+    if show_hidden
+        && !clipped_right
+        && visual_used + 1 <= avail
+        && code_block_bg.is_none()
+    {
         queue!(
             out,
             SetForegroundColor(dim_color),
@@ -3343,6 +3373,21 @@ fn draw_line_with_selection(
                     )?;
                 }
             }
+        }
+    }
+    // Code-fence trailing fill — extend the Mantle background to the
+    // right edge so the slab spans the full buffer width regardless
+    // of how short the actual line content is. Done after EOL
+    // decorations (¬ marker, diagnostics) so those still render.
+    if let Some(bg) = code_block_bg {
+        let trailing = avail.saturating_sub(visual_used);
+        if trailing > 0 {
+            queue!(
+                out,
+                SetBackgroundColor(bg),
+                Print(" ".repeat(trailing)),
+                ResetColor
+            )?;
         }
     }
     Ok(())

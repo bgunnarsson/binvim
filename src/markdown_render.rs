@@ -50,17 +50,25 @@ pub struct MarkdownStyleRange {
 
 /// Whole-line render decisions that override the per-char loop. Most
 /// lines are `Default` (the renderer walks chars and applies
-/// transforms / styles); these special kinds short-circuit that:
-/// - `Hidden` paints a blank row (used for fence boundaries and
-///   setext underline rows so they collapse into the heading above).
+/// transforms / styles); these special kinds short-circuit or layer
+/// on extra behaviour:
+/// - `Hidden` paints a blank row (used for setext underlines that
+///   collapse into the heading above).
 /// - `HorizontalRule` paints a continuous `─` line in dim across the
 ///   buffer area's width.
+/// - `CodeBlock` paints the row with a Mantle background (extending
+///   to the right edge) so opener / body / closer rows all share
+///   the dark chrome of the block. Per-char transforms and styles
+///   still apply on top — opener hides backticks + paints lang
+///   tag, body keeps tree-sitter colour, closer hides backticks
+///   (renders as a blank dark row that closes the block visually).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MarkdownLineKind {
     #[default]
     Default,
     Hidden,
     HorizontalRule,
+    CodeBlock,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -227,10 +235,7 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
             match fence {
                 Some(open_ch) if open_ch == ch => {
                     fence = None;
-                    out.push(MarkdownLineMeta {
-                        kind: MarkdownLineKind::Hidden,
-                        ..MarkdownLineMeta::default()
-                    });
+                    out.push(fence_close_meta(line, leading, ch));
                     continue;
                 }
                 None => {
@@ -247,7 +252,13 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
         if fence.is_some() {
             // Inside a code block — no transforms, no styling
             // overrides; tree-sitter / config syntax colour wins.
-            out.push(MarkdownLineMeta::default());
+            // The CodeBlock kind tells the renderer to paint the
+            // row with the Mantle background so the block reads as
+            // a unified dark slab.
+            out.push(MarkdownLineMeta {
+                kind: MarkdownLineKind::CodeBlock,
+                ..MarkdownLineMeta::default()
+            });
             continue;
         }
 
@@ -323,9 +334,9 @@ fn frontmatter_meta(line: &str) -> MarkdownLineMeta {
     meta
 }
 
-/// Build the meta for a fence opener — hide the fence chars, then
-/// style whatever language tag follows in bold-Peach so the user can
-/// see what's inside the block at a glance.
+/// Build the meta for a fence opener — hide the fence chars, style
+/// the language tag in bold-Peach, mark the row as `CodeBlock` so the
+/// renderer paints the Mantle background across the full width.
 fn fence_open_meta(line: &str, leading: usize, fence_ch: char) -> MarkdownLineMeta {
     let chars: Vec<char> = line.chars().collect();
     let backtick_start = leading;
@@ -333,7 +344,10 @@ fn fence_open_meta(line: &str, leading: usize, fence_ch: char) -> MarkdownLineMe
     while backtick_end < chars.len() && chars[backtick_end] == fence_ch {
         backtick_end += 1;
     }
-    let mut meta = MarkdownLineMeta::default();
+    let mut meta = MarkdownLineMeta {
+        kind: MarkdownLineKind::CodeBlock,
+        ..MarkdownLineMeta::default()
+    };
     meta.transforms.push(MarkdownTransform {
         start: backtick_start,
         end: backtick_end,
@@ -348,6 +362,31 @@ fn fence_open_meta(line: &str, leading: usize, fence_ch: char) -> MarkdownLineMe
             underline: false,
             strikethrough: false,
             color: Some(BULLET_COLOR),
+        });
+    }
+    meta
+}
+
+/// Build the meta for a fence closer — hide every char on the line
+/// (so the row appears empty) but mark `CodeBlock` so the renderer
+/// still paints the Mantle background. Visually this gives the
+/// block a "footer" row of solid dark bg that closes the slab
+/// without re-displaying the backticks.
+fn fence_close_meta(line: &str, leading: usize, fence_ch: char) -> MarkdownLineMeta {
+    let chars: Vec<char> = line.chars().collect();
+    let mut backtick_end = leading;
+    while backtick_end < chars.len() && chars[backtick_end] == fence_ch {
+        backtick_end += 1;
+    }
+    let mut meta = MarkdownLineMeta {
+        kind: MarkdownLineKind::CodeBlock,
+        ..MarkdownLineMeta::default()
+    };
+    if leading < backtick_end {
+        meta.transforms.push(MarkdownTransform {
+            start: leading,
+            end: backtick_end,
+            action: ConcealAction::Hide,
         });
     }
     meta
@@ -964,11 +1003,15 @@ mod tests {
         assert_eq!(s.start, 3);
         assert_eq!(s.end, 7);
         assert!(s.bold);
-        // Body: no transforms, default kind.
-        assert_eq!(metas[1].kind, MarkdownLineKind::Default);
+        // Body: no transforms, CodeBlock kind so renderer paints
+        // the Mantle background.
+        assert_eq!(metas[1].kind, MarkdownLineKind::CodeBlock);
         assert!(metas[1].transforms.is_empty());
-        // Closer: hidden.
-        assert_eq!(metas[2].kind, MarkdownLineKind::Hidden);
+        // Closer: CodeBlock with the backticks hidden — renders
+        // as a solid dark bg row that visually closes the block.
+        assert_eq!(metas[2].kind, MarkdownLineKind::CodeBlock);
+        assert_eq!(metas[2].transforms.len(), 1);
+        assert!(matches!(metas[2].transforms[0].action, ConcealAction::Hide));
     }
 
     #[test]
