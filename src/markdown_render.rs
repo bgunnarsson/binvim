@@ -62,6 +62,10 @@ pub struct MarkdownStyleRange {
 ///   still apply on top — opener hides backticks + paints lang
 ///   tag, body keeps tree-sitter colour, closer hides backticks
 ///   (renders as a blank dark row that closes the block visually).
+/// - `Table(kind)` paints the row's `replacement` string (the
+///   pre-rendered box-drawn line) instead of walking source chars.
+///   The kind tag drives the styling (Header bold-Lavender,
+///   Separator dim Overlay0, Body normal text).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MarkdownLineKind {
     #[default]
@@ -69,6 +73,14 @@ pub enum MarkdownLineKind {
     Hidden,
     HorizontalRule,
     CodeBlock,
+    Table(TableRowKind),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableRowKind {
+    Header,
+    Separator,
+    Body,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -76,6 +88,11 @@ pub struct MarkdownLineMeta {
     pub transforms: Vec<MarkdownTransform>,
     pub styles: Vec<MarkdownStyleRange>,
     pub kind: MarkdownLineKind,
+    /// Pre-rendered text that the renderer paints verbatim instead
+    /// of walking source chars. Used by tables (where the rendered
+    /// row width differs from the source) — `kind` decides the
+    /// styling that wraps it.
+    pub replacement: Option<String>,
 }
 
 // Catppuccin Mocha
@@ -185,14 +202,16 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
 }
 
 /// Multi-line pass — needs the whole buffer because some classifications
-/// (setext headings, code-fence interior, top-of-file frontmatter) are
-/// only decidable with cross-line context. Returns one `MarkdownLineMeta`
-/// per input line.
+/// (setext headings, code-fence interior, top-of-file frontmatter,
+/// tables) are only decidable with cross-line context. Returns one
+/// `MarkdownLineMeta` per input line.
 pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
     let mut out: Vec<MarkdownLineMeta> = Vec::with_capacity(lines.len());
     let mut fence: Option<char> = None;
     let mut in_frontmatter = false;
-    for (i, line) in lines.iter().enumerate() {
+    let mut i = 0;
+    while i < lines.len() {
+        let line = &lines[i];
         // Top-of-file YAML / TOML frontmatter — opening `---` (or
         // `+++` for TOML) on line 0, runs until the matching closer.
         // Render every frontmatter row in muted Overlay0 italic so it
@@ -202,6 +221,7 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
             if t == "---" || t == "+++" {
                 in_frontmatter = true;
                 out.push(frontmatter_meta(line));
+                i += 1;
                 continue;
             }
         }
@@ -212,6 +232,7 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
                 in_frontmatter = false;
             }
             out.push(frontmatter_meta(line));
+            i += 1;
             continue;
         }
 
@@ -236,11 +257,13 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
                 Some(open_ch) if open_ch == ch => {
                     fence = None;
                     out.push(fence_close_meta(line, leading, ch));
+                    i += 1;
                     continue;
                 }
                 None => {
                     fence = Some(ch);
                     out.push(fence_open_meta(line, leading, ch));
+                    i += 1;
                     continue;
                 }
                 Some(_) => {
@@ -259,6 +282,31 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
                 kind: MarkdownLineKind::CodeBlock,
                 ..MarkdownLineMeta::default()
             });
+            i += 1;
+            continue;
+        }
+
+        // GFM tables — header row + separator + body rows. Detection
+        // requires looking ahead one line (separator pattern), so it
+        // sits before the setext / HR checks (a `|---|---|` line is
+        // a separator, not an HR). On match we emit one Table row
+        // per source line and skip past the whole block in one jump.
+        if let Some((rendered_rows, end)) = try_render_table(lines, i) {
+            for (row_offset, rendered) in rendered_rows.into_iter().enumerate() {
+                let kind = if row_offset == 0 {
+                    TableRowKind::Header
+                } else if row_offset == 1 {
+                    TableRowKind::Separator
+                } else {
+                    TableRowKind::Body
+                };
+                out.push(MarkdownLineMeta {
+                    kind: MarkdownLineKind::Table(kind),
+                    replacement: Some(rendered),
+                    ..MarkdownLineMeta::default()
+                });
+            }
+            i = end;
             continue;
         }
 
@@ -297,6 +345,7 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
                     kind: MarkdownLineKind::Hidden,
                     ..MarkdownLineMeta::default()
                 });
+                i += 1;
                 continue;
             }
         }
@@ -309,12 +358,138 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
                 kind: MarkdownLineKind::HorizontalRule,
                 ..MarkdownLineMeta::default()
             });
+            i += 1;
             continue;
         }
 
         out.push(compute_line_meta(line));
+        i += 1;
     }
     out
+}
+
+/// Attempt to parse a GFM-style table starting at `lines[start]`.
+/// On success returns `(rendered_rows, end_exclusive)` where each
+/// rendered row is the box-drawn replacement string the renderer
+/// should paint in place of the source. Returns `None` when the
+/// pair (header + separator) at `start` doesn't look like a table.
+fn try_render_table(lines: &[String], start: usize) -> Option<(Vec<String>, usize)> {
+    if start + 1 >= lines.len() {
+        return None;
+    }
+    let header_cells = parse_pipe_row(&lines[start])?;
+    let sep_cells = parse_separator(&lines[start + 1])?;
+    if header_cells.len() != sep_cells {
+        return None;
+    }
+    let n_cols = header_cells.len();
+    let mut body_rows: Vec<Vec<String>> = Vec::new();
+    let mut end = start + 2;
+    while end < lines.len() {
+        if let Some(mut row) = parse_pipe_row(&lines[end]) {
+            row.resize(n_cols, String::new());
+            body_rows.push(row);
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    let mut col_widths: Vec<usize> = vec![0; n_cols];
+    for (c, cell) in header_cells.iter().enumerate() {
+        col_widths[c] = col_widths[c].max(cell.chars().count());
+    }
+    for row in &body_rows {
+        for (c, cell) in row.iter().enumerate() {
+            col_widths[c] = col_widths[c].max(cell.chars().count());
+        }
+    }
+    let mut rendered: Vec<String> = Vec::with_capacity(2 + body_rows.len());
+    rendered.push(render_pipe_row(&header_cells, &col_widths));
+    rendered.push(render_separator(&col_widths));
+    for row in &body_rows {
+        rendered.push(render_pipe_row(row, &col_widths));
+    }
+    Some((rendered, end))
+}
+
+/// Parse a single `| a | b | c |` row into its cells (already
+/// trimmed). Requires both leading and trailing pipes to keep
+/// detection conservative — `key | value` style without outer
+/// pipes is more likely to be prose with a stray bar.
+fn parse_pipe_row(line: &str) -> Option<Vec<String>> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('|') || !trimmed.ends_with('|') || trimmed.len() < 2 {
+        return None;
+    }
+    let inner = &trimmed[1..trimmed.len() - 1];
+    Some(inner.split('|').map(|s| s.trim().to_string()).collect())
+}
+
+/// Parse a separator row (`|---|---|---|`, optionally with leading
+/// or trailing colons for alignment). Returns the column count when
+/// it matches; alignment markers are accepted but currently not
+/// used (everything renders left-aligned).
+fn parse_separator(line: &str) -> Option<usize> {
+    let cells = parse_pipe_row(line)?;
+    if cells.is_empty() {
+        return None;
+    }
+    for cell in &cells {
+        let chs: Vec<char> = cell.chars().collect();
+        if chs.is_empty() {
+            return None;
+        }
+        let mut i = 0;
+        if chs[i] == ':' {
+            i += 1;
+        }
+        let dash_start = i;
+        while i < chs.len() && chs[i] == '-' {
+            i += 1;
+        }
+        if i == dash_start {
+            return None;
+        }
+        if i < chs.len() && chs[i] == ':' {
+            i += 1;
+        }
+        if i != chs.len() {
+            return None;
+        }
+    }
+    Some(cells.len())
+}
+
+fn render_pipe_row(cells: &[String], col_widths: &[usize]) -> String {
+    let mut s = String::with_capacity(64);
+    s.push('│');
+    for (c, cell) in cells.iter().enumerate() {
+        let w = col_widths.get(c).copied().unwrap_or(0);
+        let pad = w.saturating_sub(cell.chars().count());
+        s.push(' ');
+        s.push_str(cell);
+        for _ in 0..pad {
+            s.push(' ');
+        }
+        s.push(' ');
+        s.push('│');
+    }
+    s
+}
+
+fn render_separator(col_widths: &[usize]) -> String {
+    let mut s = String::with_capacity(64);
+    s.push('├');
+    for (c, w) in col_widths.iter().enumerate() {
+        for _ in 0..(w + 2) {
+            s.push('─');
+        }
+        if c + 1 < col_widths.len() {
+            s.push('┼');
+        }
+    }
+    s.push('┤');
+    s
 }
 
 fn frontmatter_meta(line: &str) -> MarkdownLineMeta {
@@ -973,6 +1148,75 @@ mod tests {
         let m = compute_line_meta("Just a normal sentence.");
         assert!(m.transforms.is_empty());
         assert!(m.styles.is_empty());
+    }
+
+    #[test]
+    fn table_renders_box_drawn_rows() {
+        let lines = vec![
+            "| A | B |".to_string(),
+            "|---|---|".to_string(),
+            "| 1 | 22 |".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas.len(), 3);
+        // Header
+        match metas[0].kind {
+            MarkdownLineKind::Table(TableRowKind::Header) => {}
+            other => panic!("row 0 kind: {:?}", other),
+        }
+        // Column widths come from widest cell per column: col 0 = "A"
+        // / "1" / "" → max 1; col 1 = "B" / "22" → max 2. Each cell
+        // is bracketed with one space of padding either side, so the
+        // header reads `│ A │ B  │`.
+        assert_eq!(metas[0].replacement.as_deref(), Some("│ A │ B  │"));
+        // Separator widths match: 1+2 = 3 dashes col0, 2+2 = 4 dashes col1.
+        match metas[1].kind {
+            MarkdownLineKind::Table(TableRowKind::Separator) => {}
+            other => panic!("row 1 kind: {:?}", other),
+        }
+        assert_eq!(metas[1].replacement.as_deref(), Some("├───┼────┤"));
+        // Body
+        match metas[2].kind {
+            MarkdownLineKind::Table(TableRowKind::Body) => {}
+            other => panic!("row 2 kind: {:?}", other),
+        }
+        assert_eq!(metas[2].replacement.as_deref(), Some("│ 1 │ 22 │"));
+    }
+
+    #[test]
+    fn table_alignment_markers_accepted() {
+        let lines = vec![
+            "| L | C | R |".to_string(),
+            "|:---|:---:|---:|".to_string(),
+            "| 1 | 2 | 3 |".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        // Should be detected as a table (alignment markers parsed).
+        match metas[0].kind {
+            MarkdownLineKind::Table(_) => {}
+            other => panic!("row 0 kind: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn non_table_pipe_lines_stay_default() {
+        // Just one row with pipes, no separator → not a table.
+        let lines = vec!["| not a table |".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert!(matches!(metas[0].kind, MarkdownLineKind::Default));
+    }
+
+    #[test]
+    fn header_separator_col_count_must_match() {
+        let lines = vec![
+            "| A | B | C |".to_string(),
+            "|---|---|".to_string(), // 2 cols, mismatch
+            "| 1 | 2 | 3 |".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        // Falls through to default classification — first row is a
+        // valid prose line with pipes.
+        assert!(matches!(metas[0].kind, MarkdownLineKind::Default));
     }
 
     #[test]

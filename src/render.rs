@@ -2903,6 +2903,37 @@ fn draw_line_with_selection(
                 )?;
                 return Ok(());
             }
+            crate::markdown_render::MarkdownLineKind::Table(row_kind) => {
+                // Tables paint a pre-rendered box-drawn replacement
+                // string (column-padded, pipes/junctions) instead of
+                // the source row. Style by row kind: header bold +
+                // Lavender, separator dim Overlay0, body normal text
+                // (so cell content reads as foreground prose).
+                if let Some(rendered) = meta.replacement.as_deref() {
+                    let (color, bold) = match row_kind {
+                        crate::markdown_render::TableRowKind::Header => (
+                            Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }, // Lavender
+                            true,
+                        ),
+                        crate::markdown_render::TableRowKind::Separator => (
+                            Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }, // Overlay0
+                            false,
+                        ),
+                        crate::markdown_render::TableRowKind::Body => (
+                            Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }, // Text
+                            false,
+                        ),
+                    };
+                    let printable: String = rendered.chars().take(avail).collect();
+                    queue!(out, SetForegroundColor(color))?;
+                    if bold {
+                        queue!(out, SetAttribute(Attribute::Bold))?;
+                    }
+                    queue!(out, Print(&printable))?;
+                    queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+                }
+                return Ok(());
+            }
             crate::markdown_render::MarkdownLineKind::Default
             | crate::markdown_render::MarkdownLineKind::CodeBlock => {}
         }

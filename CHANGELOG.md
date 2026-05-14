@@ -33,6 +33,14 @@ follows [Semantic Versioning](https://semver.org/).
   - **Frontmatter.** YAML (`---`…`---`) and TOML (`+++`…`+++`)
     blocks at the top of file render in muted Overlay0 italic so
     they read as metadata chrome, not content.
+  - **Tables.** GFM tables (header + `|---|---|` separator + body
+    rows) render as box-drawn `│ … │ … │` with `├─┼─┤` separator;
+    cells column-pad to the widest entry per column. Header bold
+    + Lavender, separator dim Overlay0, body normal text.
+    Alignment markers (`:---`, `---:`, `:---:`) are accepted but
+    everything renders left-aligned in v1. Cursor on a table row
+    keeps source-byte semantics so editing via `i` / Visual still
+    works on the raw `| … |` pipes.
 - **Markdown "concealed render" mode.** `.md` buffers in Normal mode
   paint with structural markers folded into prettier glyphs:
   headings drop their `#`s and render bold (Lavender for H1/H2,
