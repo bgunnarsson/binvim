@@ -6,7 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-14
+
 ### Added
+- **`:health` is now a full-screen TUI dashboard.** Replaces the
+  previous scratch-buffer with an ASCII-banner header and bordered
+  PROCESS / RESOURCES / ENVIRONMENT / ACTIVE BUFFER / LSP SERVERS /
+  GIT / BUFFERS / TAILWIND sections. New data the old plain-text
+  report didn't have: detected language / line count / indent style
+  / cursor in ACTIVE BUFFER, diagnostics chips coloured per
+  severity, GIT panel with ahead / behind / modified / untracked
+  counts. Auto-refreshes every second so resource numbers actually
+  move. Esc / `q` / `:q` dismiss.
+- **Smart Enter splits HTML / JSX / TSX tag pairs.** `<div>|</div>`
+  + Enter expands to three lines with the body indented, matching
+  the existing `{|}` / `[|]` / `(|)` behaviour.
 - **Tier 1 language coverage — Python, C / C++, Bash, YAML, Lua.** Each
   gets the full stack: LSP (`pyright`-langserver with `basedpyright`
   fallback, `clangd` with `language_id` flipping on extension,
@@ -100,6 +114,19 @@ follows [Semantic Versioning](https://semver.org/).
   of buffer content instead of overlapping tab labels.
 
 ### Fixed
+- **Auxiliary LSPs (emmet, Tailwind, …) never received `didOpen` when
+  the primary server's binary wasn't installed.** `LspManager::
+  ensure_for_path` returned the primary client specifically. When the
+  primary failed to spawn (vscode-html-language-server missing on a
+  `.html` file is the canonical case), the function returned `None`
+  and the two callers (`lsp_attach_active` / `lsp_sync_active`)
+  early-returned on `None` — `didOpen` never went out, and emmet-ls
+  / Tailwind appeared as "running" in `:health` but produced empty
+  responses to every textDocument/* request. Specific user-facing
+  symptom: typing `!` in a blank `.html` file should pop the HTML5
+  boilerplate via emmet-ls, but nothing appeared. Fixed by changing
+  `ensure_for_path` to return `bool` indicating "at least one client
+  is running" rather than the primary client specifically.
 - **CSS custom properties rendered identical to regular properties.**
   The CSS query's `((property_name) @variable (#match? @variable
   "^--"))` override was meant to flip `--color-primary` away from the
