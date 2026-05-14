@@ -14,6 +14,20 @@ follows [Semantic Versioning](https://semver.org/).
   "more above" / "more below" / "↑ k ↓ j to scroll" when both
   directions have content offscreen. Useful on short terminals where
   the LSP / BUFFERS / TAILWIND sections used to fall off the bottom.
+- **`:health` dashboard: five new sections after TAILWIND.**
+  FORMATTER (on-save tool for the active buffer + binary resolution,
+  including project-local `node_modules` resolution and the
+  ruff→black / nixfmt→alejandra fallback chains), EDITORCONFIG
+  (effective indent / tab width / trim-trailing-ws / final-newline
+  + the chain of `.editorconfig` files that produced them, or
+  "defaults — no .editorconfig found" if none), TREE-SITTER (detected
+  language + highlight-cache state and byte-count, "no parser
+  configured" when the extension isn't wired up), SESSION (whether
+  the launch restored a session, the cwd-keyed session file path,
+  recent-files count), TERMINAL ($TERM, $COLORTERM, truecolor
+  detection, $TERM_PROGRAM, current size). Useful for diagnosing
+  "why didn't save reformat" / "where is this indent coming from" /
+  "are my colours actually 24-bit" without grepping the source.
 
 ## [0.1.6] - 2026-05-14
 

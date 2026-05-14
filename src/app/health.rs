@@ -29,6 +29,48 @@ pub struct HealthSnapshot {
     pub active_buffer: Option<HealthActiveBuffer>,
     pub tailwind: Option<PathBuf>,
     pub git: Option<GitStatusSummary>,
+    /// On-save formatter that would run for the active buffer. `None`
+    /// when no buffer is open or the extension has no formatter.
+    pub formatter: Option<crate::format::FormatterStatus>,
+    /// Effective `.editorconfig` settings for the active buffer plus
+    /// the source files that produced them.
+    pub editorconfig: HealthEditorConfig,
+    /// Tree-sitter wiring status for the active buffer.
+    pub tree_sitter: HealthTreeSitter,
+    /// Session-restore status + recent-files count.
+    pub session: HealthSession,
+    /// Terminal capability bits, sampled from env at render time.
+    pub terminal: HealthTerminal,
+}
+
+pub struct HealthEditorConfig {
+    pub indent: String,
+    pub tab_width: usize,
+    pub trim_trailing: bool,
+    pub final_newline: bool,
+    pub sources: Vec<PathBuf>,
+}
+
+pub struct HealthTreeSitter {
+    pub language: Option<String>,
+    pub highlight_cache_ready: bool,
+    pub cache_byte_count: usize,
+}
+
+pub struct HealthSession {
+    pub restored: bool,
+    pub session_path: Option<PathBuf>,
+    pub session_file_exists: bool,
+    pub recents_count: usize,
+}
+
+pub struct HealthTerminal {
+    pub width: u16,
+    pub height: u16,
+    pub term: Option<String>,
+    pub colorterm: Option<String>,
+    pub truecolor: bool,
+    pub program: Option<String>,
 }
 
 pub struct HealthBuffer {
@@ -196,6 +238,82 @@ impl super::App {
 
         let git = crate::git::status_summary(&cwd_path);
 
+        let formatter = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(crate::format::primary_formatter_for_path);
+
+        // Editorconfig source list — walks up from the active buffer
+        // when there is one, otherwise from cwd so the user sees what
+        // would apply to a fresh file in this directory.
+        let ec_probe: PathBuf = self
+            .buffer
+            .path
+            .clone()
+            .unwrap_or_else(|| cwd_path.join("__binvim_probe__"));
+        let ec_sources = crate::editorconfig::EditorConfig::sources(&ec_probe);
+        let indent = match self.editorconfig.indent_style {
+            crate::editorconfig::IndentStyle::Spaces => {
+                format!("spaces × {}", self.editorconfig.indent_size)
+            }
+            crate::editorconfig::IndentStyle::Tabs => "tabs".into(),
+        };
+        let editorconfig = HealthEditorConfig {
+            indent,
+            tab_width: self.editorconfig.tab_width,
+            trim_trailing: self.editorconfig.trim_trailing_whitespace,
+            final_newline: self.editorconfig.insert_final_newline,
+            sources: ec_sources,
+        };
+
+        let detected_lang = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(crate::lang::Lang::detect);
+        let cache_matches_active = self
+            .highlight_cache
+            .as_ref()
+            .map(|c| c.buffer_version == self.buffer.version)
+            .unwrap_or(false);
+        let cache_byte_count = self
+            .highlight_cache
+            .as_ref()
+            .map(|c| c.byte_colors.len())
+            .unwrap_or(0);
+        let tree_sitter = HealthTreeSitter {
+            language: detected_lang.map(|l| format!("{l:?}").to_lowercase()),
+            highlight_cache_ready: cache_matches_active,
+            cache_byte_count,
+        };
+
+        let session_path = crate::session::session_path(&cwd_path);
+        let session_file_exists = session_path
+            .as_ref()
+            .map(|p| p.is_file())
+            .unwrap_or(false);
+        let session = HealthSession {
+            restored: self.session_restored,
+            session_path,
+            session_file_exists,
+            recents_count: self.recents.len(),
+        };
+
+        let colorterm = std::env::var("COLORTERM").ok();
+        let truecolor = colorterm
+            .as_deref()
+            .map(|s| matches!(s, "truecolor" | "24bit"))
+            .unwrap_or(false);
+        let terminal = HealthTerminal {
+            width: self.width,
+            height: self.height,
+            term: std::env::var("TERM").ok(),
+            colorterm,
+            truecolor,
+            program: std::env::var("TERM_PROGRAM").ok(),
+        };
+
         HealthSnapshot {
             version: env!("CARGO_PKG_VERSION"),
             pid,
@@ -210,6 +328,11 @@ impl super::App {
             active_buffer,
             tailwind,
             git,
+            formatter,
+            editorconfig,
+            tree_sitter,
+            session,
+            terminal,
         }
     }
 }

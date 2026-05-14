@@ -1777,6 +1777,200 @@ fn build_health_rows(
         ],
     };
     push_section_box(rows, left, body_w, "TAILWIND", p.teal, &tw_lines);
+    rows.push(DashRow::Blank);
+
+    // --- FORMATTER section --------------------------------------------
+    let fmt_lines: Vec<SectionLine> = match &snap.formatter {
+        Some(f) => {
+            let (glyph, glyph_colour) = match &f.binary {
+                Some(_) => ('✓', p.green),
+                None => ('✗', p.red),
+            };
+            let bin_part = match (&f.binary, f.via_node_modules) {
+                (Some(b), true) => format!("{} (node_modules)", home_relative_path(&b.display().to_string())),
+                (Some(b), false) => home_relative_path(&b.display().to_string()),
+                (None, _) => "NOT INSTALLED".into(),
+            };
+            let mut row1 = vec![
+                (format!("{glyph} "), glyph_colour),
+                (format!("{:<24}", f.label), p.text),
+                (bin_part, p.subtext1),
+            ];
+            if f.binary.is_none() {
+                if let Some(fb) = &f.fallback_label {
+                    row1.push((format!("  (also tried {fb})"), p.overlay1));
+                }
+            }
+            vec![SectionLine::Custom { parts: row1 }]
+        }
+        None => match snap.active_buffer.as_ref() {
+            Some(_) => vec![SectionLine::plain(
+                "(no formatter configured for this extension)",
+                p.overlay1,
+            )],
+            None => vec![SectionLine::plain(
+                "[No Name] — open a file to see its formatter",
+                p.overlay1,
+            )],
+        },
+    };
+    push_section_box(rows, left, body_w, "FORMATTER", p.mauve, &fmt_lines);
+    rows.push(DashRow::Blank);
+
+    // --- EDITORCONFIG section -----------------------------------------
+    let ec = &snap.editorconfig;
+    let mut ec_lines: Vec<SectionLine> = Vec::new();
+    ec_lines.push(SectionLine::Custom {
+        parts: vec![
+            ("indent             ".into(), p.subtext1),
+            (ec.indent.clone(), p.text),
+            ("   tab width ".into(), p.subtext1),
+            (ec.tab_width.to_string(), p.text),
+        ],
+    });
+    ec_lines.push(SectionLine::Custom {
+        parts: vec![
+            ("trim trailing ws   ".into(), p.subtext1),
+            (
+                if ec.trim_trailing { "yes" } else { "no" }.into(),
+                if ec.trim_trailing { p.green } else { p.overlay1 },
+            ),
+            ("   final newline ".into(), p.subtext1),
+            (
+                if ec.final_newline { "yes" } else { "no" }.into(),
+                if ec.final_newline { p.green } else { p.overlay1 },
+            ),
+        ],
+    });
+    if ec.sources.is_empty() {
+        ec_lines.push(SectionLine::plain(
+            "sources            (defaults — no .editorconfig found)",
+            p.overlay1,
+        ));
+    } else {
+        for (i, src) in ec.sources.iter().enumerate() {
+            let label = if i == 0 { "sources            " } else { "                   " };
+            ec_lines.push(SectionLine::Custom {
+                parts: vec![
+                    (label.into(), p.subtext1),
+                    (home_relative_path(&src.display().to_string()), p.text),
+                ],
+            });
+        }
+    }
+    push_section_box(rows, left, body_w, "EDITORCONFIG", p.peach, &ec_lines);
+    rows.push(DashRow::Blank);
+
+    // --- TREE-SITTER section ------------------------------------------
+    let ts = &snap.tree_sitter;
+    let mut ts_lines: Vec<SectionLine> = Vec::new();
+    match &ts.language {
+        Some(name) => {
+            ts_lines.push(SectionLine::Custom {
+                parts: vec![
+                    ("language           ".into(), p.subtext1),
+                    (name.clone(), p.text),
+                ],
+            });
+            let (glyph, colour, suffix) = if ts.highlight_cache_ready {
+                (
+                    '✓',
+                    p.green,
+                    format!("active · {} bytes coloured", ts.cache_byte_count),
+                )
+            } else if snap.active_buffer.is_some() {
+                ('!', p.yellow, "no cache yet (paint pending)".into())
+            } else {
+                ('—', p.overlay1, "no buffer".into())
+            };
+            ts_lines.push(SectionLine::Custom {
+                parts: vec![
+                    (format!("{glyph} highlight cache   "), colour),
+                    (suffix, p.text),
+                ],
+            });
+        }
+        None => match snap.active_buffer.as_ref() {
+            Some(_) => ts_lines.push(SectionLine::plain(
+                "(unknown extension — no tree-sitter parser configured)",
+                p.overlay1,
+            )),
+            None => ts_lines.push(SectionLine::plain(
+                "[No Name] — open a file to see its parser status",
+                p.overlay1,
+            )),
+        },
+    }
+    push_section_box(rows, left, body_w, "TREE-SITTER", p.lavender, &ts_lines);
+    rows.push(DashRow::Blank);
+
+    // --- SESSION section ----------------------------------------------
+    let s = &snap.session;
+    let mut session_lines: Vec<SectionLine> = Vec::new();
+    let (glyph, glyph_colour, label) = if s.restored {
+        ('✓', p.green, "restored on launch")
+    } else if s.session_file_exists {
+        ('—', p.overlay1, "saved (will restore on next launch with no path arg)")
+    } else {
+        ('—', p.overlay1, "no session for this cwd yet")
+    };
+    session_lines.push(SectionLine::Custom {
+        parts: vec![
+            (format!("{glyph} "), glyph_colour),
+            (format!("{:<24}", label), p.text),
+        ],
+    });
+    if let Some(sp) = &s.session_path {
+        session_lines.push(SectionLine::Custom {
+            parts: vec![
+                ("session file       ".into(), p.subtext1),
+                (home_relative_path(&sp.display().to_string()), p.text),
+            ],
+        });
+    }
+    session_lines.push(SectionLine::Custom {
+        parts: vec![
+            ("recent files       ".into(), p.subtext1),
+            (s.recents_count.to_string(), p.text),
+        ],
+    });
+    push_section_box(rows, left, body_w, "SESSION", p.blue, &session_lines);
+    rows.push(DashRow::Blank);
+
+    // --- TERMINAL section ---------------------------------------------
+    let t = &snap.terminal;
+    let mut term_lines: Vec<SectionLine> = Vec::new();
+    term_lines.push(SectionLine::Custom {
+        parts: vec![
+            ("size               ".into(), p.subtext1),
+            (format!("{}×{}", t.width, t.height), p.text),
+        ],
+    });
+    term_lines.push(SectionLine::Custom {
+        parts: vec![
+            ("$TERM              ".into(), p.subtext1),
+            (t.term.clone().unwrap_or_else(|| "—".into()), p.text),
+        ],
+    });
+    let truecolor_colour = if t.truecolor { p.green } else { p.overlay1 };
+    let truecolor_label = if t.truecolor { "yes" } else { "no" };
+    term_lines.push(SectionLine::Custom {
+        parts: vec![
+            ("truecolor          ".into(), p.subtext1),
+            (truecolor_label.into(), truecolor_colour),
+            ("   $COLORTERM ".into(), p.subtext1),
+            (t.colorterm.clone().unwrap_or_else(|| "—".into()), p.text),
+        ],
+    });
+    if let Some(prog) = &t.program {
+        term_lines.push(SectionLine::Custom {
+            parts: vec![
+                ("$TERM_PROGRAM      ".into(), p.subtext1),
+                (prog.clone(), p.text),
+            ],
+        });
+    }
+    push_section_box(rows, left, body_w, "TERMINAL", p.teal, &term_lines);
 }
 
 /// One row inside a dashboard section box.

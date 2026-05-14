@@ -254,6 +254,11 @@ pub struct App {
     pub(crate) replaying_macro: bool,
     pub(crate) recording: Option<RecordingState>,
     pub(crate) replaying: bool,
+    /// True when `App::new` restored buffers from a saved session on
+    /// launch (no explicit file argument + a session file matched the
+    /// cwd). Surfaced by the `:health` dashboard so the user can tell
+    /// whether the buffer list was restored or seeded fresh.
+    pub session_restored: bool,
 }
 
 /// How quickly a second left-click must arrive at the same buffer position
@@ -355,6 +360,7 @@ impl App {
             replaying_macro: false,
             recording: None,
             replaying: false,
+            session_restored: restored_session.is_some(),
         };
         // Hydrate from the saved session — open every still-extant buffer,
         // restore each one's cursor + viewport, and land on the previously

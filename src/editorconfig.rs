@@ -71,6 +71,33 @@ impl EditorConfig {
         cfg
     }
 
+    /// Every `.editorconfig` that contributed to `detect(target_file)`,
+    /// in nearest-to-farthest order. Used by the `:health` dashboard to
+    /// show the user *where* the resolved indent / newline settings came
+    /// from. Returns an empty vec when no `.editorconfig` was found —
+    /// the dashboard then says "(defaults — no .editorconfig found)".
+    pub fn sources(target_file: &Path) -> Vec<PathBuf> {
+        let canon = target_file
+            .canonicalize()
+            .unwrap_or_else(|_| target_file.to_path_buf());
+        let mut sources: Vec<PathBuf> = Vec::new();
+        let mut dir = canon.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            let candidate = d.join(".editorconfig");
+            if candidate.is_file() {
+                let stop = std::fs::read(&candidate)
+                    .map(|bytes| has_root_true(&bytes))
+                    .unwrap_or(false);
+                sources.push(candidate);
+                if stop {
+                    break;
+                }
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+        sources
+    }
+
     pub fn indent_string(&self) -> String {
         match self.indent_style {
             IndentStyle::Tabs => "\t".to_string(),

@@ -617,6 +617,109 @@ fn run_gofmt(source: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("{label} stdout not utf-8: {e}"))
 }
 
+/// What `format_buffer` would do for `path`'s extension: which tool
+/// it would invoke and whether that tool resolves on the local
+/// machine. Surfaced by `:health` so the user can see, at a glance,
+/// whether their on-save formatter is set up — and where the binary
+/// would come from (project `node_modules` vs system `$PATH`).
+pub struct FormatterStatus {
+    pub label: String,
+    pub binary: Option<PathBuf>,
+    pub via_node_modules: bool,
+    /// Optional "if the primary binary is missing, also tried these"
+    /// hint — used by Python (ruff → black) and Nix (nixfmt → alejandra).
+    pub fallback_label: Option<String>,
+}
+
+/// Resolve the formatter that would run on save for `path`'s
+/// extension. Returns `None` when no formatter is configured.
+/// Resolution mirrors what the corresponding `run_*` function does at
+/// save time (project-local `node_modules/.bin` first for biome /
+/// prettier, fallback chains preserved for Python and Nix).
+pub fn primary_formatter_for_path(path: &Path) -> Option<FormatterStatus> {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    let start = path.parent().unwrap_or(Path::new("."));
+    let on_path = |name: &str| FormatterStatus {
+        label: name.to_string(),
+        binary: find_on_path(name),
+        via_node_modules: false,
+        fallback_label: None,
+    };
+    let node_or_path = |name: &str| {
+        if let Some(p) = find_node_modules_bin(start, name) {
+            return FormatterStatus {
+                label: name.to_string(),
+                binary: Some(PathBuf::from(p)),
+                via_node_modules: true,
+                fallback_label: None,
+            };
+        }
+        on_path(name)
+    };
+    let status = match ext {
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc" => node_or_path("biome"),
+        "cs" | "cshtml" | "razor" => on_path("csharpier"),
+        "go" => on_path("gofmt"),
+        "py" | "pyi" => {
+            let ruff = on_path("ruff");
+            if ruff.binary.is_some() {
+                ruff
+            } else {
+                let black = on_path("black");
+                if black.binary.is_some() {
+                    return Some(FormatterStatus {
+                        label: "black".into(),
+                        binary: black.binary,
+                        via_node_modules: false,
+                        fallback_label: None,
+                    });
+                }
+                FormatterStatus {
+                    label: "ruff".into(),
+                    binary: None,
+                    via_node_modules: false,
+                    fallback_label: Some("black".into()),
+                }
+            }
+        }
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => on_path("clang-format"),
+        "sh" | "bash" | "zsh" | "ksh" => on_path("shfmt"),
+        "lua" => on_path("stylua"),
+        "md" | "markdown" | "mdx" | "vue" | "svelte" | "html" | "htm" | "css" | "scss"
+        | "less" | "yaml" | "yml" | "graphql" | "gql" => node_or_path("prettier"),
+        "toml" => on_path("taplo"),
+        "rb" | "rake" | "gemspec" => on_path("rufo"),
+        "php" => on_path("php-cs-fixer"),
+        "java" => on_path("google-java-format"),
+        "zig" => on_path("zig"),
+        "nix" => {
+            let nixfmt = on_path("nixfmt");
+            if nixfmt.binary.is_some() {
+                nixfmt
+            } else {
+                let alejandra = on_path("alejandra");
+                if alejandra.binary.is_some() {
+                    return Some(alejandra);
+                }
+                FormatterStatus {
+                    label: "nixfmt".into(),
+                    binary: None,
+                    via_node_modules: false,
+                    fallback_label: Some("alejandra".into()),
+                }
+            }
+        }
+        "ex" | "exs" => on_path("mix"),
+        "kt" | "kts" => on_path("ktfmt"),
+        "sql" => on_path("sql-formatter"),
+        _ => return None,
+    };
+    Some(status)
+}
+
 /// Resolve a binary by name on `$PATH`. Returns the first match.
 fn find_on_path(name: &str) -> Option<PathBuf> {
     let path_var = std::env::var("PATH").ok()?;
