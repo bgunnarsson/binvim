@@ -2867,7 +2867,79 @@ fn draw_line_with_selection(
         }
     }
     let mut clipped_right = false;
+    // Markdown "concealed render" mode — only active when the buffer
+    // is markdown AND the editor is in Normal mode (Insert / Visual
+    // flip back to raw markdown). When active, per-line transforms
+    // hide / replace structural markers (`# `, `**`, `*`, `` ` ``,
+    // `[…](…)`, `- `, `> `) and style ranges layer bold / italic /
+    // underline / colour over the syntax-highlight pass.
+    let md_meta: Option<&crate::markdown_render::MarkdownLineMeta> =
+        if app.markdown_render_active() {
+            app.markdown_line_meta(line_idx)
+        } else {
+            None
+        };
+    let mut conceal_active: Option<&crate::markdown_render::MarkdownTransform> = None;
     for (col, c) in chars.iter().enumerate() {
+        // Markdown conceal: exit a transform we just walked past.
+        if let Some(t) = conceal_active {
+            if col >= t.end {
+                conceal_active = None;
+            }
+        }
+        // Markdown conceal: enter a new transform that starts at this col.
+        // For Replace transforms we paint the substitute glyph here so the
+        // replacement lands at the source-marker's visual position; for
+        // Hide transforms we just record state and let the inner cols be
+        // skipped silently. Either way `line_visual_pos` advances by the
+        // replacement's width so subsequent chars sit where the user
+        // expects (right after the rendered glyph, not the source span).
+        if conceal_active.is_none() {
+            if let Some(meta) = md_meta {
+                if let Some(t) = meta.transforms.iter().find(|t| t.start == col) {
+                    let glyph_w = match &t.action {
+                        crate::markdown_render::ConcealAction::Hide => 0,
+                        crate::markdown_render::ConcealAction::Replace { glyph, color } => {
+                            let w = glyph.chars().count();
+                            // Paint only when at least one cell of the glyph
+                            // would land inside the viewport. Fully off-left
+                            // / off-right glyphs are silently skipped — the
+                            // surrounding char loop already handles the
+                            // surrounding bytes' state advancement.
+                            if line_visual_pos + w > view_left {
+                                let visible_left = line_visual_pos.max(view_left);
+                                let visible_right =
+                                    (line_visual_pos + w).min(view_left + avail);
+                                if visible_right > visible_left {
+                                    let visible = visible_right - visible_left;
+                                    if visual_used + visible > avail {
+                                        clipped_right = true;
+                                        break;
+                                    }
+                                    let skip = visible_left - line_visual_pos;
+                                    let printable: String =
+                                        glyph.chars().skip(skip).take(visible).collect();
+                                    queue!(
+                                        out,
+                                        SetForegroundColor(*color),
+                                        Print(printable),
+                                        ResetColor
+                                    )?;
+                                    visual_used += visible;
+                                }
+                            }
+                            w
+                        }
+                    };
+                    line_visual_pos += glyph_w;
+                    conceal_active = Some(t);
+                }
+            }
+        }
+        if conceal_active.is_some() {
+            byte_off += c.len_utf8();
+            continue;
+        }
         // Paint any inlay hints anchored at this column before the char.
         // Hints contribute to the on-screen width budget so the buffer
         // chars after them still wrap and clip correctly.
@@ -3000,6 +3072,41 @@ fn draw_line_with_selection(
         } else if let Some(fg) = syntax_color {
             queue!(out, SetForegroundColor(fg))?;
         }
+        // Markdown style overlay — bold / italic / underline + colour
+        // override on top of whatever the syntax pass picked. Suppressed
+        // when the cell is already speaking for itself (selection,
+        // search, yank flash, multi-cursor, match-pair, whitespace
+        // marker, modal dim) — those need to read as chrome, not
+        // markdown styling.
+        let md_style = md_meta.and_then(|m| crate::markdown_render::style_at(m, col));
+        let md_attrs_set = if let Some(s) = md_style {
+            let suppressed = in_sel
+                || in_search
+                || in_yank_flash
+                || is_multi_cursor
+                || in_match_pair
+                || render_hidden
+                || dim;
+            if !suppressed {
+                if let Some(c) = s.color {
+                    queue!(out, SetForegroundColor(c))?;
+                }
+                if s.bold {
+                    queue!(out, SetAttribute(Attribute::Bold))?;
+                }
+                if s.italic {
+                    queue!(out, SetAttribute(Attribute::Italic))?;
+                }
+                if s.underline {
+                    queue!(out, SetAttribute(Attribute::Underlined))?;
+                }
+                s.bold || s.italic || s.underline
+            } else {
+                false
+            }
+        } else {
+            false
+        };
         if let Some(sev) = diag_severity {
             let underline = severity_color(sev);
             queue!(
@@ -3035,7 +3142,18 @@ fn draw_line_with_selection(
             queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
         } else if is_multi_cursor {
             queue!(out, ResetColor)?;
-        } else if in_search || in_yank_flash || syntax_color.is_some() || dim || render_hidden {
+        } else if md_attrs_set {
+            // Bold / italic / underline don't unset themselves on the
+            // next char — clear all SGR so the styling stops at the
+            // span boundary.
+            queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+        } else if in_search
+            || in_yank_flash
+            || syntax_color.is_some()
+            || dim
+            || render_hidden
+            || md_style.and_then(|s| s.color).is_some()
+        {
             queue!(out, ResetColor)?;
         }
         visual_used += visible_w;
@@ -3841,6 +3959,30 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // Backspace / typing edit a buffer position that's "ahead" of where
     // the user thinks the cursor is.
     let hints_at: Vec<usize> = inlay_hint_widths_for_line(app, app.cursor.line);
+    // Markdown concealed mode collapses / replaces source spans, so the
+    // cursor's visual column needs to walk the same transforms the
+    // renderer used. Without this, the cursor would land at the
+    // buffer-char visual position — which is past the rendered
+    // content for hidden ranges, putting the terminal cursor several
+    // cells right of where the user sees their position.
+    if app.markdown_render_active() {
+        if let Some(meta) = app.markdown_line_meta(app.cursor.line) {
+            let line_chars: Vec<char> = line
+                .chars()
+                .filter(|c| *c != '\n' && *c != '\r')
+                .collect();
+            let visual = crate::markdown_render::visual_col_for_buffer_col(
+                &line_chars,
+                meta,
+                app.cursor.col,
+                TAB_WIDTH,
+            );
+            let on_screen = visual.saturating_sub(app.view_left);
+            let col = (gutter + on_screen) as u16;
+            queue!(out, MoveTo(col, row))?;
+            return Ok(());
+        }
+    }
     let mut visual = 0usize;
     for (i, c) in line.chars().enumerate() {
         // Stop *before* adding the hint at col i — the cursor sits at

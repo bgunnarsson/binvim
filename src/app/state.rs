@@ -26,6 +26,18 @@ pub struct FindRecord {
     pub before: bool,
 }
 
+/// Cached per-line markdown render meta for the active buffer. Keyed
+/// by `(path, version)` so we recompute when the buffer changes or
+/// the user switches to a different file. The cache is mode-independent
+/// — whether to APPLY the transforms is decided per-frame by the
+/// renderer via `App::markdown_render_active`.
+#[derive(Debug, Clone)]
+pub struct MarkdownMetaCache {
+    pub path: std::path::PathBuf,
+    pub version: u64,
+    pub per_line: Vec<crate::markdown_render::MarkdownLineMeta>,
+}
+
 /// Per-buffer state. The active buffer's state lives directly on App fields;
 /// inactive buffers are stored as stashes in `App.buffers`.
 #[derive(Default, Clone)]

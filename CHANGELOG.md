@@ -7,6 +7,23 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Markdown "concealed render" mode.** `.md` buffers in Normal mode
+  paint with structural markers folded into prettier glyphs:
+  headings drop their `#`s and render bold (Lavender for H1/H2,
+  Sapphire for H3, Sky for H4+); `**bold**` and `*italic*` / `_x_`
+  hide their markers and style the inner span; `` `inline code` ``
+  hides the backticks and tints the body Catppuccin Green;
+  `[text](url)` collapses to underlined-Blue `text` (the URL and
+  brackets vanish); `- ` / `* ` / `+ ` bullets become `•` (Peach);
+  `> ` blockquotes become `▎ ` with the body in muted Overlay0
+  italic. The buffer text is never mutated — entering Insert or
+  Visual mode flips back to raw markdown source instantly so you
+  edit what's actually on disk. Cursor placement and mouse clicks
+  walk the same per-line transforms the renderer uses, so navigating
+  hidden ranges and clicking on rendered glyphs both land on the
+  expected source position. Code-fence cross-line state is not
+  handled in v1, so `**bold**` *inside* a fenced code block will
+  still render concealed — known limitation.
 - **Scroll the `:health` dashboard.** `j`/`k` (or arrow keys) scroll
   one row, `Ctrl-D`/`Ctrl-U` half a page, `Ctrl-F`/`Ctrl-B` and
   PageDown/PageUp a full page, `g`/`G` (or Home/End) jump to top /

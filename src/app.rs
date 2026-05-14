@@ -119,6 +119,12 @@ pub struct App {
     pub buffers: Vec<BufferStash>,
     pub active: usize,
     pub highlight_cache: Option<HighlightCache>,
+    /// Per-line markdown render meta for the active buffer. Cached
+    /// against `(path, buffer.version)` and consulted by the renderer
+    /// only when the active buffer is markdown AND the editor is in
+    /// Normal mode (`markdown_render_active`). Insert/Visual flip back
+    /// to raw markdown source.
+    pub markdown_meta: Option<crate::app::state::MarkdownMetaCache>,
     pub picker: Option<PickerState>,
     pub config: Config,
     pub editorconfig: EditorConfig,
@@ -312,6 +318,7 @@ impl App {
             buffers: vec![BufferStash::default()],
             active: 0,
             highlight_cache: None,
+            markdown_meta: None,
             picker: None,
             config: Config::load(),
             editorconfig: EditorConfig::default(),
@@ -383,6 +390,7 @@ impl App {
                 self.maybe_reload_from_disk();
                 self.adjust_viewport();
                 self.ensure_highlights();
+                self.ensure_markdown_meta();
                 self.ensure_folds();
                 self.lsp_sync_active_debounced();
                 self.lsp_request_inlay_hints_if_due();

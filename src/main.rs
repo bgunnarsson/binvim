@@ -13,6 +13,7 @@ mod format;
 mod git;
 mod lang;
 mod lsp;
+mod markdown_render;
 mod mode;
 mod motion;
 mod parser;

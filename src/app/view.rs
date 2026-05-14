@@ -446,6 +446,68 @@ impl super::App {
         }
     }
 
+    /// True when the renderer should fold markdown's syntax markers
+    /// into prettier glyphs / hide them entirely. Applies only in
+    /// Normal mode so Insert / Visual see the raw source they're
+    /// editing.
+    pub fn markdown_render_active(&self) -> bool {
+        if !matches!(self.mode, crate::mode::Mode::Normal) {
+            return false;
+        }
+        let Some(path) = self.buffer.path.as_deref() else {
+            return false;
+        };
+        matches!(crate::lang::Lang::detect(path), Some(crate::lang::Lang::Markdown))
+    }
+
+    /// Read-only lookup of the cached per-line meta. Returns `None`
+    /// when the cache hasn't been built yet (i.e. `ensure_markdown_meta`
+    /// wasn't called this frame, or the active buffer isn't markdown)
+    /// or the line index is out of range.
+    pub fn markdown_line_meta(
+        &self,
+        line: usize,
+    ) -> Option<&crate::markdown_render::MarkdownLineMeta> {
+        self.markdown_meta.as_ref()?.per_line.get(line)
+    }
+
+    /// Refresh the cache when the active buffer's path or version has
+    /// changed. Cheap when the buffer isn't markdown — single lang
+    /// detect + early return. Called once per render tick from `run`.
+    pub(super) fn ensure_markdown_meta(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.markdown_meta = None;
+            return;
+        };
+        if !matches!(crate::lang::Lang::detect(&path), Some(crate::lang::Lang::Markdown)) {
+            self.markdown_meta = None;
+            return;
+        }
+        let version = self.buffer.version;
+        if let Some(cache) = &self.markdown_meta {
+            if cache.path == path && cache.version == version {
+                return;
+            }
+        }
+        let line_count = self.buffer.rope.len_lines();
+        let mut per_line = Vec::with_capacity(line_count);
+        for line_idx in 0..line_count {
+            let line: String = self
+                .buffer
+                .rope
+                .line(line_idx)
+                .chars()
+                .filter(|c| *c != '\n' && *c != '\r')
+                .collect();
+            per_line.push(crate::markdown_render::compute_line_meta(&line));
+        }
+        self.markdown_meta = Some(crate::app::state::MarkdownMetaCache {
+            path,
+            version,
+            per_line,
+        });
+    }
+
     pub(super) fn ensure_highlights(&mut self) {
         let lang = self
             .buffer

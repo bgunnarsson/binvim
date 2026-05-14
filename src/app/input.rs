@@ -39,6 +39,29 @@ fn visual_col_to_char_col(
     visual_col: usize,
     line_len: usize,
 ) -> usize {
+    // Markdown concealed mode warps source spans (`**` hidden, `- `
+    // replaced by `•`, …), so the click → buffer-col mapping has to
+    // walk the same per-line transforms the renderer used. Without
+    // this, clicking on rendered "bold" text would land at whatever
+    // raw-source position happened to share the visual column.
+    if app.markdown_render_active() {
+        if let Some(meta) = app.markdown_line_meta(line) {
+            let chars: Vec<char> = app
+                .buffer
+                .rope
+                .line(line)
+                .chars()
+                .filter(|c| *c != '\n' && *c != '\r')
+                .collect();
+            let col = crate::markdown_render::buffer_col_for_visual_col(
+                &chars,
+                meta,
+                visual_col,
+                crate::render::TAB_WIDTH,
+            );
+            return col.min(line_len.saturating_sub(1));
+        }
+    }
     let hint_widths = crate::render::inlay_hint_widths_for_line(app, line);
     visual_col_to_char_col_with_hints(&app.buffer, line, visual_col, line_len, &hint_widths)
 }
