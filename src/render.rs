@@ -1499,7 +1499,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         .map(|v| format!("{v:.1} %"))
         .unwrap_or_else(|| "—".into());
     let ram_str = match (snap.ram_mb, snap.ram_pct) {
-        (Some(mb), Some(pct)) => format!("{mb:.0} MB · {pct:.1} %"),
+        (Some(mb), Some(pct)) => format!("{pct:.1} % · {mb:.0} MB"),
         (Some(mb), None) => format!("{mb:.0} MB"),
         (None, Some(pct)) => format!("{pct:.1} %"),
         (None, None) => "—".into(),
