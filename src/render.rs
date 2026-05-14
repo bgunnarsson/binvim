@@ -644,6 +644,7 @@ fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
         Mode::Search { backward: false } => ("Search", '/'),
         Mode::Search { backward: true } => ("Search", '?'),
         Mode::Prompt(crate::mode::PromptKind::Rename) => ("Rename", ' '),
+        Mode::Prompt(crate::mode::PromptKind::ReplaceAll) => ("Replace in buffer", ' '),
         _ => ("", ' '),
     }
 }
