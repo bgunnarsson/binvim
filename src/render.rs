@@ -2934,6 +2934,24 @@ fn draw_line_with_selection(
                 }
                 return Ok(());
             }
+            crate::markdown_render::MarkdownLineKind::HtmlSummary => {
+                // <summary>X</summary> — paint as a bold-Peach
+                // disclosure title with `▼ ` prefix already baked
+                // into `replacement`. Same return-after-paint shape
+                // as the Table arm.
+                if let Some(rendered) = meta.replacement.as_deref() {
+                    let printable: String = rendered.chars().take(avail).collect();
+                    queue!(
+                        out,
+                        SetForegroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
+                        SetAttribute(Attribute::Bold),
+                        Print(&printable),
+                        SetAttribute(Attribute::Reset),
+                        ResetColor
+                    )?;
+                }
+                return Ok(());
+            }
             crate::markdown_render::MarkdownLineKind::Default
             | crate::markdown_render::MarkdownLineKind::CodeBlock => {}
         }

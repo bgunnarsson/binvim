@@ -33,6 +33,18 @@ follows [Semantic Versioning](https://semver.org/).
   - **Frontmatter.** YAML (`---`…`---`) and TOML (`+++`…`+++`)
     blocks at the top of file render in muted Overlay0 italic so
     they read as metadata chrome, not content.
+  - **Inline HTML.** A handful of common tags fold into native
+    styling: `<strong>` / `<b>` → bold, `<em>` / `<i>` → italic,
+    `<u>` → underline, `<code>` → inline-code Green; `<br>` /
+    `<br/>` / `<br />` collapse entirely; `<!--…-->` comments
+    collapse on the line they appear on.
+  - **`<details>` disclosure blocks.** Standalone `<details>` /
+    `</details>` rows hide as chrome; `<summary>X</summary>`
+    becomes a bold-Peach `▼ X` disclosure title (always-expanded
+    in a TUI). Inline tags inside the summary are stripped, so
+    `<summary><strong>Setup the frontend</strong></summary>`
+    reads cleanly as `▼ Setup the frontend`. Body content
+    between the open/close tags renders as ordinary markdown.
   - **Six distinct heading colours.** Each ATX level now lands on
     its own Catppuccin accent so an outline reads as a six-tone
     hierarchy at a glance: H1 Red, H2 Peach, H3 Yellow, H4 Green,

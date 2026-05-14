@@ -66,6 +66,11 @@ pub struct MarkdownStyleRange {
 ///   pre-rendered box-drawn line) instead of walking source chars.
 ///   The kind tag drives the styling (Header bold-Lavender,
 ///   Separator dim Overlay0, Body normal text).
+/// - `HtmlSummary` paints `replacement` as a bold-Peach
+///   disclosure title prefixed with `▼ ` — matches how a `<details>`
+///   block reads in a browser when expanded. Inline HTML inside the
+///   summary is stripped so a doubled-up `<summary><strong>X</strong></summary>`
+///   shows once.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum MarkdownLineKind {
     #[default]
@@ -74,6 +79,7 @@ pub enum MarkdownLineKind {
     HorizontalRule,
     CodeBlock,
     Table(TableRowKind),
+    HtmlSummary,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,6 +318,40 @@ pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
             continue;
         }
 
+        // HTML disclosure block — `<details>` / `</details>` lines
+        // are chrome (hidden); `<summary>X</summary>` becomes a
+        // bold-Peach disclosure title with a `▼` prefix. Cheap to
+        // check before the heavier setext / HR scanners.
+        let trimmed_full = line.trim();
+        if is_html_open_tag(trimmed_full, "details") || trimmed_full == "</details>" {
+            out.push(MarkdownLineMeta {
+                kind: MarkdownLineKind::Hidden,
+                ..MarkdownLineMeta::default()
+            });
+            i += 1;
+            continue;
+        }
+        if let Some(title) = extract_summary_title(line) {
+            out.push(MarkdownLineMeta {
+                kind: MarkdownLineKind::HtmlSummary,
+                replacement: Some(format!("▼ {}", title)),
+                ..MarkdownLineMeta::default()
+            });
+            i += 1;
+            continue;
+        }
+        // Standalone HTML comment line — `<!-- foo -->` collapses
+        // to a blank row so meta-comments don't dilute prose
+        // hierarchy.
+        if trimmed_full.starts_with("<!--") && trimmed_full.ends_with("-->") {
+            out.push(MarkdownLineMeta {
+                kind: MarkdownLineKind::Hidden,
+                ..MarkdownLineMeta::default()
+            });
+            i += 1;
+            continue;
+        }
+
         // Setext underline (`====` / `----` on a line below prose).
         // Re-classifies the previous line as H1 / H2 and hides this
         // underline row. Otherwise this is either an HR or normal
@@ -479,6 +519,109 @@ fn render_pipe_row(cells: &[String], col_widths: &[usize]) -> String {
     s
 }
 
+/// Match `<tag` / `<tag …>` / `<tag>` opener (case-insensitive on
+/// the tag name, lenient on attributes). Used by block-level HTML
+/// detection — must NOT match if the same line also contains the
+/// closing tag (single-line `<details><summary>X</summary></details>`
+/// shouldn't blow away the line as chrome).
+fn is_html_open_tag(line: &str, tag: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    let needle_lt = format!("<{}", tag.to_ascii_lowercase());
+    let needle_close = format!("</{}>", tag.to_ascii_lowercase());
+    if !lower.starts_with(&needle_lt) || !lower.ends_with('>') {
+        return false;
+    }
+    if lower.contains(&needle_close) {
+        return false;
+    }
+    // Char immediately after `<tag` must be `>` or whitespace —
+    // otherwise it's a longer tag like `<details-list>`.
+    let after = lower.as_bytes().get(needle_lt.len()).copied();
+    matches!(after, Some(b'>') | Some(b' ') | Some(b'\t'))
+}
+
+/// Pull the visible title out of a `<summary>…</summary>` line. The
+/// returned string has any inline HTML tags inside the summary
+/// stripped — duplicated emphasis like `<summary><strong>X</strong></summary>`
+/// reads as `▼ X` (not `▼ <strong>X</strong>`).
+fn extract_summary_title(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if !lower.starts_with("<summary") || !lower.ends_with("</summary>") {
+        return None;
+    }
+    // Skip `<summary…>` — find first `>` after `<summary`.
+    let open_close = trimmed.find('>')?;
+    let body_start = open_close + 1;
+    let close_idx = lower.rfind("</summary>")?;
+    if close_idx < body_start {
+        return None;
+    }
+    let inner = &trimmed[body_start..close_idx];
+    let stripped = strip_html_tags(inner);
+    let collapsed = stripped.trim().to_string();
+    if collapsed.is_empty() {
+        None
+    } else {
+        Some(collapsed)
+    }
+}
+
+/// Remove every `<…>` span from `s`. Cheap regex-free pass — fine
+/// for the small inline-HTML strings we feed it.
+fn strip_html_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// True when the chars at `chars[i..]` start with the literal
+/// `pattern` (char-by-char, case-insensitive on ASCII).
+fn matches_at(chars: &[char], i: usize, pattern: &str) -> bool {
+    let pat: Vec<char> = pattern.chars().collect();
+    if i + pat.len() > chars.len() {
+        return false;
+    }
+    for (k, p) in pat.iter().enumerate() {
+        if !chars[i + k].eq_ignore_ascii_case(p) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Find the next occurrence of `pattern` in `chars[start..]`.
+/// Case-insensitive on ASCII. Returns the absolute char index.
+fn find_pattern(chars: &[char], start: usize, pattern: &str) -> Option<usize> {
+    let pat: Vec<char> = pattern.chars().collect();
+    if pat.is_empty() || pat.len() > chars.len() {
+        return None;
+    }
+    let mut k = start;
+    while k + pat.len() <= chars.len() {
+        let mut ok = true;
+        for (j, p) in pat.iter().enumerate() {
+            if !chars[k + j].eq_ignore_ascii_case(p) {
+                ok = false;
+                break;
+            }
+        }
+        if ok {
+            return Some(k);
+        }
+        k += 1;
+    }
+    None
+}
+
 fn render_separator(col_widths: &[usize]) -> String {
     let mut s = String::with_capacity(64);
     s.push('├');
@@ -643,7 +786,7 @@ fn is_plain_prose(line: &str) -> bool {
 fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
     let n = chars.len();
     let mut i = body_start;
-    while i < n {
+    'scan: while i < n {
         let c = chars[i];
 
         // Inline code — `` `text` ``. Highest priority: anything inside a
@@ -814,6 +957,86 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
                         }
                     }
                 }
+            }
+        }
+
+        // Inline HTML — small set of tags people commonly mix into
+        // markdown. Each pair hides the open + close tags and folds
+        // the appropriate style onto the inner span. Self-closing
+        // `<br>` variants and HTML comments collapse entirely.
+        if c == '<' {
+            // <!-- comment --> — hide the whole span.
+            if matches_at(chars, i, "<!--") {
+                if let Some(end) = find_pattern(chars, i + 4, "-->") {
+                    let close_end = end + 3;
+                    meta.transforms.push(MarkdownTransform {
+                        start: i,
+                        end: close_end,
+                        action: ConcealAction::Hide,
+                    });
+                    i = close_end;
+                    continue;
+                }
+            }
+            // <br>, <br/>, <br /> — self-closing line break.
+            for variant in &["<br />", "<br/>", "<br>"] {
+                if matches_at(chars, i, variant) {
+                    let len = variant.chars().count();
+                    meta.transforms.push(MarkdownTransform {
+                        start: i,
+                        end: i + len,
+                        action: ConcealAction::Hide,
+                    });
+                    i += len;
+                    continue 'scan;
+                }
+            }
+            // Paired tags — `<strong>`, `<em>`, `<i>`, `<u>`, `<code>`.
+            // Each entry: (open, close, bold, italic, underline, color).
+            // First match wins.
+            const PAIRS: &[(&str, &str, bool, bool, bool, Option<Color>)] = &[
+                ("<strong>", "</strong>", true, false, false, None),
+                ("<b>", "</b>", true, false, false, None),
+                ("<em>", "</em>", false, true, false, None),
+                ("<i>", "</i>", false, true, false, None),
+                ("<u>", "</u>", false, false, true, None),
+                ("<code>", "</code>", false, false, false, Some(CODE_COLOR)),
+            ];
+            let mut matched = false;
+            for (open, close, bold, italic, underline, color) in PAIRS {
+                if matches_at(chars, i, open) {
+                    let open_len = open.chars().count();
+                    if let Some(close_start) =
+                        find_pattern(chars, i + open_len, close)
+                    {
+                        let close_len = close.chars().count();
+                        meta.transforms.push(MarkdownTransform {
+                            start: i,
+                            end: i + open_len,
+                            action: ConcealAction::Hide,
+                        });
+                        meta.transforms.push(MarkdownTransform {
+                            start: close_start,
+                            end: close_start + close_len,
+                            action: ConcealAction::Hide,
+                        });
+                        meta.styles.push(MarkdownStyleRange {
+                            start: i + open_len,
+                            end: close_start,
+                            bold: *bold,
+                            italic: *italic,
+                            underline: *underline,
+                            strikethrough: false,
+                            color: *color,
+                        });
+                        i = close_start + close_len;
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+            if matched {
+                continue;
             }
         }
 
@@ -1167,6 +1390,104 @@ mod tests {
         let m = compute_line_meta("Just a normal sentence.");
         assert!(m.transforms.is_empty());
         assert!(m.styles.is_empty());
+    }
+
+    #[test]
+    fn details_open_close_lines_collapse() {
+        let lines = vec![
+            "<details>".to_string(),
+            "<summary>Setup</summary>".to_string(),
+            "".to_string(),
+            "Body".to_string(),
+            "</details>".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[0].kind, MarkdownLineKind::Hidden);
+        assert_eq!(metas[1].kind, MarkdownLineKind::HtmlSummary);
+        assert_eq!(metas[1].replacement.as_deref(), Some("▼ Setup"));
+        // Body line is plain markdown.
+        assert!(matches!(metas[3].kind, MarkdownLineKind::Default));
+        assert_eq!(metas[4].kind, MarkdownLineKind::Hidden);
+    }
+
+    #[test]
+    fn details_with_attributes_still_collapses() {
+        let lines = vec!["<details open>".to_string(), "</details>".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[0].kind, MarkdownLineKind::Hidden);
+        assert_eq!(metas[1].kind, MarkdownLineKind::Hidden);
+    }
+
+    #[test]
+    fn summary_strips_inline_html() {
+        let lines = vec![
+            "<summary><strong>Setup the frontend</strong></summary>".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[0].replacement.as_deref(), Some("▼ Setup the frontend"));
+    }
+
+    #[test]
+    fn html_comment_line_collapses() {
+        let lines = vec!["<!-- TODO: revise -->".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[0].kind, MarkdownLineKind::Hidden);
+    }
+
+    #[test]
+    fn inline_strong_em_u_hide_tags() {
+        let m = compute_line_meta("a <strong>b</strong> c");
+        // `<strong>` at cols 2..10 hidden; `</strong>` at cols 11..20 hidden.
+        let hidden = cols_hidden(&m);
+        for c in [2, 3, 4, 5, 6, 7, 8, 9] {
+            assert!(hidden.contains(&c), "open col {} hidden", c);
+        }
+        for c in 11..20 {
+            assert!(hidden.contains(&c), "close col {} hidden", c);
+        }
+        let s = style_at(&m, 10).unwrap();
+        assert!(s.bold);
+    }
+
+    #[test]
+    fn inline_em_styles_italic() {
+        let m = compute_line_meta("<em>x</em>");
+        let s = style_at(&m, 4).unwrap();
+        assert!(s.italic);
+    }
+
+    #[test]
+    fn inline_u_styles_underline() {
+        let m = compute_line_meta("<u>x</u>");
+        let s = style_at(&m, 3).unwrap();
+        assert!(s.underline);
+    }
+
+    #[test]
+    fn inline_br_collapses() {
+        let m = compute_line_meta("a<br>b");
+        // `<br>` at cols 1..5 hidden.
+        let hidden = cols_hidden(&m);
+        for c in 1..5 {
+            assert!(hidden.contains(&c), "col {}", c);
+        }
+    }
+
+    #[test]
+    fn inline_br_self_closing_variants() {
+        for src in &["a<br/>b", "a<br />b"] {
+            let m = compute_line_meta(src);
+            assert!(!m.transforms.is_empty(), "no transforms for {:?}", src);
+        }
+    }
+
+    #[test]
+    fn inline_html_comment_collapses() {
+        let m = compute_line_meta("a <!-- hi --> b");
+        let hidden = cols_hidden(&m);
+        for c in 2..13 {
+            assert!(hidden.contains(&c), "col {}", c);
+        }
     }
 
     #[test]
