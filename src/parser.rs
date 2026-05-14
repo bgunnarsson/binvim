@@ -904,7 +904,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Pending;
     }
 
-    if ch == ' ' && ctx == ParseCtx::Normal && state.operator.is_none() {
+    if ch == ' '
+        && (ctx == ParseCtx::Normal || ctx == ParseCtx::Visual)
+        && state.operator.is_none()
+    {
         state.awaiting_leader = true;
         return ParseResult::Pending;
     }

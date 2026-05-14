@@ -240,16 +240,51 @@ impl super::App {
         self.mode = Mode::Prompt(crate::mode::PromptKind::Rename);
     }
 
-    /// Open the literal-string replace-all prompt. Captures the word
-    /// under the cursor as the search term and stashes it in
-    /// `rename_anchor`; the prompt key handler routes the typed
-    /// replacement to `finish_replace_all`.
+    /// Open the literal-string replace-all prompt. Source of the
+    /// search term:
+    ///
+    ///   - Visual mode → the selected text. Newline-spanning
+    ///     selections are rejected (substitute is a line-oriented op
+    ///     against a literal needle).
+    ///   - Normal mode → the word under the cursor.
+    ///
+    /// Stashes the term in `rename_anchor` so the prompt's key handler
+    /// can pass it to `finish_replace_all`. Pre-fills the cmdline with
+    /// the term so the user can edit instead of retyping.
     pub(super) fn start_replace_all_prompt(&mut self) {
-        let Some(current) = self.word_under_cursor() else {
-            self.status_msg = "No word under cursor".into();
-            return;
+        let current = if let Mode::Visual(kind) = self.mode {
+            let (start, end, _) = self.visual_range_chars(kind);
+            if end <= start {
+                self.status_msg = "replace: empty selection".into();
+                self.exit_visual();
+                return;
+            }
+            let text: String = self.buffer.rope.slice(start..end).to_string();
+            // Strip a trailing newline (linewise selections include the
+            // closing `\n`) so the substitute below matches actual
+            // content on the line rather than line-break-anchored runs.
+            let text = text.trim_end_matches('\n').to_string();
+            if text.contains('\n') {
+                self.status_msg =
+                    "replace: selection spans multiple lines (not supported)".into();
+                self.exit_visual();
+                return;
+            }
+            if text.is_empty() {
+                self.status_msg = "replace: empty selection".into();
+                self.exit_visual();
+                return;
+            }
+            self.exit_visual();
+            text
+        } else {
+            let Some(word) = self.word_under_cursor() else {
+                self.status_msg = "No word under cursor".into();
+                return;
+            };
+            word
         };
-        // We reuse `rename_anchor` to carry the original word — the path
+        // We reuse `rename_anchor` to carry the original term — the path
         // / line / col fields are unused for replace-all but the tuple
         // is the only place a prompt action has to stash arbitrary data
         // alongside the typed string.
