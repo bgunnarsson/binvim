@@ -33,6 +33,11 @@ follows [Semantic Versioning](https://semver.org/).
   - **Frontmatter.** YAML (`---`…`---`) and TOML (`+++`…`+++`)
     blocks at the top of file render in muted Overlay0 italic so
     they read as metadata chrome, not content.
+  - **Six distinct heading colours.** Each ATX level now lands on
+    its own Catppuccin accent so an outline reads as a six-tone
+    hierarchy at a glance: H1 Red, H2 Peach, H3 Yellow, H4 Green,
+    H5 Sky, H6 Mauve. Previously H1+H2 collapsed into Lavender
+    and H4-H6 all rendered Sky.
   - **Tables.** GFM tables (header + `|---|---|` separator + body
     rows) render as box-drawn `│ … │ … │` with `├─┼─┤` separator;
     cells column-pad to the widest entry per column. Header bold

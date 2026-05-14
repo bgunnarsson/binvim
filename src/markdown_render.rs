@@ -96,22 +96,24 @@ pub struct MarkdownLineMeta {
 }
 
 // Catppuccin Mocha
-const HEADING_COLOR: Color = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
 const CODE_COLOR: Color = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };    // Green
 const LINK_COLOR: Color = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };    // Blue
 const BULLET_COLOR: Color = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };  // Peach
 const QUOTE_COLOR: Color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };   // Overlay0
 
-/// Heading levels render in slightly different intensity so an outline
-/// reads as a hierarchy rather than a wall of bold-Lavender. H1 / H2
-/// land on Lavender (default heading); H3+ steps down through Sapphire
-/// then Sky so deeper sections still pop but don't compete with the
-/// top-level titles.
+/// Each heading level gets its own Catppuccin accent so an outline
+/// reads as a six-tone hierarchy at a glance. Stepping warm → cool
+/// through the palette: H1 Red (loudest), H2 Peach, H3 Yellow,
+/// H4 Green, H5 Sky, H6 Mauve. Anything deeper than H6 isn't
+/// valid markdown but we land on Mauve so it still renders.
 fn heading_color(level: usize) -> Color {
     match level {
-        1 | 2 => HEADING_COLOR,
-        3 => Color::Rgb { r: 0x74, g: 0xc7, b: 0xec }, // Sapphire
-        _ => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
+        1 => Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
+        2 => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
+        3 => Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
+        4 => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
+        5 => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
+        _ => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
     }
 }
 
@@ -1007,12 +1009,29 @@ mod tests {
     }
 
     #[test]
-    fn h3_uses_a_different_colour_than_h1() {
-        let h1 = compute_line_meta("# A");
-        let h3 = compute_line_meta("### A");
-        let c1 = style_at(&h1, 2).unwrap().color.unwrap();
-        let c3 = style_at(&h3, 4).unwrap().color.unwrap();
-        assert_ne!(c1, c3);
+    fn each_heading_level_has_a_distinct_colour() {
+        let inputs = ["# A", "## A", "### A", "#### A", "##### A", "###### A"];
+        let mut colors = Vec::new();
+        for (i, src) in inputs.iter().enumerate() {
+            let m = compute_line_meta(src);
+            let body_col = i + 2; // hash count + space
+            let c = style_at(&m, body_col)
+                .unwrap_or_else(|| panic!("H{} missing style", i + 1))
+                .color
+                .unwrap_or_else(|| panic!("H{} missing color", i + 1));
+            colors.push(c);
+        }
+        for i in 0..colors.len() {
+            for j in (i + 1)..colors.len() {
+                assert_ne!(
+                    colors[i],
+                    colors[j],
+                    "H{} and H{} share a colour",
+                    i + 1,
+                    j + 1
+                );
+            }
+        }
     }
 
     #[test]
