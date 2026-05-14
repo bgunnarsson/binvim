@@ -21,9 +21,14 @@ follows [Semantic Versioning](https://semver.org/).
   edit what's actually on disk. Cursor placement and mouse clicks
   walk the same per-line transforms the renderer uses, so navigating
   hidden ranges and clicking on rendered glyphs both land on the
-  expected source position. Code-fence cross-line state is not
-  handled in v1, so `**bold**` *inside* a fenced code block will
-  still render concealed — known limitation.
+  expected source position. Fenced code blocks (` ``` ` / `~~~`)
+  are tracked across lines so inline transforms are suppressed
+  inside them — `_API_` inside `ANTHROPIC_API_KEY=…` no longer
+  renders as italic-`API`. Italic / bold flanking rules also
+  follow CommonMark: underscore can't open or close emphasis if
+  it sits between two word chars (so `f_o_o` and `FOO__BAR__BAZ`
+  stay literal); a `*` or `_` opener can't precede whitespace,
+  a closer can't follow whitespace.
 - **Scroll the `:health` dashboard.** `j`/`k` (or arrow keys) scroll
   one row, `Ctrl-D`/`Ctrl-U` half a page, `Ctrl-F`/`Ctrl-B` and
   PageDown/PageUp a full page, `g`/`G` (or Home/End) jump to top /

@@ -491,6 +491,12 @@ impl super::App {
         }
         let line_count = self.buffer.rope.len_lines();
         let mut per_line = Vec::with_capacity(line_count);
+        // Track fenced code blocks across lines. CommonMark allows up
+        // to 3 leading spaces of indent on a fence; the fence char (`
+        // or ~) must match between opener and closer. While inside a
+        // fence we suppress all inline transforms so things like
+        // `_API_` inside `ANTHROPIC_API_KEY=…` don't render as italic.
+        let mut fence: Option<char> = None;
         for line_idx in 0..line_count {
             let line: String = self
                 .buffer
@@ -499,7 +505,43 @@ impl super::App {
                 .chars()
                 .filter(|c| *c != '\n' && *c != '\r')
                 .collect();
-            per_line.push(crate::markdown_render::compute_line_meta(&line));
+            let trimmed = line.trim_start();
+            let leading = line.len() - trimmed.len();
+            let fence_char = if leading <= 3 {
+                if trimmed.starts_with("```") {
+                    Some('`')
+                } else if trimmed.starts_with("~~~") {
+                    Some('~')
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(ch) = fence_char {
+                match fence {
+                    Some(open_ch) if open_ch == ch => {
+                        fence = None;
+                        per_line.push(crate::markdown_render::MarkdownLineMeta::default());
+                        continue;
+                    }
+                    None => {
+                        fence = Some(ch);
+                        per_line.push(crate::markdown_render::MarkdownLineMeta::default());
+                        continue;
+                    }
+                    Some(_) => {
+                        // Different fence char inside an open fence —
+                        // treat as ordinary content of the surrounding
+                        // fence (no transforms).
+                    }
+                }
+            }
+            if fence.is_some() {
+                per_line.push(crate::markdown_render::MarkdownLineMeta::default());
+            } else {
+                per_line.push(crate::markdown_render::compute_line_meta(&line));
+            }
         }
         self.markdown_meta = Some(crate::app::state::MarkdownMetaCache {
             path,

@@ -196,31 +196,51 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
             }
         }
 
-        // Bold — `**text**` / `__text__`. Match before italic so the inner
-        // `*` of a bold pair doesn't trip the single-marker italic case.
+        // Bold — `**text**` / `__text__`. Match before italic so the
+        // inner `*` of a bold pair doesn't trip the single-marker
+        // italic case. Same flanking rules as italic below: an opener
+        // can't sit before whitespace, a closer can't sit after
+        // whitespace, and `__` won't open/close intraword (CommonMark
+        // forbids underscore emphasis flanked by alphanumerics on
+        // both sides — saves us from matching the `_API_` inside
+        // `ANTHROPIC_API_KEY`).
         if (c == '*' || c == '_') && chars.get(i + 1).copied() == Some(c) {
-            if let Some(close) = find_double_close(chars, i + 2, c) {
-                if close > i + 2 {
-                    meta.transforms.push(MarkdownTransform {
-                        start: i,
-                        end: i + 2,
-                        action: ConcealAction::Hide,
-                    });
-                    meta.transforms.push(MarkdownTransform {
-                        start: close,
-                        end: close + 2,
-                        action: ConcealAction::Hide,
-                    });
-                    meta.styles.push(MarkdownStyleRange {
-                        start: i + 2,
-                        end: close,
-                        bold: true,
-                        italic: false,
-                        underline: false,
-                        color: None,
-                    });
-                    i = close + 2;
-                    continue;
+            let after_open = chars.get(i + 2).copied();
+            let before_open = if i > 0 { Some(chars[i - 1]) } else { None };
+            let opener_ok = !is_ws(after_open)
+                && !(c == '_' && is_word(before_open) && is_word(after_open));
+            if opener_ok {
+                if let Some(close) = find_double_close(chars, i + 2, c) {
+                    if close > i + 2 {
+                        let before_close = chars.get(close - 1).copied();
+                        let after_close = chars.get(close + 2).copied();
+                        let closer_ok = !is_ws(before_close)
+                            && !(c == '_'
+                                && is_word(before_close)
+                                && is_word(after_close));
+                        if closer_ok {
+                            meta.transforms.push(MarkdownTransform {
+                                start: i,
+                                end: i + 2,
+                                action: ConcealAction::Hide,
+                            });
+                            meta.transforms.push(MarkdownTransform {
+                                start: close,
+                                end: close + 2,
+                                action: ConcealAction::Hide,
+                            });
+                            meta.styles.push(MarkdownStyleRange {
+                                start: i + 2,
+                                end: close,
+                                bold: true,
+                                italic: false,
+                                underline: false,
+                                color: None,
+                            });
+                            i = close + 2;
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -229,32 +249,47 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
         // - skip if next char is the same (would have been bold)
         // - skip if previous char is the same (we're mid-bold close)
         // - close marker must not be followed by the same char either
+        // Plus flanking: opener can't precede whitespace; closer
+        // can't follow whitespace; `_` can't open/close intraword
+        // (`f_o_o` is not italic per CommonMark).
         if c == '*' || c == '_' {
             let next = chars.get(i + 1).copied();
             let prev = if i > 0 { Some(chars[i - 1]) } else { None };
-            if next != Some(c) && prev != Some(c) {
+            if next != Some(c)
+                && prev != Some(c)
+                && !is_ws(next)
+                && !(c == '_' && is_word(prev) && is_word(next))
+            {
                 if let Some(close) = find_close(chars, i + 1, c) {
                     if close > i + 1 && chars.get(close + 1).copied() != Some(c) {
-                        meta.transforms.push(MarkdownTransform {
-                            start: i,
-                            end: i + 1,
-                            action: ConcealAction::Hide,
-                        });
-                        meta.transforms.push(MarkdownTransform {
-                            start: close,
-                            end: close + 1,
-                            action: ConcealAction::Hide,
-                        });
-                        meta.styles.push(MarkdownStyleRange {
-                            start: i + 1,
-                            end: close,
-                            bold: false,
-                            italic: true,
-                            underline: false,
-                            color: None,
-                        });
-                        i = close + 1;
-                        continue;
+                        let before_close = chars.get(close - 1).copied();
+                        let after_close = chars.get(close + 1).copied();
+                        let closer_ok = !is_ws(before_close)
+                            && !(c == '_'
+                                && is_word(before_close)
+                                && is_word(after_close));
+                        if closer_ok {
+                            meta.transforms.push(MarkdownTransform {
+                                start: i,
+                                end: i + 1,
+                                action: ConcealAction::Hide,
+                            });
+                            meta.transforms.push(MarkdownTransform {
+                                start: close,
+                                end: close + 1,
+                                action: ConcealAction::Hide,
+                            });
+                            meta.styles.push(MarkdownStyleRange {
+                                start: i + 1,
+                                end: close,
+                                bold: false,
+                                italic: true,
+                                underline: false,
+                                color: None,
+                            });
+                            i = close + 1;
+                            continue;
+                        }
                     }
                 }
             }
@@ -296,6 +331,18 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
 
         i += 1;
     }
+}
+
+/// CommonMark "word char" for emphasis flanking purposes — alnum or
+/// `_`. `None` (off the line edge) is treated as non-word so a marker
+/// at the start / end of a line behaves like it has whitespace
+/// flanking it.
+fn is_word(c: Option<char>) -> bool {
+    matches!(c, Some(ch) if ch.is_alphanumeric() || ch == '_')
+}
+
+fn is_ws(c: Option<char>) -> bool {
+    matches!(c, Some(ch) if ch.is_whitespace())
 }
 
 fn find_close(chars: &[char], start: usize, target: char) -> Option<usize> {
@@ -580,6 +627,45 @@ mod tests {
         let m = compute_line_meta("Just a normal sentence.");
         assert!(m.transforms.is_empty());
         assert!(m.styles.is_empty());
+    }
+
+    #[test]
+    fn intraword_underscore_is_not_italic() {
+        // `ANTHROPIC_API_KEY` — `_API_` is flanked by alnum on both
+        // sides, must not trigger emphasis.
+        let m = compute_line_meta("ANTHROPIC_API_KEY=foo");
+        assert!(m.transforms.is_empty(), "{:?}", m.transforms);
+        assert!(m.styles.is_empty(), "{:?}", m.styles);
+    }
+
+    #[test]
+    fn intraword_underscore_bold_does_not_match() {
+        let m = compute_line_meta("FOO__BAR__BAZ");
+        assert!(m.transforms.is_empty(), "{:?}", m.transforms);
+    }
+
+    #[test]
+    fn underscore_italic_works_at_word_boundary() {
+        // ` _word_ ` — both flanks non-word, should italicise.
+        let m = compute_line_meta("a _word_ b");
+        let hidden = cols_hidden(&m);
+        assert_eq!(hidden, vec![2, 7]);
+    }
+
+    #[test]
+    fn star_can_open_intraword() {
+        // `f*oo*` — `*` allows intraword opening per CommonMark.
+        let m = compute_line_meta("f*oo*");
+        let hidden = cols_hidden(&m);
+        assert_eq!(hidden, vec![1, 4]);
+    }
+
+    #[test]
+    fn opener_cannot_precede_whitespace() {
+        // `a * foo * b` — markers are flanked by whitespace on the
+        // wrong side; should not match.
+        let m = compute_line_meta("a * foo * b");
+        assert!(m.transforms.is_empty(), "{:?}", m.transforms);
     }
 
     #[test]
