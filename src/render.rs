@@ -2872,13 +2872,40 @@ fn draw_line_with_selection(
     // flip back to raw markdown). When active, per-line transforms
     // hide / replace structural markers (`# `, `**`, `*`, `` ` ``,
     // `[…](…)`, `- `, `> `) and style ranges layer bold / italic /
-    // underline / colour over the syntax-highlight pass.
+    // underline / strikethrough / colour over the syntax-highlight
+    // pass. Whole-line `kind` short-circuits the per-char loop for
+    // horizontal rules and hidden rows (setext underlines, fence
+    // closers).
     let md_meta: Option<&crate::markdown_render::MarkdownLineMeta> =
         if app.markdown_render_active() {
             app.markdown_line_meta(line_idx)
         } else {
             None
         };
+    if let Some(meta) = md_meta {
+        match meta.kind {
+            crate::markdown_render::MarkdownLineKind::Hidden => {
+                // Render an empty row — the line is part of a fence
+                // boundary or setext underline that has been folded
+                // into adjacent rendering.
+                return Ok(());
+            }
+            crate::markdown_render::MarkdownLineKind::HorizontalRule => {
+                // Paint `─` × `avail` in muted Overlay0 so the rule
+                // visually separates sections without competing with
+                // surrounding prose.
+                let rule: String = "─".repeat(avail);
+                queue!(
+                    out,
+                    SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }),
+                    Print(rule),
+                    ResetColor
+                )?;
+                return Ok(());
+            }
+            crate::markdown_render::MarkdownLineKind::Default => {}
+        }
+    }
     let mut conceal_active: Option<&crate::markdown_render::MarkdownTransform> = None;
     for (col, c) in chars.iter().enumerate() {
         // Markdown conceal: exit a transform we just walked past.
@@ -3100,7 +3127,10 @@ fn draw_line_with_selection(
                 if s.underline {
                     queue!(out, SetAttribute(Attribute::Underlined))?;
                 }
-                s.bold || s.italic || s.underline
+                if s.strikethrough {
+                    queue!(out, SetAttribute(Attribute::CrossedOut))?;
+                }
+                s.bold || s.italic || s.underline || s.strikethrough
             } else {
                 false
             }

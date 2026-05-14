@@ -44,13 +44,30 @@ pub struct MarkdownStyleRange {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub strikethrough: bool,
     pub color: Option<Color>,
+}
+
+/// Whole-line render decisions that override the per-char loop. Most
+/// lines are `Default` (the renderer walks chars and applies
+/// transforms / styles); these special kinds short-circuit that:
+/// - `Hidden` paints a blank row (used for fence boundaries and
+///   setext underline rows so they collapse into the heading above).
+/// - `HorizontalRule` paints a continuous `─` line in dim across the
+///   buffer area's width.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum MarkdownLineKind {
+    #[default]
+    Default,
+    Hidden,
+    HorizontalRule,
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct MarkdownLineMeta {
     pub transforms: Vec<MarkdownTransform>,
     pub styles: Vec<MarkdownStyleRange>,
+    pub kind: MarkdownLineKind,
 }
 
 // Catppuccin Mocha
@@ -105,6 +122,7 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
                 bold: true,
                 italic: false,
                 underline: false,
+                strikethrough: false,
                 color: Some(heading_color(level)),
             });
             return meta;
@@ -131,6 +149,7 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
             bold: false,
             italic: true,
             underline: false,
+            strikethrough: false,
             color: Some(QUOTE_COLOR),
         });
         body_start = end;
@@ -155,6 +174,251 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
     meta.transforms.sort_by_key(|t| t.start);
     meta.styles.sort_by_key(|s| s.start);
     meta
+}
+
+/// Multi-line pass — needs the whole buffer because some classifications
+/// (setext headings, code-fence interior, top-of-file frontmatter) are
+/// only decidable with cross-line context. Returns one `MarkdownLineMeta`
+/// per input line.
+pub fn compute_buffer_meta(lines: &[String]) -> Vec<MarkdownLineMeta> {
+    let mut out: Vec<MarkdownLineMeta> = Vec::with_capacity(lines.len());
+    let mut fence: Option<char> = None;
+    let mut in_frontmatter = false;
+    for (i, line) in lines.iter().enumerate() {
+        // Top-of-file YAML / TOML frontmatter — opening `---` (or
+        // `+++` for TOML) on line 0, runs until the matching closer.
+        // Render every frontmatter row in muted Overlay0 italic so it
+        // reads as metadata, not content.
+        if i == 0 {
+            let t = line.trim();
+            if t == "---" || t == "+++" {
+                in_frontmatter = true;
+                out.push(frontmatter_meta(line));
+                continue;
+            }
+        }
+        if in_frontmatter {
+            let t = line.trim();
+            // YAML closes on `---` or `...`; TOML closes on `+++`.
+            if t == "---" || t == "..." || t == "+++" {
+                in_frontmatter = false;
+            }
+            out.push(frontmatter_meta(line));
+            continue;
+        }
+
+        // Code fence — open or close. Inside a fence we suppress
+        // inline transforms and decorate the fence boundaries
+        // themselves.
+        let trimmed = line.trim_start();
+        let leading = line.chars().take_while(|c| *c == ' ').count();
+        let fence_ch = if leading <= 3 {
+            if trimmed.starts_with("```") {
+                Some('`')
+            } else if trimmed.starts_with("~~~") {
+                Some('~')
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(ch) = fence_ch {
+            match fence {
+                Some(open_ch) if open_ch == ch => {
+                    fence = None;
+                    out.push(MarkdownLineMeta {
+                        kind: MarkdownLineKind::Hidden,
+                        ..MarkdownLineMeta::default()
+                    });
+                    continue;
+                }
+                None => {
+                    fence = Some(ch);
+                    out.push(fence_open_meta(line, leading, ch));
+                    continue;
+                }
+                Some(_) => {
+                    // Different fence char inside an open fence —
+                    // not a close, treat as code content.
+                }
+            }
+        }
+        if fence.is_some() {
+            // Inside a code block — no transforms, no styling
+            // overrides; tree-sitter / config syntax colour wins.
+            out.push(MarkdownLineMeta::default());
+            continue;
+        }
+
+        // Setext underline (`====` / `----` on a line below prose).
+        // Re-classifies the previous line as H1 / H2 and hides this
+        // underline row. Otherwise this is either an HR or normal
+        // content (handled below).
+        if let Some(level) = setext_level(line) {
+            let prev_idx = i.checked_sub(1);
+            let prev_is_prose = prev_idx
+                .and_then(|p| lines.get(p))
+                .map(|p| is_plain_prose(p))
+                .unwrap_or(false);
+            // Only treat as setext if the previous line is plain
+            // prose AND we haven't already classified it as something
+            // else (HR / heading / fence / blockquote / list).
+            let prev_was_default = prev_idx
+                .and_then(|p| out.get(p))
+                .map(|m| m.kind == MarkdownLineKind::Default)
+                .unwrap_or(false);
+            if prev_is_prose && prev_was_default {
+                let prev_chars = lines[prev_idx.unwrap()].chars().count();
+                let m = &mut out[prev_idx.unwrap()];
+                m.transforms.clear();
+                m.styles.clear();
+                m.styles.push(MarkdownStyleRange {
+                    start: 0,
+                    end: prev_chars,
+                    bold: true,
+                    italic: false,
+                    underline: false,
+                    strikethrough: false,
+                    color: Some(heading_color(level)),
+                });
+                out.push(MarkdownLineMeta {
+                    kind: MarkdownLineKind::Hidden,
+                    ..MarkdownLineMeta::default()
+                });
+                continue;
+            }
+        }
+
+        // Horizontal rule — standalone `---` / `***` / `___` (3+ of
+        // the same char, optional spaces). Renders as a continuous
+        // dim `─` line spanning the buffer width.
+        if is_hr_line(line) {
+            out.push(MarkdownLineMeta {
+                kind: MarkdownLineKind::HorizontalRule,
+                ..MarkdownLineMeta::default()
+            });
+            continue;
+        }
+
+        out.push(compute_line_meta(line));
+    }
+    out
+}
+
+fn frontmatter_meta(line: &str) -> MarkdownLineMeta {
+    let mut meta = MarkdownLineMeta::default();
+    let n = line.chars().count();
+    if n > 0 {
+        meta.styles.push(MarkdownStyleRange {
+            start: 0,
+            end: n,
+            bold: false,
+            italic: true,
+            underline: false,
+            strikethrough: false,
+            color: Some(QUOTE_COLOR),
+        });
+    }
+    meta
+}
+
+/// Build the meta for a fence opener — hide the fence chars, then
+/// style whatever language tag follows in bold-Peach so the user can
+/// see what's inside the block at a glance.
+fn fence_open_meta(line: &str, leading: usize, fence_ch: char) -> MarkdownLineMeta {
+    let chars: Vec<char> = line.chars().collect();
+    let backtick_start = leading;
+    let mut backtick_end = backtick_start;
+    while backtick_end < chars.len() && chars[backtick_end] == fence_ch {
+        backtick_end += 1;
+    }
+    let mut meta = MarkdownLineMeta::default();
+    meta.transforms.push(MarkdownTransform {
+        start: backtick_start,
+        end: backtick_end,
+        action: ConcealAction::Hide,
+    });
+    if backtick_end < chars.len() {
+        meta.styles.push(MarkdownStyleRange {
+            start: backtick_end,
+            end: chars.len(),
+            bold: true,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+            color: Some(BULLET_COLOR),
+        });
+    }
+    meta
+}
+
+/// Detect a setext heading underline. Returns `Some(1)` for `====`,
+/// `Some(2)` for `----`. Both must consist solely of that char (with
+/// optional surrounding whitespace) — otherwise it's not a setext
+/// underline.
+fn setext_level(line: &str) -> Option<usize> {
+    let t = line.trim();
+    if t.is_empty() {
+        return None;
+    }
+    if t.chars().all(|c| c == '=') {
+        Some(1)
+    } else if t.chars().all(|c| c == '-') {
+        Some(2)
+    } else {
+        None
+    }
+}
+
+/// Thematic break detector — 3+ of `-`, `*`, or `_` on a line, with
+/// only whitespace between them. CommonMark allows up to 3 leading
+/// spaces of indent.
+fn is_hr_line(line: &str) -> bool {
+    let t = line.trim();
+    if t.chars().count() < 3 {
+        return false;
+    }
+    let first = match t.chars().next() {
+        Some(c) if c == '-' || c == '*' || c == '_' => c,
+        _ => return false,
+    };
+    let mut count = 0;
+    for c in t.chars() {
+        if c == first {
+            count += 1;
+        } else if !c.is_whitespace() {
+            return false;
+        }
+    }
+    count >= 3
+}
+
+/// True when a line is "plain prose" — a candidate for setext
+/// heading promotion. Excludes block-element openers (ATX heading,
+/// blockquote, list item, fence, HR pattern) so a `---` underneath
+/// a `# Foo` doesn't get misread as a setext H2.
+fn is_plain_prose(line: &str) -> bool {
+    let t = line.trim_start();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with('#') || t.starts_with('>') {
+        return false;
+    }
+    if t.starts_with("```") || t.starts_with("~~~") {
+        return false;
+    }
+    let mut chars = t.chars();
+    if let Some(first) = chars.next() {
+        if matches!(first, '-' | '*' | '+') && chars.next() == Some(' ') {
+            return false;
+        }
+    }
+    if is_hr_line(line) {
+        return false;
+    }
+    true
 }
 
 /// Walk the line looking for inline markers. `body_start` lets the
@@ -188,10 +452,50 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
                         bold: false,
                         italic: false,
                         underline: false,
+                        strikethrough: false,
                         color: Some(CODE_COLOR),
                     });
                     i = end + 1;
                     continue;
+                }
+            }
+        }
+
+        // Strikethrough — `~~text~~`. GFM extension; same shape as
+        // bold (double-marker) so we use the same flanking guards
+        // (opener not before whitespace, closer not after whitespace).
+        // No intraword restriction needed — `~` isn't a word char so
+        // `f~~o~~o` is plausibly intentional.
+        if c == '~' && chars.get(i + 1).copied() == Some('~') {
+            let after_open = chars.get(i + 2).copied();
+            if !is_ws(after_open) {
+                if let Some(close) = find_double_close(chars, i + 2, '~') {
+                    if close > i + 2 {
+                        let before_close = chars.get(close - 1).copied();
+                        if !is_ws(before_close) {
+                            meta.transforms.push(MarkdownTransform {
+                                start: i,
+                                end: i + 2,
+                                action: ConcealAction::Hide,
+                            });
+                            meta.transforms.push(MarkdownTransform {
+                                start: close,
+                                end: close + 2,
+                                action: ConcealAction::Hide,
+                            });
+                            meta.styles.push(MarkdownStyleRange {
+                                start: i + 2,
+                                end: close,
+                                bold: false,
+                                italic: false,
+                                underline: false,
+                                strikethrough: true,
+                                color: Some(QUOTE_COLOR),
+                            });
+                            i = close + 2;
+                            continue;
+                        }
+                    }
                 }
             }
         }
@@ -235,6 +539,7 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
                                 bold: true,
                                 italic: false,
                                 underline: false,
+                                strikethrough: false,
                                 color: None,
                             });
                             i = close + 2;
@@ -285,6 +590,7 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
                                 bold: false,
                                 italic: true,
                                 underline: false,
+                                strikethrough: false,
                                 color: None,
                             });
                             i = close + 1;
@@ -320,6 +626,7 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
                             bold: false,
                             italic: false,
                             underline: true,
+                            strikethrough: false,
                             color: Some(LINK_COLOR),
                         });
                         i = rp + 1;
@@ -627,6 +934,117 @@ mod tests {
         let m = compute_line_meta("Just a normal sentence.");
         assert!(m.transforms.is_empty());
         assert!(m.styles.is_empty());
+    }
+
+    #[test]
+    fn strikethrough_hides_double_tildes() {
+        let m = compute_line_meta("a ~~done~~ b");
+        assert_eq!(cols_hidden(&m), vec![2, 3, 8, 9]);
+        let s = style_at(&m, 4).unwrap();
+        assert!(s.strikethrough);
+    }
+
+    #[test]
+    fn strikethrough_skips_when_opener_before_whitespace() {
+        let m = compute_line_meta("a ~~ done ~~ b");
+        // Opener `~~` followed by space — should not match.
+        assert!(m.transforms.is_empty(), "{:?}", m.transforms);
+    }
+
+    #[test]
+    fn fence_open_hides_backticks_and_styles_lang() {
+        let lines = vec!["```rust".to_string(), "let x = 1;".to_string(), "```".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas.len(), 3);
+        // Opener: hide ```, style "rust" bold-Peach.
+        assert_eq!(metas[0].transforms.len(), 1);
+        assert_eq!(metas[0].transforms[0].start, 0);
+        assert_eq!(metas[0].transforms[0].end, 3);
+        let s = &metas[0].styles[0];
+        assert_eq!(s.start, 3);
+        assert_eq!(s.end, 7);
+        assert!(s.bold);
+        // Body: no transforms, default kind.
+        assert_eq!(metas[1].kind, MarkdownLineKind::Default);
+        assert!(metas[1].transforms.is_empty());
+        // Closer: hidden.
+        assert_eq!(metas[2].kind, MarkdownLineKind::Hidden);
+    }
+
+    #[test]
+    fn inside_fence_no_emphasis_applied() {
+        // `_API_` inside a code block should pass through unchanged.
+        let lines = vec![
+            "```bash".to_string(),
+            "ANTHROPIC_API_KEY=foo".to_string(),
+            "```".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        assert!(metas[1].transforms.is_empty());
+        assert!(metas[1].styles.is_empty());
+    }
+
+    #[test]
+    fn frontmatter_styles_block_dim() {
+        let lines = vec![
+            "---".to_string(),
+            "title: Foo".to_string(),
+            "---".to_string(),
+            "# Heading".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        // All three frontmatter rows styled dim italic.
+        for i in 0..3 {
+            assert!(!metas[i].styles.is_empty(), "row {} should be styled", i);
+            assert!(metas[i].styles[0].italic);
+        }
+        // Heading after frontmatter is processed normally.
+        assert!(!metas[3].transforms.is_empty());
+    }
+
+    #[test]
+    fn frontmatter_only_at_top_of_file() {
+        // `---` mid-file is not frontmatter; it's an HR.
+        let lines = vec![
+            "Some prose here.".to_string(),
+            "".to_string(),
+            "---".to_string(),
+            "More prose.".to_string(),
+        ];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[2].kind, MarkdownLineKind::HorizontalRule);
+    }
+
+    #[test]
+    fn setext_h1_promotes_previous_line() {
+        let lines = vec!["My Title".to_string(), "========".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        let s = &metas[0].styles[0];
+        assert!(s.bold);
+        assert_eq!(metas[1].kind, MarkdownLineKind::Hidden);
+    }
+
+    #[test]
+    fn setext_h2_with_dashes_promotes_previous_line() {
+        let lines = vec!["My Title".to_string(), "--------".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert!(metas[0].styles[0].bold);
+        assert_eq!(metas[1].kind, MarkdownLineKind::Hidden);
+    }
+
+    #[test]
+    fn dashes_after_atx_heading_stays_hr() {
+        // `---` under `# Foo` is HR, not setext (heading isn't prose).
+        let lines = vec!["# Foo".to_string(), "---".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[1].kind, MarkdownLineKind::HorizontalRule);
+    }
+
+    #[test]
+    fn standalone_dashes_render_as_hr() {
+        let lines = vec!["".to_string(), "---".to_string(), "".to_string()];
+        let metas = compute_buffer_meta(&lines);
+        assert_eq!(metas[1].kind, MarkdownLineKind::HorizontalRule);
     }
 
     #[test]

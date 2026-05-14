@@ -7,6 +7,28 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Markdown rendering polish.** Five additions on top of the
+  existing concealed-render mode:
+  - **Strikethrough.** GFM `~~text~~` hides the markers and renders
+    the inner span with the terminal's strikethrough attribute in
+    Overlay0 (so it reads as "deprecated / done"). Same flanking
+    rules as bold — opener can't precede whitespace, closer can't
+    follow whitespace.
+  - **Code-fence chrome.** ` ```rust ` (or ` ~~~ `) opener now
+    hides the fence chars and styles the language tag in
+    bold-Peach so the block is labeled at a glance. The closing
+    fence row collapses to a blank line.
+  - **Setext headings.** `Title\n=====` becomes a bold-Lavender
+    H1; `Title\n-----` becomes bold-Lavender H2. The underline
+    row collapses. CommonMark's prose-only constraint is honoured
+    (so `# ATX heading\n---` stays as ATX heading + horizontal
+    rule, not a setext promotion).
+  - **Horizontal rules.** Standalone `---` / `***` / `___` (3+
+    of the same char) renders as a continuous `─` line in
+    Overlay0 across the buffer width.
+  - **Frontmatter.** YAML (`---`…`---`) and TOML (`+++`…`+++`)
+    blocks at the top of file render in muted Overlay0 italic so
+    they read as metadata chrome, not content.
 - **Markdown "concealed render" mode.** `.md` buffers in Normal mode
   paint with structural markers folded into prettier glyphs:
   headings drop their `#`s and render bold (Lavender for H1/H2,
