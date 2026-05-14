@@ -582,46 +582,50 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         };
     }
 
-    // Resolve leader key (space) → picker dispatch. Only meaningful in normal mode.
+    // Resolve leader key (space) → picker / action dispatch. Works in
+    // Normal *and* Visual mode — Visual is the relevant context for
+    // `<leader>R` (replace selection across the file). Actions that
+    // don't care about the visual selection (file picker, LSP rename,
+    // …) still behave correctly when triggered from Visual: each one
+    // takes whatever cursor / buffer state it needs and reads through
+    // its own dispatch path.
     if state.awaiting_leader {
         state.awaiting_leader = false;
-        if ctx == ParseCtx::Normal {
-            // `b` opens a buffer-prefix sub-menu — defer to the next key.
-            if ch == 'b' {
-                state.awaiting_buffer_leader = true;
-                return ParseResult::Pending;
-            }
-            // `d` opens the debugger sub-menu (`<leader>db`, `<leader>dc`, …).
-            if ch == 'd' {
-                state.awaiting_debug_leader = true;
-                return ParseResult::Pending;
-            }
-            // `h` opens the git-hunk sub-menu (`<leader>hp` preview,
-            // `<leader>hs` stage, `<leader>hu` unstage, `<leader>hr` reset).
-            if ch == 'h' {
-                state.awaiting_hunk_leader = true;
-                return ParseResult::Pending;
-            }
-            let action = match ch {
-                ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
-                '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
-                'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
-                'e' => Some(Action::OpenYazi),
-                // Doc-symbol / workspace-symbol pickers moved under
-                // `<leader>d` so the debug sub-menu collects every
-                // "navigate around code while debugging" action in one
-                // place; Code actions stays at top level since it's used
-                // independently of any debug flow.
-                'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
-                'r' => Some(Action::LspRename),
-                'R' => Some(Action::ReplaceAllInBuffer),
-                'f' => Some(Action::Format),
-                _ => None,
-            };
-            if let Some(a) = action {
-                state.reset();
-                return ParseResult::Action(a);
-            }
+        // `b` opens a buffer-prefix sub-menu — defer to the next key.
+        if ch == 'b' {
+            state.awaiting_buffer_leader = true;
+            return ParseResult::Pending;
+        }
+        // `d` opens the debugger sub-menu (`<leader>db`, `<leader>dc`, …).
+        if ch == 'd' {
+            state.awaiting_debug_leader = true;
+            return ParseResult::Pending;
+        }
+        // `h` opens the git-hunk sub-menu (`<leader>hp` preview,
+        // `<leader>hs` stage, `<leader>hu` unstage, `<leader>hr` reset).
+        if ch == 'h' {
+            state.awaiting_hunk_leader = true;
+            return ParseResult::Pending;
+        }
+        let action = match ch {
+            ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
+            '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
+            'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
+            'e' => Some(Action::OpenYazi),
+            // Doc-symbol / workspace-symbol pickers moved under
+            // `<leader>d` so the debug sub-menu collects every
+            // "navigate around code while debugging" action in one
+            // place; Code actions stays at top level since it's used
+            // independently of any debug flow.
+            'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
+            'r' => Some(Action::LspRename),
+            'R' => Some(Action::ReplaceAllInBuffer),
+            'f' => Some(Action::Format),
+            _ => None,
+        };
+        if let Some(a) = action {
+            state.reset();
+            return ParseResult::Action(a);
         }
         state.reset();
         return ParseResult::Cancelled;
