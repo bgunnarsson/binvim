@@ -20,22 +20,52 @@ follows [Semantic Versioning](https://semver.org/).
   to apply it. The baked-in default palette remains Catppuccin
   Mocha; the `themes/catppuccin-mocha/theme.toml` file mirrors it
   explicitly as a copy-paste starting point.
-- **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l` / `<C-w>q` /
-  `<C-w>o` / `<C-w>=`.** Vertical and horizontal splits with
-  independent cursors and viewports per pane. Each window can show a
-  different buffer — `:e other.txt` / `:b 2` / `H` / `L` update only
-  the active pane's file. Focus moves geometrically (`<C-w>l` picks
-  the right-side neighbour with the largest vertical overlap);
-  crossing focus into a window pointing at a different buffer swaps
-  App's live buffer state on the fly so each pane keeps its own
-  syntax-highlight cache, fold ranges, git stripe, and diagnostics.
-  Closing the active window collapses its space into the sibling
-  that absorbed it; `<C-w>o` collapses everything down to just the
-  active pane. The split tree lives in `src/layout.rs` (binary tree
-  of `WindowId`s); per-pane view state lives in `src/window.rs`
+- **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>V` / `<C-w>S` /
+  `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o` / `<C-w>=` / `<C-w>T`.**
+  Vertical and horizontal splits with independent cursors,
+  viewports, and per-pane buffer selection. Lowercase `v`/`s` open
+  the file picker immediately so the new pane lands on a *different*
+  file — the typical "show A on the left, B on the right" workflow
+  is one keystroke + a fuzzy pick. Uppercase `V`/`S` keep Vim's
+  same-buffer behaviour (two viewports of one file with independent
+  cursors, mirroring edits — useful for skimming the top of a long
+  file while editing the bottom). Focus moves geometrically:
+  `<C-w>l` picks the right-side neighbour with the largest vertical
+  overlap, not tree-order. Crossing focus into a window pointing at
+  a different buffer swaps App's live buffer state under you so each
+  pane keeps its own syntax-highlight cache, fold ranges, git
+  stripe, diagnostics, blame, and markdown concealed render. `:e
+  other.txt` / picker selections / `<C-w>q` collapse / `<C-w>o`
+  close-others / `<C-w>=` equalize behave the way Vim users expect.
+  The split tree lives in `src/layout.rs` (binary tree of
+  `WindowId`s); per-pane view state lives in `src/window.rs`
   alongside a `buffer_idx`; the renderer routes through a new
   `BufferState` struct (`src/app/state.rs`) so each pane reads its
   own buffer's state rather than mirroring the active one.
+- **Per-buffer split layouts.** Each tab in the tabline carries its
+  own layout. Splitting buffer A doesn't follow you when you `L` to
+  buffer B — B's tab shows up as a single window (or its own
+  previously-saved split state), and going back to A restores its
+  split intact. `App.active` and `App.active_tab` track the focused
+  buffer and the loaded tab separately; tab swaps via `H`/`L`/`:b`
+  stash the outgoing tab's layout into its `BufferStash` and load
+  the incoming one, while `:e` / picker keep the current tab and
+  only update the focused pane's buffer. Single-window `:e` also
+  slides the tabline highlight to the new buffer so the highlighted
+  tab matches what you actually see on screen.
+- **Split companions stay out of the tabline.** A file picked via
+  `<C-w>v` + picker is visible in its split pane but doesn't claim a
+  tab slot until you promote it. `<C-w>T` is the dedicated promote
+  binding (non-destructive: the split survives, the buffer just
+  gains a tab entry). `:b <name>` or `:e <path>` from another
+  single-window tab also promotes. The "is this buffer a tab" state
+  lives in an explicit `App.tabs: HashSet<usize>` so the rule
+  doesn't have to be inferred from the layout structure.
+- **Session: closed-buffers stay closed.** Quitting with no open
+  buffers (typically after `<leader>bA`) now deletes the saved
+  session file for the cwd. Previously the stale file lingered on
+  disk and the next launch silently revived every just-closed
+  buffer.
 - **`<leader>ba` / `<leader>bA` — close all buffers.** New buffer-prefix
   bindings that drop every open buffer in one keystroke. Lowercase
   refuses if any buffer is dirty (mirrors `<leader>bd`); uppercase forces

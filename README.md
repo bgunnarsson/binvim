@@ -1,6 +1,6 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters dispatched by extension (biome, csharpier, gofmt/goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter, plus `.editorconfig` reflow on every save), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters dispatched by extension (biome, csharpier, gofmt/goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter, plus `.editorconfig` reflow on every save), window splits with per-buffer layouts and pick-on-split (`<C-w>v` → picker → instant side-by-side), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 ## Features
 
@@ -204,11 +204,20 @@ picker so the new pane lands on a different file straight away —
 typical case is "show me file A on the left and file B on the right."
 The uppercase `<C-w>V` / `<C-w>S` keep Vim's classic behaviour of
 opening the *same* buffer in both panes (useful for viewing two parts
-of one long file with independent cursors). `:e other.txt` / `:b 2` /
-`H` / `L` all operate on the active pane only. Moving focus into a
-pane that points at a different buffer swaps the live buffer state
-under you, so each window keeps its own cursor, viewport, syntax
-highlighting, fold state, git stripe, and diagnostics.
+of one long file with independent cursors). `:e other.txt` swaps the
+focused pane's buffer without disturbing other panes. Moving focus
+into a pane that points at a different buffer swaps the live buffer
+state under you, so each window keeps its own cursor, viewport,
+syntax highlighting, fold state, git stripe, blame, and markdown
+concealed render.
+
+Splits are scoped to the tab they were created in. `H` / `L` / `:b N`
+cycle between *tabs*; each tab carries its own layout, so splitting
+in one tab doesn't bleed into the others. A file picked into a split
+via `<C-w>v` lives in that tab's layout but stays out of the tabline
+until you promote it — `<C-w>T` from its focused pane adds it as a
+tab (the split stays intact), or `:b <name>` from anywhere does the
+same as a side effect of jumping to it.
 
 ## Ex commands
 

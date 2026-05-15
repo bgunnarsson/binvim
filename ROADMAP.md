@@ -8,12 +8,15 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Editor
 
-- [x] **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o` / `<C-w>=`.** Vertical
-      and horizontal splits with independent cursors and viewports per pane, each window can show a
-      different buffer. `<C-w>` plus an integer to resize (e.g. `<C-w>10>` widen by 10 cols) is the
-      remaining bit of polish.
-- [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. Reuses
-      the split work above. After splits land. **planned**
+- [x] **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>V` / `<C-w>S` / `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o`
+      / `<C-w>=` / `<C-w>T`.** Vertical and horizontal splits with per-buffer layouts (each tab carries
+      its own split tree), independent cursors / viewports per pane, pick-on-split (default `<C-w>v`
+      opens the file picker so the new pane lands on a different file straight away), and Vim-style
+      same-buffer splits via the uppercase variants. **Shipped in 0.1.8.**
+- [ ] **`<C-w>` + integer resize.** `<C-w>10>` to widen by 10 cols, `<C-w>5<` to shrink, etc. Mostly a
+      parser change — the layout tree already carries a ratio on every split node. **next**
+- [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. The
+      split work is done; this is the PTY + scrollback widget on top. **next**
 - [ ] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Persist across sessions alongside the existing session file. **next**
 - [ ] **Tab completion in `:` ex commands.** Filenames after `:e`, buffer names after `:b`, command names from
@@ -81,8 +84,10 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [ ] **Inline AI completion.** Ghost text from a model (Claude / a local LLM) rendered the same way LSP
       completion ghosts work today. Trigger on idle pause; accept with `<Tab>`. Pluggable backend so users can
       point at whichever endpoint. **planned**
-- [ ] **`:claude` chat sidebar.** A right-pane conversation tied to the active buffer / selection. Out of
-      scope until splits land. **considering**
+- [ ] **`:claude` chat sidebar.** A right-pane conversation tied to the active buffer / selection.
+      Unblocked by splits — would render as a vertical pane in the current tab's layout, with the chat
+      buffer as a normal `Buffer` so all editor affordances (yank, search, copy code blocks) just work.
+      **considering**
 
 ## Architecture / non-goals
 
