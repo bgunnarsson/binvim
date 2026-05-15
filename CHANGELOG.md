@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-15
+
 ### Fixed
 - **Start page survives a history-only relaunch.** With the cmdline-
   history change keeping the per-cwd session file alive across a
@@ -1128,7 +1130,8 @@ covered by its bundled language stack.
 - `bim` symlink installed alongside the `binvim` binary.
 - binman-style local release scripts.
 
-[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/bgunnarsson/binvim/releases/tag/v0.2.1
 [0.2.0]: https://github.com/bgunnarsson/binvim/releases/tag/v0.2.0
 [0.1.8]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.8
 [0.1.7]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.7
