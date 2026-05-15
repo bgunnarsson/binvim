@@ -311,6 +311,9 @@ show = true   # space=`·`, tab=`→ `, nbsp=`⎵`, eol=`¬`. On by default.
 
 [line_numbers]
 relative = true   # cursor row shows absolute, others show distance. On by default.
+
+[copilot]
+enabled = false   # GitHub Copilot via copilot-language-server (npm). Off by default.
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head (`keyword.return` overrides `keyword`).
@@ -320,6 +323,8 @@ relative = true   # cursor row shows absolute, others show distance. On by defau
 **`[whitespace]`** — `show = true` (the default) renders every space as `·`, every tab as `→` plus space-fill to the tab width, every non-breaking space (U+00A0) as `⎵`, and the end-of-line as `¬`. All in the muted overlay colour. Set `show = false` to disable.
 
 **`[line_numbers]`** — `relative = true` (the default) renders the gutter Vim-style: the cursor's row shows its absolute (1-indexed) line in a brighter Subtext1 tone, every other row shows the count of lines away from the cursor. Pairs naturally with count-prefixed motions like `5j` / `12k` / `3dd`. Set `relative = false` to fall back to plain 1-indexed numbering on every row.
+
+**`[copilot]`** — `enabled = true` opts into GitHub Copilot. binvim attaches `copilot-language-server` (npm package `@github/copilot-language-server`, install with `npm i -g @github/copilot-language-server`) as an auxiliary LSP for every buffer; authentication happens out-of-process via the server's own sign-in flow (run the binary once and follow the device-code prompt; the token persists at `~/.config/github-copilot/hosts.json`). binvim itself doesn't carry an HTTP client or talk to GitHub directly — the language server handles all networking and auth. Default is `enabled = false`. *Note: the visible surface (inline ghost completions, sign-in status in the status line) is landing in a follow-up; the foundation lets you attach the server today and see it in `:health`.*
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 
