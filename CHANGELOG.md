@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-15
+
 ### Added
 - **GitHub Copilot integration via `copilot-language-server`.** Opt
   in with `[copilot] enabled = true` in `~/.config/binvim/config.toml`
@@ -1062,7 +1064,8 @@ covered by its bundled language stack.
 - `bim` symlink installed alongside the `binvim` binary.
 - binman-style local release scripts.
 
-[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/bgunnarsson/binvim/releases/tag/v0.2.0
 [0.1.8]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.8
 [0.1.7]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.7
 [0.1.6]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.6
