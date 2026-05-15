@@ -1,0 +1,50 @@
+# Visual Studio Code — Dark+ default theme
+schema_version = 1
+
+[colors]
+comment           = "#6a9955"
+string            = "#ce9178"
+"string.escape"   = "#d7ba7d"
+character         = "#ce9178"
+escape            = "#d7ba7d"
+regex             = "#d16969"
+
+keyword           = "#569cd6"
+"keyword.return"  = "#c586c0"
+"keyword.control" = "#c586c0"
+include           = "#c586c0"
+conditional       = "#c586c0"
+repeat            = "#c586c0"
+exception         = "#c586c0"
+operator          = "#d4d4d4"
+
+function          = "#dcdcaa"
+"function.call"   = "#dcdcaa"
+method            = "#dcdcaa"
+"method.call"     = "#dcdcaa"
+macro             = "#dcdcaa"
+preproc           = "#c586c0"
+
+type              = "#4ec9b0"
+constructor       = "#4ec9b0"
+namespace         = "#4ec9b0"
+module            = "#4ec9b0"
+attribute         = "#9cdcfe"
+
+constant          = "#4fc1ff"
+boolean           = "#569cd6"
+number            = "#b5cea8"
+float             = "#b5cea8"
+
+tag               = "#569cd6"
+"tag.attribute"   = "#9cdcfe"
+label             = "#c8c8c8"
+property          = "#9cdcfe"
+key               = "#9cdcfe"
+parameter         = "#9cdcfe"
+variable          = "#9cdcfe"
+"variable.builtin" = "#569cd6"
+punctuation       = "#d4d4d4"
+
+title             = "#569cd6"
+text              = "#d4d4d4"

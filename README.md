@@ -319,7 +319,7 @@ Ready-made `[colors]` blocks live in [`themes/`](themes/) — one folder per the
 
 | Dark themes | Light themes |
 | --- | --- |
-| `dracula`, `tokyo-night`, `one-dark`, `github-dark`, `catppuccin-mocha`, `night-owl`, `gruvbox`, `nord` | `github-light`, `solarized-light`, `catppuccin-latte`, `ayu-light`, `light-owl` |
+| `dracula`, `tokyo-night`, `one-dark`, `github-dark`, `catppuccin-mocha`, `night-owl`, `gruvbox`, `nord`, `visual-studio` | `github-light`, `solarized-light`, `catppuccin-latte`, `ayu-light`, `light-owl` |
 
 There is no built-in theme loader — copy the file contents into your `~/.config/binvim/config.toml`, e.g.:
 

@@ -10,8 +10,9 @@ follows [Semantic Versioning](https://semver.org/).
 - **Theme presets — `themes/<name>/theme.toml`.** Drop-in `[colors]`
   blocks for the most common editor themes: Dracula, Tokyo Night,
   One Dark, GitHub Dark, Catppuccin Mocha, Night Owl, Gruvbox, Nord,
-  GitHub Light, Solarized Light, Catppuccin Latte, Ayu Light, and
-  Light Owl. There is no built-in theme loader — copy the contents
+  Visual Studio (Dark+), GitHub Light, Solarized Light, Catppuccin
+  Latte, Ayu Light, and Light Owl. There is no built-in theme loader
+  — copy the contents
   of any `theme.toml` into your `~/.config/binvim/config.toml` (or
   `cat themes/dracula/theme.toml >> ~/.config/binvim/config.toml`)
   to apply it. The baked-in default palette remains Catppuccin
