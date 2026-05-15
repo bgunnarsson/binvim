@@ -315,6 +315,33 @@ impl super::App {
         digits + 3
     }
 
+    /// Full editor rect — the band between the tab bar (if any) and the
+    /// status line / cmdline / debug pane. With splits, this is the
+    /// rectangle partitioned by `App.layout` into per-window rects.
+    pub fn editor_rect(&self) -> crate::layout::Rect {
+        crate::layout::Rect {
+            x: 0,
+            y: self.buffer_top() as u16,
+            w: self.width,
+            h: self.buffer_rows() as u16,
+        }
+    }
+
+    /// Rect of the currently-focused window. Used by overlays (cursor
+    /// placement, hover popup, signature popup, completion popup) that
+    /// anchor on the active cursor's terminal coordinates.
+    pub fn active_pane_rect(&self) -> crate::layout::Rect {
+        for (id, r) in self.layout.partition(self.editor_rect()) {
+            if id == self.active_window {
+                return r;
+            }
+        }
+        // Fallback — shouldn't happen because the layout always contains
+        // the active window. Returning the full editor rect keeps the
+        // renderer from panicking if invariants drift.
+        self.editor_rect()
+    }
+
     /// Hunk kind covering `line` (0-indexed), if any. Linear scan over the
     /// active buffer's `git_hunks` — typical hunk counts are well under
     /// 100, and we call this per-visible-row at render time only.

@@ -8,10 +8,10 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Editor
 
-- [ ] **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l`.** Currently every buffer takes the full editor
-      area; tabs cover "many open files" but not "two files side-by-side." This is the single biggest Vim
-      feature still missing. Touches `App` (window tree instead of one active buffer), `render.rs` (rect
-      partitioning), and viewport math per-pane. **next**
+- [x] **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o` / `<C-w>=`.** Vertical
+      and horizontal splits with independent cursors and viewports per pane. Splits currently share the
+      active buffer across all panes — per-window buffer switching (each pane shows a different file)
+      is the remaining piece. **next**
 - [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. Reuses
       the split work above. After splits land. **planned**
 - [ ] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.

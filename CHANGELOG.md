@@ -7,6 +7,19 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l` / `<C-w>q` /
+  `<C-w>o` / `<C-w>=`.** Vertical and horizontal splits with
+  independent cursors and viewports per pane. Focus moves
+  geometrically — `<C-w>l` picks the right-side neighbour with the
+  largest vertical overlap, matching Vim's spatial intuition. Closing
+  the active window collapses its space into the sibling that absorbed
+  it; `<C-w>o` collapses everything down to just the active pane.
+  Splits currently share the same buffer across all panes — per-window
+  buffer switching is the next step. The split tree lives in
+  `src/layout.rs` (binary tree of `WindowId`s, leaves carry no inline
+  state); per-pane view state lives in `src/window.rs` and is stashed
+  in `App.windows` for inactive panes, swapped onto `App.window` when
+  focus moves.
 - **`<leader>ba` / `<leader>bA` — close all buffers.** New buffer-prefix
   bindings that drop every open buffer in one keystroke. Lowercase
   refuses if any buffer is dirty (mirrors `<leader>bd`); uppercase forces

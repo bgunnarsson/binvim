@@ -38,6 +38,7 @@ mod search;
 mod state;
 mod view;
 mod visual;
+mod windows;
 
 pub use health::{DiagnosticsCounts, HealthSnapshot};
 pub use state::{

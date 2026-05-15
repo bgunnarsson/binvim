@@ -218,6 +218,18 @@ pub enum Action {
     /// `<leader>hr` — discard the working-tree change for the hunk under
     /// the cursor (reset to the staged version).
     HunkReset,
+    /// `<C-w>v` — split the active window vertically (new pane on the right).
+    WindowSplitVertical,
+    /// `<C-w>s` — split the active window horizontally (new pane below).
+    WindowSplitHorizontal,
+    /// `<C-w>h/j/k/l` — focus the spatially-nearest neighbouring window.
+    WindowFocus { dir: crate::layout::FocusDir },
+    /// `<C-w>q` / `<C-w>c` — close the active window. Refuses if it's the last one.
+    WindowClose,
+    /// `<C-w>o` — close every window except the active one.
+    WindowOnly,
+    /// `<C-w>=` — reset every split ratio to 0.5.
+    WindowEqualize,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -265,6 +277,10 @@ pub struct PendingCmd {
     /// Set after `<leader>h` — next char picks a git-hunk action
     /// (`p` preview, `s` stage, `u` unstage, `r` reset).
     pub awaiting_hunk_leader: bool,
+    /// Set after `<C-w>` — next char picks a window action
+    /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
+    /// Wired in Normal mode only; cancels on any unrecognised follow-up.
+    pub awaiting_window_leader: bool,
 }
 
 impl PendingCmd {
@@ -424,6 +440,13 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 let count = state.total_count();
                 state.reset();
                 ParseResult::Action(Action::MoveLine { down: false, count })
+            }
+            // <C-w> in Normal mode opens the window-leader prefix —
+            // the next char picks a split / focus / close action.
+            'w' | 'W' if matches!(ctx, ParseCtx::Normal) => {
+                state.reset();
+                state.awaiting_window_leader = true;
+                ParseResult::Pending
             }
             _ => ParseResult::Pending,
         };
@@ -656,6 +679,30 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // doc-symbol / workspace-symbol pickers — Step out moves to `O`
     // (capital sibling of step-over `n` / step-in `i`) and Stop session
     // moves to `q` (matches the `:q` mnemonic).
+    // Window-prefix dispatch (after `<C-w>`). Mirrors Vim:
+    // `v` / `s` split; `h/j/k/l` focus a neighbour; `q` / `c` close;
+    // `o` close-others; `=` equalize. Anything else cancels.
+    if state.awaiting_window_leader {
+        state.awaiting_window_leader = false;
+        let action = match ch {
+            'v' => Some(Action::WindowSplitVertical),
+            's' => Some(Action::WindowSplitHorizontal),
+            'h' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Left }),
+            'j' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Down }),
+            'k' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Up }),
+            'l' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Right }),
+            'q' | 'c' => Some(Action::WindowClose),
+            'o' => Some(Action::WindowOnly),
+            '=' => Some(Action::WindowEqualize),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
     // Git-hunk prefix dispatch (after `<leader>h`).
     if state.awaiting_hunk_leader {
         state.awaiting_hunk_leader = false;

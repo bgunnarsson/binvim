@@ -185,6 +185,21 @@ Hold `<space>` (or `<space>b` / `<space>d`) for ~250 ms and a which-key popup li
 | Click `×` on a tab    | Close it (refuses dirty)                     |
 | Click `‹` / `›`       | Scroll the visible tab slice by one          |
 
+## Window splits
+
+| Keys              | Action                                                       |
+|-------------------|--------------------------------------------------------------|
+| `<C-w> v`         | Split the active window vertically (new pane on the right)   |
+| `<C-w> s`         | Split the active window horizontally (new pane below)        |
+| `<C-w> h/j/k/l`   | Focus the neighbouring window on the left/down/up/right      |
+| `<C-w> q` / `c`   | Close the active window (refuses if it's the last one)       |
+| `<C-w> o`         | Close every window except the active one                     |
+| `<C-w> =`         | Reset every split ratio back to 50/50                        |
+
+Splits currently share the same buffer across panes — each window has
+its own cursor and viewport. Per-window buffer switching (`:b` only
+changes the active pane's file) is the next step.
+
 ## Ex commands
 
 Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:

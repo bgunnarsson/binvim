@@ -18,7 +18,29 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if app.show_tabs() {
         draw_tab_bar(out, app)?;
     }
-    draw_buffer(out, app)?;
+    // Start / health pages take over the full editor area — splits stay
+    // dormant while they're up so the user isn't looking at a partitioned
+    // "[No Name]" placeholder.
+    if app.show_health_page {
+        draw_health_page(out, app)?;
+    } else if app.show_start_page {
+        draw_start_page(out, app)?;
+    } else {
+        let editor_rect = app.editor_rect();
+        let panes = app.layout.partition(editor_rect);
+        for (id, rect) in &panes {
+            let is_active = *id == app.active_window;
+            let window = if is_active {
+                &app.window
+            } else {
+                app.windows
+                    .get(id)
+                    .expect("layout window id not present in App.windows")
+            };
+            draw_buffer(out, app, window, *rect, is_active)?;
+        }
+        draw_pane_dividers(out, app, editor_rect)?;
+    }
     draw_debug_pane(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
@@ -2619,19 +2641,70 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
-    if app.show_health_page {
-        return draw_health_page(out, app);
+/// Paint the 1-cell gaps left between pane rects by `Layout::partition`.
+/// Vertical gaps get a `│` glyph, horizontal gaps `─`; the colour is
+/// Surface1 — same hue as the empty `~` placeholders, dim enough not to
+/// fight with content but visible against the editor background.
+fn draw_pane_dividers(
+    out: &mut impl Write,
+    app: &App,
+    editor_rect: crate::layout::Rect,
+) -> Result<()> {
+    let panes = app.layout.partition(editor_rect);
+    let surface1 = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a };
+    queue!(out, SetForegroundColor(surface1))?;
+    // Vertical bars: any column directly between two horizontally
+    // adjacent panes that share at least one row.
+    for (i, (_, a)) in panes.iter().enumerate() {
+        for (j, (_, b)) in panes.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            // `b` sits immediately to the right of `a` if the column
+            // between them is unclaimed by any pane.
+            if a.x + a.w + 1 == b.x {
+                let lo = a.y.max(b.y);
+                let hi = (a.y + a.h).min(b.y + b.h);
+                if hi > lo {
+                    let col = a.x + a.w;
+                    for row in lo..hi {
+                        queue!(out, MoveTo(col, row), Print("│"))?;
+                    }
+                }
+            }
+            // `b` sits immediately below `a`.
+            if a.y + a.h + 1 == b.y {
+                let lo = a.x.max(b.x);
+                let hi = (a.x + a.w).min(b.x + b.w);
+                if hi > lo {
+                    let row = a.y + a.h;
+                    queue!(out, MoveTo(lo, row))?;
+                    for _ in lo..hi {
+                        queue!(out, Print("─"))?;
+                    }
+                }
+            }
+        }
     }
-    if app.show_start_page {
-        return draw_start_page(out, app);
-    }
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
+    queue!(out, ResetColor)?;
+    Ok(())
+}
+
+fn draw_buffer(
+    out: &mut impl Write,
+    app: &App,
+    win: &crate::window::Window,
+    rect: crate::layout::Rect,
+    is_active: bool,
+) -> Result<()> {
+    let rows = rect.h as usize;
+    let top = rect.y as usize;
+    let left = rect.x as usize;
+    let pane_w = rect.w as usize;
     let gutter = app.gutter_width();
-    let avail = (app.width as usize).saturating_sub(gutter);
+    let avail = pane_w.saturating_sub(gutter);
     let total_lines = app.buffer.line_count();
-    let mut line_idx = app.window.view_top;
+    let mut line_idx = win.view_top;
     // Skip any lines that are hidden — by a closed fold or by the
     // markdown concealed-render pass (HTML chrome, setext
     // underlines) — from the start of the viewport so the first
@@ -2662,10 +2735,20 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
         }
         _ => None,
     };
+    // Pre-built blanker the same width as this pane — used in place of
+    // `Clear(ClearType::CurrentLine)` so we don't nuke any pane sitting
+    // to the left or right of us on the same terminal row.
+    let pane_blank: String = " ".repeat(pane_w);
     for row in 0..rows {
-        // Clear the row before drawing — guards against terminal-side wrap
-        // from the previous row's render leaking onto this one.
-        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
+        // Wipe this pane's row (leaves adjacent panes untouched), then
+        // return the cursor to the pane's left edge so the per-line draw
+        // below starts in the right column.
+        queue!(
+            out,
+            MoveTo(left as u16, (row + top) as u16),
+            Print(&pane_blank),
+            MoveTo(left as u16, (row + top) as u16),
+        )?;
         if line_idx < total_lines {
             // Git stripe — leftmost gutter column. Mirrors gitsigns /
             // GitGutter conventions: a coloured vertical block for
@@ -2735,12 +2818,12 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
             // cursor row gets a brighter Subtext1 tone so the eye can
             // anchor on it; other rows stay the muted Overlay0.
             let (label, label_color) = if app.config.line_numbers.relative
-                && line_idx != app.window.cursor.line
+                && line_idx != win.cursor.line
             {
-                let dist = if line_idx > app.window.cursor.line {
-                    line_idx - app.window.cursor.line
+                let dist = if line_idx > win.cursor.line {
+                    line_idx - win.cursor.line
                 } else {
-                    app.window.cursor.line - line_idx
+                    win.cursor.line - line_idx
                 };
                 (
                     format!("{:>width$} ", dist, width = gutter - 3),
@@ -2760,7 +2843,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
                 )
             };
             queue!(out, SetForegroundColor(label_color), Print(label), ResetColor)?;
-            draw_line_with_selection(out, app, line_idx, avail)?;
+            draw_line_with_selection(out, app, win, line_idx, avail, is_active)?;
             // Fold-start placeholder: append `… N lines` after the line's
             // own content so the user sees what's collapsed.
             if app.line_is_fold_start(line_idx) {
@@ -2799,8 +2882,10 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
 fn draw_line_with_selection(
     out: &mut impl Write,
     app: &App,
+    win: &crate::window::Window,
     line_idx: usize,
     avail: usize,
+    is_active: bool,
 ) -> Result<()> {
     let slice = app.buffer.rope.line(line_idx);
     let mut text: String = slice.chars().collect();
@@ -2813,14 +2898,30 @@ fn draw_line_with_selection(
     if text.ends_with('\r') {
         text.pop();
     }
-    let sel = app.line_selection(line_idx);
-    let extra_sels = app.line_extra_selections(line_idx);
+    // Per-window UI affordances (selection, match-pair, multi-cursor,
+    // yank flash) are tied to the active cursor — Vim shows them only
+    // in the focused pane. Inactive panes still paint the buffer + git
+    // stripe + diagnostics, just without the active-cursor decoration.
+    let sel = if is_active { app.line_selection(line_idx) } else { None };
+    let extra_sels = if is_active {
+        app.line_extra_selections(line_idx)
+    } else {
+        Vec::new()
+    };
     let search_matches = app.line_search_matches(line_idx);
-    let yank_flash = app.line_yank_highlight(line_idx);
-    let match_pair = app.line_match_pair(line_idx);
+    let yank_flash = if is_active {
+        app.line_yank_highlight(line_idx)
+    } else {
+        None
+    };
+    let match_pair = if is_active {
+        app.line_match_pair(line_idx)
+    } else {
+        Vec::new()
+    };
     let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
-    let view_left = app.window.view_left;
+    let view_left = win.view_left;
     // Visual column from the start of the line — tracks where each char
     // would land if `view_left == 0`. Subtract `view_left` to get the
     // on-screen column.
@@ -2833,7 +2934,11 @@ fn draw_line_with_selection(
     // Multi-cursor positions on this line — the renderer paints a
     // Lavender block at each so the user can see where mirrored edits
     // will land.
-    let multi_cursors: Vec<usize> = app.line_multi_cursor_cols(line_idx);
+    let multi_cursors: Vec<usize> = if is_active {
+        app.line_multi_cursor_cols(line_idx)
+    } else {
+        Vec::new()
+    };
 
     // Pre-bin inlay hints by column so we can render them inline at the
     // start of each char iteration (and once more after the last char,
@@ -4082,12 +4187,18 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let gutter = app.gutter_width();
+    // Cursor lives inside the active pane — translate the cursor's
+    // logical row/col into terminal coords through that pane's rect,
+    // not the full editor area.
+    let pane = app.active_pane_rect();
     // Hidden rows (folded code blocks, markdown chrome like
     // `<details>`/`</details>`) collapse out of the visible render,
     // so the cursor's on-screen row needs to count *visible* rows
     // between view_top and the cursor's source line — not the raw
     // line-index delta.
-    let row = (app.visible_rows_between(app.window.view_top, app.window.cursor.line) + app.buffer_top()) as u16;
+    let row = pane.y
+        + app
+            .visible_rows_between(app.window.view_top, app.window.cursor.line) as u16;
     let line = app.buffer.rope.line(app.window.cursor.line);
     // Per-buffer-col inlay-hint widths so the cursor's visual position
     // accounts for them. Without this, the cursor renders at the visual
@@ -4115,7 +4226,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
                 TAB_WIDTH,
             );
             let on_screen = visual.saturating_sub(app.window.view_left);
-            let col = (gutter + on_screen) as u16;
+            let col = pane.x + (gutter + on_screen) as u16;
             queue!(out, MoveTo(col, row))?;
             return Ok(());
         }
@@ -4145,7 +4256,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // Account for horizontal scroll. `adjust_viewport` keeps the cursor
     // within `[view_left, view_left + buffer_cols)`, so subtraction is safe.
     let on_screen = visual.saturating_sub(app.window.view_left);
-    let col = (gutter + on_screen) as u16;
+    let col = pane.x + (gutter + on_screen) as u16;
     queue!(out, MoveTo(col, row))?;
     Ok(())
 }
