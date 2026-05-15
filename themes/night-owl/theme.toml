@@ -1,0 +1,49 @@
+# Night Owl — https://github.com/sdras/night-owl-vscode-theme
+schema_version = 1
+
+[colors]
+comment           = "#637777"
+string            = "#ecc48d"
+"string.escape"   = "#f78c6c"
+character         = "#ecc48d"
+escape            = "#f78c6c"
+regex             = "#5ca7e4"
+
+keyword           = "#c792ea"
+"keyword.return"  = "#c792ea"
+include           = "#c792ea"
+conditional       = "#c792ea"
+repeat            = "#c792ea"
+exception         = "#c792ea"
+operator          = "#c792ea"
+
+function          = "#82aaff"
+"function.call"   = "#82aaff"
+method            = "#82aaff"
+"method.call"     = "#82aaff"
+macro             = "#82aaff"
+preproc           = "#c792ea"
+
+type              = "#ffcb8b"
+constructor       = "#ffcb8b"
+namespace         = "#ffcb8b"
+module            = "#ffcb8b"
+attribute         = "#addb67"
+
+constant          = "#f78c6c"
+boolean           = "#ff5874"
+number            = "#f78c6c"
+float             = "#f78c6c"
+
+tag               = "#7fdbca"
+"tag.attribute"   = "#addb67"
+label             = "#82aaff"
+property          = "#80cbc4"
+key               = "#7fdbca"
+parameter         = "#d6deeb"
+variable          = "#d6deeb"
+"variable.builtin" = "#ff5874"
+punctuation       = "#c792ea"
+
+title             = "#82aaff"
+text              = "#d6deeb"

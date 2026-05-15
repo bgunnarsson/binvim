@@ -306,6 +306,22 @@ relative = true   # cursor row shows absolute, others show distance. On by defau
 
 A missing or malformed config is ignored — the baked-in Catppuccin Mocha palette is used.
 
+### Theme presets
+
+Ready-made `[colors]` blocks live in [`themes/`](themes/) — one folder per theme, each containing a `theme.toml`:
+
+| Dark themes | Light themes |
+| --- | --- |
+| `dracula`, `tokyo-night`, `one-dark`, `github-dark`, `catppuccin-mocha`, `night-owl`, `gruvbox`, `nord` | `github-light`, `solarized-light`, `catppuccin-latte`, `ayu-light`, `light-owl` |
+
+There is no built-in theme loader — copy the file contents into your `~/.config/binvim/config.toml`, e.g.:
+
+```sh
+cat themes/tokyo-night/theme.toml >> ~/.config/binvim/config.toml
+```
+
+The baked-in default is Catppuccin Mocha; `themes/catppuccin-mocha/theme.toml` mirrors it explicitly as a copy-paste starting point.
+
 ## Licence
 
 Source-available, not open source. Copyright (c) 2026 B. Gunnarsson — see [LICENSE](LICENSE) for the full text. In short: you may read the source, run it locally, modify your own copy, and submit pull requests upstream. You may not redistribute, publicly fork, or run it as a hosted service. For anything outside that scope, contact the licensor on Twitter/X at [@bgunnarssonis](https://twitter.com/bgunnarssonis).

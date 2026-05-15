@@ -1,0 +1,49 @@
+# Tokyo Night — https://github.com/folke/tokyonight.nvim
+schema_version = 1
+
+[colors]
+comment           = "#565f89"
+string            = "#9ece6a"
+"string.escape"   = "#b4f9f8"
+character         = "#9ece6a"
+escape            = "#b4f9f8"
+regex             = "#b4f9f8"
+
+keyword           = "#bb9af7"
+"keyword.return"  = "#bb9af7"
+include           = "#7dcfff"
+conditional       = "#bb9af7"
+repeat            = "#bb9af7"
+exception         = "#bb9af7"
+operator          = "#89ddff"
+
+function          = "#7aa2f7"
+"function.call"   = "#7aa2f7"
+method            = "#7aa2f7"
+"method.call"     = "#7aa2f7"
+macro             = "#7dcfff"
+preproc           = "#7dcfff"
+
+type              = "#2ac3de"
+constructor       = "#2ac3de"
+namespace         = "#c0caf5"
+module            = "#c0caf5"
+attribute         = "#7dcfff"
+
+constant          = "#ff9e64"
+boolean           = "#ff9e64"
+number            = "#ff9e64"
+float             = "#ff9e64"
+
+tag               = "#f7768e"
+"tag.attribute"   = "#bb9af7"
+label             = "#7dcfff"
+property          = "#73daca"
+key               = "#7dcfff"
+parameter         = "#e0af68"
+variable          = "#c0caf5"
+"variable.builtin" = "#f7768e"
+punctuation       = "#89ddff"
+
+title             = "#7aa2f7"
+text              = "#c0caf5"

@@ -1,0 +1,49 @@
+# Nord — https://www.nordtheme.com
+schema_version = 1
+
+[colors]
+comment           = "#616e88"
+string            = "#a3be8c"
+"string.escape"   = "#ebcb8b"
+character         = "#a3be8c"
+escape            = "#ebcb8b"
+regex             = "#ebcb8b"
+
+keyword           = "#81a1c1"
+"keyword.return"  = "#81a1c1"
+include           = "#81a1c1"
+conditional       = "#81a1c1"
+repeat            = "#81a1c1"
+exception         = "#81a1c1"
+operator          = "#81a1c1"
+
+function          = "#88c0d0"
+"function.call"   = "#88c0d0"
+method            = "#88c0d0"
+"method.call"     = "#88c0d0"
+macro             = "#88c0d0"
+preproc           = "#5e81ac"
+
+type              = "#8fbcbb"
+constructor       = "#8fbcbb"
+namespace         = "#8fbcbb"
+module            = "#8fbcbb"
+attribute         = "#8fbcbb"
+
+constant          = "#b48ead"
+boolean           = "#b48ead"
+number            = "#b48ead"
+float             = "#b48ead"
+
+tag               = "#81a1c1"
+"tag.attribute"   = "#8fbcbb"
+label             = "#88c0d0"
+property          = "#d8dee9"
+key               = "#8fbcbb"
+parameter         = "#d8dee9"
+variable          = "#d8dee9"
+"variable.builtin" = "#5e81ac"
+punctuation       = "#eceff4"
+
+title             = "#88c0d0"
+text              = "#d8dee9"

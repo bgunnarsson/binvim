@@ -1,0 +1,49 @@
+# GitHub Light — https://github.com/primer/github-vscode-theme
+schema_version = 1
+
+[colors]
+comment           = "#6e7781"
+string            = "#0a3069"
+"string.escape"   = "#0550ae"
+character         = "#0a3069"
+escape            = "#0550ae"
+regex             = "#116329"
+
+keyword           = "#cf222e"
+"keyword.return"  = "#cf222e"
+include           = "#cf222e"
+conditional       = "#cf222e"
+repeat            = "#cf222e"
+exception         = "#cf222e"
+operator          = "#cf222e"
+
+function          = "#8250df"
+"function.call"   = "#8250df"
+method            = "#8250df"
+"method.call"     = "#8250df"
+macro             = "#8250df"
+preproc           = "#cf222e"
+
+type              = "#953800"
+constructor       = "#953800"
+namespace         = "#953800"
+module            = "#953800"
+attribute         = "#116329"
+
+constant          = "#0550ae"
+boolean           = "#0550ae"
+number            = "#0550ae"
+float             = "#0550ae"
+
+tag               = "#116329"
+"tag.attribute"   = "#0550ae"
+label             = "#0550ae"
+property          = "#0550ae"
+key               = "#0550ae"
+parameter         = "#953800"
+variable          = "#24292f"
+"variable.builtin" = "#0550ae"
+punctuation       = "#24292f"
+
+title             = "#0550ae"
+text              = "#24292f"

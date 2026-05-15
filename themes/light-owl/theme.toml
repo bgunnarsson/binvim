@@ -1,0 +1,49 @@
+# Light Owl — light variant of Night Owl
+schema_version = 1
+
+[colors]
+comment           = "#989fb1"
+string            = "#4876d6"
+"string.escape"   = "#c96765"
+character         = "#4876d6"
+escape            = "#c96765"
+regex             = "#aa0982"
+
+keyword           = "#994cc3"
+"keyword.return"  = "#994cc3"
+include           = "#994cc3"
+conditional       = "#994cc3"
+repeat            = "#994cc3"
+exception         = "#994cc3"
+operator          = "#994cc3"
+
+function          = "#4876d6"
+"function.call"   = "#4876d6"
+method            = "#4876d6"
+"method.call"     = "#4876d6"
+macro             = "#4876d6"
+preproc           = "#994cc3"
+
+type              = "#c96765"
+constructor       = "#c96765"
+namespace         = "#403f53"
+module            = "#403f53"
+attribute         = "#bc5454"
+
+constant          = "#aa0982"
+boolean           = "#aa0982"
+number            = "#aa0982"
+float             = "#aa0982"
+
+tag               = "#994cc3"
+"tag.attribute"   = "#bc5454"
+label             = "#4876d6"
+property          = "#0c969b"
+key               = "#0c969b"
+parameter         = "#403f53"
+variable          = "#403f53"
+"variable.builtin" = "#c96765"
+punctuation       = "#994cc3"
+
+title             = "#4876d6"
+text              = "#403f53"

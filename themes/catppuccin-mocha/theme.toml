@@ -1,0 +1,51 @@
+# Catppuccin Mocha — https://github.com/catppuccin/catppuccin
+# This mirrors the baked-in default palette, but provided explicitly so
+# users can copy it as a starting point.
+schema_version = 1
+
+[colors]
+comment           = "#7f849c"
+string            = "#a6e3a1"
+"string.escape"   = "#f5c2e7"
+character         = "#94e2d5"
+escape            = "#f5c2e7"
+regex             = "#f5c2e7"
+
+keyword           = "#cba6f7"
+"keyword.return"  = "#cba6f7"
+include           = "#cba6f7"
+conditional       = "#cba6f7"
+repeat            = "#cba6f7"
+exception         = "#cba6f7"
+operator          = "#89dceb"
+
+function          = "#89b4fa"
+"function.call"   = "#89b4fa"
+method            = "#89b4fa"
+"method.call"     = "#89b4fa"
+macro             = "#fab387"
+preproc           = "#fab387"
+
+type              = "#f9e2af"
+constructor       = "#f9e2af"
+namespace         = "#f9e2af"
+module            = "#f9e2af"
+attribute         = "#f9e2af"
+
+constant          = "#fab387"
+boolean           = "#fab387"
+number            = "#fab387"
+float             = "#fab387"
+
+tag               = "#f5c2e7"
+"tag.attribute"   = "#f9e2af"
+label             = "#74c7ec"
+property          = "#b4befe"
+key               = "#b4befe"
+parameter         = "#eba0ac"
+variable          = "#cdd6f4"
+"variable.builtin" = "#f38ba8"
+punctuation       = "#9399b2"
+
+title             = "#f9e2af"
+text              = "#cdd6f4"

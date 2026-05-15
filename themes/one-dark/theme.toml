@@ -1,0 +1,49 @@
+# One Dark — Atom's iconic theme
+schema_version = 1
+
+[colors]
+comment           = "#5c6370"
+string            = "#98c379"
+"string.escape"   = "#56b6c2"
+character         = "#98c379"
+escape            = "#56b6c2"
+regex             = "#56b6c2"
+
+keyword           = "#c678dd"
+"keyword.return"  = "#c678dd"
+include           = "#c678dd"
+conditional       = "#c678dd"
+repeat            = "#c678dd"
+exception         = "#c678dd"
+operator          = "#56b6c2"
+
+function          = "#61afef"
+"function.call"   = "#61afef"
+method            = "#61afef"
+"method.call"     = "#61afef"
+macro             = "#61afef"
+preproc           = "#c678dd"
+
+type              = "#e5c07b"
+constructor       = "#e5c07b"
+namespace         = "#e5c07b"
+module            = "#e5c07b"
+attribute         = "#d19a66"
+
+constant          = "#d19a66"
+boolean           = "#d19a66"
+number            = "#d19a66"
+float             = "#d19a66"
+
+tag               = "#e06c75"
+"tag.attribute"   = "#d19a66"
+label             = "#61afef"
+property          = "#e06c75"
+key               = "#e06c75"
+parameter         = "#abb2bf"
+variable          = "#abb2bf"
+"variable.builtin" = "#e06c75"
+punctuation       = "#abb2bf"
+
+title             = "#e06c75"
+text              = "#abb2bf"

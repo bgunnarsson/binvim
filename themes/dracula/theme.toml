@@ -1,0 +1,49 @@
+# Dracula — https://draculatheme.com
+schema_version = 1
+
+[colors]
+comment           = "#6272a4"
+string            = "#f1fa8c"
+"string.escape"   = "#ff79c6"
+character         = "#f1fa8c"
+escape            = "#ff79c6"
+regex             = "#f1fa8c"
+
+keyword           = "#ff79c6"
+"keyword.return"  = "#ff79c6"
+include           = "#ff79c6"
+conditional       = "#ff79c6"
+repeat            = "#ff79c6"
+exception         = "#ff79c6"
+operator          = "#ff79c6"
+
+function          = "#50fa7b"
+"function.call"   = "#50fa7b"
+method            = "#50fa7b"
+"method.call"     = "#50fa7b"
+macro             = "#50fa7b"
+preproc           = "#ff79c6"
+
+type              = "#8be9fd"
+constructor       = "#8be9fd"
+namespace         = "#8be9fd"
+module            = "#8be9fd"
+attribute         = "#50fa7b"
+
+constant          = "#bd93f9"
+boolean           = "#bd93f9"
+number            = "#bd93f9"
+float             = "#bd93f9"
+
+tag               = "#ff79c6"
+"tag.attribute"   = "#50fa7b"
+label             = "#8be9fd"
+property          = "#f8f8f2"
+key               = "#8be9fd"
+parameter         = "#ffb86c"
+variable          = "#f8f8f2"
+"variable.builtin" = "#bd93f9"
+punctuation       = "#f8f8f2"
+
+title             = "#bd93f9"
+text              = "#f8f8f2"

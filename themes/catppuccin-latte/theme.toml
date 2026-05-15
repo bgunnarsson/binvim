@@ -1,0 +1,49 @@
+# Catppuccin Latte — https://github.com/catppuccin/catppuccin
+schema_version = 1
+
+[colors]
+comment           = "#8c8fa1"
+string            = "#40a02b"
+"string.escape"   = "#ea76cb"
+character         = "#179299"
+escape            = "#ea76cb"
+regex             = "#ea76cb"
+
+keyword           = "#8839ef"
+"keyword.return"  = "#8839ef"
+include           = "#8839ef"
+conditional       = "#8839ef"
+repeat            = "#8839ef"
+exception         = "#8839ef"
+operator          = "#04a5e5"
+
+function          = "#1e66f5"
+"function.call"   = "#1e66f5"
+method            = "#1e66f5"
+"method.call"     = "#1e66f5"
+macro             = "#fe640b"
+preproc           = "#fe640b"
+
+type              = "#df8e1d"
+constructor       = "#df8e1d"
+namespace         = "#df8e1d"
+module            = "#df8e1d"
+attribute         = "#df8e1d"
+
+constant          = "#fe640b"
+boolean           = "#fe640b"
+number            = "#fe640b"
+float             = "#fe640b"
+
+tag               = "#ea76cb"
+"tag.attribute"   = "#df8e1d"
+label             = "#209fb5"
+property          = "#7287fd"
+key               = "#7287fd"
+parameter         = "#e64553"
+variable          = "#4c4f69"
+"variable.builtin" = "#d20f39"
+punctuation       = "#7c7f93"
+
+title             = "#df8e1d"
+text              = "#4c4f69"

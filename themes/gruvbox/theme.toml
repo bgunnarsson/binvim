@@ -1,0 +1,49 @@
+# Gruvbox (dark, medium) — https://github.com/morhetz/gruvbox
+schema_version = 1
+
+[colors]
+comment           = "#928374"
+string            = "#b8bb26"
+"string.escape"   = "#fe8019"
+character         = "#b8bb26"
+escape            = "#fe8019"
+regex             = "#b8bb26"
+
+keyword           = "#fb4934"
+"keyword.return"  = "#fb4934"
+include           = "#fb4934"
+conditional       = "#fb4934"
+repeat            = "#fb4934"
+exception         = "#fb4934"
+operator          = "#fe8019"
+
+function          = "#b8bb26"
+"function.call"   = "#b8bb26"
+method            = "#b8bb26"
+"method.call"     = "#b8bb26"
+macro             = "#8ec07c"
+preproc           = "#8ec07c"
+
+type              = "#fabd2f"
+constructor       = "#fabd2f"
+namespace         = "#fabd2f"
+module            = "#fabd2f"
+attribute         = "#b8bb26"
+
+constant          = "#d3869b"
+boolean           = "#d3869b"
+number            = "#d3869b"
+float             = "#d3869b"
+
+tag               = "#83a598"
+"tag.attribute"   = "#8ec07c"
+label             = "#83a598"
+property          = "#83a598"
+key               = "#83a598"
+parameter         = "#fe8019"
+variable          = "#ebdbb2"
+"variable.builtin" = "#83a598"
+punctuation       = "#ebdbb2"
+
+title             = "#fabd2f"
+text              = "#ebdbb2"

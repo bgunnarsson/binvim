@@ -1,0 +1,49 @@
+# GitHub Dark — https://github.com/primer/github-vscode-theme
+schema_version = 1
+
+[colors]
+comment           = "#8b949e"
+string            = "#a5d6ff"
+"string.escape"   = "#79c0ff"
+character         = "#a5d6ff"
+escape            = "#79c0ff"
+regex             = "#7ee787"
+
+keyword           = "#ff7b72"
+"keyword.return"  = "#ff7b72"
+include           = "#ff7b72"
+conditional       = "#ff7b72"
+repeat            = "#ff7b72"
+exception         = "#ff7b72"
+operator          = "#ff7b72"
+
+function          = "#d2a8ff"
+"function.call"   = "#d2a8ff"
+method            = "#d2a8ff"
+"method.call"     = "#d2a8ff"
+macro             = "#d2a8ff"
+preproc           = "#ff7b72"
+
+type              = "#ffa657"
+constructor       = "#ffa657"
+namespace         = "#ffa657"
+module            = "#ffa657"
+attribute         = "#7ee787"
+
+constant          = "#79c0ff"
+boolean           = "#79c0ff"
+number            = "#79c0ff"
+float             = "#79c0ff"
+
+tag               = "#7ee787"
+"tag.attribute"   = "#79c0ff"
+label             = "#79c0ff"
+property          = "#79c0ff"
+key               = "#79c0ff"
+parameter         = "#ffa657"
+variable          = "#c9d1d9"
+"variable.builtin" = "#79c0ff"
+punctuation       = "#c9d1d9"
+
+title             = "#79c0ff"
+text              = "#c9d1d9"

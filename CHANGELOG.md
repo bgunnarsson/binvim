@@ -7,6 +7,16 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Theme presets — `themes/<name>/theme.toml`.** Drop-in `[colors]`
+  blocks for the most common editor themes: Dracula, Tokyo Night,
+  One Dark, GitHub Dark, Catppuccin Mocha, Night Owl, Gruvbox, Nord,
+  GitHub Light, Solarized Light, Catppuccin Latte, Ayu Light, and
+  Light Owl. There is no built-in theme loader — copy the contents
+  of any `theme.toml` into your `~/.config/binvim/config.toml` (or
+  `cat themes/dracula/theme.toml >> ~/.config/binvim/config.toml`)
+  to apply it. The baked-in default palette remains Catppuccin
+  Mocha; the `themes/catppuccin-mocha/theme.toml` file mirrors it
+  explicitly as a copy-paste starting point.
 - **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l` / `<C-w>q` /
   `<C-w>o` / `<C-w>=`.** Vertical and horizontal splits with
   independent cursors and viewports per pane. Each window can show a

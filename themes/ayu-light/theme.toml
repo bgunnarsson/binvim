@@ -1,0 +1,49 @@
+# Ayu Light — https://github.com/ayu-theme/ayu-colors
+schema_version = 1
+
+[colors]
+comment           = "#abb0b6"
+string            = "#86b300"
+"string.escape"   = "#4cbf99"
+character         = "#86b300"
+escape            = "#4cbf99"
+regex             = "#4cbf99"
+
+keyword           = "#fa8d3e"
+"keyword.return"  = "#fa8d3e"
+include           = "#fa8d3e"
+conditional       = "#fa8d3e"
+repeat            = "#fa8d3e"
+exception         = "#fa8d3e"
+operator          = "#ed9366"
+
+function          = "#f2ae49"
+"function.call"   = "#f2ae49"
+method            = "#f2ae49"
+"method.call"     = "#f2ae49"
+macro             = "#a37acc"
+preproc           = "#fa8d3e"
+
+type              = "#399ee6"
+constructor       = "#399ee6"
+namespace         = "#399ee6"
+module            = "#399ee6"
+attribute         = "#f2ae49"
+
+constant          = "#a37acc"
+boolean           = "#a37acc"
+number            = "#a37acc"
+float             = "#a37acc"
+
+tag               = "#55b4d4"
+"tag.attribute"   = "#f2ae49"
+label             = "#399ee6"
+property          = "#5c6773"
+key               = "#5c6773"
+parameter         = "#5c6773"
+variable          = "#5c6773"
+"variable.builtin" = "#fa8d3e"
+punctuation       = "#5c6773"
+
+title             = "#399ee6"
+text              = "#5c6773"

@@ -1,0 +1,49 @@
+# Solarized Light — https://ethanschoonover.com/solarized
+schema_version = 1
+
+[colors]
+comment           = "#93a1a1"
+string            = "#2aa198"
+"string.escape"   = "#cb4b16"
+character         = "#2aa198"
+escape            = "#cb4b16"
+regex             = "#cb4b16"
+
+keyword           = "#859900"
+"keyword.return"  = "#859900"
+include           = "#cb4b16"
+conditional       = "#859900"
+repeat            = "#859900"
+exception         = "#859900"
+operator          = "#859900"
+
+function          = "#268bd2"
+"function.call"   = "#268bd2"
+method            = "#268bd2"
+"method.call"     = "#268bd2"
+macro             = "#268bd2"
+preproc           = "#cb4b16"
+
+type              = "#b58900"
+constructor       = "#b58900"
+namespace         = "#b58900"
+module            = "#b58900"
+attribute         = "#b58900"
+
+constant          = "#cb4b16"
+boolean           = "#cb4b16"
+number            = "#d33682"
+float             = "#d33682"
+
+tag               = "#268bd2"
+"tag.attribute"   = "#93a1a1"
+label             = "#268bd2"
+property          = "#268bd2"
+key               = "#268bd2"
+parameter         = "#b58900"
+variable          = "#657b83"
+"variable.builtin" = "#6c71c4"
+punctuation       = "#586e75"
+
+title             = "#268bd2"
+text              = "#657b83"
