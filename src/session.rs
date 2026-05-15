@@ -78,6 +78,21 @@ pub fn save(session: &Session) -> std::io::Result<()> {
     std::fs::write(&path, json)
 }
 
+/// Remove the saved session for `cwd`. Called on clean shutdown when
+/// no buffers are open — leaving a stale session on disk would cause
+/// the next launch in the same cwd to silently revive every closed
+/// buffer.
+pub fn clear_for_cwd(cwd: &Path) -> std::io::Result<()> {
+    let Some(path) = session_path(cwd) else {
+        return Ok(());
+    };
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Load the saved session for the given cwd. Returns `None` if the file
 /// doesn't exist, can't be parsed, or its embedded `cwd` doesn't match
 /// the live canonicalised cwd (defensive — guards against hash collisions

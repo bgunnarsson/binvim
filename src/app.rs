@@ -588,9 +588,16 @@ impl App {
         }
         // Clean shutdown — persist the session so the next launch in this
         // cwd can restore it. Best-effort: errors don't block exit.
+        // If every buffer was closed (e.g. via `<leader>bA`), DELETE the
+        // saved session rather than skipping the save: leaving a stale
+        // file on disk silently revives the just-closed buffers on the
+        // next launch.
         let session = self.build_session();
         if !session.buffers.is_empty() {
             let _ = crate::session::save(&session);
+        } else {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let _ = crate::session::clear_for_cwd(&cwd);
         }
         Ok(())
     }
