@@ -23,7 +23,7 @@ impl super::App {
         };
         self.last_search = Some((word.clone(), backward));
         self.search_hl_off = false;
-        let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let cur_idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let total = self.buffer.total_chars();
         let from = if backward {
             cur_idx.saturating_sub(1)
@@ -41,7 +41,7 @@ impl super::App {
     }
 
     pub(super) fn push_jump(&mut self) {
-        let pos = (self.cursor.line, self.cursor.col);
+        let pos = (self.window.cursor.line, self.window.cursor.col);
         // If we've stepped back via Ctrl-O, drop the forward history before pushing.
         self.jumplist.truncate(self.jump_idx);
         // Avoid duplicate consecutive entries.
@@ -58,16 +58,16 @@ impl super::App {
         }
         // If we're at the head, save current position so Ctrl-I can return to it.
         if self.jump_idx == self.jumplist.len() {
-            let pos = (self.cursor.line, self.cursor.col);
+            let pos = (self.window.cursor.line, self.window.cursor.col);
             if self.jumplist.last() != Some(&pos) {
                 self.jumplist.push(pos);
             }
         }
         self.jump_idx -= 1;
         let (l, c) = self.jumplist[self.jump_idx];
-        self.cursor.line = l;
-        self.cursor.col = c;
-        self.cursor.want_col = c;
+        self.window.cursor.line = l;
+        self.window.cursor.col = c;
+        self.window.cursor.want_col = c;
         self.clamp_cursor_normal();
     }
 
@@ -78,14 +78,14 @@ impl super::App {
         }
         self.jump_idx += 1;
         let (l, c) = self.jumplist[self.jump_idx];
-        self.cursor.line = l;
-        self.cursor.col = c;
-        self.cursor.want_col = c;
+        self.window.cursor.line = l;
+        self.window.cursor.col = c;
+        self.window.cursor.want_col = c;
         self.clamp_cursor_normal();
     }
 
     pub(super) fn word_under_cursor(&self) -> Option<String> {
-        let line_len = self.buffer.line_len(self.cursor.line);
+        let line_len = self.buffer.line_len(self.window.cursor.line);
         if line_len == 0 {
             return None;
         }
@@ -98,30 +98,30 @@ impl super::App {
                 2
             }
         };
-        let here = self.buffer.char_at(self.cursor.line, self.cursor.col)?;
+        let here = self.buffer.char_at(self.window.cursor.line, self.window.cursor.col)?;
         let here_class = cls(here);
         if here_class == 0 {
             return None;
         }
-        let mut start = self.cursor.col;
+        let mut start = self.window.cursor.col;
         while start > 0 {
-            let c = self.buffer.char_at(self.cursor.line, start - 1)?;
+            let c = self.buffer.char_at(self.window.cursor.line, start - 1)?;
             if cls(c) == here_class {
                 start -= 1;
             } else {
                 break;
             }
         }
-        let mut end = self.cursor.col + 1;
+        let mut end = self.window.cursor.col + 1;
         while end < line_len {
-            let c = self.buffer.char_at(self.cursor.line, end)?;
+            let c = self.buffer.char_at(self.window.cursor.line, end)?;
             if cls(c) == here_class {
                 end += 1;
             } else {
                 break;
             }
         }
-        let line_start = self.buffer.line_start_idx(self.cursor.line);
+        let line_start = self.buffer.line_start_idx(self.window.cursor.line);
         Some(
             self.buffer
                 .rope
@@ -132,12 +132,12 @@ impl super::App {
 
     pub(super) fn run_search_next(&self, reverse: bool, _count: usize) -> MotionResult {
         let Some((query, was_backward)) = self.last_search.clone() else {
-            return MotionResult { target: self.cursor, kind: MotionKind::CharExclusive };
+            return MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive };
         };
         // n continues original direction; N reverses it.
         let forward = if reverse { was_backward } else { !was_backward };
         let total = self.buffer.total_chars();
-        let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let cur_idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let from = if forward { (cur_idx + 1).min(total) } else { cur_idx.saturating_sub(1) };
         match self.search(&query, from, forward, true) {
             Some(idx) => {
@@ -148,7 +148,7 @@ impl super::App {
                     kind: MotionKind::CharExclusive,
                 }
             }
-            None => MotionResult { target: self.cursor, kind: MotionKind::CharExclusive },
+            None => MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive },
         }
     }
 
@@ -226,7 +226,7 @@ impl super::App {
         };
         self.last_search = Some((q.clone(), backward));
         self.search_hl_off = false;
-        let cur_idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let cur_idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let forward = !backward;
         match self.search(&q, cur_idx, forward, true) {
             Some(idx) => {
@@ -246,8 +246,8 @@ impl super::App {
     /// global char indices, half-open. For brackets each range is one char;
     /// for HTML tags it spans the entire `<…>` of the open and close tag.
     pub fn matched_pair_ranges(&self) -> Vec<(usize, usize)> {
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         // HTML tag matching takes precedence so cursor on `<` of `<div>`
         // shows the whole-tag highlight rather than a single `<` char match.
         if is_html_like_buffer(&self.buffer) {
@@ -375,8 +375,8 @@ impl super::App {
             Mode::Visual(k) => k,
             _ => return None,
         };
-        let anchor = self.visual_anchor?;
-        let cursor = self.cursor;
+        let anchor = self.window.visual_anchor?;
+        let cursor = self.window.cursor;
         let line_len = self.buffer.line_len(line);
         match kind {
             VisualKind::Line => {

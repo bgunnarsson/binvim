@@ -202,8 +202,8 @@ impl super::App {
                     format!("tabs (width {})", self.editorconfig.tab_width)
                 }
             };
-            let cursor_line = self.cursor.line + 1;
-            let cursor_col = self.cursor.col + 1;
+            let cursor_line = self.window.cursor.line + 1;
+            let cursor_col = self.window.cursor.col + 1;
             let statuses = self.lsp.active_buffer_status(p);
             let diagnostics = self
                 .lsp

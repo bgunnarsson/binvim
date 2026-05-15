@@ -521,7 +521,7 @@ impl super::App {
         };
         let abs = path.canonicalize().unwrap_or(path);
         // Cursor.line is 0-based; DAP / the user-visible line number is 1-based.
-        let line = self.cursor.line + 1;
+        let line = self.window.cursor.line + 1;
         // Toggle the breakpoint silently — the gutter dot is the
         // user-visible confirmation, so a status-line notification is
         // redundant noise on every press.
@@ -639,9 +639,9 @@ impl super::App {
                 return;
             }
         }
-        self.cursor.line = line;
-        self.cursor.col = col;
-        self.cursor.want_col = col;
+        self.window.cursor.line = line;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
         self.clamp_cursor_normal();
         self.adjust_viewport();
     }

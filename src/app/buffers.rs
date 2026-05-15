@@ -20,11 +20,11 @@ impl super::App {
     pub(super) fn snapshot_active(&mut self) -> BufferStash {
         BufferStash {
             buffer: std::mem::take(&mut self.buffer),
-            cursor: std::mem::take(&mut self.cursor),
-            view_top: std::mem::take(&mut self.view_top),
-            view_left: std::mem::take(&mut self.view_left),
+            cursor: std::mem::take(&mut self.window.cursor),
+            view_top: std::mem::take(&mut self.window.view_top),
+            view_left: std::mem::take(&mut self.window.view_left),
             history: std::mem::take(&mut self.history),
-            visual_anchor: self.visual_anchor.take(),
+            visual_anchor: self.window.visual_anchor.take(),
             marks: std::mem::take(&mut self.marks),
             jumplist: std::mem::take(&mut self.jumplist),
             jump_idx: std::mem::take(&mut self.jump_idx),
@@ -40,11 +40,11 @@ impl super::App {
 
     fn load_stash(&mut self, stash: BufferStash) {
         self.buffer = stash.buffer;
-        self.cursor = stash.cursor;
-        self.view_top = stash.view_top;
-        self.view_left = stash.view_left;
+        self.window.cursor = stash.cursor;
+        self.window.view_top = stash.view_top;
+        self.window.view_left = stash.view_left;
         self.history = stash.history;
-        self.visual_anchor = stash.visual_anchor;
+        self.window.visual_anchor = stash.visual_anchor;
         self.marks = stash.marks;
         self.jumplist = stash.jumplist;
         self.jump_idx = stash.jump_idx;
@@ -180,8 +180,8 @@ impl super::App {
         });
         self.buffer.dirty = false;
         let last = self.buffer.line_count().saturating_sub(1);
-        if self.cursor.line > last {
-            self.cursor.line = last;
+        if self.window.cursor.line > last {
+            self.window.cursor.line = last;
         }
         self.clamp_cursor_normal();
         // Blame is keyed by the on-disk file's line numbers; a reload
@@ -264,11 +264,11 @@ impl super::App {
         if self.buffers.len() == 1 {
             // Last buffer — replace with an empty one and resurface the start page.
             self.buffer = Buffer::empty();
-            self.cursor = Cursor::default();
-            self.view_top = 0;
-            self.view_left = 0;
+            self.window.cursor = Cursor::default();
+            self.window.view_top = 0;
+            self.window.view_left = 0;
             self.history = History::default();
-            self.visual_anchor = None;
+            self.window.visual_anchor = None;
             self.marks.clear();
             self.jumplist.clear();
             self.jump_idx = 0;
@@ -314,11 +314,11 @@ impl super::App {
         self.buffers.push(BufferStash::default());
         self.active = 0;
         self.buffer = Buffer::empty();
-        self.cursor = Cursor::default();
-        self.view_top = 0;
-        self.view_left = 0;
+        self.window.cursor = Cursor::default();
+        self.window.view_top = 0;
+        self.window.view_left = 0;
         self.history = History::default();
-        self.visual_anchor = None;
+        self.window.visual_anchor = None;
         self.marks.clear();
         self.jumplist.clear();
         self.jump_idx = 0;
@@ -372,11 +372,11 @@ impl super::App {
             // After open_buffer the active buffer is the one we just
             // opened — restore its cursor + viewport.
             let last = self.buffer.line_count().saturating_sub(1);
-            self.cursor.line = sb.line.min(last);
-            let line_len = self.buffer.line_len(self.cursor.line);
-            self.cursor.col = sb.col.min(line_len.saturating_sub(1).max(0));
-            self.cursor.want_col = self.cursor.col;
-            self.view_top = sb.view_top.min(last);
+            self.window.cursor.line = sb.line.min(last);
+            let line_len = self.buffer.line_len(self.window.cursor.line);
+            self.window.cursor.col = sb.col.min(line_len.saturating_sub(1).max(0));
+            self.window.cursor.want_col = self.window.cursor.col;
+            self.window.view_top = sb.view_top.min(last);
             // Restore jumplist — clamp each entry against the current
             // buffer's bounds so a file shortened since the last session
             // doesn't carry an out-of-range jump.
@@ -431,9 +431,9 @@ impl super::App {
             let (path, line, col, view_top, jumplist, jump_idx) = if i == self.active {
                 (
                     self.buffer.path.as_ref(),
-                    self.cursor.line,
-                    self.cursor.col,
-                    self.view_top,
+                    self.window.cursor.line,
+                    self.window.cursor.col,
+                    self.window.view_top,
                     self.jumplist.clone(),
                     self.jump_idx,
                 )

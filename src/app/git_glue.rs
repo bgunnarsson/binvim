@@ -13,7 +13,7 @@ impl super::App {
             self.status_msg = "no git hunks in this buffer".into();
             return;
         }
-        let here = self.cursor.line;
+        let here = self.window.cursor.line;
         let target = if forward {
             self.git_hunks.iter().find(|h| h.start_line > here)
         } else {
@@ -23,9 +23,9 @@ impl super::App {
             Some(h) => {
                 let line = h.start_line.min(self.buffer.line_count().saturating_sub(1));
                 self.push_jump();
-                self.cursor.line = line;
-                self.cursor.col = 0;
-                self.cursor.want_col = 0;
+                self.window.cursor.line = line;
+                self.window.cursor.col = 0;
+                self.window.cursor.want_col = 0;
             }
             None => {
                 self.status_msg = if forward {
@@ -46,11 +46,11 @@ impl super::App {
             self.status_msg = "no path: open a file first".into();
             return;
         };
-        let line_one_based = self.cursor.line + 1;
+        let line_one_based = self.window.cursor.line + 1;
         let in_hunk = self
             .git_hunks
             .iter()
-            .any(|h| self.cursor.line >= h.start_line && self.cursor.line <= h.end_line);
+            .any(|h| self.window.cursor.line >= h.start_line && self.window.cursor.line <= h.end_line);
         if !in_hunk {
             self.status_msg = "no hunk under cursor".into();
             return;
@@ -80,7 +80,7 @@ impl super::App {
             self.status_msg = "no path: open a file first".into();
             return;
         };
-        let line_one_based = self.cursor.line + 1;
+        let line_one_based = self.window.cursor.line + 1;
         match crate::git::unidiff_zero_hunk_for_line(&path, line_one_based, false) {
             Some((root, rel, hunk)) if !hunk.trim().is_empty() => {
                 let patch = crate::git::build_patch(&rel, &hunk);
@@ -109,7 +109,7 @@ impl super::App {
             self.status_msg = "no path: open a file first".into();
             return;
         };
-        let line_one_based = self.cursor.line + 1;
+        let line_one_based = self.window.cursor.line + 1;
         match crate::git::unidiff_zero_hunk_for_line(&path, line_one_based, true) {
             Some((root, rel, hunk)) if !hunk.trim().is_empty() => {
                 let patch = crate::git::build_patch(&rel, &hunk);
@@ -169,7 +169,7 @@ impl super::App {
             self.status_msg = "no path: open a file first".into();
             return;
         };
-        let line_one_based = self.cursor.line + 1;
+        let line_one_based = self.window.cursor.line + 1;
         match crate::git::unidiff_zero_hunk_for_line(&path, line_one_based, false) {
             Some((root, rel, hunk)) if !hunk.trim().is_empty() => {
                 let patch = crate::git::build_patch(&rel, &hunk);

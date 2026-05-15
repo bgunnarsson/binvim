@@ -21,11 +21,11 @@ impl super::App {
     /// insert path would have done — this routine handles all
     /// `additional_cursors` and the primary char-index together.
     pub(super) fn mirror_insert_char(&mut self, c: char) {
-        let primary_pos = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let primary_pos = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
         if self.additional_cursors.is_empty() {
-            self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
-            self.cursor.col += 1;
-            self.cursor.want_col = self.cursor.col;
+            self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+            self.window.cursor.col += 1;
+            self.window.cursor.want_col = self.window.cursor.col;
             return;
         }
         let mut positions: Vec<(usize, bool)> = vec![(primary_pos, true)];
@@ -63,14 +63,14 @@ impl super::App {
     /// across the multi-cursor set is genuinely tricky and the user can
     /// fall back to single-cursor mode for that.
     pub(super) fn mirror_backspace(&mut self) {
-        let primary_pos = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+        let primary_pos = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
         if self.additional_cursors.is_empty() {
             // Fall through to the caller's normal backspace path.
             return;
         }
         // Filter to cursors that have something to delete.
         let mut positions: Vec<(usize, bool)> = Vec::new();
-        if primary_pos > 0 && self.cursor.col > 0 {
+        if primary_pos > 0 && self.window.cursor.col > 0 {
             positions.push((primary_pos, true));
         }
         for &p in &self.additional_cursors {
@@ -170,10 +170,10 @@ impl super::App {
             let line_start = self.buffer.line_start_idx(line);
             self.buffer.insert_at_idx(line_start, &unit);
         }
-        self.cursor.line = l1;
+        self.window.cursor.line = l1;
         let col = self.first_non_blank_col(l1);
-        self.cursor.col = col;
-        self.cursor.want_col = col;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
     }
 
     /// Remove up to one indent unit's worth of leading whitespace from every
@@ -209,10 +209,10 @@ impl super::App {
                 self.buffer.delete_range(line_start, line_start + take);
             }
         }
-        self.cursor.line = l1;
+        self.window.cursor.line = l1;
         let col = self.first_non_blank_col(l1);
-        self.cursor.col = col;
-        self.cursor.want_col = col;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
     }
 
     pub(super) fn first_non_blank_col(&self, line: usize) -> usize {
@@ -228,7 +228,7 @@ impl super::App {
     }
 
     pub(super) fn enter_insert(&mut self, w: InsertWhere) {
-        self.history.record(&self.buffer.rope, self.cursor);
+        self.history.record(&self.buffer.rope, self.window.cursor);
         // Multi-cursor preservation: `i` and `a` keep the secondary
         // cursors aligned with the primary's transformation. Every other
         // Insert-entry (line-above/below, jump to line ends) does
@@ -255,54 +255,54 @@ impl super::App {
         match w {
             InsertWhere::Cursor => {}
             InsertWhere::AfterCursor => {
-                let len = self.buffer.line_len(self.cursor.line);
-                if self.cursor.col < len {
-                    self.cursor.col += 1;
-                    self.cursor.want_col = self.cursor.col;
+                let len = self.buffer.line_len(self.window.cursor.line);
+                if self.window.cursor.col < len {
+                    self.window.cursor.col += 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
                 }
             }
             InsertWhere::LineBelow => {
-                let len = self.buffer.line_len(self.cursor.line);
-                let idx = self.buffer.pos_to_char(self.cursor.line, len);
+                let len = self.buffer.line_len(self.window.cursor.line);
+                let idx = self.buffer.pos_to_char(self.window.cursor.line, len);
                 self.buffer.insert_at_idx(idx, "\n");
-                self.cursor.line += 1;
-                self.cursor.col = 0;
-                self.cursor.want_col = 0;
+                self.window.cursor.line += 1;
+                self.window.cursor.col = 0;
+                self.window.cursor.want_col = 0;
             }
             InsertWhere::LineAbove => {
-                let idx = self.buffer.line_start_idx(self.cursor.line);
+                let idx = self.buffer.line_start_idx(self.window.cursor.line);
                 self.buffer.insert_at_idx(idx, "\n");
-                self.cursor.col = 0;
-                self.cursor.want_col = 0;
+                self.window.cursor.col = 0;
+                self.window.cursor.want_col = 0;
             }
             InsertWhere::LineFirstNonBlank => {
-                let line_len = self.buffer.line_len(self.cursor.line);
+                let line_len = self.buffer.line_len(self.window.cursor.line);
                 let mut col = 0;
                 while col < line_len {
-                    match self.buffer.char_at(self.cursor.line, col) {
+                    match self.buffer.char_at(self.window.cursor.line, col) {
                         Some(c) if c.is_whitespace() => col += 1,
                         _ => break,
                     }
                 }
-                self.cursor.col = col;
-                self.cursor.want_col = col;
+                self.window.cursor.col = col;
+                self.window.cursor.want_col = col;
             }
             InsertWhere::LineEnd => {
-                let len = self.buffer.line_len(self.cursor.line);
-                self.cursor.col = len;
-                self.cursor.want_col = len;
+                let len = self.buffer.line_len(self.window.cursor.line);
+                self.window.cursor.col = len;
+                self.window.cursor.want_col = len;
             }
         }
         self.mode = Mode::Insert;
     }
 
     pub(super) fn replace_char(&mut self, ch: char, count: usize) {
-        let line = self.cursor.line;
+        let line = self.window.cursor.line;
         let line_len = self.buffer.line_len(line);
         if line_len == 0 {
             return;
         }
-        let start = self.buffer.pos_to_char(line, self.cursor.col);
+        let start = self.buffer.pos_to_char(line, self.window.cursor.col);
         let max_end = self.buffer.pos_to_char(line, line_len);
         let end = (start + count.max(1)).min(max_end);
         let actual = end - start;
@@ -315,8 +315,8 @@ impl super::App {
             buf.push(ch);
         }
         self.buffer.insert_at_idx(start, &buf);
-        self.cursor.col = self.cursor.col + actual.saturating_sub(1);
-        self.cursor.want_col = self.cursor.col;
+        self.window.cursor.col = self.window.cursor.col + actual.saturating_sub(1);
+        self.window.cursor.want_col = self.window.cursor.col;
         self.clamp_cursor_normal();
     }
 
@@ -333,13 +333,13 @@ impl super::App {
             return;
         }
 
-        let (mut start_line, mut end_line) = match (self.mode, self.visual_anchor) {
+        let (mut start_line, mut end_line) = match (self.mode, self.window.visual_anchor) {
             (crate::mode::Mode::Visual(_), Some(anchor)) => {
-                let a = anchor.line.min(self.cursor.line);
-                let b = anchor.line.max(self.cursor.line);
+                let a = anchor.line.min(self.window.cursor.line);
+                let b = anchor.line.max(self.window.cursor.line);
                 (a, b)
             }
-            _ => (self.cursor.line, self.cursor.line),
+            _ => (self.window.cursor.line, self.window.cursor.line),
         };
 
         // Effective last line excludes ropey's phantom trailing empty
@@ -359,7 +359,7 @@ impl super::App {
             return;
         }
 
-        self.history.record(&self.buffer.rope, self.cursor);
+        self.history.record(&self.buffer.rope, self.window.cursor);
         for _ in 0..step {
             if down {
                 shift_block_down_by_one(&mut self.buffer, start_line, end_line);
@@ -373,8 +373,8 @@ impl super::App {
         }
 
         let delta = step as isize * if down { 1 } else { -1 };
-        self.cursor.line = (self.cursor.line as isize + delta).max(0) as usize;
-        if let Some(anchor) = self.visual_anchor.as_mut() {
+        self.window.cursor.line = (self.window.cursor.line as isize + delta).max(0) as usize;
+        if let Some(anchor) = self.window.visual_anchor.as_mut() {
             anchor.line = (anchor.line as isize + delta).max(0) as usize;
         }
         self.clamp_cursor_normal();
@@ -383,7 +383,7 @@ impl super::App {
     pub(super) fn join_lines(&mut self, count: usize) {
         let times = count.max(1);
         for _ in 0..times {
-            let cur_line = self.cursor.line;
+            let cur_line = self.window.cursor.line;
             if cur_line + 1 >= self.buffer.line_count() {
                 break;
             }
@@ -416,8 +416,8 @@ impl super::App {
             if insert_space {
                 self.buffer.insert_at_idx(nl_idx, " ");
             }
-            self.cursor.col = line_len;
-            self.cursor.want_col = self.cursor.col;
+            self.window.cursor.col = line_len;
+            self.window.cursor.want_col = self.window.cursor.col;
         }
         self.clamp_cursor_normal();
     }
@@ -468,11 +468,11 @@ impl super::App {
         // `open`/`close` at `(c1, c2+1)` on every row in the span. Going
         // bottom-up keeps higher-row char indices stable while we edit.
         if matches!(kind, VisualKind::Block) {
-            let anchor = self.visual_anchor.unwrap_or(self.cursor);
-            let l1 = anchor.line.min(self.cursor.line);
-            let l2 = anchor.line.max(self.cursor.line);
-            let c1 = anchor.col.min(self.cursor.col);
-            let c2 = anchor.col.max(self.cursor.col);
+            let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+            let l1 = anchor.line.min(self.window.cursor.line);
+            let l2 = anchor.line.max(self.window.cursor.line);
+            let c1 = anchor.col.min(self.window.cursor.col);
+            let c2 = anchor.col.max(self.window.cursor.col);
             let (open, close) = surround_open_close(ch);
             for line in (l1..=l2).rev() {
                 let line_len = self.buffer.line_len(line);
@@ -492,9 +492,9 @@ impl super::App {
             }
             // Land the cursor on the freshly-inserted opener of the
             // first row — same convention as charwise surround.
-            self.cursor.line = l1;
-            self.cursor.col = c1;
-            self.cursor.want_col = c1;
+            self.window.cursor.line = l1;
+            self.window.cursor.col = c1;
+            self.window.cursor.want_col = c1;
             self.clamp_cursor_normal();
             self.exit_visual();
             return;
@@ -524,7 +524,7 @@ impl super::App {
         // can't balance, so just find the nearest enclosing pair on the
         // line by scanning out from the cursor.
         if is_paired_bracket(ch) {
-            let here = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+            let here = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
             let open_c = open.chars().next().unwrap();
             let close_c = close.chars().next().unwrap();
             let mut depth = 1usize;
@@ -566,13 +566,13 @@ impl super::App {
             return None;
         }
         // Quote-style: nearest enclosing same-char on the same line.
-        let line = self.cursor.line;
+        let line = self.window.cursor.line;
         let line_len = self.buffer.line_len(line);
         if line_len == 0 {
             return None;
         }
         let line_start = self.buffer.line_start_idx(line);
-        let here_col = self.cursor.col.min(line_len);
+        let here_col = self.window.cursor.col.min(line_len);
         let chars: Vec<char> = self
             .buffer
             .rope
@@ -607,7 +607,7 @@ impl super::App {
     /// new number, matching Vim's behaviour.
     pub(super) fn adjust_number(&mut self, delta: i64, count: usize) {
         let count = count.max(1) as i64;
-        let line = self.cursor.line;
+        let line = self.window.cursor.line;
         let line_len = self.buffer.line_len(line);
         if line_len == 0 {
             self.status_msg = "no numbers found".into();
@@ -620,7 +620,7 @@ impl super::App {
             .slice(line_start..line_start + line_len)
             .to_string();
         let chars: Vec<char> = line_text.chars().collect();
-        let from_col = self.cursor.col.min(chars.len());
+        let from_col = self.window.cursor.col.min(chars.len());
         let Some(num) = find_number_on_line(&chars, from_col) else {
             self.status_msg = "no numbers found".into();
             return;
@@ -633,21 +633,21 @@ impl super::App {
         self.buffer.insert_at_idx(abs_start, &formatted);
         // Cursor on the last char of the new number.
         let new_end_col = num.start_col + formatted.chars().count().saturating_sub(1);
-        self.cursor.col = new_end_col;
-        self.cursor.want_col = new_end_col;
+        self.window.cursor.col = new_end_col;
+        self.window.cursor.want_col = new_end_col;
     }
 
     pub(super) fn toggle_case(&mut self, count: usize) {
-        let line = self.cursor.line;
+        let line = self.window.cursor.line;
         let line_len = self.buffer.line_len(line);
         if line_len == 0 {
             return;
         }
         for _ in 0..count.max(1) {
-            if self.cursor.col >= self.buffer.line_len(self.cursor.line) {
+            if self.window.cursor.col >= self.buffer.line_len(self.window.cursor.line) {
                 break;
             }
-            let c = match self.buffer.char_at(self.cursor.line, self.cursor.col) {
+            let c = match self.buffer.char_at(self.window.cursor.line, self.window.cursor.col) {
                 Some(c) => c,
                 None => break,
             };
@@ -658,26 +658,26 @@ impl super::App {
             } else {
                 c
             };
-            let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+            let idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
             self.buffer.delete_range(idx, idx + 1);
-            self.buffer.insert_char(self.cursor.line, self.cursor.col, new_c);
+            self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, new_c);
             // Advance unless we're at end of line.
-            let len_now = self.buffer.line_len(self.cursor.line);
-            if self.cursor.col + 1 < len_now {
-                self.cursor.col += 1;
+            let len_now = self.buffer.line_len(self.window.cursor.line);
+            if self.window.cursor.col + 1 < len_now {
+                self.window.cursor.col += 1;
             }
         }
-        self.cursor.want_col = self.cursor.col;
+        self.window.cursor.want_col = self.window.cursor.col;
         self.clamp_cursor_normal();
     }
 
     pub(super) fn delete_char_forward(&mut self, count: usize, target: Option<char>) {
-        let line_len = self.buffer.line_len(self.cursor.line);
+        let line_len = self.buffer.line_len(self.window.cursor.line);
         if line_len == 0 {
             return;
         }
-        let start = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
-        let max_end = self.buffer.pos_to_char(self.cursor.line, line_len);
+        let start = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let max_end = self.buffer.pos_to_char(self.window.cursor.line, line_len);
         let end = (start + count).min(max_end);
         let removed = self.buffer.delete_range(start, end);
         if !removed.is_empty() {
@@ -695,9 +695,9 @@ impl super::App {
         }
         if reg.linewise {
             let target_line = if before {
-                self.cursor.line
+                self.window.cursor.line
             } else {
-                self.cursor.line + 1
+                self.window.cursor.line + 1
             };
             let mut text = String::new();
             for _ in 0..count {
@@ -723,19 +723,19 @@ impl super::App {
             } else {
                 self.buffer.insert_at_idx(idx, &text);
             }
-            self.cursor.line = target_line;
-            self.cursor.col = 0;
-            self.cursor.want_col = 0;
+            self.window.cursor.line = target_line;
+            self.window.cursor.col = 0;
+            self.window.cursor.want_col = 0;
         } else {
             let target_idx = if before {
-                self.buffer.pos_to_char(self.cursor.line, self.cursor.col)
+                self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col)
             } else {
-                let line_len = self.buffer.line_len(self.cursor.line);
+                let line_len = self.buffer.line_len(self.window.cursor.line);
                 if line_len == 0 {
-                    self.buffer.line_start_idx(self.cursor.line)
+                    self.buffer.line_start_idx(self.window.cursor.line)
                 } else {
                     self.buffer
-                        .pos_to_char(self.cursor.line, self.cursor.col + 1)
+                        .pos_to_char(self.window.cursor.line, self.window.cursor.col + 1)
                 }
             };
             let mut text = String::new();
@@ -753,9 +753,9 @@ impl super::App {
     }
 
     pub(super) fn undo(&mut self) {
-        if let Some(snap) = self.history.undo(&self.buffer.rope, self.cursor) {
+        if let Some(snap) = self.history.undo(&self.buffer.rope, self.window.cursor) {
             self.buffer.rope = snap.rope;
-            self.cursor = snap.cursor;
+            self.window.cursor = snap.cursor;
             self.buffer.dirty = true;
             // Bump version so the highlight cache and LSP didChange know
             // to recompute — replacing the rope wholesale is still a
@@ -769,9 +769,9 @@ impl super::App {
     }
 
     pub(super) fn redo(&mut self) {
-        if let Some(snap) = self.history.redo(&self.buffer.rope, self.cursor) {
+        if let Some(snap) = self.history.redo(&self.buffer.rope, self.window.cursor) {
             self.buffer.rope = snap.rope;
-            self.cursor = snap.cursor;
+            self.window.cursor = snap.cursor;
             self.buffer.dirty = true;
             self.buffer.version = self.buffer.version.wrapping_add(1);
             self.clamp_cursor_normal();

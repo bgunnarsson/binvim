@@ -186,7 +186,7 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     let popup_h = 3usize; // top + label + bottom
 
     let buffer_rows = app.buffer_rows();
-    let cursor_row = app.cursor.line.saturating_sub(app.view_top);
+    let cursor_row = app.window.cursor.line.saturating_sub(app.window.view_top);
     // Prefer above the cursor — call sites have the popup above so it
     // doesn't cover the line you're typing into.
     let mut top_row = cursor_row.saturating_sub(popup_h);
@@ -196,7 +196,7 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     // Buffer-relative → screen y.
     let top_row = top_row + app.buffer_top();
     let gutter = app.gutter_width();
-    let cursor_visual = app.cursor_visual_col().saturating_sub(app.view_left);
+    let cursor_visual = app.cursor_visual_col().saturating_sub(app.window.view_left);
     let mut left_col = gutter + cursor_visual;
     if left_col + popup_w > total_w {
         left_col = total_w.saturating_sub(popup_w);
@@ -280,14 +280,14 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
 
     // Position: prefer below cursor; flip above if overflow.
     let buffer_rows = app.buffer_rows();
-    let cursor_row = app.cursor.line.saturating_sub(app.view_top);
+    let cursor_row = app.window.cursor.line.saturating_sub(app.window.view_top);
     let mut top_row = cursor_row + 1;
     if top_row + popup_h > buffer_rows {
         top_row = cursor_row.saturating_sub(popup_h);
     }
     let top_row = top_row + app.buffer_top();
     let gutter = app.gutter_width();
-    let mut left_col = gutter + app.cursor.col;
+    let mut left_col = gutter + app.window.cursor.col;
     if left_col + popup_w > app.width as usize {
         left_col = (app.width as usize).saturating_sub(popup_w);
     }
@@ -776,8 +776,8 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
     };
 
     let gutter = app.gutter_width();
-    let cursor_row = app.cursor.line.saturating_sub(app.view_top);
-    let cursor_col = gutter + app.cursor.col;
+    let cursor_row = app.window.cursor.line.saturating_sub(app.window.view_top);
+    let cursor_col = gutter + app.window.cursor.col;
     let buffer_rows = app.buffer_rows();
     let mut top_row = cursor_row + 1;
     if top_row + popup_h > buffer_rows {
@@ -2631,7 +2631,7 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     let gutter = app.gutter_width();
     let avail = (app.width as usize).saturating_sub(gutter);
     let total_lines = app.buffer.line_count();
-    let mut line_idx = app.view_top;
+    let mut line_idx = app.window.view_top;
     // Skip any lines that are hidden — by a closed fold or by the
     // markdown concealed-render pass (HTML chrome, setext
     // underlines) — from the start of the viewport so the first
@@ -2735,12 +2735,12 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
             // cursor row gets a brighter Subtext1 tone so the eye can
             // anchor on it; other rows stay the muted Overlay0.
             let (label, label_color) = if app.config.line_numbers.relative
-                && line_idx != app.cursor.line
+                && line_idx != app.window.cursor.line
             {
-                let dist = if line_idx > app.cursor.line {
-                    line_idx - app.cursor.line
+                let dist = if line_idx > app.window.cursor.line {
+                    line_idx - app.window.cursor.line
                 } else {
-                    app.cursor.line - line_idx
+                    app.window.cursor.line - line_idx
                 };
                 (
                     format!("{:>width$} ", dist, width = gutter - 3),
@@ -2820,7 +2820,7 @@ fn draw_line_with_selection(
     let match_pair = app.line_match_pair(line_idx);
     let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
-    let view_left = app.view_left;
+    let view_left = app.window.view_left;
     // Visual column from the start of the line — tracks where each char
     // would land if `view_left == 0`. Subtract `view_left` to get the
     // on-screen column.
@@ -4087,15 +4087,15 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // so the cursor's on-screen row needs to count *visible* rows
     // between view_top and the cursor's source line — not the raw
     // line-index delta.
-    let row = (app.visible_rows_between(app.view_top, app.cursor.line) + app.buffer_top()) as u16;
-    let line = app.buffer.rope.line(app.cursor.line);
+    let row = (app.visible_rows_between(app.window.view_top, app.window.cursor.line) + app.buffer_top()) as u16;
+    let line = app.buffer.rope.line(app.window.cursor.line);
     // Per-buffer-col inlay-hint widths so the cursor's visual position
     // accounts for them. Without this, the cursor renders at the visual
     // column corresponding to its buffer-char count and visually lands
     // *inside* any hint(s) anchored at or before its col — making
     // Backspace / typing edit a buffer position that's "ahead" of where
     // the user thinks the cursor is.
-    let hints_at: Vec<usize> = inlay_hint_widths_for_line(app, app.cursor.line);
+    let hints_at: Vec<usize> = inlay_hint_widths_for_line(app, app.window.cursor.line);
     // Markdown concealed mode collapses / replaces source spans, so the
     // cursor's visual column needs to walk the same transforms the
     // renderer used. Without this, the cursor would land at the
@@ -4103,7 +4103,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // content for hidden ranges, putting the terminal cursor several
     // cells right of where the user sees their position.
     if app.markdown_render_active() {
-        if let Some(meta) = app.markdown_line_meta(app.cursor.line) {
+        if let Some(meta) = app.markdown_line_meta(app.window.cursor.line) {
             let line_chars: Vec<char> = line
                 .chars()
                 .filter(|c| *c != '\n' && *c != '\r')
@@ -4111,10 +4111,10 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
             let visual = crate::markdown_render::visual_col_for_buffer_col(
                 &line_chars,
                 meta,
-                app.cursor.col,
+                app.window.cursor.col,
                 TAB_WIDTH,
             );
-            let on_screen = visual.saturating_sub(app.view_left);
+            let on_screen = visual.saturating_sub(app.window.view_left);
             let col = (gutter + on_screen) as u16;
             queue!(out, MoveTo(col, row))?;
             return Ok(());
@@ -4130,7 +4130,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         // the cursor and `: string` is a trailing type hint). Adding
         // the col-N hint here would push the cursor past it visually
         // and a backspace would feel like it ate from the next token.
-        if i >= app.cursor.col {
+        if i >= app.window.cursor.col {
             break;
         }
         if let Some(w) = hints_at.get(i) {
@@ -4144,7 +4144,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     }
     // Account for horizontal scroll. `adjust_viewport` keeps the cursor
     // within `[view_left, view_left + buffer_cols)`, so subtraction is safe.
-    let on_screen = visual.saturating_sub(app.view_left);
+    let on_screen = visual.saturating_sub(app.window.view_left);
     let col = (gutter + on_screen) as u16;
     queue!(out, MoveTo(col, row))?;
     Ok(())

@@ -493,7 +493,7 @@ impl super::App {
         // non-md-hidden) rows, until we've passed `buf_row` of them.
         // Without this the click would miscount when collapsed rows
         // sit between the viewport top and the click target.
-        let mut buf_line = self.view_top;
+        let mut buf_line = self.window.view_top;
         let total = self.buffer.line_count();
         let mut visible_rows_seen = 0;
         while buf_line < total {
@@ -515,7 +515,7 @@ impl super::App {
         // cursor several chars past tab-indented text. We replay the same
         // width rule the renderer uses (tab = TAB_WIDTH, everything else
         // = 1) walking the line until we've consumed `visual_col` cells.
-        let visual_col = col.saturating_sub(gutter) + self.view_left;
+        let visual_col = col.saturating_sub(gutter) + self.window.view_left;
         let buf_col = visual_col_to_char_col(self, buf_line, visual_col, line_len);
 
         match ev.kind {
@@ -532,7 +532,7 @@ impl super::App {
                 {
                     let line_start = self.buffer.line_start_idx(buf_line);
                     let pos = line_start + buf_col;
-                    let primary = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                    let primary = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     if pos != primary && !self.additional_cursors.contains(&pos) {
                         self.additional_cursors.push(pos);
                         self.additional_cursors.sort();
@@ -559,16 +559,16 @@ impl super::App {
                 // Any fresh Down resets word-drag tracking; only a
                 // double-click re-arms it below.
                 self.word_drag_origin = None;
-                self.cursor.line = buf_line;
-                self.cursor.col = buf_col;
-                self.cursor.want_col = buf_col;
+                self.window.cursor.line = buf_line;
+                self.window.cursor.col = buf_col;
+                self.window.cursor.want_col = buf_col;
                 if is_double {
                     // Expand to the inner word under the cursor and enter
                     // Visual-char mode with that span selected.
                     self.apply_visual_select_textobj(
                         crate::text_object::TextObjectVerb::Word { inner: true },
                     );
-                    if let Some(anchor) = self.visual_anchor {
+                    if let Some(anchor) = self.window.visual_anchor {
                         self.mode = Mode::Visual(VisualKind::Char);
                         // Remember the (start, end-exclusive) char range
                         // of the word so a subsequent drag can extend
@@ -576,7 +576,7 @@ impl super::App {
                         let start = self.buffer.pos_to_char(anchor.line, anchor.col);
                         let end = self
                             .buffer
-                            .pos_to_char(self.cursor.line, self.cursor.col)
+                            .pos_to_char(self.window.cursor.line, self.window.cursor.col)
                             + 1;
                         self.word_drag_origin = Some((start, end));
                     }
@@ -592,13 +592,13 @@ impl super::App {
                     self.word_drag_extend(buf_line, buf_col, origin_start, origin_end);
                 } else {
                     if !matches!(self.mode, Mode::Visual(_)) {
-                        let anchor = self.cursor;
+                        let anchor = self.window.cursor;
                         self.mode = Mode::Visual(VisualKind::Char);
-                        self.visual_anchor = Some(anchor);
+                        self.window.visual_anchor = Some(anchor);
                     }
-                    self.cursor.line = buf_line;
-                    self.cursor.col = buf_col;
-                    self.cursor.want_col = buf_col;
+                    self.window.cursor.line = buf_line;
+                    self.window.cursor.col = buf_col;
+                    self.window.cursor.want_col = buf_col;
                 }
             }
             _ => {}
@@ -654,24 +654,24 @@ impl super::App {
             // word, cursor jumps to the start of the word at the drag.
             let sel_start = drag_word.map(|w| w.0).unwrap_or(origin_start);
             self.cursor_to_idx(origin_end.saturating_sub(1).max(origin_start));
-            let anchor = self.cursor;
+            let anchor = self.window.cursor;
             self.cursor_to_idx(sel_start);
-            self.visual_anchor = Some(anchor);
+            self.window.visual_anchor = Some(anchor);
         } else if drag_pos >= origin_end {
             // Forward drag — anchor pinned to the start of the origin
             // word, cursor jumps to the last char of the word at the drag.
             let sel_end = drag_word.map(|w| w.1).unwrap_or(origin_end);
             self.cursor_to_idx(origin_start);
-            let anchor = self.cursor;
+            let anchor = self.window.cursor;
             let cursor_idx = sel_end.saturating_sub(1).max(origin_start);
             self.cursor_to_idx(cursor_idx);
-            self.visual_anchor = Some(anchor);
+            self.window.visual_anchor = Some(anchor);
         } else {
             // Still inside the origin word — restore the origin selection.
             self.cursor_to_idx(origin_start);
-            let anchor = self.cursor;
+            let anchor = self.window.cursor;
             self.cursor_to_idx(origin_end.saturating_sub(1).max(origin_start));
-            self.visual_anchor = Some(anchor);
+            self.window.visual_anchor = Some(anchor);
         }
     }
 
@@ -721,7 +721,7 @@ impl super::App {
                 // auto-indent that the user landed on but never put real
                 // content on — leaving the whitespace behind clutters the
                 // file and trips trailing-whitespace formatters on save.
-                let line_idx = self.cursor.line;
+                let line_idx = self.window.cursor.line;
                 let line_len = self.buffer.line_len(line_idx);
                 let all_ws = line_len > 0
                     && (0..line_len).all(|c| {
@@ -730,11 +730,11 @@ impl super::App {
                 if all_ws {
                     let line_start = self.buffer.line_start_idx(line_idx);
                     self.buffer.delete_range(line_start, line_start + line_len);
-                    self.cursor.col = 0;
-                    self.cursor.want_col = 0;
-                } else if self.cursor.col > 0 {
-                    self.cursor.col -= 1;
-                    self.cursor.want_col = self.cursor.col;
+                    self.window.cursor.col = 0;
+                    self.window.cursor.want_col = 0;
+                } else if self.window.cursor.col > 0 {
+                    self.window.cursor.col -= 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
                 }
                 self.mode = Mode::Normal;
                 self.signature_help = None;
@@ -765,28 +765,28 @@ impl super::App {
                 if !self.additional_cursors.is_empty() {
                     self.mirror_insert_char(c);
                 } else if is_close_char(c)
-                    && self.buffer.char_at(self.cursor.line, self.cursor.col) == Some(c)
+                    && self.buffer.char_at(self.window.cursor.line, self.window.cursor.col) == Some(c)
                 {
                     // If the cursor sits on the same closing char the user is typing,
                     // step past it instead of inserting a duplicate. Lets `}`/`)`/`"`
                     // skip over an auto-inserted closer.
-                    self.cursor.col += 1;
-                    self.cursor.want_col = self.cursor.col;
+                    self.window.cursor.col += 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
                 } else if let Some(close) = open_pair_for(c) {
-                    if should_auto_pair(c, &self.buffer, self.cursor.line, self.cursor.col) {
-                        self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
-                        self.buffer.insert_char(self.cursor.line, self.cursor.col + 1, close);
-                        self.cursor.col += 1;
-                        self.cursor.want_col = self.cursor.col;
+                    if should_auto_pair(c, &self.buffer, self.window.cursor.line, self.window.cursor.col) {
+                        self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+                        self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col + 1, close);
+                        self.window.cursor.col += 1;
+                        self.window.cursor.want_col = self.window.cursor.col;
                     } else {
-                        self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
-                        self.cursor.col += 1;
-                        self.cursor.want_col = self.cursor.col;
+                        self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+                        self.window.cursor.col += 1;
+                        self.window.cursor.want_col = self.window.cursor.col;
                     }
                 } else {
-                    self.buffer.insert_char(self.cursor.line, self.cursor.col, c);
-                    self.cursor.col += 1;
-                    self.cursor.want_col = self.cursor.col;
+                    self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+                    self.window.cursor.col += 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
                 }
                 // Tag auto-completion: typing `>` at the end of an opening
                 // HTML tag inserts the matching closer after the cursor so
@@ -795,12 +795,12 @@ impl super::App {
                 if c == '>' && is_html_like_buffer(&self.buffer) {
                     if let Some(tag) = detect_open_tag_to_close(
                         &self.buffer,
-                        self.cursor.line,
-                        self.cursor.col,
+                        self.window.cursor.line,
+                        self.window.cursor.col,
                     ) {
                         let closer = format!("</{tag}>");
                         self.buffer
-                            .insert_str(self.cursor.line, self.cursor.col, &closer);
+                            .insert_str(self.window.cursor.line, self.window.cursor.col, &closer);
                     }
                 }
                 // Signature help: opening `(` starts the popup, `,` advances
@@ -856,47 +856,47 @@ impl super::App {
                     || mods.contains(KeyModifiers::META);
                 if !self.additional_cursors.is_empty() {
                     self.mirror_backspace();
-                } else if line_back && self.cursor.col > 0 {
-                    let line_start = self.buffer.line_start_idx(self.cursor.line);
+                } else if line_back && self.window.cursor.col > 0 {
+                    let line_start = self.buffer.line_start_idx(self.window.cursor.line);
                     let cursor_idx =
-                        self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                        self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     self.buffer.delete_range(line_start, cursor_idx);
-                    self.cursor.col = 0;
-                    self.cursor.want_col = 0;
-                } else if word_back && self.cursor.col > 0 {
-                    let new_col = previous_word_boundary(&self.buffer, self.cursor.line, self.cursor.col);
-                    let line_start = self.buffer.line_start_idx(self.cursor.line);
-                    let cursor_idx = line_start + self.cursor.col;
+                    self.window.cursor.col = 0;
+                    self.window.cursor.want_col = 0;
+                } else if word_back && self.window.cursor.col > 0 {
+                    let new_col = previous_word_boundary(&self.buffer, self.window.cursor.line, self.window.cursor.col);
+                    let line_start = self.buffer.line_start_idx(self.window.cursor.line);
+                    let cursor_idx = line_start + self.window.cursor.col;
                     let to_idx = line_start + new_col;
                     self.buffer.delete_range(to_idx, cursor_idx);
-                    self.cursor.col = new_col;
-                    self.cursor.want_col = new_col;
-                } else if self.cursor.col > 0 {
+                    self.window.cursor.col = new_col;
+                    self.window.cursor.want_col = new_col;
+                } else if self.window.cursor.col > 0 {
                     // If the cursor sits between an auto-inserted pair like {|},
                     // wipe out both characters in one stroke.
-                    let prev = self.buffer.char_at(self.cursor.line, self.cursor.col - 1);
-                    let next = self.buffer.char_at(self.cursor.line, self.cursor.col);
+                    let prev = self.buffer.char_at(self.window.cursor.line, self.window.cursor.col - 1);
+                    let next = self.buffer.char_at(self.window.cursor.line, self.window.cursor.col);
                     if let (Some(p), Some(n)) = (prev, next) {
                         if open_pair_for(p) == Some(n) {
-                            let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                            let idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                             self.buffer.delete_range(idx - 1, idx + 1);
-                            self.cursor.col -= 1;
-                            self.cursor.want_col = self.cursor.col;
+                            self.window.cursor.col -= 1;
+                            self.window.cursor.want_col = self.window.cursor.col;
                             return;
                         }
                     }
-                    let idx = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                    let idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     self.buffer.delete_range(idx - 1, idx);
-                    self.cursor.col -= 1;
-                    self.cursor.want_col = self.cursor.col;
-                } else if self.cursor.line > 0 {
-                    let prev = self.cursor.line - 1;
+                    self.window.cursor.col -= 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
+                } else if self.window.cursor.line > 0 {
+                    let prev = self.window.cursor.line - 1;
                     let prev_len = self.buffer.line_len(prev);
                     let idx = self.buffer.pos_to_char(prev, prev_len);
                     self.buffer.delete_range(idx, idx + 1);
-                    self.cursor.line = prev;
-                    self.cursor.col = prev_len;
-                    self.cursor.want_col = prev_len;
+                    self.window.cursor.line = prev;
+                    self.window.cursor.col = prev_len;
+                    self.window.cursor.want_col = prev_len;
                 }
                 if popup_was_open && !self.replaying {
                     self.lsp_request_completion(None);
@@ -913,46 +913,46 @@ impl super::App {
                 }
                 let s = self.editorconfig.indent_string();
                 let inserted = s.chars().count();
-                self.buffer.insert_str(self.cursor.line, self.cursor.col, &s);
-                self.cursor.col += inserted;
-                self.cursor.want_col = self.cursor.col;
+                self.buffer.insert_str(self.window.cursor.line, self.window.cursor.col, &s);
+                self.window.cursor.col += inserted;
+                self.window.cursor.want_col = self.window.cursor.col;
             }
             KeyCode::Left => {
-                if self.cursor.col > 0 {
-                    self.cursor.col -= 1;
-                    self.cursor.want_col = self.cursor.col;
+                if self.window.cursor.col > 0 {
+                    self.window.cursor.col -= 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
                 }
             }
             KeyCode::Right => {
-                let len = self.buffer.line_len(self.cursor.line);
-                if self.cursor.col < len {
-                    self.cursor.col += 1;
-                    self.cursor.want_col = self.cursor.col;
+                let len = self.buffer.line_len(self.window.cursor.line);
+                if self.window.cursor.col < len {
+                    self.window.cursor.col += 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
                 }
             }
             KeyCode::Up => {
-                if self.cursor.line > 0 {
-                    self.cursor.line -= 1;
-                    let len = self.buffer.line_len(self.cursor.line);
-                    self.cursor.col = self.cursor.want_col.min(len);
+                if self.window.cursor.line > 0 {
+                    self.window.cursor.line -= 1;
+                    let len = self.buffer.line_len(self.window.cursor.line);
+                    self.window.cursor.col = self.window.cursor.want_col.min(len);
                 }
             }
             KeyCode::Down => {
                 let last = self.buffer.line_count().saturating_sub(1);
-                if self.cursor.line < last {
-                    self.cursor.line += 1;
-                    let len = self.buffer.line_len(self.cursor.line);
-                    self.cursor.col = self.cursor.want_col.min(len);
+                if self.window.cursor.line < last {
+                    self.window.cursor.line += 1;
+                    let len = self.buffer.line_len(self.window.cursor.line);
+                    self.window.cursor.col = self.window.cursor.want_col.min(len);
                 }
             }
             KeyCode::Home => {
-                self.cursor.col = 0;
-                self.cursor.want_col = 0;
+                self.window.cursor.col = 0;
+                self.window.cursor.want_col = 0;
             }
             KeyCode::End => {
-                let len = self.buffer.line_len(self.cursor.line);
-                self.cursor.col = len;
-                self.cursor.want_col = len;
+                let len = self.buffer.line_len(self.window.cursor.line);
+                self.window.cursor.col = len;
+                self.window.cursor.want_col = len;
             }
             _ => {}
         }
@@ -973,8 +973,8 @@ impl super::App {
             self.mirror_insert_char('\n');
             return;
         }
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         let line_len = self.buffer.line_len(line);
         let line_start = self.buffer.line_start_idx(line);
         let line_text: String = self
@@ -1023,9 +1023,9 @@ impl super::App {
             let body_indent = format!("{lead}{unit}");
             let payload = format!("\n{body_indent}\n{lead}");
             self.buffer.insert_str(line, col, &payload);
-            self.cursor.line = line + 1;
-            self.cursor.col = body_indent.chars().count();
-            self.cursor.want_col = self.cursor.col;
+            self.window.cursor.line = line + 1;
+            self.window.cursor.col = body_indent.chars().count();
+            self.window.cursor.want_col = self.window.cursor.col;
             return;
         }
 
@@ -1036,9 +1036,9 @@ impl super::App {
         };
         let payload = format!("\n{next_indent}");
         self.buffer.insert_str(line, col, &payload);
-        self.cursor.line = line + 1;
-        self.cursor.col = next_indent.chars().count();
-        self.cursor.want_col = self.cursor.col;
+        self.window.cursor.line = line + 1;
+        self.window.cursor.col = next_indent.chars().count();
+        self.window.cursor.want_col = self.window.cursor.col;
     }
 
     fn handle_insert_key_with_completion(&mut self, key: KeyEvent) -> bool {
@@ -1183,7 +1183,7 @@ impl super::App {
                 }
             }
             ExCommand::Substitute { range, pattern, replacement, global, regex } => {
-                self.history.record(&self.buffer.rope, self.cursor);
+                self.history.record(&self.buffer.rope, self.window.cursor);
                 match self.substitute(range, &pattern, &replacement, global, regex) {
                     Ok(0) => self.status_msg = format!("Pattern not found: {pattern}"),
                     Ok(n) => {
@@ -1199,7 +1199,7 @@ impl super::App {
                 self.project_substitute(&pattern, &replacement, global, regex);
             }
             ExCommand::DeleteRange { range } => {
-                self.history.record(&self.buffer.rope, self.cursor);
+                self.history.record(&self.buffer.rope, self.window.cursor);
                 self.delete_lines(range);
             }
             ExCommand::YankRange { range } => {
@@ -1226,7 +1226,7 @@ impl super::App {
             }
             ExCommand::Goto(n) => {
                 let m = motion::goto_line(&self.buffer, n);
-                self.cursor = m.target;
+                self.window.cursor = m.target;
             }
             ExCommand::Unknown(s) => {
                 self.status_msg = format!("E492: Not an editor command: {s}");
@@ -1275,7 +1275,7 @@ impl super::App {
         match range {
             ExRange::Implicit => {
                 if default_current {
-                    (self.cursor.line, self.cursor.line)
+                    (self.window.cursor.line, self.window.cursor.line)
                 } else {
                     (0, last)
                 }
@@ -1347,9 +1347,9 @@ impl super::App {
             }
         }
         if total > 0 {
-            self.cursor.line = l1;
-            self.cursor.col = 0;
-            self.cursor.want_col = 0;
+            self.window.cursor.line = l1;
+            self.window.cursor.col = 0;
+            self.window.cursor.want_col = 0;
             self.clamp_cursor_normal();
         }
         Ok(total)
@@ -1384,9 +1384,9 @@ impl super::App {
         self.write_register(None, reg_text, true);
         self.buffer.delete_range(effective_start, end);
         let new_last = self.buffer.line_count().saturating_sub(1);
-        self.cursor.line = l1.min(new_last);
-        self.cursor.col = 0;
-        self.cursor.want_col = 0;
+        self.window.cursor.line = l1.min(new_last);
+        self.window.cursor.col = 0;
+        self.window.cursor.want_col = 0;
         self.status_msg = format!("{} lines deleted", l2 - l1 + 1);
         let _ = last_line;
     }
@@ -1443,7 +1443,7 @@ impl super::App {
                 errors += 1;
                 continue;
             }
-            self.history.record(&self.buffer.rope, self.cursor);
+            self.history.record(&self.buffer.rope, self.window.cursor);
             match self.substitute(
                 crate::command::ExRange::Whole,
                 pattern,

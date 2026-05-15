@@ -80,8 +80,8 @@ impl super::App {
             PickerLeader::CodeActions => {
                 if let Some(path) = self.buffer.path.clone() {
                     self.lsp_sync_active();
-                    let line = self.cursor.line;
-                    let col = self.cursor.col;
+                    let line = self.window.cursor.line;
+                    let col = self.window.cursor.col;
                     let diags = self.diagnostics_at_cursor_for_lsp();
                     if !self.lsp.request_code_actions(&path, line, col, diags) {
                         self.status_msg = "LSP: not active for this buffer".into();
@@ -166,9 +166,9 @@ impl super::App {
                                 self.status_msg = format!("error: {e}");
                             } else {
                                 self.push_jump();
-                                self.cursor.line = line.saturating_sub(1);
-                                self.cursor.col = col.saturating_sub(1);
-                                self.cursor.want_col = self.cursor.col;
+                                self.window.cursor.line = line.saturating_sub(1);
+                                self.window.cursor.col = col.saturating_sub(1);
+                                self.window.cursor.want_col = self.window.cursor.col;
                                 self.clamp_cursor_normal();
                             }
                         }

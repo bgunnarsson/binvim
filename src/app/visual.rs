@@ -8,7 +8,7 @@ use crate::text_object::{self, TextObjectVerb};
 impl super::App {
     pub(super) fn exit_visual(&mut self) {
         self.mode = Mode::Normal;
-        self.visual_anchor = None;
+        self.window.visual_anchor = None;
         self.additional_selections.clear();
         self.word_drag_origin = None;
     }
@@ -65,24 +65,24 @@ impl super::App {
         self.additional_selections.dedup();
         // Anchor at hit_start, cursor at hit_end - 1 (inclusive end for visual).
         self.cursor_to_idx(hit_start);
-        let anchor = self.cursor;
+        let anchor = self.window.cursor;
         self.cursor_to_idx(hit_end.saturating_sub(1).max(hit_start));
-        self.visual_anchor = Some(anchor);
+        self.window.visual_anchor = Some(anchor);
     }
 
     pub(super) fn visual_range_chars(&self, kind: VisualKind) -> (usize, usize, bool) {
-        let anchor = self.visual_anchor.unwrap_or(self.cursor);
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
         match kind {
             VisualKind::Char => {
                 let a = self.buffer.pos_to_char(anchor.line, anchor.col);
-                let c = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                let c = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                 let (lo, hi) = if a <= c { (a, c) } else { (c, a) };
                 let total = self.buffer.total_chars();
                 (lo, (hi + 1).min(total), false)
             }
             VisualKind::Line => {
-                let l1 = anchor.line.min(self.cursor.line);
-                let l2 = anchor.line.max(self.cursor.line);
+                let l1 = anchor.line.min(self.window.cursor.line);
+                let l2 = anchor.line.max(self.window.cursor.line);
                 let s = self.buffer.line_start_idx(l1);
                 let e = self.buffer.line_start_idx(l2 + 1);
                 let total = self.buffer.total_chars();
@@ -97,7 +97,7 @@ impl super::App {
                 // anchor-to-cursor char range so it does *something* rather
                 // than crashing.
                 let a = self.buffer.pos_to_char(anchor.line, anchor.col);
-                let c = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                let c = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                 let (lo, hi) = if a <= c { (a, c) } else { (c, a) };
                 let total = self.buffer.total_chars();
                 (lo, (hi + 1).min(total), false)
@@ -128,11 +128,11 @@ impl super::App {
         // Crucially, keep the selection alive afterwards so the user can keep
         // hammering > / < to indent further without re-selecting.
         if matches!(op, Operator::Indent | Operator::Outdent) {
-            let anchor = self.visual_anchor.unwrap_or(self.cursor);
+            let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
             let saved_anchor_line = anchor.line;
             let saved_anchor_col = anchor.col;
-            let saved_cursor_line = self.cursor.line;
-            let saved_cursor_col = self.cursor.col;
+            let saved_cursor_line = self.window.cursor.line;
+            let saved_cursor_col = self.window.cursor.col;
             let l1 = saved_anchor_line.min(saved_cursor_line);
             let l2 = saved_anchor_line.max(saved_cursor_line);
             if matches!(op, Operator::Indent) {
@@ -144,14 +144,14 @@ impl super::App {
             // shift left of them. The line range is what matters for indent.
             let anchor_max = self.buffer.line_len(saved_anchor_line).saturating_sub(1);
             let cursor_max = self.buffer.line_len(saved_cursor_line).saturating_sub(1);
-            self.visual_anchor = Some(Cursor {
+            self.window.visual_anchor = Some(Cursor {
                 line: saved_anchor_line,
                 col: saved_anchor_col.min(anchor_max),
                 want_col: saved_anchor_col.min(anchor_max),
             });
-            self.cursor.line = saved_cursor_line;
-            self.cursor.col = saved_cursor_col.min(cursor_max);
-            self.cursor.want_col = self.cursor.col;
+            self.window.cursor.line = saved_cursor_line;
+            self.window.cursor.col = saved_cursor_col.min(cursor_max);
+            self.window.cursor.want_col = self.window.cursor.col;
             return;
         }
         let (start, end, linewise) = self.visual_range_chars(kind);
@@ -183,7 +183,7 @@ impl super::App {
                 }
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;
-                self.visual_anchor = None;
+                self.window.visual_anchor = None;
             }
             Operator::Indent | Operator::Outdent => unreachable!(),
         }
@@ -263,7 +263,7 @@ impl super::App {
                 self.clamp_cursor_normal();
                 if matches!(op, Operator::Change) {
                     self.mode = Mode::Insert;
-                    self.visual_anchor = None;
+                    self.window.visual_anchor = None;
                 } else {
                     self.exit_visual();
                 }
@@ -348,11 +348,11 @@ impl super::App {
     /// would need a full block-paste implementation; this is the minimum
     /// that makes `vp` over a block selection do something useful.
     fn apply_block_put(&mut self, reg: super::state::Register) {
-        let anchor = self.visual_anchor.unwrap_or(self.cursor);
-        let l1 = anchor.line.min(self.cursor.line);
-        let l2 = anchor.line.max(self.cursor.line);
-        let c1 = anchor.col.min(self.cursor.col);
-        let c2 = anchor.col.max(self.cursor.col);
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+        let l1 = anchor.line.min(self.window.cursor.line);
+        let l2 = anchor.line.max(self.window.cursor.line);
+        let c1 = anchor.col.min(self.window.cursor.col);
+        let c2 = anchor.col.max(self.window.cursor.col);
         // Collect the rectangle's text for the unnamed register, then strip
         // it from the buffer bottom-up so the upper rows' indices stay valid.
         let mut chunks: Vec<String> = Vec::with_capacity(l2 - l1 + 1);
@@ -402,11 +402,11 @@ impl super::App {
     /// the line range it covers — matching what users typically want from
     /// `>` on a `Ctrl-V` selection.
     fn apply_block_operate(&mut self, op: Operator, target: Option<char>) {
-        let anchor = self.visual_anchor.unwrap_or(self.cursor);
-        let l1 = anchor.line.min(self.cursor.line);
-        let l2 = anchor.line.max(self.cursor.line);
-        let c1 = anchor.col.min(self.cursor.col);
-        let c2 = anchor.col.max(self.cursor.col);
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+        let l1 = anchor.line.min(self.window.cursor.line);
+        let l2 = anchor.line.max(self.window.cursor.line);
+        let c1 = anchor.col.min(self.window.cursor.col);
+        let c2 = anchor.col.max(self.window.cursor.col);
 
         if matches!(op, Operator::Indent) {
             self.indent_lines(l1, l2);
@@ -449,9 +449,9 @@ impl super::App {
                 let start = (line_start + c1).min(line_start + first_line_len);
                 let end = (line_start + c2 + 1).min(line_start + first_line_len);
                 self.flash_yank(start, end);
-                self.cursor.line = l1;
-                self.cursor.col = c1.min(first_line_len.saturating_sub(1));
-                self.cursor.want_col = self.cursor.col;
+                self.window.cursor.line = l1;
+                self.window.cursor.col = c1.min(first_line_len.saturating_sub(1));
+                self.window.cursor.want_col = self.window.cursor.col;
                 self.exit_visual();
             }
             Operator::Delete | Operator::Change => {
@@ -468,13 +468,13 @@ impl super::App {
                             .delete_range(line_start + start, line_start + end);
                     }
                 }
-                self.cursor.line = l1;
+                self.window.cursor.line = l1;
                 let new_len = self.buffer.line_len(l1);
-                self.cursor.col = c1.min(new_len.saturating_sub(1));
-                self.cursor.want_col = self.cursor.col;
+                self.window.cursor.col = c1.min(new_len.saturating_sub(1));
+                self.window.cursor.want_col = self.window.cursor.col;
                 if matches!(op, Operator::Change) {
                     self.mode = Mode::Insert;
-                    self.visual_anchor = None;
+                    self.window.visual_anchor = None;
                 } else {
                     self.exit_visual();
                 }
@@ -484,15 +484,15 @@ impl super::App {
     }
 
     pub(super) fn apply_visual_select_textobj(&mut self, obj: TextObjectVerb) {
-        let range = match text_object::compute(&self.buffer, self.cursor, obj) {
+        let range = match text_object::compute(&self.buffer, self.window.cursor, obj) {
             Some(r) => r,
             None => return,
         };
         // Anchor → start, cursor → end-1 (inclusive endpoint for visual).
         self.cursor_to_idx(range.start);
-        let anchor = self.cursor;
+        let anchor = self.window.cursor;
         let end_idx = range.end.saturating_sub(1).max(range.start);
         self.cursor_to_idx(end_idx);
-        self.visual_anchor = Some(anchor);
+        self.window.visual_anchor = Some(anchor);
     }
 }

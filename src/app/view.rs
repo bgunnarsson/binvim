@@ -60,16 +60,16 @@ impl super::App {
                 self.shift_view_and_cursor(amount, down, last);
             }
             PageScrollKind::LineDown => {
-                self.view_top = (self.view_top + 1).min(last);
-                if self.cursor.line < self.view_top {
-                    self.cursor.line = self.view_top;
+                self.window.view_top = (self.window.view_top + 1).min(last);
+                if self.window.cursor.line < self.window.view_top {
+                    self.window.cursor.line = self.window.view_top;
                 }
                 self.snap_cursor_col_to_want();
             }
             PageScrollKind::LineUp => {
-                self.view_top = self.view_top.saturating_sub(1);
-                if self.cursor.line > self.view_top + rows.saturating_sub(1) {
-                    self.cursor.line = self.view_top + rows.saturating_sub(1);
+                self.window.view_top = self.window.view_top.saturating_sub(1);
+                if self.window.cursor.line > self.window.view_top + rows.saturating_sub(1) {
+                    self.window.cursor.line = self.window.view_top + rows.saturating_sub(1);
                 }
                 self.snap_cursor_col_to_want();
             }
@@ -78,30 +78,30 @@ impl super::App {
 
     fn shift_view_and_cursor(&mut self, amount: usize, down: bool, last: usize) {
         if down {
-            self.view_top = (self.view_top + amount).min(last);
-            self.cursor.line = (self.cursor.line + amount).min(last);
+            self.window.view_top = (self.window.view_top + amount).min(last);
+            self.window.cursor.line = (self.window.cursor.line + amount).min(last);
         } else {
-            self.view_top = self.view_top.saturating_sub(amount);
-            self.cursor.line = self.cursor.line.saturating_sub(amount);
+            self.window.view_top = self.window.view_top.saturating_sub(amount);
+            self.window.cursor.line = self.window.cursor.line.saturating_sub(amount);
         }
         self.snap_cursor_col_to_want();
     }
 
     fn snap_cursor_col_to_want(&mut self) {
-        let len = self.buffer.line_len(self.cursor.line);
+        let len = self.buffer.line_len(self.window.cursor.line);
         let max = if len == 0 { 0 } else { len - 1 };
-        self.cursor.col = self.cursor.want_col.min(max);
+        self.window.cursor.col = self.window.cursor.want_col.min(max);
     }
 
     pub(super) fn adjust_viewport_to(&mut self, kind: ViewportAdjust) {
         let rows = self.buffer_rows();
-        let cur = self.cursor.line;
+        let cur = self.window.cursor.line;
         let buffer_cols = (self.width as usize).saturating_sub(self.gutter_width());
         match kind {
-            ViewportAdjust::Top if rows > 0 => self.view_top = cur,
-            ViewportAdjust::Center if rows > 0 => self.view_top = cur.saturating_sub(rows / 2),
+            ViewportAdjust::Top if rows > 0 => self.window.view_top = cur,
+            ViewportAdjust::Center if rows > 0 => self.window.view_top = cur.saturating_sub(rows / 2),
             ViewportAdjust::Bottom if rows > 0 => {
-                self.view_top = cur.saturating_sub(rows.saturating_sub(1))
+                self.window.view_top = cur.saturating_sub(rows.saturating_sub(1))
             }
             ViewportAdjust::Left => self.scroll_horizontal(-1),
             ViewportAdjust::Right => self.scroll_horizontal(1),
@@ -122,8 +122,8 @@ impl super::App {
     /// in Vim does the same. The next motion will pull the viewport back
     /// via `adjust_viewport`.
     pub fn scroll_horizontal(&mut self, delta: i64) {
-        let new_left = (self.view_left as i64 + delta).max(0) as usize;
-        self.view_left = new_left;
+        let new_left = (self.window.view_left as i64 + delta).max(0) as usize;
+        self.window.view_left = new_left;
     }
 
     pub(super) fn cursor_to_idx(&mut self, idx: usize) {
@@ -132,20 +132,20 @@ impl super::App {
         let line = self.buffer.rope.char_to_line(idx);
         let line_start = self.buffer.rope.line_to_char(line);
         let col = idx - line_start;
-        self.cursor.line = line;
-        self.cursor.col = col;
-        self.cursor.want_col = col;
+        self.window.cursor.line = line;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
     }
 
     pub(super) fn clamp_cursor_normal(&mut self) {
         let last = self.buffer.line_count().saturating_sub(1);
-        if self.cursor.line > last {
-            self.cursor.line = last;
+        if self.window.cursor.line > last {
+            self.window.cursor.line = last;
         }
-        let len = self.buffer.line_len(self.cursor.line);
+        let len = self.buffer.line_len(self.window.cursor.line);
         let max = if len == 0 { 0 } else { len - 1 };
-        if self.cursor.col > max {
-            self.cursor.col = max;
+        if self.window.cursor.col > max {
+            self.window.cursor.col = max;
         }
     }
 
@@ -167,19 +167,20 @@ impl super::App {
         let scrolloff = 3.min(buffer_rows / 2);
 
         // Move the viewport.
-        let new_top = (self.view_top as i64 + delta).max(0) as usize;
-        self.view_top = new_top.min(max_top);
+        let new_top = (self.window.view_top as i64 + delta).max(0) as usize;
+        self.window.view_top = new_top.min(max_top);
 
         // Drag the cursor by the same amount, then clamp it into the scroll-off
         // zone of the (possibly clamped) viewport.
-        let new_cursor_line = (self.cursor.line as i64 + delta).max(0) as usize;
+        let new_cursor_line = (self.window.cursor.line as i64 + delta).max(0) as usize;
         let mut line = new_cursor_line.min(last);
-        let top_min = self.view_top + scrolloff;
+        let top_min = self.window.view_top + scrolloff;
         let bot_max = self
+            .window
             .view_top
             .saturating_add(buffer_rows.saturating_sub(scrolloff + 1));
         line = line.max(top_min).min(bot_max).min(last);
-        self.cursor.line = line;
+        self.window.cursor.line = line;
         self.clamp_cursor_normal();
     }
 
@@ -187,13 +188,13 @@ impl super::App {
         let buffer_rows = self.buffer_rows();
         if buffer_rows > 0 {
             let scrolloff = 3.min(buffer_rows / 2);
-            let cur = self.cursor.line;
-            if cur < self.view_top + scrolloff {
-                self.view_top = cur.saturating_sub(scrolloff);
+            let cur = self.window.cursor.line;
+            if cur < self.window.view_top + scrolloff {
+                self.window.view_top = cur.saturating_sub(scrolloff);
             }
-            if cur >= self.view_top + buffer_rows.saturating_sub(scrolloff) {
+            if cur >= self.window.view_top + buffer_rows.saturating_sub(scrolloff) {
                 let want = cur + scrolloff + 1;
-                self.view_top = want.saturating_sub(buffer_rows);
+                self.window.view_top = want.saturating_sub(buffer_rows);
             }
         }
 
@@ -205,13 +206,13 @@ impl super::App {
         }
         let scrolloff_h = 5.min(buffer_cols / 4);
         let cur_vis = self.cursor_visual_col();
-        if cur_vis < self.view_left + scrolloff_h {
-            self.view_left = cur_vis.saturating_sub(scrolloff_h);
+        if cur_vis < self.window.view_left + scrolloff_h {
+            self.window.view_left = cur_vis.saturating_sub(scrolloff_h);
         }
-        let right_edge = self.view_left + buffer_cols.saturating_sub(scrolloff_h);
+        let right_edge = self.window.view_left + buffer_cols.saturating_sub(scrolloff_h);
         if cur_vis >= right_edge {
             let want = cur_vis + scrolloff_h + 1;
-            self.view_left = want.saturating_sub(buffer_cols);
+            self.window.view_left = want.saturating_sub(buffer_cols);
         }
     }
 
@@ -219,13 +220,13 @@ impl super::App {
     /// `TAB_WIDTH` columns. Used by horizontal viewport tracking and cursor
     /// placement.
     pub fn cursor_visual_col(&self) -> usize {
-        if self.cursor.line >= self.buffer.line_count() {
+        if self.window.cursor.line >= self.buffer.line_count() {
             return 0;
         }
-        let line = self.buffer.rope.line(self.cursor.line);
+        let line = self.buffer.rope.line(self.window.cursor.line);
         let mut v = 0usize;
         for (i, c) in line.chars().enumerate() {
-            if i >= self.cursor.col {
+            if i >= self.window.cursor.col {
                 break;
             }
             if c == '\t' {
@@ -355,28 +356,28 @@ impl super::App {
                     .collect();
             }
             FoldOp::Open => {
-                if let Some(f) = self.innermost_closed_fold_at(self.cursor.line) {
+                if let Some(f) = self.innermost_closed_fold_at(self.window.cursor.line) {
                     self.closed_folds.remove(&f.start_line);
                 }
             }
             FoldOp::Close => {
-                if let Some(f) = self.innermost_open_fold_at(self.cursor.line) {
+                if let Some(f) = self.innermost_open_fold_at(self.window.cursor.line) {
                     self.closed_folds.insert(f.start_line);
                     // Snap cursor to the fold's start so it's never on a
                     // hidden row.
-                    if self.cursor.line > f.start_line && self.cursor.line <= f.end_line {
-                        self.cursor.line = f.start_line;
+                    if self.window.cursor.line > f.start_line && self.window.cursor.line <= f.end_line {
+                        self.window.cursor.line = f.start_line;
                         self.clamp_cursor_normal();
                     }
                 }
             }
             FoldOp::Toggle => {
-                if let Some(f) = self.innermost_closed_fold_at(self.cursor.line) {
+                if let Some(f) = self.innermost_closed_fold_at(self.window.cursor.line) {
                     self.closed_folds.remove(&f.start_line);
-                } else if let Some(f) = self.innermost_open_fold_at(self.cursor.line) {
+                } else if let Some(f) = self.innermost_open_fold_at(self.window.cursor.line) {
                     self.closed_folds.insert(f.start_line);
-                    if self.cursor.line > f.start_line && self.cursor.line <= f.end_line {
-                        self.cursor.line = f.start_line;
+                    if self.window.cursor.line > f.start_line && self.window.cursor.line <= f.end_line {
+                        self.window.cursor.line = f.start_line;
                         self.clamp_cursor_normal();
                     }
                 }

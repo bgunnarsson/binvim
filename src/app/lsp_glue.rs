@@ -25,9 +25,9 @@ impl super::App {
                         self.status_msg = format!("error: {e}");
                         continue;
                     }
-                    self.cursor.line = line;
-                    self.cursor.col = col;
-                    self.cursor.want_col = col;
+                    self.window.cursor.line = line;
+                    self.window.cursor.col = col;
+                    self.window.cursor.want_col = col;
                     self.clamp_cursor_normal();
                 }
                 LspEvent::Hover { text } => {
@@ -108,7 +108,7 @@ impl super::App {
                     let start_idx = self.buffer.pos_to_char(anchor_line, anchor_col);
                     let end_idx = self
                         .buffer
-                        .pos_to_char(self.cursor.line, self.cursor.col);
+                        .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     let prefix = if end_idx > start_idx {
                         self.buffer.rope.slice(start_idx..end_idx).to_string()
                     } else {
@@ -154,8 +154,8 @@ impl super::App {
     /// `-` is included so CSS property names (`border-color`) and Tailwind class
     /// names (`bg-blue-500`) are treated as one continuous token.
     fn word_prefix_start(&self) -> (usize, usize) {
-        let line = self.cursor.line;
-        let mut col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let mut col = self.window.cursor.col;
         while col > 0 {
             let prev = self
                 .buffer
@@ -178,8 +178,8 @@ impl super::App {
         // request lands against last frame's text and the server sees stale
         // content (no `.`, wrong identifier prefix, etc).
         self.lsp_sync_active();
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         if !self.lsp.request_completion(&path, line, col, trigger_char) {
             // No LSP — silently ignore so editing isn't disrupted.
         }
@@ -231,8 +231,8 @@ impl super::App {
             self.status_msg = "Save the buffer to rename".into();
             return;
         };
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         // Pre-fill with the current word so common renames are a few-char edit.
         let current = self.word_under_cursor().unwrap_or_default();
         self.rename_anchor = Some((path, line, col, current.clone()));
@@ -310,7 +310,7 @@ impl super::App {
             self.status_msg = "replace cancelled (empty)".into();
             return;
         }
-        self.history.record(&self.buffer.rope, self.cursor);
+        self.history.record(&self.buffer.rope, self.window.cursor);
         let n = self
             .substitute(
                 crate::command::ExRange::Whole,
@@ -356,8 +356,8 @@ impl super::App {
             return;
         };
         self.lsp_sync_active();
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         if !self.lsp.request_references(&path, line, col) {
             self.status_msg = "LSP: not active for this buffer".into();
         }
@@ -368,8 +368,8 @@ impl super::App {
             return;
         };
         self.lsp_sync_active();
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         let _ = self.lsp.request_signature_help(&path, line, col);
     }
 
@@ -401,11 +401,11 @@ impl super::App {
                 (s.min(e), s.max(e))
             }
             None => {
-                if c.anchor_line != self.cursor.line {
+                if c.anchor_line != self.window.cursor.line {
                     return;
                 }
                 let s = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
-                let e = self.buffer.pos_to_char(self.cursor.line, self.cursor.col);
+                let e = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
                 (s.min(e), s.max(e))
             }
         };
@@ -573,8 +573,8 @@ impl super::App {
             self.status_msg = "LSP: buffer has no file".into();
             return;
         };
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         if !self.lsp.request_definition(&path, line, col) {
             self.status_msg = "LSP: not active for this buffer".into();
         }
@@ -606,8 +606,8 @@ impl super::App {
             self.status_msg = "LSP: buffer has no file".into();
             return;
         };
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         if !self.lsp.request_hover(&path, line, col) {
             self.status_msg = "LSP: not active for this buffer".into();
         }
@@ -643,8 +643,8 @@ impl super::App {
     pub(super) fn diagnostics_at_cursor_for_lsp(&self) -> Vec<JsonValue> {
         let Some(path) = self.buffer.path.as_deref() else { return Vec::new(); };
         let Some(diags) = self.lsp.diagnostics_for(path) else { return Vec::new(); };
-        let line = self.cursor.line;
-        let col = self.cursor.col;
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
         diags
             .iter()
             .filter(|d| {
@@ -793,7 +793,7 @@ impl super::App {
         let files = grouped.len();
         for (path, edits) in grouped {
             self.open_buffer(path.clone())?;
-            self.history.record(&self.buffer.rope, self.cursor);
+            self.history.record(&self.buffer.rope, self.window.cursor);
             let mut concrete: Vec<(usize, usize, String)> = Vec::with_capacity(edits.len());
             for e in &edits {
                 let Some(range) = e.get("range") else { continue };

@@ -25,13 +25,13 @@ impl super::App {
                     self.status_msg = "already formatted".into();
                     return;
                 }
-                self.history.record(&self.buffer.rope, self.cursor);
+                self.history.record(&self.buffer.rope, self.window.cursor);
                 let total = self.buffer.total_chars();
                 self.buffer.delete_range(0, total);
                 self.buffer.insert_at_idx(0, &formatted);
                 let last_line = self.buffer.line_count().saturating_sub(1);
-                if self.cursor.line > last_line {
-                    self.cursor.line = last_line;
+                if self.window.cursor.line > last_line {
+                    self.window.cursor.line = last_line;
                 }
                 self.clamp_cursor_normal();
                 self.status_msg = "formatted".into();
@@ -52,13 +52,13 @@ impl super::App {
             let source = self.buffer.rope.to_string();
             match crate::format::format_buffer(&path, &source) {
                 Ok(formatted) if formatted != source => {
-                    self.history.record(&self.buffer.rope, self.cursor);
+                    self.history.record(&self.buffer.rope, self.window.cursor);
                     let total = self.buffer.total_chars();
                     self.buffer.delete_range(0, total);
                     self.buffer.insert_at_idx(0, &formatted);
                     let last_line = self.buffer.line_count().saturating_sub(1);
-                    if self.cursor.line > last_line {
-                        self.cursor.line = last_line;
+                    if self.window.cursor.line > last_line {
+                        self.window.cursor.line = last_line;
                     }
                     self.clamp_cursor_normal();
                     format_note = Some("formatted".into());

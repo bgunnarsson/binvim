@@ -22,6 +22,7 @@ mod render;
 mod session;
 mod text_object;
 mod undo;
+mod window;
 
 fn main() -> Result<()> {
     let path = env::args().nth(1).map(PathBuf::from);

@@ -68,7 +68,6 @@ use std::time::{Duration, Instant};
 
 use crate::buffer::Buffer;
 use crate::config::Config;
-use crate::cursor::Cursor;
 use crate::dap::DapManager;
 use crate::editorconfig::EditorConfig;
 use crate::lang::HighlightCache;
@@ -83,7 +82,11 @@ use state::RecordingState;
 
 pub struct App {
     pub buffer: Buffer,
-    pub cursor: Cursor,
+    /// The active window — its cursor, viewport, and Visual anchor. Until
+    /// splits land there is exactly one of these; the field exists now so
+    /// the eventual `Vec<Window>` / split-tree move is a structural change
+    /// rather than a sweep of every cursor read in the codebase.
+    pub window: crate::window::Window,
     pub mode: Mode,
     pub pending: PendingCmd,
     pub history: History,
@@ -95,13 +98,9 @@ pub struct App {
     /// message itself is cleared (either by the next keypress, the
     /// timeout firing, or a fresh message replacing it).
     pub status_msg_at: Option<Instant>,
-    pub view_top: usize,
-    /// Visual columns hidden off the left edge of the buffer area.
-    pub view_left: usize,
     pub width: u16,
     pub height: u16,
     pub should_quit: bool,
-    pub visual_anchor: Option<Cursor>,
     pub last_find: Option<FindRecord>,
     /// `(query, backward)` — direction is the original search direction so `n`/`N` honour it.
     pub last_search: Option<(String, bool)>,
@@ -290,7 +289,7 @@ impl App {
         let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
         let mut this = Self {
             buffer,
-            cursor: Cursor::default(),
+            window: crate::window::Window::default(),
             mode: Mode::Normal,
             pending: PendingCmd::default(),
             history: History::new(),
@@ -298,12 +297,9 @@ impl App {
             cmdline: String::new(),
             status_msg: String::new(),
             status_msg_at: None,
-            view_top: 0,
-            view_left: 0,
             width: w,
             height: h,
             should_quit: false,
-            visual_anchor: None,
             last_find: None,
             last_search: None,
             search_hl_off: false,

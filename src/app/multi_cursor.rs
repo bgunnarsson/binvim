@@ -150,7 +150,7 @@ impl super::App {
     /// particular order — callers sort what they need.
     fn all_cursors(&self) -> Vec<Cursor> {
         let mut out = Vec::with_capacity(self.additional_cursors.len() + 1);
-        out.push(self.cursor);
+        out.push(self.window.cursor);
         for &idx in &self.additional_cursors {
             out.push(cursor_at_idx(&self.buffer, idx));
         }

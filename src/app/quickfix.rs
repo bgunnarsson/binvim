@@ -160,9 +160,9 @@ impl super::App {
             return;
         }
         // Coords coming from grep / references / diagnostics are 1-indexed.
-        self.cursor.line = entry.line.saturating_sub(1);
-        self.cursor.col = entry.col.saturating_sub(1);
-        self.cursor.want_col = self.cursor.col;
+        self.window.cursor.line = entry.line.saturating_sub(1);
+        self.window.cursor.col = entry.col.saturating_sub(1);
+        self.window.cursor.want_col = self.window.cursor.col;
         self.clamp_cursor_normal();
         self.status_msg = format!("({pos}/{total}) {display_path}:{}:{}", entry.line, entry.col);
     }
