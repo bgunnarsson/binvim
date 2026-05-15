@@ -7,6 +7,21 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Cmdline (`:`) and search (`/` / `?`) history with `<Up>` / `<Down>`
+  recall, persisted across sessions.** Each successful Enter records
+  the line into a per-cwd ring (dedup against the previous entry,
+  capped at 100). Inside the prompt, `<Up>` walks one step older and
+  `<Down>` walks newer — the first `<Up>` snapshots whatever was
+  already typed so walking past the most recent entry restores that
+  draft instead of leaving an empty cmdline. The two histories are
+  independent: `:` recall doesn't surface `/` queries and vice versa.
+  Persistence rides on the existing per-cwd `~/.cache/binvim/sessions/<hash>.json`
+  file — `serde(default)` keeps old session files parseable, and a
+  `binvim foo.rs` launch now loads histories even though it skips
+  buffer restoration, so `:` / `/` recall stays warm regardless of
+  launch mode. The "no buffers left = clear the session file" rule
+  was relaxed to "no buffers AND no history" so closing every buffer
+  via `<leader>bA` no longer wipes recall.
 - **`<C-w> [N] >` / `<` / `+` / `-` resize the active window by N
   cells.** Widens (`>`) or narrows (`<`) along the vertical axis;
   grows (`+`) or shrinks (`-`) the height. Count defaults to 1 when

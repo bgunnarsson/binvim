@@ -21,6 +21,7 @@
 //! - [`health`]: `:health` command output
 
 mod buffers;
+mod cmdline_history;
 mod comment;
 mod copilot;
 mod dap_glue;
@@ -100,6 +101,23 @@ pub struct App {
     pub history: History,
     pub registers: HashMap<char, Register>,
     pub cmdline: String,
+    /// Ex-command history (`:`), oldest first. Persisted to the session
+    /// file alongside the buffer list; `<Up>` / `<Down>` inside Command
+    /// mode walks it via `history_walk_back` / `history_walk_forward`.
+    pub cmd_history: Vec<String>,
+    /// Search-query history (`/` / `?`), oldest first. Same shape and
+    /// recall path as `cmd_history`; the two are kept independent so
+    /// that searching doesn't pollute the ex-command list and vice versa.
+    pub search_history: Vec<String>,
+    /// Index into the active history while the user is cycling with
+    /// Up/Down. `None` means "not currently cycling — `cmdline` is
+    /// the freshly-typed draft." Reset whenever Command / Search mode
+    /// is entered or exited.
+    pub history_cursor: Option<usize>,
+    /// Snapshot of `cmdline` taken on the first Up press so walking
+    /// off the bottom of history restores the in-progress draft. Reset
+    /// alongside `history_cursor`.
+    pub history_draft: Option<String>,
     pub status_msg: String,
     /// When the current `status_msg` was first observed non-empty.
     /// Drives the 10-second auto-dismiss timer; cleared whenever the
@@ -341,16 +359,16 @@ pub const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(350);
 
 impl App {
     pub fn new(path: Option<PathBuf>) -> Result<Self> {
-        // No path arg + a saved session for this cwd → restore the session
-        // instead of opening the empty start page. The session module does
-        // its own existence checks for each tracked buffer.
+        // Always load the saved session for this cwd if one exists —
+        // we use it for cmdline / search history regardless of how the
+        // editor was launched. Buffer restoration is gated separately
+        // on `path.is_none()`, so `binvim foo.rs` doesn't pull every
+        // previously-open buffer back in, but it DOES keep your `:` /
+        // `/` recall warm.
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let restored_session = if path.is_none() {
-            crate::session::load_for_cwd(&cwd)
-        } else {
-            None
-        };
-        let show_start_page = path.is_none() && restored_session.is_none();
+        let saved_session = crate::session::load_for_cwd(&cwd);
+        let restore_buffers = path.is_none() && saved_session.is_some();
+        let show_start_page = path.is_none() && !restore_buffers;
         let buffer = match path.as_ref() {
             Some(p) => Buffer::from_path(p.clone())?,
             None => Buffer::empty(),
@@ -368,6 +386,10 @@ impl App {
             history: History::new(),
             registers: HashMap::new(),
             cmdline: String::new(),
+            cmd_history: Vec::new(),
+            search_history: Vec::new(),
+            history_cursor: None,
+            history_draft: None,
             status_msg: String::new(),
             status_msg_at: None,
             width: w,
@@ -442,7 +464,7 @@ impl App {
             replaying_macro: false,
             recording: None,
             replaying: false,
-            session_restored: restored_session.is_some(),
+            session_restored: restore_buffers,
             copilot_ghost: None,
             last_keystroke_at: Instant::now(),
             last_copilot_request_version: HashMap::new(),
@@ -454,11 +476,16 @@ impl App {
         // buffer is opened (and thus before `lsp_attach_active` runs)
         // so the initial didOpen carries the Copilot client too.
         this.lsp.copilot_enabled = this.config.copilot.enabled;
-        // Hydrate from the saved session — open every still-extant buffer,
-        // restore each one's cursor + viewport, and land on the previously
-        // active buffer.
-        if let Some(s) = restored_session {
-            this.hydrate_from_session(s);
+        // Hydrate from the saved session — histories always restore so
+        // `:` / `/` recall stays warm regardless of launch mode; the
+        // buffer set restores only when no path arg was given (so
+        // `binvim foo.rs` opens just `foo.rs`, not the whole prior set).
+        if let Some(s) = saved_session {
+            this.cmd_history = s.cmd_history.clone();
+            this.search_history = s.search_history.clone();
+            if restore_buffers {
+                this.hydrate_from_session(s);
+            }
         }
         Ok(this)
     }
@@ -643,12 +670,16 @@ impl App {
         }
         // Clean shutdown — persist the session so the next launch in this
         // cwd can restore it. Best-effort: errors don't block exit.
-        // If every buffer was closed (e.g. via `<leader>bA`), DELETE the
-        // saved session rather than skipping the save: leaving a stale
-        // file on disk silently revives the just-closed buffers on the
-        // next launch.
+        // We DELETE the file only when there's truly nothing worth
+        // restoring (no buffers AND no histories). Buffers-empty-but-
+        // history-non-empty still saves: the `<leader>bA` flow shouldn't
+        // wipe `:` / `/` recall, and `hydrate_from_session` already
+        // tolerates a session whose tracked files have all been deleted.
         let session = self.build_session();
-        if !session.buffers.is_empty() {
+        if !session.buffers.is_empty()
+            || !session.cmd_history.is_empty()
+            || !session.search_history.is_empty()
+        {
             let _ = crate::session::save(&session);
         } else {
             let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

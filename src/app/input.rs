@@ -1126,23 +1126,30 @@ impl super::App {
     }
 
     pub(super) fn handle_command_key(&mut self, key: KeyEvent) {
+        use super::cmdline_history::HistoryKind;
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
+                self.history_reset();
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
                 let line = std::mem::take(&mut self.cmdline);
+                self.history_record(HistoryKind::Command, &line);
+                self.history_reset();
                 self.mode = Mode::Normal;
                 self.exec_command(&line);
             }
             KeyCode::Backspace => {
                 if self.cmdline.is_empty() {
+                    self.history_reset();
                     self.mode = Mode::Normal;
                 } else {
                     self.cmdline.pop();
                 }
             }
+            KeyCode::Up => self.history_walk_back(HistoryKind::Command),
+            KeyCode::Down => self.history_walk_forward(HistoryKind::Command),
             KeyCode::Char(c) => {
                 self.cmdline.push(c);
             }

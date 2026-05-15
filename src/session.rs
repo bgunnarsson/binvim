@@ -18,6 +18,14 @@ pub struct Session {
     pub cwd: String,
     pub buffers: Vec<SessionBuffer>,
     pub active: usize,
+    /// Ex command history (`:`) — oldest first, most recent at the
+    /// end. Capped at `CMDLINE_HISTORY_CAP` on save. Defaulted so old
+    /// session files without this field keep parsing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cmd_history: Vec<String>,
+    /// Search query history (`/` / `?`) — oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub search_history: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

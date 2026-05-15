@@ -685,6 +685,8 @@ impl super::App {
             cwd: canon.to_string_lossy().to_string(),
             buffers,
             active: active_in_session,
+            cmd_history: self.cmd_history.clone(),
+            search_history: self.search_history.clone(),
         }
     }
 

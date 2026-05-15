@@ -187,13 +187,17 @@ impl super::App {
     }
 
     pub(super) fn handle_search_key(&mut self, key: KeyEvent) {
+        use super::cmdline_history::HistoryKind;
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
+                self.history_reset();
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
                 let query = std::mem::take(&mut self.cmdline);
+                self.history_record(HistoryKind::Search, &query);
+                self.history_reset();
                 let backward = match self.mode {
                     Mode::Search { backward } => backward,
                     _ => return,
@@ -203,11 +207,14 @@ impl super::App {
             }
             KeyCode::Backspace => {
                 if self.cmdline.is_empty() {
+                    self.history_reset();
                     self.mode = Mode::Normal;
                 } else {
                     self.cmdline.pop();
                 }
             }
+            KeyCode::Up => self.history_walk_back(HistoryKind::Search),
+            KeyCode::Down => self.history_walk_forward(HistoryKind::Search),
             KeyCode::Char(c) => {
                 self.cmdline.push(c);
             }

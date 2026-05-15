@@ -32,7 +32,7 @@ A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX
 
 ### Sessions & tabs
 
-- **Sessions** — open buffers + per-buffer cursor + viewport persist to `~/.cache/binvim/sessions/<cwd-hash>.json` on clean shutdown and restore on launch when no file argument is passed. Buffers whose paths no longer exist are silently dropped. Restored sessions drop you on the start page with the tab row above it advertising what's loaded — `H`/`L` (or `:bn`/`:bp`, `:b<n>`, a tab click) brings you into a buffer.
+- **Sessions** — open buffers + per-buffer cursor + viewport persist to `~/.cache/binvim/sessions/<cwd-hash>.json` on clean shutdown and restore on launch when no file argument is passed. Buffers whose paths no longer exist are silently dropped. Restored sessions drop you on the start page with the tab row above it advertising what's loaded — `H`/`L` (or `:bn`/`:bp`, `:b<n>`, a tab click) brings you into a buffer. Ex (`:`) and search (`/` / `?`) history rides on the same file (capped at 100 entries each, dedup against the immediate previous); `<Up>` / `<Down>` inside either prompt walks it, and the first `<Up>` snapshots whatever you'd already typed so walking off the bottom brings the draft back. Histories load even when you launch with `binvim foo.rs` — only buffer restoration is gated on a bare invocation.
 - **Tab bar** — every open buffer renders as a tab at the top of the screen. Active tab in Surface1 + Lavender + bold, inactive tabs in Subtext0, dirty buffers carry a Peach `+`. Click a tab to switch; click its `×` to close (refuses dirty, same as `:bd`). `‹` / `›` chevrons appear at the bar edges when tabs scroll off either side. The bar matches the editor background.
 
 ### Tree-sitter highlighting

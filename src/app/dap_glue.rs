@@ -161,6 +161,7 @@ impl super::App {
             KeyCode::Char(':') => {
                 self.mode = Mode::Command;
                 self.cmdline.clear();
+                self.history_reset();
                 true
             }
             _ => false,

@@ -73,10 +73,12 @@ impl super::App {
             }
             Action::EnterCommand => {
                 self.cmdline.clear();
+                self.history_reset();
                 self.mode = Mode::Command;
             }
             Action::EnterSearch { backward } => {
                 self.cmdline.clear();
+                self.history_reset();
                 self.mode = Mode::Search { backward };
             }
             Action::Repeat => self.repeat_last_edit(),
