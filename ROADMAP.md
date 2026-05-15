@@ -26,6 +26,12 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [ ] **Large-file mode.** Skip tree-sitter + LSP attach when the buffer crosses a size threshold (e.g. 5MB or
       50k lines), with a status hint. The rope handles the byte volume fine; the highlight pass is what dies.
       **planned**
+- [ ] **Inline ghost completion (LSP 3.18 `textDocument/inlineCompletion`).** Render the server's
+      multi-line suggestion as muted gray text after the cursor on idle pause; `<Tab>` accepts, any
+      other key rejects. Provider-neutral — the editor implements the spec method and any server
+      that speaks it (Copilot, supermaven, codeium-lsp, tabby, future ones) gets the UI for free.
+      Reuses the existing debounce path from `didChange`. The ghost-text render layer is the meat
+      of the work (multi-line, horizontal-scroll-aware, plays nice with syntax colours). **planned**
 
 ## LSP
 
@@ -40,6 +46,12 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [ ] **`window/showMessage` and `window/logMessage` surfacing.** Server-emitted notifications and logs route
       to the notification box / a `:messages`-like buffer instead of being dropped. **planned**
+- [ ] **Copilot via `copilot-language-server`.** Wire GitHub's official LSP server as an auxiliary client
+      (same five-file pattern as any language server in `lsp/specs.rs`). Authentication happens
+      out-of-process — users sign in once via the language server's own flow, the token lives at
+      `~/.config/github-copilot/hosts.json`. Pairs with the inline-ghost-completion editor item:
+      when both land, you get muted-gray Copilot suggestions on idle pause. No HTTP client in binvim
+      itself — Node handles the networking. **planned**
 
 ## Debugger (DAP)
 
@@ -85,11 +97,14 @@ These are explicit decisions worth recording so they don't get relitigated every
 
 - **No plugin system.** Every language, formatter, and LSP is hard-wired. Adding a language is a five-file PR
   (see CLAUDE.md). This keeps the binary self-contained and the codebase greppable.
-- **No AI integration — chat or inline.** binvim is an editor, not an LLM client. Adding a chat sidebar
-  (`:claude`) or inline ghost completion would pull in an HTTP stack, couple a feature to a vendor's API
-  surface, and dilute the "one binary, plugin-free, terminal-native" pitch. Users who want AI assistance
-  run a dedicated tool (Claude Code, Aider, etc.) alongside binvim — terminal multiplexers and split
-  panes are the integration layer. This is a strong "no" rather than a "maybe later."
+- **No in-binary LLM client, no chat sidebar.** binvim doesn't embed an HTTP client to talk to
+  Anthropic / OpenAI / Gemini / etc. directly, and there's no `:claude`-style conversation pane
+  bolted onto the editor. Users who want chat-driven coding run a dedicated tool (Claude Code,
+  Aider, etc.) alongside binvim — terminal multiplexers and split panes are the integration layer.
+  This rules out direct API integrations as first-class infrastructure but **not** AI features that
+  speak LSP — Copilot, supermaven, codeium-lsp, tabby, and any future server implementing
+  `textDocument/inlineCompletion` are wired the same way as rust-analyzer or tsserver, with no
+  HTTP stack on binvim's side. See the LSP / Editor sections.
 - **Source-available, not open source.** See `LICENSE`. Contributions welcome under the existing terms;
   redistribution and forks are governed by the licence.
 - **Single binary, no runtime config beyond `~/.config/binvim/config.toml`.** No init script, no Lua /
