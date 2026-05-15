@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-05-15
+
 ### Added
 - **Markdown rendering polish.** Five additions on top of the
   existing concealed-render mode:
@@ -955,7 +957,12 @@ covered by its bundled language stack.
 - `bim` symlink installed alongside the `binvim` binary.
 - binman-style local release scripts.
 
-[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.7
+[0.1.6]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.6
+[0.1.5]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.5
+[0.1.4]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.4
+[0.1.3]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.3
 [0.1.2]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.2
 [0.1.1]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.1
 [0.1.0]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.0
