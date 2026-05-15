@@ -7,6 +7,19 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`<C-w> [N] >` / `<` / `+` / `-` resize the active window by N
+  cells.** Widens (`>`) or narrows (`<`) along the vertical axis;
+  grows (`+`) or shrinks (`-`) the height. Count defaults to 1 when
+  omitted (`<C-w>>` = +1 col), and the count goes between `<C-w>`
+  and the resize key in Vim's positional order (`<C-w>10>`). Internally
+  the parser accumulates digits while the window-leader prefix is
+  pending; the layout walks the split tree to find the **deepest**
+  ancestor of the focused pane whose axis matches, converts the
+  cell-delta to a ratio against that subtree's own rect (so a 10-col
+  widen in a 40-col half doesn't behave the same as in a 200-col
+  one), and clamps to the existing `[0.1, 0.9]` visibility band so a
+  pane can't vanish. No-op when the layout has no split along the
+  requested axis (e.g. `<C-w>+` in a vertical-only column).
 - **Inline `<script>` / `<style>` highlighting in HTML, Razor, and
   Svelte buffers.** Tree-sitter-html (and friends) parses the
   surrounding markup but leaves `<script>` / `<style>` contents as

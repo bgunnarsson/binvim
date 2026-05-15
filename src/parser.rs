@@ -238,6 +238,12 @@ pub enum Action {
     WindowOnly,
     /// `<C-w>=` — reset every split ratio to 0.5.
     WindowEqualize,
+    /// `<C-w>>` / `<C-w>N>` (positive delta) / `<C-w><` (negative) —
+    /// resize the active window along `axis` by `delta` cells. The
+    /// count between `<C-w>` and the resize key defaults to 1.
+    /// `axis = Vertical` ↔ widen/narrow (`<` / `>`),
+    /// `axis = Horizontal` ↔ taller/shorter (`+` / `-`).
+    WindowResize { axis: crate::layout::SplitDir, delta: i32 },
     /// `<C-w>T` — promote the focused pane's buffer to a tab in the
     /// tabline. Non-destructive: the split stays intact, the buffer
     /// just gains its own tab slot so it's reachable via `H`/`L`.
@@ -703,9 +709,19 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // moves to `q` (matches the `:q` mnemonic).
     // Window-prefix dispatch (after `<C-w>`). Mirrors Vim:
     // `v` / `s` split; `h/j/k/l` focus a neighbour; `q` / `c` close;
-    // `o` close-others; `=` equalize. Anything else cancels.
+    // `o` close-others; `=` equalize; `<`/`>` narrow/widen by count
+    // cells; `+`/`-` grow/shrink height. Anything else cancels.
     if state.awaiting_window_leader {
+        // Digits inside the window-leader prefix accumulate the resize
+        // count (e.g. `<C-w>10>` = widen by 10). Without this branch
+        // they'd hit the `_ => None` arm below and cancel.
+        if ch.is_ascii_digit() {
+            let d = ch.to_digit(10).unwrap() as usize;
+            state.push_digit(d);
+            return ParseResult::Pending;
+        }
         state.awaiting_window_leader = false;
+        let count = state.count1.unwrap_or(1) as i32;
         let action = match ch {
             // Lowercase `v` / `s` — split and pick a different file in
             // the new pane. Uppercase `V` / `S` keep Vim's two-viewports-
@@ -722,6 +738,22 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'o' => Some(Action::WindowOnly),
             '=' => Some(Action::WindowEqualize),
             'T' => Some(Action::WindowPromoteToTab),
+            '>' => Some(Action::WindowResize {
+                axis: crate::layout::SplitDir::Vertical,
+                delta: count,
+            }),
+            '<' => Some(Action::WindowResize {
+                axis: crate::layout::SplitDir::Vertical,
+                delta: -count,
+            }),
+            '+' => Some(Action::WindowResize {
+                axis: crate::layout::SplitDir::Horizontal,
+                delta: count,
+            }),
+            '-' => Some(Action::WindowResize {
+                axis: crate::layout::SplitDir::Horizontal,
+                delta: -count,
+            }),
             _ => None,
         };
         state.reset();
@@ -1240,6 +1272,79 @@ mod tests {
                 assert_eq!(count, 3);
             }
             _ => panic!("3 Ctrl-K did not emit MoveLine"),
+        }
+    }
+
+    fn ctrl_w() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)
+    }
+
+    fn drive(state: &mut PendingCmd, keys: &[KeyEvent]) -> ParseResult {
+        let mut last = ParseResult::Pending;
+        for k in keys {
+            last = parse(state, *k, ParseCtx::Normal);
+        }
+        last
+    }
+
+    #[test]
+    fn ctrl_w_gt_emits_widen_by_one() {
+        let mut state = PendingCmd::default();
+        let r = drive(&mut state, &[ctrl_w(), key('>')]);
+        match r {
+            ParseResult::Action(Action::WindowResize { axis, delta }) => {
+                assert_eq!(axis, crate::layout::SplitDir::Vertical);
+                assert_eq!(delta, 1);
+            }
+            other => panic!("expected WindowResize, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn ctrl_w_10_gt_emits_widen_by_ten() {
+        let mut state = PendingCmd::default();
+        let r = drive(&mut state, &[ctrl_w(), key('1'), key('0'), key('>')]);
+        match r {
+            ParseResult::Action(Action::WindowResize { axis, delta }) => {
+                assert_eq!(axis, crate::layout::SplitDir::Vertical);
+                assert_eq!(delta, 10);
+            }
+            _ => panic!("<C-w>10> did not emit WindowResize{{+10}}"),
+        }
+    }
+
+    #[test]
+    fn ctrl_w_5_lt_emits_shrink_by_five() {
+        let mut state = PendingCmd::default();
+        let r = drive(&mut state, &[ctrl_w(), key('5'), key('<')]);
+        match r {
+            ParseResult::Action(Action::WindowResize { axis, delta }) => {
+                assert_eq!(axis, crate::layout::SplitDir::Vertical);
+                assert_eq!(delta, -5);
+            }
+            _ => panic!("<C-w>5< did not emit WindowResize{{-5}}"),
+        }
+    }
+
+    #[test]
+    fn ctrl_w_plus_minus_resize_height() {
+        let mut state = PendingCmd::default();
+        let r = drive(&mut state, &[ctrl_w(), key('3'), key('+')]);
+        match r {
+            ParseResult::Action(Action::WindowResize { axis, delta }) => {
+                assert_eq!(axis, crate::layout::SplitDir::Horizontal);
+                assert_eq!(delta, 3);
+            }
+            _ => panic!("<C-w>3+ did not emit horizontal WindowResize"),
+        }
+        let mut state = PendingCmd::default();
+        let r = drive(&mut state, &[ctrl_w(), key('-')]);
+        match r {
+            ParseResult::Action(Action::WindowResize { axis, delta }) => {
+                assert_eq!(axis, crate::layout::SplitDir::Horizontal);
+                assert_eq!(delta, -1);
+            }
+            _ => panic!("<C-w>- did not emit horizontal WindowResize"),
         }
     }
 

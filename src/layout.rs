@@ -174,50 +174,9 @@ impl Layout {
         match node {
             LayoutNode::Leaf(id) => out.push((*id, rect)),
             LayoutNode::Split { dir, ratio, a, b } => {
-                let r = ratio.clamp(0.1, 0.9);
-                match dir {
-                    SplitDir::Vertical => {
-                        // Reserve one column for the divider between A and B.
-                        let usable = rect.w.saturating_sub(1);
-                        let aw = ((usable as f32) * r).round().max(1.0).min(usable as f32 - 1.0)
-                            as u16;
-                        let bw = usable.saturating_sub(aw);
-                        let ra = Rect {
-                            x: rect.x,
-                            y: rect.y,
-                            w: aw,
-                            h: rect.h,
-                        };
-                        let rb = Rect {
-                            x: rect.x + aw + 1,
-                            y: rect.y,
-                            w: bw,
-                            h: rect.h,
-                        };
-                        Self::partition_in(a, ra, out);
-                        Self::partition_in(b, rb, out);
-                    }
-                    SplitDir::Horizontal => {
-                        let usable = rect.h.saturating_sub(1);
-                        let ah = ((usable as f32) * r).round().max(1.0).min(usable as f32 - 1.0)
-                            as u16;
-                        let bh = usable.saturating_sub(ah);
-                        let ra = Rect {
-                            x: rect.x,
-                            y: rect.y,
-                            w: rect.w,
-                            h: ah,
-                        };
-                        let rb = Rect {
-                            x: rect.x,
-                            y: rect.y + ah + 1,
-                            w: rect.w,
-                            h: bh,
-                        };
-                        Self::partition_in(a, ra, out);
-                        Self::partition_in(b, rb, out);
-                    }
-                }
+                let (ra, rb) = Self::child_rects(*dir, *ratio, rect);
+                Self::partition_in(a, ra, out);
+                Self::partition_in(b, rb, out);
             }
         }
     }
@@ -272,6 +231,101 @@ impl Layout {
             }
         }
         best.map(|(id, _)| id)
+    }
+
+    /// `<C-w><N>>` / `<C-w><N><` / `<C-w><N>+` / `<C-w><N>-` —
+    /// resize the focused window by `delta` cells along `axis`. Walks
+    /// the tree to find the **deepest** ancestor of `focus` whose
+    /// split direction matches `axis` and adjusts that node's ratio,
+    /// converting cells to a fraction using the ancestor's own rect
+    /// (so a `>10` near a small parent doesn't blow past the clamp
+    /// just because the *whole screen* is wide). Sign rule: if focus
+    /// is under the `a` child of that split, widening adds to the
+    /// ratio; under `b`, widening subtracts. Returns `false` when
+    /// the focused window has no ancestor along the requested axis
+    /// (e.g. `<C-w>+` in a layout with only vertical splits).
+    pub fn resize(&mut self, focus: WindowId, axis: SplitDir, delta: i32, area: Rect) -> bool {
+        Self::resize_in(&mut self.root, focus, axis, delta, area)
+    }
+
+    fn resize_in(
+        node: &mut LayoutNode,
+        focus: WindowId,
+        axis: SplitDir,
+        delta: i32,
+        rect: Rect,
+    ) -> bool {
+        let LayoutNode::Split { dir, ratio, a, b } = node else {
+            return false;
+        };
+        let in_a = Self::contains(a, focus);
+        let in_b = !in_a && Self::contains(b, focus);
+        if !in_a && !in_b {
+            return false;
+        }
+        let (ra, rb) = Self::child_rects(*dir, *ratio, rect);
+        // Recurse first so we apply at the *deepest* matching ancestor.
+        let (child_rect, child_node): (Rect, &mut LayoutNode) = if in_a {
+            (ra, a.as_mut())
+        } else {
+            (rb, b.as_mut())
+        };
+        if Self::resize_in(child_node, focus, axis, delta, child_rect) {
+            return true;
+        }
+        if *dir != axis {
+            return false;
+        }
+        let total = match axis {
+            SplitDir::Vertical => rect.w.saturating_sub(1) as f32,
+            SplitDir::Horizontal => rect.h.saturating_sub(1) as f32,
+        };
+        if total <= 0.0 {
+            return false;
+        }
+        let delta_r = delta as f32 / total;
+        let signed = if in_a { delta_r } else { -delta_r };
+        *ratio = (*ratio + signed).clamp(0.1, 0.9);
+        true
+    }
+
+    fn contains(node: &LayoutNode, focus: WindowId) -> bool {
+        match node {
+            LayoutNode::Leaf(id) => *id == focus,
+            LayoutNode::Split { a, b, .. } => {
+                Self::contains(a, focus) || Self::contains(b, focus)
+            }
+        }
+    }
+
+    fn child_rects(dir: SplitDir, ratio: f32, rect: Rect) -> (Rect, Rect) {
+        let r = ratio.clamp(0.1, 0.9);
+        match dir {
+            SplitDir::Vertical => {
+                let usable = rect.w.saturating_sub(1);
+                let aw = ((usable as f32) * r)
+                    .round()
+                    .max(1.0)
+                    .min(usable as f32 - 1.0) as u16;
+                let bw = usable.saturating_sub(aw);
+                (
+                    Rect { x: rect.x, y: rect.y, w: aw, h: rect.h },
+                    Rect { x: rect.x + aw + 1, y: rect.y, w: bw, h: rect.h },
+                )
+            }
+            SplitDir::Horizontal => {
+                let usable = rect.h.saturating_sub(1);
+                let ah = ((usable as f32) * r)
+                    .round()
+                    .max(1.0)
+                    .min(usable as f32 - 1.0) as u16;
+                let bh = usable.saturating_sub(ah);
+                (
+                    Rect { x: rect.x, y: rect.y, w: rect.w, h: ah },
+                    Rect { x: rect.x, y: rect.y + ah + 1, w: rect.w, h: bh },
+                )
+            }
+        }
     }
 
     /// Reset every split ratio to 0.5 — `<C-w>=` equivalent.
@@ -423,6 +477,110 @@ mod tests {
         assert!(dropped.contains(&r));
         assert!(dropped.contains(&b));
         assert_eq!(l.ids(), vec![root]);
+    }
+
+    #[test]
+    fn resize_widens_focus_in_left_pane() {
+        let (mut l, root) = Layout::new();
+        let r = l.alloc_id();
+        l.split(root, SplitDir::Vertical, r);
+        let area = rect(0, 0, 101, 24); // usable width = 100
+        assert!(l.resize(root, SplitDir::Vertical, 10, area));
+        let LayoutNode::Split { ratio, .. } = &l.root else {
+            panic!("expected split root");
+        };
+        // Focus in `a` (left) → widening adds; 10/100 = +0.1, base 0.5.
+        assert!((ratio - 0.6).abs() < 1e-5, "ratio = {ratio}");
+    }
+
+    #[test]
+    fn resize_widens_focus_in_right_pane_by_lowering_ratio() {
+        let (mut l, root) = Layout::new();
+        let r = l.alloc_id();
+        l.split(root, SplitDir::Vertical, r);
+        let area = rect(0, 0, 101, 24);
+        assert!(l.resize(r, SplitDir::Vertical, 10, area));
+        let LayoutNode::Split { ratio, .. } = &l.root else {
+            panic!("expected split root");
+        };
+        assert!((ratio - 0.4).abs() < 1e-5, "ratio = {ratio}");
+    }
+
+    #[test]
+    fn resize_negative_delta_shrinks() {
+        let (mut l, root) = Layout::new();
+        let r = l.alloc_id();
+        l.split(root, SplitDir::Vertical, r);
+        let area = rect(0, 0, 101, 24);
+        assert!(l.resize(root, SplitDir::Vertical, -10, area));
+        let LayoutNode::Split { ratio, .. } = &l.root else {
+            panic!("expected split root");
+        };
+        assert!((ratio - 0.4).abs() < 1e-5, "ratio = {ratio}");
+    }
+
+    #[test]
+    fn resize_ignores_mismatched_axis() {
+        // Vertical-only split; <C-w>+ (horizontal axis) finds no
+        // matching ancestor and reports no-op.
+        let (mut l, root) = Layout::new();
+        let r = l.alloc_id();
+        l.split(root, SplitDir::Vertical, r);
+        let area = rect(0, 0, 80, 24);
+        assert!(!l.resize(root, SplitDir::Horizontal, 5, area));
+    }
+
+    #[test]
+    fn resize_picks_deepest_matching_ancestor() {
+        // Outer vertical split; inner pane is split vertically again.
+        // Focus on the innermost-right leaf — resizing should adjust
+        // the *inner* ratio, not the outer one.
+        let (mut l, root) = Layout::new();
+        let mid = l.alloc_id();
+        l.split(root, SplitDir::Vertical, mid);
+        let inner_right = l.alloc_id();
+        l.split(mid, SplitDir::Vertical, inner_right);
+        let area = rect(0, 0, 101, 24);
+        // Snapshot outer ratio so we can confirm it didn't move.
+        let LayoutNode::Split { ratio: outer_before, b: outer_b, .. } = &l.root else {
+            panic!("expected split root");
+        };
+        let outer_before = *outer_before;
+        // Inner ratio sits on the right subtree.
+        let inner_before = if let LayoutNode::Split { ratio, .. } = outer_b.as_ref() {
+            *ratio
+        } else {
+            panic!("expected inner split");
+        };
+        assert!(l.resize(inner_right, SplitDir::Vertical, 5, area));
+        let LayoutNode::Split { ratio: outer_after, b: outer_b, .. } = &l.root else {
+            unreachable!();
+        };
+        assert!((outer_after - outer_before).abs() < 1e-6, "outer changed");
+        let inner_after = if let LayoutNode::Split { ratio, .. } = outer_b.as_ref() {
+            *ratio
+        } else {
+            unreachable!();
+        };
+        assert!(
+            (inner_after - inner_before).abs() > 1e-6,
+            "inner did not move",
+        );
+    }
+
+    #[test]
+    fn resize_clamps_to_visible_range() {
+        let (mut l, root) = Layout::new();
+        let r = l.alloc_id();
+        l.split(root, SplitDir::Vertical, r);
+        let area = rect(0, 0, 21, 24); // usable = 20
+        // Widen left by 50 cells — would push ratio past 1.0; should
+        // clamp to the layout's 0.9 ceiling.
+        assert!(l.resize(root, SplitDir::Vertical, 50, area));
+        let LayoutNode::Split { ratio, .. } = &l.root else {
+            panic!("expected split root");
+        };
+        assert!((ratio - 0.9).abs() < 1e-5, "ratio = {ratio}");
     }
 
     #[test]

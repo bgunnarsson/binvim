@@ -127,6 +127,10 @@ impl super::App {
             Action::WindowClose => self.window_close(),
             Action::WindowOnly => self.window_only(),
             Action::WindowEqualize => self.layout.equalize(),
+            Action::WindowResize { axis, delta } => {
+                let area = self.editor_rect();
+                self.layout.resize(self.active_window, axis, delta, area);
+            }
             Action::WindowPromoteToTab => self.window_promote_to_tab(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
