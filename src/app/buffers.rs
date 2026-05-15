@@ -35,6 +35,7 @@ impl super::App {
             git_hunks: std::mem::take(&mut self.git_hunks),
             blame_visible: std::mem::take(&mut self.blame_visible),
             blame: std::mem::take(&mut self.blame),
+            markdown_meta: self.markdown_meta.take(),
         }
     }
 
@@ -55,6 +56,7 @@ impl super::App {
         self.git_hunks = stash.git_hunks;
         self.blame_visible = stash.blame_visible;
         self.blame = stash.blame;
+        self.markdown_meta = stash.markdown_meta;
     }
 
     pub(super) fn switch_to(&mut self, idx: usize) -> Result<()> {

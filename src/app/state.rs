@@ -76,6 +76,13 @@ pub struct BufferStash {
     /// Populated lazily the first time `blame_visible` is turned on;
     /// rebuilt on save / disk reload.
     pub blame: Vec<crate::git::BlameLine>,
+    /// Per-line markdown concealed-render meta — same shape as
+    /// `App.markdown_meta` but cached against this specific buffer's
+    /// path + version. Stashed here (rather than only on App) so an
+    /// inactive markdown pane can render with concealed glyphs
+    /// rather than as raw source. `None` when the buffer isn't
+    /// markdown or the cache hasn't been built yet.
+    pub markdown_meta: Option<MarkdownMetaCache>,
 }
 
 #[derive(Debug, Clone)]

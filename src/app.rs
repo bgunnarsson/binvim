@@ -397,6 +397,7 @@ impl App {
                 self.adjust_viewport();
                 self.ensure_highlights();
                 self.ensure_markdown_meta();
+                self.ensure_inactive_markdown_meta();
                 self.ensure_folds();
                 self.lsp_sync_active_debounced();
                 self.lsp_request_inlay_hints_if_due();

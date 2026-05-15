@@ -372,10 +372,15 @@ impl super::App {
             }
         } else {
             let stash = &self.buffers[buffer_idx];
-            // Inactive panes don't carry markdown concealed-render meta
-            // (BufferStash doesn't cache it), so any markdown buffer in
-            // a non-active pane renders as raw source. Acceptable: the
-            // user can move focus to it to get the concealed view.
+            let md_active = normal_mode
+                && matches!(
+                    stash
+                        .buffer
+                        .path
+                        .as_deref()
+                        .and_then(crate::lang::Lang::detect),
+                    Some(crate::lang::Lang::Markdown)
+                );
             super::state::BufferState {
                 buffer: &stash.buffer,
                 highlight_cache: stash.highlight_cache.as_ref(),
@@ -384,8 +389,8 @@ impl super::App {
                 git_hunks: &stash.git_hunks,
                 blame: &stash.blame,
                 blame_visible: stash.blame_visible,
-                markdown_meta: None,
-                markdown_render_active: false,
+                markdown_meta: stash.markdown_meta.as_ref(),
+                markdown_render_active: md_active,
             }
         }
     }
@@ -602,38 +607,39 @@ impl super::App {
     /// changed. Cheap when the buffer isn't markdown — single lang
     /// detect + early return. Called once per render tick from `run`.
     pub(super) fn ensure_markdown_meta(&mut self) {
-        let Some(path) = self.buffer.path.clone() else {
-            self.markdown_meta = None;
-            return;
-        };
-        if !matches!(crate::lang::Lang::detect(&path), Some(crate::lang::Lang::Markdown)) {
-            self.markdown_meta = None;
-            return;
+        self.markdown_meta = compute_markdown_meta(&self.buffer, self.markdown_meta.take());
+    }
+
+    /// Same pass for every inactive markdown pane — walks
+    /// `self.windows` (the stashed view state for non-active windows)
+    /// and refreshes the per-buffer markdown_meta cache on each
+    /// `BufferStash` whose buffer is markdown. Without this, an
+    /// inactive markdown pane renders as raw source until focus moves
+    /// to it. A buffer that shows up in multiple inactive panes only
+    /// gets recomputed once — the cache key (path + version) short-
+    /// circuits redundant work.
+    pub(super) fn ensure_inactive_markdown_meta(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        let inactive_buffers: Vec<usize> = self
+            .windows
+            .values()
+            .filter_map(|w| {
+                if w.buffer_idx == self.active {
+                    None
+                } else if seen.insert(w.buffer_idx) {
+                    Some(w.buffer_idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for idx in inactive_buffers {
+            let Some(stash) = self.buffers.get_mut(idx) else {
+                continue;
+            };
+            let prev = stash.markdown_meta.take();
+            stash.markdown_meta = compute_markdown_meta(&stash.buffer, prev);
         }
-        let version = self.buffer.version;
-        if let Some(cache) = &self.markdown_meta {
-            if cache.path == path && cache.version == version {
-                return;
-            }
-        }
-        let line_count = self.buffer.rope.len_lines();
-        let mut lines: Vec<String> = Vec::with_capacity(line_count);
-        for line_idx in 0..line_count {
-            let line: String = self
-                .buffer
-                .rope
-                .line(line_idx)
-                .chars()
-                .filter(|c| *c != '\n' && *c != '\r')
-                .collect();
-            lines.push(line);
-        }
-        let per_line = crate::markdown_render::compute_buffer_meta(&lines);
-        self.markdown_meta = Some(crate::app::state::MarkdownMetaCache {
-            path,
-            version,
-            per_line,
-        });
     }
 
     pub(super) fn ensure_highlights(&mut self) {
@@ -656,6 +662,51 @@ impl super::App {
             None => None,
         };
     }
+}
+
+/// Build / refresh the markdown concealed-render meta for `buffer`.
+/// Returns `None` for non-markdown buffers (so callers can simply
+/// assign the result). Reuses `prev` when its `(path, version)` still
+/// matches — the cache is keyed against buffer version so an unedited
+/// buffer never recomputes. Used by both the active-buffer pass on
+/// `App.markdown_meta` and the per-pane pass on
+/// `BufferStash.markdown_meta` for inactive markdown panes.
+pub(super) fn compute_markdown_meta(
+    buffer: &Buffer,
+    prev: Option<crate::app::state::MarkdownMetaCache>,
+) -> Option<crate::app::state::MarkdownMetaCache> {
+    let Some(path) = buffer.path.clone() else {
+        return None;
+    };
+    if !matches!(
+        crate::lang::Lang::detect(&path),
+        Some(crate::lang::Lang::Markdown)
+    ) {
+        return None;
+    }
+    let version = buffer.version;
+    if let Some(cache) = prev.as_ref() {
+        if cache.path == path && cache.version == version {
+            return prev;
+        }
+    }
+    let line_count = buffer.rope.len_lines();
+    let mut lines: Vec<String> = Vec::with_capacity(line_count);
+    for line_idx in 0..line_count {
+        let line: String = buffer
+            .rope
+            .line(line_idx)
+            .chars()
+            .filter(|c| *c != '\n' && *c != '\r')
+            .collect();
+        lines.push(line);
+    }
+    let per_line = crate::markdown_render::compute_buffer_meta(&lines);
+    Some(crate::app::state::MarkdownMetaCache {
+        path,
+        version,
+        per_line,
+    })
 }
 
 /// Indent-based fold computation. Builds a fold range starting at every
