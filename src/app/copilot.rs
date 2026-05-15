@@ -130,16 +130,20 @@ impl super::App {
 
     /// `<Tab>` in Insert mode with an active ghost — wipe whatever
     /// the user has typed between `replace_start` and the cursor,
-    /// then insert the suggestion verbatim at `replace_start`. The
-    /// server's `range` field is what makes this correct: Copilot's
-    /// `insertText` is the FULL replacement (it already contains
-    /// whatever prefix the user has typed so far), so a naive
-    /// "insert at cursor" would duplicate the prefix
-    /// (`body.` + ` body.classList…` → `body. body.classList…`).
+    /// then insert the suggestion at `replace_start`. Two passes of
+    /// overlap trimming keep the result clean:
     ///
-    /// Returns true if the ghost was consumed; the Tab handler in
-    /// `input.rs` uses this to decide whether to fall through to
-    /// snippet / literal-tab behaviour.
+    /// 1. **Leading overlap** with `replace_start..cursor` is implicit
+    ///    in the protocol: `insertText` is the full replacement, so
+    ///    deleting the typed prefix before inserting it back doesn't
+    ///    duplicate (`body.` + ` body.classList…`).
+    /// 2. **Trailing overlap** with the text *after* the cursor is the
+    ///    auto-pair case: `body.querySelector(|)` with a suggestion
+    ///    ending in `)` would land as `…))`. We trim the longest
+    ///    suffix of the suggestion that matches a prefix of the
+    ///    post-cursor line tail before inserting.
+    ///
+    /// Returns true if the ghost was consumed.
     pub fn copilot_accept_ghost(&mut self) -> bool {
         if !self.copilot_ghost_active() {
             return false;
@@ -152,25 +156,38 @@ impl super::App {
         // in the history elsewhere.
         self.history
             .record(&self.buffer.rope, self.window.cursor);
-        // Delete buffer span [replace_start .. cursor] first, then
-        // insert the full text at replace_start. Single-line case is
-        // the only one observed in practice (range.start is the
-        // start of the current line), but the index math here is
-        // line-agnostic so multi-line replacement ranges also work.
         let cursor_idx = self
             .buffer
             .pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let start_idx = self
             .buffer
             .pos_to_char(ghost.replace_start_line, ghost.replace_start_col);
+        // Post-cursor text on the same line — that's the search
+        // surface for trailing-overlap trimming. We only consider
+        // the current line (not whole buffer) because a multi-line
+        // overlap is rare and the line-scoped heuristic matches
+        // what VS Code / official Copilot plugins do.
+        let cur_line = self.window.cursor.line;
+        let line_end_idx = if cur_line + 1 < self.buffer.line_count() {
+            self.buffer
+                .line_start_idx(cur_line + 1)
+                .saturating_sub(1)
+        } else {
+            self.buffer.total_chars()
+        };
+        let post_cursor: String = self
+            .buffer
+            .rope
+            .slice(cursor_idx..line_end_idx)
+            .to_string();
+        let trimmed = trim_trailing_overlap(&ghost.text, &post_cursor);
         if cursor_idx > start_idx {
             self.buffer.delete_range(start_idx, cursor_idx);
         }
-        self.buffer
-            .insert_at_idx(start_idx, &ghost.text);
+        self.buffer.insert_at_idx(start_idx, trimmed);
         // Land the cursor at the end of the inserted text. Walk the
         // ghost text's line breaks to compute the final (line, col).
-        let lines: Vec<&str> = ghost.text.split('\n').collect();
+        let lines: Vec<&str> = trimmed.split('\n').collect();
         let new_line = ghost.replace_start_line + lines.len() - 1;
         let new_col = if lines.len() == 1 {
             ghost.replace_start_col + lines[0].chars().count()
@@ -335,5 +352,81 @@ impl super::App {
         }
         self.lsp.copilot_status = CopilotStatus::SignedOut;
         self.status_msg = "Copilot: signed out".into();
+    }
+}
+
+/// Trim the longest suffix of `suggestion` that matches a prefix of
+/// `post_cursor`. Handles the auto-pair case where the buffer already
+/// has a `)` after the cursor and the suggestion's last char is `)` —
+/// returning the suggestion sans that `)` so the existing buffer char
+/// keeps its job.
+///
+/// Walks descending lengths (longest overlap first) so the earliest
+/// match wins. Char-aware so multi-byte UTF-8 doesn't slice mid-glyph.
+fn trim_trailing_overlap<'a>(suggestion: &'a str, post_cursor: &str) -> &'a str {
+    let sug_chars: Vec<char> = suggestion.chars().collect();
+    let post_chars: Vec<char> = post_cursor.chars().collect();
+    let max_k = sug_chars.len().min(post_chars.len());
+    for k in (1..=max_k).rev() {
+        // suggestion[len-k..] == post_cursor[..k] ?
+        let sug_tail = &sug_chars[sug_chars.len() - k..];
+        let post_head = &post_chars[..k];
+        if sug_tail == post_head {
+            let total = sug_chars.len();
+            let byte_off = if total - k == 0 {
+                0
+            } else {
+                suggestion
+                    .char_indices()
+                    .nth(total - k)
+                    .map(|(i, _)| i)
+                    .unwrap_or(suggestion.len())
+            };
+            return &suggestion[..byte_off];
+        }
+    }
+    suggestion
+}
+
+#[cfg(test)]
+mod tests {
+    use super::trim_trailing_overlap;
+
+    #[test]
+    fn trims_single_char_overlap() {
+        // `body.querySelector(|)` case — suggestion ends with `)`,
+        // post-cursor starts with `)`.
+        assert_eq!(
+            trim_trailing_overlap("body.querySelector('.preload'))", ")"),
+            "body.querySelector('.preload')"
+        );
+    }
+
+    #[test]
+    fn trims_multi_char_overlap() {
+        assert_eq!(trim_trailing_overlap("foo)abc", ")abc"), "foo");
+    }
+
+    #[test]
+    fn no_overlap_returns_full() {
+        assert_eq!(trim_trailing_overlap("foo", "bar"), "foo");
+    }
+
+    #[test]
+    fn empty_post_cursor_no_trim() {
+        assert_eq!(trim_trailing_overlap("foo)", ""), "foo)");
+    }
+
+    #[test]
+    fn full_overlap_returns_empty() {
+        assert_eq!(trim_trailing_overlap(")", ")abc"), "");
+    }
+
+    #[test]
+    fn picks_longest_overlap_first() {
+        // Single `)` would also match but the suggestion has `))`
+        // followed by `;` and post-cursor is `);`. Longest match is
+        // `);` (2 chars), so we trim both — not just the trailing `)`.
+        assert_eq!(trim_trailing_overlap("foo);", ");"), "foo");
     }
 }
