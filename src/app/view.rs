@@ -327,23 +327,15 @@ impl super::App {
         }
     }
 
-    /// True when buffer `idx` is "promoted" — i.e., has its own tab
-    /// slot in the tabline and is reachable via `H`/`L` cycling. A
-    /// buffer is promoted if it's the currently-active tab OR it has
-    /// a stashed layout (which means the user has visited it as a
-    /// tab at some point — even just bouncing through it via `H`/`L`
-    /// is enough to leave a stash). Newly-opened files that arrived
-    /// via `<C-w>v` + picker land as buffers without a stash, so
-    /// they show in their split pane but stay out of the tabline
-    /// until the user `:b`s / `:e`s into them.
+    /// True when buffer `idx` is "promoted" — has its own slot in
+    /// the tabline and is reachable via `H`/`L` cycling. Promotion
+    /// is recorded explicitly in `App.tabs` whenever a buffer
+    /// becomes the active tab (via `switch_tab`, or via the
+    /// single-window `switch_to` rule). Split-companion buffers
+    /// opened by `<C-w>v` + picker never enter the set unless the
+    /// user later visits them as a tab.
     pub fn buffer_has_tab(&self, idx: usize) -> bool {
-        if idx == self.active_tab {
-            return true;
-        }
-        self.buffers
-            .get(idx)
-            .map(|s| s.layout.is_some())
-            .unwrap_or(false)
+        self.tabs.contains(&idx)
     }
 
     /// Indices of every buffer that has its own tab in the tabline,

@@ -133,6 +133,16 @@ pub struct App {
     /// buffer changes via `:e` / picker do not. Initial value: 0
     /// (the seed buffer's tab is the first one in view).
     pub active_tab: usize,
+    /// Buffer indices that the user has "promoted" to first-class
+    /// tabs — visible in the tabline, reachable via `H`/`L`. A
+    /// buffer is in this set after being the active tab at any
+    /// point (via switch_tab, or via the single-window switch_to
+    /// rule). Split-companion buffers — opened via `<C-w>v` + picker
+    /// without ever being the active tab — stay out of the set and
+    /// out of the tabline. Maintained alongside `buffers` so the
+    /// indices stay valid through delete / buffer_only / phantom
+    /// strip shifts.
+    pub tabs: std::collections::HashSet<usize>,
     pub highlight_cache: Option<HighlightCache>,
     /// Per-line markdown render meta for the active buffer. Cached
     /// against `(path, buffer.version)` and consulted by the renderer
@@ -334,6 +344,11 @@ impl App {
             buffers: vec![BufferStash::default()],
             active: 0,
             active_tab: 0,
+            tabs: {
+                let mut s = std::collections::HashSet::new();
+                s.insert(0);
+                s
+            },
             highlight_cache: None,
             markdown_meta: None,
             picker: None,

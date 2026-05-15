@@ -104,6 +104,8 @@ impl super::App {
         // stays highlighted even when focus moves between panes.
         if matches!(self.layout.root, crate::layout::LayoutNode::Leaf(_)) {
             self.active_tab = idx;
+            // Single-window :e promotes the new buffer to a real tab.
+            self.tabs.insert(idx);
         }
         Ok(())
     }
@@ -191,6 +193,9 @@ impl super::App {
         self.active_window = new_active_window;
         self.window = focused_window;
         self.active_tab = idx;
+        // Explicit tab swap promotes the destination buffer to a
+        // first-class tab if it wasn't already.
+        self.tabs.insert(idx);
         Ok(())
     }
 
@@ -256,7 +261,13 @@ impl super::App {
             self.active = self.active.saturating_sub(1);
             self.active_tab = self.active_tab.saturating_sub(1);
             // Phantom `[No Name]` at index 0 just got stripped — every
-            // Window's `buffer_idx` shifts down to match.
+            // Window's `buffer_idx` and every entry in `tabs` shifts
+            // down to match.
+            self.tabs = self
+                .tabs
+                .iter()
+                .filter_map(|&i| if i == 0 { None } else { Some(i - 1) })
+                .collect();
             self.remap_windows_after_remove(0);
         }
         Ok(())
@@ -420,6 +431,11 @@ impl super::App {
             self.jumplist.clear();
             self.jump_idx = 0;
             self.buffers[0] = BufferStash::default();
+            self.tabs = {
+                let mut s = std::collections::HashSet::new();
+                s.insert(0);
+                s
+            };
             // Every Window now points at the same fresh empty slot.
             self.remap_windows_to_single(0);
             self.show_start_page = true;
@@ -441,6 +457,20 @@ impl super::App {
         if self.active_tab > prev {
             self.active_tab -= 1;
         }
+        // Shift the tabs set to match the removed buffer slot.
+        self.tabs = self
+            .tabs
+            .iter()
+            .filter_map(|&i| {
+                if i == prev {
+                    None
+                } else if i > prev {
+                    Some(i - 1)
+                } else {
+                    Some(i)
+                }
+            })
+            .collect();
         // Every Window's buffer_idx may need fixing after the shift.
         self.remap_windows_after_remove(prev);
         Ok(())
@@ -472,6 +502,11 @@ impl super::App {
         self.buffers.push(BufferStash::default());
         self.active = 0;
         self.active_tab = 0;
+        self.tabs = {
+            let mut s = std::collections::HashSet::new();
+            s.insert(0);
+            s
+        };
         self.buffer = Buffer::empty();
         self.window.cursor = Cursor::default();
         self.window.view_top = 0;
@@ -523,6 +558,11 @@ impl super::App {
         }
         // Only one buffer survives — every Window points at it.
         self.active_tab = self.active;
+        self.tabs = {
+            let mut s = std::collections::HashSet::new();
+            s.insert(self.active);
+            s
+        };
         self.remap_windows_to_single(self.active);
         self.status_msg = format!("kept buffer {}", self.active + 1);
         Ok(())
@@ -582,6 +622,11 @@ impl super::App {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
             self.active_tab = self.active_tab.saturating_sub(1);
+            self.tabs = self
+                .tabs
+                .iter()
+                .filter_map(|&i| if i == 0 { None } else { Some(i - 1) })
+                .collect();
             self.remap_windows_after_remove(0);
         }
         // Honour the session's `active` index — clamp to whatever we
