@@ -2515,10 +2515,10 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
     let mut start_idx = 0usize;
     if total_widths > total_w {
         let mut used = 0usize;
-        for i in (0..=app.active).rev() {
+        for i in (0..=app.active_tab).rev() {
             used += widths[i];
             if used > total_w / 2 {
-                start_idx = (i + 1).min(app.active);
+                start_idx = (i + 1).min(app.active_tab);
                 break;
             }
             start_idx = i;
@@ -2546,7 +2546,7 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
             // No tab is the "active" one while the start page is up —
             // we're not actually rendering any buffer. Highlighting one
             // would be misleading.
-            active: *idx == app.active && !app.show_start_page,
+            active: *idx == app.active_tab && !app.show_start_page,
         });
         col += w;
     }

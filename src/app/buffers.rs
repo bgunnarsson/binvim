@@ -20,11 +20,16 @@ impl super::App {
     pub(super) fn snapshot_active(&mut self) -> BufferStash {
         BufferStash {
             buffer: std::mem::take(&mut self.buffer),
-            cursor: std::mem::take(&mut self.window.cursor),
-            view_top: std::mem::take(&mut self.window.view_top),
-            view_left: std::mem::take(&mut self.window.view_left),
+            // Window-level fields are `Copy` — read them instead of
+            // taking so the focused Window state stays intact on
+            // `App.window` for a follow-up tab snapshot (switch_tab
+            // needs to move the focused window into tab_windows with
+            // its cursor/viewport preserved).
+            cursor: self.window.cursor,
+            view_top: self.window.view_top,
+            view_left: self.window.view_left,
             history: std::mem::take(&mut self.history),
-            visual_anchor: self.window.visual_anchor.take(),
+            visual_anchor: self.window.visual_anchor,
             marks: std::mem::take(&mut self.marks),
             jumplist: std::mem::take(&mut self.jumplist),
             jump_idx: std::mem::take(&mut self.jump_idx),
@@ -36,6 +41,14 @@ impl super::App {
             blame_visible: std::mem::take(&mut self.blame_visible),
             blame: std::mem::take(&mut self.blame),
             markdown_meta: self.markdown_meta.take(),
+            // Layout state belongs to the tab, not the buffer — it
+            // gets snapshotted separately via `snapshot_tab` when the
+            // tab actually changes (H/L/:b), so the buffer-level
+            // switch path (open_buffer / :e) keeps the current tab
+            // intact.
+            layout: None,
+            tab_windows: std::collections::HashMap::new(),
+            tab_active_window: None,
         }
     }
 
@@ -59,6 +72,10 @@ impl super::App {
         self.markdown_meta = stash.markdown_meta;
     }
 
+    /// Buffer-only swap: replace App's live buffer fields with the
+    /// content of `idx`, but keep the current tab's layout intact.
+    /// Used by `:e` and the file picker — the active pane's buffer
+    /// changes but other panes (and the split structure) survive.
     pub(super) fn switch_to(&mut self, idx: usize) -> Result<()> {
         if idx >= self.buffers.len() {
             anyhow::bail!("invalid buffer index {idx}");
@@ -72,11 +89,98 @@ impl super::App {
         let stash = std::mem::take(&mut self.buffers[idx]);
         self.load_stash(stash);
         self.active = idx;
-        // Active window now points at the new buffer — keep the window's
-        // `buffer_idx` in sync so per-window buffer-state lookups
-        // (BufferState routing in the renderer, focus-change buffer
-        // swaps in window_focus / window_close) agree with App.active.
+        // Active window in the current tab now points at the new
+        // buffer — keep the window's `buffer_idx` in sync so
+        // per-window buffer-state lookups (BufferState routing in the
+        // renderer, focus-change buffer swaps in window_focus /
+        // window_close) agree with App.active.
         self.window.buffer_idx = idx;
+        Ok(())
+    }
+
+    /// Tab swap: stash the current tab's layout + buffer content,
+    /// load buffer `idx`'s tab. Used by `H`/`L`/`:b` so switching
+    /// between buffers also switches between their independent split
+    /// layouts. A tab that has never been visited is given a fresh
+    /// single-leaf layout pointing at its buffer on first load.
+    pub(super) fn switch_tab(&mut self, idx: usize) -> Result<()> {
+        if idx >= self.buffers.len() {
+            anyhow::bail!("invalid buffer index {idx}");
+        }
+        if idx == self.active_tab {
+            // Already on this tab — fall through to a buffer-only
+            // swap in case the user expects `:b N` to also re-focus
+            // the primary pane on its own buffer.
+            return self.switch_to(idx);
+        }
+        let outgoing_tab = self.active_tab;
+        let outgoing_active = self.active;
+        // 1. Stash buffer-level state of the focused buffer.
+        let buf_snap = self.snapshot_active();
+        self.buffers[outgoing_active] = buf_snap;
+        // 2. Move App.window into self.windows so the full pane set
+        //    is captured uniformly, then stash layout + windows +
+        //    active_window onto the outgoing tab's BufferStash.
+        self.windows
+            .insert(self.active_window, std::mem::take(&mut self.window));
+        let (placeholder, _) = crate::layout::Layout::new();
+        let layout = std::mem::replace(&mut self.layout, placeholder);
+        let tab_windows = std::mem::take(&mut self.windows);
+        let tab_active_window = self.active_window;
+        {
+            let stash = &mut self.buffers[outgoing_tab];
+            stash.layout = Some(layout);
+            stash.tab_windows = tab_windows;
+            stash.tab_active_window = Some(tab_active_window);
+        }
+        // 3. Pull out the incoming tab's stashed layout, or build a
+        //    fresh single-leaf layout pointing at the incoming buffer.
+        let incoming_layout = self.buffers[idx].layout.take();
+        let incoming_aw = self.buffers[idx].tab_active_window.take();
+        let mut incoming_windows = std::mem::take(&mut self.buffers[idx].tab_windows);
+        let (new_layout, new_active_window, focused_buffer_idx) =
+            match (incoming_layout, incoming_aw) {
+                (Some(l), Some(aw)) => {
+                    let focused = incoming_windows
+                        .get(&aw)
+                        .map(|w| w.buffer_idx)
+                        .unwrap_or(idx);
+                    (l, aw, focused)
+                }
+                _ => {
+                    let (l, root) = crate::layout::Layout::new();
+                    incoming_windows.insert(
+                        root,
+                        crate::window::Window {
+                            buffer_idx: idx,
+                            ..Default::default()
+                        },
+                    );
+                    (l, root, idx)
+                }
+            };
+        // 4. Load buffer content for the focused buffer first (may
+        //    differ from `idx` if the previous focused pane was on a
+        //    cross-tab buffer). `load_stash` also writes cursor /
+        //    view_top / view_left from the buffer's last-known
+        //    position onto `App.window` — step 5 then overrides them
+        //    with the focused window's per-window cursor.
+        let focused_stash = std::mem::take(&mut self.buffers[focused_buffer_idx]);
+        self.load_stash(focused_stash);
+        self.active = focused_buffer_idx;
+        // 5. Lift the focused window out of the windows map onto
+        //    App.window. The window state (cursor, viewport,
+        //    visual_anchor, buffer_idx) replaces what load_stash
+        //    wrote — cursor / viewport are per-window, so a pane's
+        //    own position wins over the buffer's last-known cursor.
+        let focused_window = incoming_windows
+            .remove(&new_active_window)
+            .unwrap_or_default();
+        self.layout = new_layout;
+        self.windows = incoming_windows;
+        self.active_window = new_active_window;
+        self.window = focused_window;
+        self.active_tab = idx;
         Ok(())
     }
 
@@ -140,6 +244,7 @@ impl super::App {
         {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
+            self.active_tab = self.active_tab.saturating_sub(1);
             // Phantom `[No Name]` at index 0 just got stripped — every
             // Window's `buffer_idx` shifts down to match.
             self.remap_windows_after_remove(0);
@@ -236,8 +341,11 @@ impl super::App {
             return;
         }
         let n = self.buffers.len() as i64;
-        let next = ((self.active as i64) + step).rem_euclid(n) as usize;
-        if let Err(e) = self.switch_to(next) {
+        // Cycle by tab rather than focused-buffer index — each buffer
+        // is its own tab in the tabline, so H/L moves between tabs
+        // (independent layouts) rather than rotating a focused pane.
+        let next = ((self.active_tab as i64) + step).rem_euclid(n) as usize;
+        if let Err(e) = self.switch_tab(next) {
             self.status_msg = format!("error: {e}");
         }
     }
@@ -252,7 +360,7 @@ impl super::App {
             if n == 0 || n > self.buffers.len() {
                 anyhow::bail!("E86: Buffer {n} does not exist");
             }
-            return self.switch_to(n - 1);
+            return self.switch_tab(n - 1);
         }
         // Substring match against buffer paths.
         let mut matches: Vec<usize> = Vec::new();
@@ -270,7 +378,7 @@ impl super::App {
         }
         match matches.len() {
             0 => anyhow::bail!("E94: No matching buffer for '{spec}'"),
-            1 => self.switch_to(matches[0]),
+            1 => self.switch_tab(matches[0]),
             _ => anyhow::bail!("E93: More than one match for '{spec}'"),
         }
     }
@@ -299,11 +407,18 @@ impl super::App {
         }
         let prev = self.active;
         let next = if prev + 1 < self.buffers.len() { prev + 1 } else { prev - 1 };
-        self.switch_to(next)?;
+        // Closing a buffer drops its whole tab (and its layout) — use
+        // switch_tab so the user lands on the next tab's saved layout
+        // rather than getting the soon-to-be-removed tab's split
+        // structure carried over.
+        self.switch_tab(next)?;
         // Now the slot at `prev` holds the snapshot we want to drop.
         self.buffers.remove(prev);
         if self.active > prev {
             self.active -= 1;
+        }
+        if self.active_tab > prev {
+            self.active_tab -= 1;
         }
         // Every Window's buffer_idx may need fixing after the shift.
         self.remap_windows_after_remove(prev);
@@ -335,6 +450,7 @@ impl super::App {
         self.buffers.clear();
         self.buffers.push(BufferStash::default());
         self.active = 0;
+        self.active_tab = 0;
         self.buffer = Buffer::empty();
         self.window.cursor = Cursor::default();
         self.window.view_top = 0;
@@ -344,6 +460,11 @@ impl super::App {
         self.marks.clear();
         self.jumplist.clear();
         self.jump_idx = 0;
+        // Drop every split too — single fresh tab with single window.
+        let (fresh_layout, fresh_root) = crate::layout::Layout::new();
+        self.layout = fresh_layout;
+        self.windows = std::collections::HashMap::new();
+        self.active_window = fresh_root;
         // Every Window now points at the single fresh `[No Name]` slot.
         self.remap_windows_to_single(0);
         self.show_start_page = true;
@@ -375,8 +496,12 @@ impl super::App {
             if self.active > idx {
                 self.active -= 1;
             }
+            if self.active_tab > idx {
+                self.active_tab -= 1;
+            }
         }
         // Only one buffer survives — every Window points at it.
+        self.active_tab = self.active;
         self.remap_windows_to_single(self.active);
         self.status_msg = format!("kept buffer {}", self.active + 1);
         Ok(())
@@ -435,6 +560,7 @@ impl super::App {
         {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
+            self.active_tab = self.active_tab.saturating_sub(1);
             self.remap_windows_after_remove(0);
         }
         // Honour the session's `active` index — clamp to whatever we

@@ -122,7 +122,17 @@ pub struct App {
     pub last_replayed_macro: Option<char>,
     /// All buffers; `buffers[active]` is a placeholder while its real state lives on App fields.
     pub buffers: Vec<BufferStash>,
+    /// Index into `buffers` of the buffer whose content is currently
+    /// live on App's fields (`buffer`, `history`, `folds`, …). May
+    /// differ from `active_tab` when a split's focused pane shows a
+    /// different buffer than the tab's primary one.
     pub active: usize,
+    /// Index into `buffers` of the buffer whose tab (layout +
+    /// per-pane Windows) is currently loaded into App.layout /
+    /// App.windows. Tab swaps via `H`/`L`/`:b` move this; per-window
+    /// buffer changes via `:e` / picker do not. Initial value: 0
+    /// (the seed buffer's tab is the first one in view).
+    pub active_tab: usize,
     pub highlight_cache: Option<HighlightCache>,
     /// Per-line markdown render meta for the active buffer. Cached
     /// against `(path, buffer.version)` and consulted by the renderer
@@ -323,6 +333,7 @@ impl App {
             last_replayed_macro: None,
             buffers: vec![BufferStash::default()],
             active: 0,
+            active_tab: 0,
             highlight_cache: None,
             markdown_meta: None,
             picker: None,

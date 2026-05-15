@@ -83,6 +83,17 @@ pub struct BufferStash {
     /// rather than as raw source. `None` when the buffer isn't
     /// markdown or the cache hasn't been built yet.
     pub markdown_meta: Option<MarkdownMetaCache>,
+    /// Per-buffer split layout. Each buffer carries its own window
+    /// tree — switching buffers (via `H`/`L`/`:b`/`:e <existing>`)
+    /// swaps the layout too, so other buffers don't inherit a split
+    /// the user only meant for the current one. `None` for a stash
+    /// that has never been visited (e.g. just pushed by
+    /// `open_buffer`); a fresh single-leaf layout is built on first
+    /// activation. Inactive panes' window state lives in
+    /// `tab_windows`, focused window id in `tab_active_window`.
+    pub layout: Option<crate::layout::Layout>,
+    pub tab_windows: std::collections::HashMap<crate::layout::WindowId, crate::window::Window>,
+    pub tab_active_window: Option<crate::layout::WindowId>,
 }
 
 #[derive(Debug, Clone)]
