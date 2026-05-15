@@ -313,15 +313,25 @@ pub struct App {
     pub last_copilot_status_poll: Instant,
 }
 
-/// Active Copilot ghost suggestion. `text` may be multi-line; only
-/// the portion that fits in the active pane gets rendered. `line` /
-/// `col` is the anchor (cursor) position when the request fired —
-/// the ghost is dropped if the cursor has since moved.
+/// Active Copilot ghost suggestion. `text` is the FULL replacement
+/// content the server returned — it may already include whatever the
+/// user has typed between `replace_start` and the cursor. On accept
+/// the buffer span `[replace_start .. cursor]` is wiped and `text` is
+/// inserted at `replace_start`, so the user's existing prefix isn't
+/// duplicated. The ghost-render layer strips the common prefix off
+/// `text` (against the live buffer text from `replace_start` to the
+/// cursor) and shows only the divergent tail.
 #[derive(Debug, Clone)]
 pub struct CopilotGhost {
     pub text: String,
+    /// Cursor position the request was anchored on. The ghost is
+    /// dropped if the cursor has since moved off it.
     pub line: usize,
     pub col: usize,
+    /// Start of the replacement range — usually `<= (line, col)`.
+    /// Often the beginning of the current line.
+    pub replace_start_line: usize,
+    pub replace_start_col: usize,
     pub path: PathBuf,
 }
 

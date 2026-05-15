@@ -3485,12 +3485,13 @@ fn draw_line_with_selection(
     }
 
     // Copilot ghost suggestion — when the cursor is on this line in
-    // Insert mode and we have a live ghost, render its first line as
-    // muted Overlay0 text after the line's real content. We only
-    // paint the first line for now; multi-line suggestions are still
-    // accepted whole on `<Tab>`, the user just doesn't see lines 2+
-    // ghosted. Skipped for inactive panes (the ghost belongs to the
-    // focused cursor, not every viewport).
+    // Insert mode and we have a live ghost, render its visible tail
+    // (the divergent portion after whatever the user already typed)
+    // as muted Overlay0 italic after the line's real content. We
+    // only paint the first line for now; multi-line suggestions are
+    // still accepted whole on `<Tab>`, the user just doesn't see
+    // lines 2+ ghosted. Skipped for inactive panes (the ghost
+    // belongs to the focused cursor, not every viewport).
     if is_active {
         if let Some(ghost) = app.copilot_ghost.as_ref() {
             if ghost.line == line_idx
@@ -3498,7 +3499,8 @@ fn draw_line_with_selection(
                 && Some(ghost.path.as_path()) == bs.buffer.path.as_deref()
                 && matches!(app.mode, Mode::Insert)
             {
-                let first_line = ghost.text.split('\n').next().unwrap_or("");
+                let tail = app.copilot_ghost_visible_tail(ghost);
+                let first_line = tail.split('\n').next().unwrap_or("");
                 // Truncate so the ghost can't wrap past the pane edge.
                 let remaining = avail.saturating_sub(visual_used);
                 if remaining > 0 && !first_line.is_empty() {

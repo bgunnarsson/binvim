@@ -757,11 +757,16 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
             buffer_version,
         } => {
             // Response shape: { items: [{ insertText, range, command? }] }
-            // — we surface the first item's text.
-            let text = result
+            // — we surface the first item, taking its insertText AND
+            // the start of the replacement range. The range tells us
+            // how much of the buffer to wipe before inserting; ignoring
+            // it duplicates whatever prefix the user has already typed
+            // (`body.` + ` body.classList…` → `body. body.classList…`).
+            let item = result
                 .get("items")
                 .and_then(|v| v.as_array())
-                .and_then(|arr| arr.first())
+                .and_then(|arr| arr.first());
+            let text = item
                 .and_then(|item| item.get("insertText"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
@@ -769,10 +774,24 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
             if text.is_empty() {
                 return Some(LspEvent::NotFound("copilot inline"));
             }
+            // Default: replace nothing — the request position becomes
+            // both range.start and range.end. Then override from the
+            // server's `range.start` if it's present.
+            let (replace_start_line, replace_start_col) = item
+                .and_then(|item| item.get("range"))
+                .and_then(|r| r.get("start"))
+                .and_then(|s| {
+                    let line = s.get("line")?.as_u64()? as usize;
+                    let character = s.get("character")?.as_u64()? as usize;
+                    Some((line, character))
+                })
+                .unwrap_or((line, col));
             Some(LspEvent::CopilotInline {
                 path,
                 line,
                 col,
+                replace_start_line,
+                replace_start_col,
                 text,
                 buffer_version,
             })

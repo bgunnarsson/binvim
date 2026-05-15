@@ -128,11 +128,18 @@ impl super::App {
             && g.col == self.window.cursor.col
     }
 
-    /// `<Tab>` in Insert mode with an active ghost — insert the
-    /// suggestion at the cursor and clear the ghost. Returns true if
-    /// the ghost was consumed; the Tab handler in `input.rs` uses
-    /// this to decide whether to fall through to snippet / literal-
-    /// tab behaviour.
+    /// `<Tab>` in Insert mode with an active ghost — wipe whatever
+    /// the user has typed between `replace_start` and the cursor,
+    /// then insert the suggestion verbatim at `replace_start`. The
+    /// server's `range` field is what makes this correct: Copilot's
+    /// `insertText` is the FULL replacement (it already contains
+    /// whatever prefix the user has typed so far), so a naive
+    /// "insert at cursor" would duplicate the prefix
+    /// (`body.` + ` body.classList…` → `body. body.classList…`).
+    ///
+    /// Returns true if the ghost was consumed; the Tab handler in
+    /// `input.rs` uses this to decide whether to fall through to
+    /// snippet / literal-tab behaviour.
     pub fn copilot_accept_ghost(&mut self) -> bool {
         if !self.copilot_ghost_active() {
             return false;
@@ -145,16 +152,28 @@ impl super::App {
         // in the history elsewhere.
         self.history
             .record(&self.buffer.rope, self.window.cursor);
-        let line = self.window.cursor.line;
-        let col = self.window.cursor.col;
-        self.buffer.insert_str(line, col, &ghost.text);
-        // Advance the cursor to the end of the inserted text. The
-        // text may span multiple lines — count the newlines and
-        // measure the tail-line's length to land at the right col.
+        // Delete buffer span [replace_start .. cursor] first, then
+        // insert the full text at replace_start. Single-line case is
+        // the only one observed in practice (range.start is the
+        // start of the current line), but the index math here is
+        // line-agnostic so multi-line replacement ranges also work.
+        let cursor_idx = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let start_idx = self
+            .buffer
+            .pos_to_char(ghost.replace_start_line, ghost.replace_start_col);
+        if cursor_idx > start_idx {
+            self.buffer.delete_range(start_idx, cursor_idx);
+        }
+        self.buffer
+            .insert_at_idx(start_idx, &ghost.text);
+        // Land the cursor at the end of the inserted text. Walk the
+        // ghost text's line breaks to compute the final (line, col).
         let lines: Vec<&str> = ghost.text.split('\n').collect();
-        let new_line = line + lines.len() - 1;
+        let new_line = ghost.replace_start_line + lines.len() - 1;
         let new_col = if lines.len() == 1 {
-            col + lines[0].chars().count()
+            ghost.replace_start_col + lines[0].chars().count()
         } else {
             lines.last().map(|s| s.chars().count()).unwrap_or(0)
         };
@@ -162,6 +181,53 @@ impl super::App {
         self.window.cursor.col = new_col;
         self.window.cursor.want_col = new_col;
         true
+    }
+
+    /// Visible tail of the ghost — the portion of `text` after
+    /// whatever the user has already typed between `replace_start`
+    /// and the cursor. This is what the renderer paints; the full
+    /// `text` is reserved for accept-time insertion. Returns an
+    /// empty slice when the typed prefix doesn't match the ghost's
+    /// prefix (which can happen if the user typed a non-matching
+    /// char while the request was in flight — the ghost gets
+    /// invalidated next frame anyway).
+    pub fn copilot_ghost_visible_tail<'a>(
+        &self,
+        ghost: &'a crate::app::CopilotGhost,
+    ) -> &'a str {
+        if ghost.replace_start_line > self.window.cursor.line {
+            return ghost.text.as_str();
+        }
+        let start_idx = self
+            .buffer
+            .pos_to_char(ghost.replace_start_line, ghost.replace_start_col);
+        let cursor_idx = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        if cursor_idx <= start_idx {
+            return ghost.text.as_str();
+        }
+        let typed: String = self
+            .buffer
+            .rope
+            .slice(start_idx..cursor_idx)
+            .to_string();
+        let typed_chars = typed.chars().count();
+        if ghost.text.chars().take(typed_chars).collect::<String>() == typed {
+            // Ghost's prefix matches what's in the buffer — return
+            // everything after that prefix.
+            let mut iter = ghost.text.char_indices();
+            for _ in 0..typed_chars {
+                iter.next();
+            }
+            let byte_off = iter.next().map(|(i, _)| i).unwrap_or(ghost.text.len());
+            &ghost.text[byte_off..]
+        } else {
+            // Prefix mismatch — user typed something other than what
+            // the ghost expected. Return empty so we don't paint
+            // garbage; the next idle will fetch a fresh ghost.
+            ""
+        }
     }
 
     /// Any non-Tab keystroke in Insert mode invalidates a pending

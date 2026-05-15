@@ -84,14 +84,22 @@ pub enum LspEvent {
     /// (`"OK"`, `"NotSignedIn"`, `"NotAuthorized"`, `"NoTelemetryConsent"`,
     /// …); the App normalises it into a `CopilotStatus`.
     CopilotStatus { kind: String, user: Option<String> },
-    /// Copilot `inlineCompletion` reply — at most one suggestion text is
-    /// surfaced as a ghost. `line`/`col` is the cursor position the
+    /// Copilot `inlineCompletion` reply — at most one suggestion text
+    /// is surfaced as a ghost. `line`/`col` is the cursor position the
     /// request was anchored on; the App drops the ghost if the cursor
-    /// has since moved off it.
+    /// has since moved off it. `replace_start_line`/`replace_start_col`
+    /// is the (line, col) where the suggestion's `range.start` sits;
+    /// `text` is the full replacement, which usually includes whatever
+    /// the user has already typed between range.start and the cursor.
+    /// On accept the buffer span `[replace_start .. cursor]` is wiped
+    /// and `text` is inserted at `replace_start`, so the user's
+    /// existing prefix isn't duplicated.
     CopilotInline {
         path: PathBuf,
         line: usize,
         col: usize,
+        replace_start_line: usize,
+        replace_start_col: usize,
         text: String,
         buffer_version: u64,
     },

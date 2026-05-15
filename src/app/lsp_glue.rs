@@ -89,6 +89,8 @@ impl super::App {
                     path,
                     line,
                     col,
+                    replace_start_line,
+                    replace_start_col,
                     text,
                     buffer_version,
                 } => {
@@ -106,6 +108,8 @@ impl super::App {
                             text,
                             line,
                             col,
+                            replace_start_line,
+                            replace_start_col,
                             path,
                         });
                     }
