@@ -9,9 +9,9 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 ## Editor
 
 - [x] **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o` / `<C-w>=`.** Vertical
-      and horizontal splits with independent cursors and viewports per pane. Splits currently share the
-      active buffer across all panes — per-window buffer switching (each pane shows a different file)
-      is the remaining piece. **next**
+      and horizontal splits with independent cursors and viewports per pane, each window can show a
+      different buffer. `<C-w>` plus an integer to resize (e.g. `<C-w>10>` widen by 10 cols) is the
+      remaining bit of polish.
 - [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. Reuses
       the split work above. After splits land. **planned**
 - [ ] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.

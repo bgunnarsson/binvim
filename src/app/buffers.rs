@@ -70,6 +70,11 @@ impl super::App {
         let stash = std::mem::take(&mut self.buffers[idx]);
         self.load_stash(stash);
         self.active = idx;
+        // Active window now points at the new buffer — keep the window's
+        // `buffer_idx` in sync so per-window buffer-state lookups
+        // (BufferState routing in the renderer, focus-change buffer
+        // swaps in window_focus / window_close) agree with App.active.
+        self.window.buffer_idx = idx;
         Ok(())
     }
 
@@ -125,6 +130,9 @@ impl super::App {
         {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
+            // Phantom `[No Name]` at index 0 just got stripped — every
+            // Window's `buffer_idx` shifts down to match.
+            self.remap_windows_after_remove(0);
         }
         Ok(())
     }
@@ -273,6 +281,8 @@ impl super::App {
             self.jumplist.clear();
             self.jump_idx = 0;
             self.buffers[0] = BufferStash::default();
+            // Every Window now points at the same fresh empty slot.
+            self.remap_windows_to_single(0);
             self.show_start_page = true;
             self.status_msg = "Buffer closed".into();
             return Ok(());
@@ -285,6 +295,8 @@ impl super::App {
         if self.active > prev {
             self.active -= 1;
         }
+        // Every Window's buffer_idx may need fixing after the shift.
+        self.remap_windows_after_remove(prev);
         Ok(())
     }
 
@@ -322,6 +334,8 @@ impl super::App {
         self.marks.clear();
         self.jumplist.clear();
         self.jump_idx = 0;
+        // Every Window now points at the single fresh `[No Name]` slot.
+        self.remap_windows_to_single(0);
         self.show_start_page = true;
         self.status_msg = format!("closed {count} buffer{}", if count == 1 { "" } else { "s" });
         Ok(())
@@ -352,6 +366,8 @@ impl super::App {
                 self.active -= 1;
             }
         }
+        // Only one buffer survives — every Window points at it.
+        self.remap_windows_to_single(self.active);
         self.status_msg = format!("kept buffer {}", self.active + 1);
         Ok(())
     }
@@ -407,6 +423,7 @@ impl super::App {
         {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
+            self.remap_windows_after_remove(0);
         }
         // Honour the session's `active` index — clamp to whatever we
         // actually managed to open.

@@ -226,6 +226,110 @@ pub struct FoldRange {
     pub end_line: usize,
 }
 
+/// Bundle of refs to every per-buffer piece of state the renderer needs —
+/// the live buffer rope, its highlight cache, its fold ranges and the
+/// closed-fold set, git hunks, blame, and markdown render meta. Built by
+/// `App::buffer_state(idx)`, which routes to the live `App` fields when
+/// `idx == self.active` and to `App.buffers[idx]` (a `BufferStash`)
+/// otherwise. This is the seam that lets each pane of a split show its
+/// own buffer's contents + syntax + git stripe rather than mirroring the
+/// active pane's data.
+pub struct BufferState<'a> {
+    pub buffer: &'a crate::buffer::Buffer,
+    pub highlight_cache: Option<&'a crate::lang::HighlightCache>,
+    pub folds: &'a [FoldRange],
+    pub closed_folds: &'a std::collections::HashSet<usize>,
+    pub git_hunks: &'a [crate::git::GitHunk],
+    pub blame: &'a [crate::git::BlameLine],
+    pub blame_visible: bool,
+    pub markdown_meta: Option<&'a MarkdownMetaCache>,
+    /// True when the renderer should apply markdown concealed-render
+    /// transforms to this buffer (file is markdown AND the editor is in
+    /// Normal mode). Captured at construction time so the per-line
+    /// helpers can answer without re-fetching `App.mode`.
+    pub markdown_render_active: bool,
+}
+
+impl<'a> BufferState<'a> {
+    /// True when `line` is hidden inside a closed fold (i.e. not the
+    /// start of one — the start renders as a placeholder).
+    pub fn line_is_folded(&self, line: usize) -> bool {
+        for f in self.folds {
+            if self.closed_folds.contains(&f.start_line)
+                && line > f.start_line
+                && line <= f.end_line
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn line_is_fold_start(&self, line: usize) -> bool {
+        self.closed_folds.contains(&line)
+            && self.folds.iter().any(|f| f.start_line == line)
+    }
+
+    pub fn folded_line_span(&self, line: usize) -> usize {
+        if let Some(f) = self
+            .folds
+            .iter()
+            .find(|f| f.start_line == line && self.closed_folds.contains(&f.start_line))
+        {
+            f.end_line - f.start_line + 1
+        } else {
+            1
+        }
+    }
+
+    pub fn markdown_line_meta(
+        &self,
+        line: usize,
+    ) -> Option<&'a crate::markdown_render::MarkdownLineMeta> {
+        self.markdown_meta?.per_line.get(line)
+    }
+
+    pub fn line_is_md_hidden(&self, line: usize) -> bool {
+        if !self.markdown_render_active {
+            return false;
+        }
+        self.markdown_line_meta(line)
+            .map(|m| m.kind == crate::markdown_render::MarkdownLineKind::Hidden)
+            .unwrap_or(false)
+    }
+
+    pub fn visible_rows_between(&self, from: usize, to: usize) -> usize {
+        if to <= from {
+            return 0;
+        }
+        let mut count = 0;
+        let mut i = from;
+        while i < to {
+            if !self.line_is_folded(i) && !self.line_is_md_hidden(i) {
+                count += 1;
+            }
+            i += 1;
+        }
+        count
+    }
+
+    pub fn git_hunk_kind_at(&self, line: usize) -> Option<crate::git::GitHunkKind> {
+        self.git_hunks
+            .iter()
+            .find(|h| line >= h.start_line && line <= h.end_line)
+            .map(|h| h.kind)
+    }
+
+    /// Gutter column count — depends on this buffer's line count, not the
+    /// active buffer's, so each pane sizes its gutter correctly.
+    pub fn gutter_width(&self) -> usize {
+        let n = self.buffer.line_count();
+        let digits = format!("{n}").len();
+        // 1 git-stripe column + 1 sign column + digits + 1 trailing space.
+        digits + 3
+    }
+}
+
 /// A char-index range that's currently flashing in the buffer to confirm a
 /// yank. Cleared automatically once `expires_at` passes.
 pub struct YankHighlight {

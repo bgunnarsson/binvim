@@ -35,7 +35,7 @@ mod quickfix;
 mod registers;
 mod save;
 mod search;
-mod state;
+pub(crate) mod state;
 mod view;
 mod visual;
 mod windows;

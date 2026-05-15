@@ -37,7 +37,8 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
                     .get(id)
                     .expect("layout window id not present in App.windows")
             };
-            draw_buffer(out, app, window, *rect, is_active)?;
+            let bs = app.buffer_state(window.buffer_idx);
+            draw_buffer(out, app, &bs, window, *rect, is_active)?;
         }
         draw_pane_dividers(out, app, editor_rect)?;
     }
@@ -2693,6 +2694,7 @@ fn draw_pane_dividers(
 fn draw_buffer(
     out: &mut impl Write,
     app: &App,
+    bs: &crate::app::state::BufferState<'_>,
     win: &crate::window::Window,
     rect: crate::layout::Rect,
     is_active: bool,
@@ -2701,24 +2703,24 @@ fn draw_buffer(
     let top = rect.y as usize;
     let left = rect.x as usize;
     let pane_w = rect.w as usize;
-    let gutter = app.gutter_width();
+    let gutter = bs.gutter_width();
     let avail = pane_w.saturating_sub(gutter);
-    let total_lines = app.buffer.line_count();
+    let total_lines = bs.buffer.line_count();
     let mut line_idx = win.view_top;
     // Skip any lines that are hidden — by a closed fold or by the
     // markdown concealed-render pass (HTML chrome, setext
     // underlines) — from the start of the viewport so the first
     // visible row isn't on a row that has no visible body.
     while line_idx < total_lines
-        && (app.line_is_folded(line_idx) || app.line_is_md_hidden(line_idx))
+        && (bs.line_is_folded(line_idx) || bs.line_is_md_hidden(line_idx))
     {
         line_idx += 1;
     }
-    // Canonicalise the buffer's path once for the duration of this draw so
-    // breakpoint + stopped-frame gutter lookups don't do one syscall per
-    // visible row. Fall back to the raw path if canonicalisation fails
-    // (e.g. unsaved or removed file).
-    let canon_buf_path: Option<std::path::PathBuf> = app
+    // Canonicalise this pane's buffer path once for the duration of this
+    // draw so breakpoint + stopped-frame gutter lookups don't do one
+    // syscall per visible row. Fall back to the raw path if canonicalisation
+    // fails (e.g. unsaved or removed file).
+    let canon_buf_path: Option<std::path::PathBuf> = bs
         .buffer
         .path
         .as_ref()
@@ -2755,7 +2757,7 @@ fn draw_buffer(
             // added (Green) / modified (Yellow) / a horizontal block
             // for deleted (Red). Empty when the line is unchanged or
             // the buffer isn't tracked by git.
-            let git_kind = app.git_hunk_kind_at(line_idx);
+            let git_kind = bs.git_hunk_kind_at(line_idx);
             if let Some(kind) = git_kind {
                 let (glyph, color) = match kind {
                     crate::git::GitHunkKind::Added => (
@@ -2793,13 +2795,15 @@ fn draw_buffer(
                 Some(('▶', Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 })) // Peach
             } else if bp_here {
                 Some(('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 })) // Red
-            } else {
-                app.worst_diagnostic(line_idx).map(|s| match s {
+            } else if let Some(diag_path) = bs.buffer.path.as_deref() {
+                app.worst_diagnostic_for(diag_path, line_idx).map(|s| match s {
                     Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }),
                     Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }),
                     Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }),
                     Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }),
                 })
+            } else {
+                None
             };
             if let Some((ch, color)) = sign {
                 queue!(
@@ -2843,11 +2847,11 @@ fn draw_buffer(
                 )
             };
             queue!(out, SetForegroundColor(label_color), Print(label), ResetColor)?;
-            draw_line_with_selection(out, app, win, line_idx, avail, is_active)?;
+            draw_line_with_selection(out, app, bs, win, line_idx, avail, is_active)?;
             // Fold-start placeholder: append `… N lines` after the line's
             // own content so the user sees what's collapsed.
-            if app.line_is_fold_start(line_idx) {
-                let span = app.folded_line_span(line_idx);
+            if bs.line_is_fold_start(line_idx) {
+                let span = bs.folded_line_span(line_idx);
                 let folded = format!("  ⏷ {} lines", span);
                 queue!(
                     out,
@@ -2860,10 +2864,10 @@ fn draw_buffer(
             // body if this row was a fold start, otherwise just by one.
             // Then keep skipping any consecutive folded / md-hidden
             // rows so the next iteration lands on a paintable row.
-            let span = app.folded_line_span(line_idx);
+            let span = bs.folded_line_span(line_idx);
             line_idx += span.max(1);
             while line_idx < total_lines
-                && (app.line_is_folded(line_idx) || app.line_is_md_hidden(line_idx))
+                && (bs.line_is_folded(line_idx) || bs.line_is_md_hidden(line_idx))
             {
                 line_idx += 1;
             }
@@ -2882,12 +2886,13 @@ fn draw_buffer(
 fn draw_line_with_selection(
     out: &mut impl Write,
     app: &App,
+    bs: &crate::app::state::BufferState<'_>,
     win: &crate::window::Window,
     line_idx: usize,
     avail: usize,
     is_active: bool,
 ) -> Result<()> {
-    let slice = app.buffer.rope.line(line_idx);
+    let slice = bs.buffer.rope.line(line_idx);
     let mut text: String = slice.chars().collect();
     if text.ends_with('\n') {
         text.pop();
@@ -2908,7 +2913,7 @@ fn draw_line_with_selection(
     } else {
         Vec::new()
     };
-    let search_matches = app.line_search_matches(line_idx);
+    let search_matches = app.line_search_matches_in(bs.buffer, line_idx);
     let yank_flash = if is_active {
         app.line_yank_highlight(line_idx)
     } else {
@@ -2919,7 +2924,7 @@ fn draw_line_with_selection(
     } else {
         Vec::new()
     };
-    let line_byte_start = app.buffer.rope.line_to_byte(line_idx);
+    let line_byte_start = bs.buffer.rope.line_to_byte(line_idx);
     let chars: Vec<char> = text.chars().collect();
     let view_left = win.view_left;
     // Visual column from the start of the line — tracks where each char
@@ -2942,10 +2947,12 @@ fn draw_line_with_selection(
 
     // Pre-bin inlay hints by column so we can render them inline at the
     // start of each char iteration (and once more after the last char,
-    // for hints anchored at end-of-line).
+    // for hints anchored at end-of-line). Hints are keyed on `App` by
+    // path, so an inactive pane gets its own buffer's hints by looking
+    // them up with `bs.buffer.path`.
     let mut hint_at: Vec<Vec<&crate::lsp::InlayHint>> = vec![Vec::new(); chars.len() + 1];
     if !dim {
-        if let Some(path) = app.buffer.path.as_ref() {
+        if let Some(path) = bs.buffer.path.as_ref() {
             if let Some(hints) = app.inlay_hints.get(path) {
                 for h in hints {
                     if h.line == line_idx && h.col <= chars.len() {
@@ -2962,8 +2969,14 @@ fn draw_line_with_selection(
     // `[whitespace]` in config.toml; on by default.
     let show_hidden = app.config.whitespace.show;
     // Precompute per-column severity from the LSP's diagnostic ranges so we
-    // can paint an undercurl directly under the offending tokens.
-    let line_diags = app.line_diagnostics(line_idx);
+    // can paint an undercurl directly under the offending tokens. Routed
+    // by this pane's buffer path so inactive panes paint their own
+    // diagnostics, not the active buffer's.
+    let line_diags = if let Some(path) = bs.buffer.path.as_deref() {
+        app.line_diagnostics_for(path, line_idx)
+    } else {
+        Vec::new()
+    };
     let mut diag_at: Vec<Option<Severity>> = vec![None; chars.len()];
     for d in &line_diags {
         let start = d.col.min(chars.len());
@@ -2989,12 +3002,12 @@ fn draw_line_with_selection(
     // pass. Whole-line `kind` short-circuits the per-char loop for
     // horizontal rules and hidden rows (setext underlines, fence
     // closers).
-    let md_meta: Option<&crate::markdown_render::MarkdownLineMeta> =
-        if app.markdown_render_active() {
-            app.markdown_line_meta(line_idx)
-        } else {
-            None
-        };
+    let md_meta: Option<&crate::markdown_render::MarkdownLineMeta> = if bs.markdown_render_active
+    {
+        bs.markdown_line_meta(line_idx)
+    } else {
+        None
+    };
     if let Some(meta) = md_meta {
         match meta.kind {
             crate::markdown_render::MarkdownLineKind::Hidden => {
@@ -3219,9 +3232,8 @@ fn draw_line_with_selection(
         // (i.e. the char to its right) in Lavender so the user can see
         // where their other cursors are.
         let is_multi_cursor = multi_cursors.contains(&col);
-        let syntax_color = app
+        let syntax_color = bs
             .highlight_cache
-            .as_ref()
             .and_then(|cache| cache.byte_colors.get(byte_off).copied())
             .flatten();
         let diag_severity = if !in_sel && !in_search && !dim {
@@ -3462,7 +3474,11 @@ fn draw_line_with_selection(
     // one column of slack so any width-miscount can't push past the row edge
     // and force the terminal to wrap onto the next row — which would clobber
     // the next line's render with the diagnostic's tail.
-    let diags = app.line_diagnostics(line_idx);
+    let diags = if let Some(path) = bs.buffer.path.as_deref() {
+        app.line_diagnostics_for(path, line_idx)
+    } else {
+        Vec::new()
+    };
     let has_diag = !diags.is_empty();
     if !dim {
         if let Some(diag) = diags.first() {

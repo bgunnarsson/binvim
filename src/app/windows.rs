@@ -43,28 +43,52 @@ impl super::App {
 
     /// Swap the live `App.window` with the stash for `target`. Updates
     /// `active_window` so the next render places the cursor in the
-    /// right pane.
+    /// right pane. If the target window points at a different buffer
+    /// than the currently-live one, also stash/load the buffer-level
+    /// state via `switch_to` so App's live fields (buffer, history,
+    /// folds, highlight cache, git hunks, …) match the new focus.
     fn focus_window(&mut self, target: crate::layout::WindowId) {
         if target == self.active_window {
             return;
         }
         let old_id = self.active_window;
-        // Stash current live state into the slot for the outgoing window.
+        // Stash current live window state into the slot for the outgoing window.
         let outgoing = std::mem::take(&mut self.window);
         self.windows.insert(old_id, outgoing);
-        // Pull in the incoming window's stash.
+        // Pull in the incoming window's stash and adopt it as the live one.
         let incoming = self
             .windows
             .remove(&target)
             .expect("focus target has no stashed window");
+        let target_buffer = incoming.buffer_idx;
         self.window = incoming;
         self.active_window = target;
+        // If the new focus shows a different buffer, swap live buffer
+        // state. `switch_to` handles the snapshot/load dance and resets
+        // window.buffer_idx — but it would overwrite the freshly-pulled
+        // cursor/viewport too, so first cache them and reapply after.
+        if target_buffer != self.active {
+            let cursor = self.window.cursor;
+            let view_top = self.window.view_top;
+            let view_left = self.window.view_left;
+            let visual_anchor = self.window.visual_anchor;
+            if let Err(e) = self.switch_to(target_buffer) {
+                self.status_msg = format!("error: {e}");
+                return;
+            }
+            self.window.cursor = cursor;
+            self.window.view_top = view_top;
+            self.window.view_left = view_left;
+            self.window.visual_anchor = visual_anchor;
+        }
     }
 
     /// `<C-w>q` / `<C-w>c` — close the active window. Refuses if it's
     /// the last one (use `:q` to quit the editor in that case). The
     /// sibling that absorbed the closed pane's space becomes the new
-    /// focus, matching Vim's behaviour.
+    /// focus, matching Vim's behaviour. If that sibling shows a
+    /// different buffer than the active one, buffer-level state on
+    /// `App` is swapped to match.
     pub(super) fn window_close(&mut self) {
         let target = self.active_window;
         let Some(new_focus) = self.layout.close(target) else {
@@ -73,15 +97,30 @@ impl super::App {
         };
         // Stash slot for the closed window is no longer reachable.
         self.windows.remove(&target);
-        // The new-focus window's stash holds its view state — swap it in
-        // to become the live one, replacing the closed window's old
-        // live state on App.window.
+        // The new-focus window's stash holds its view state — swap it
+        // onto App.window, then run a buffer swap if its buffer_idx
+        // differs from the one we're leaving behind.
         let incoming = self
             .windows
             .remove(&new_focus)
             .expect("post-close focus has no stashed window");
+        let target_buffer = incoming.buffer_idx;
         self.window = incoming;
         self.active_window = new_focus;
+        if target_buffer != self.active {
+            let cursor = self.window.cursor;
+            let view_top = self.window.view_top;
+            let view_left = self.window.view_left;
+            let visual_anchor = self.window.visual_anchor;
+            if let Err(e) = self.switch_to(target_buffer) {
+                self.status_msg = format!("error: {e}");
+                return;
+            }
+            self.window.cursor = cursor;
+            self.window.view_top = view_top;
+            self.window.view_left = view_left;
+            self.window.visual_anchor = visual_anchor;
+        }
     }
 
     /// `<C-w>o` — close every window except the active one.
@@ -90,6 +129,35 @@ impl super::App {
         let dropped = self.layout.only(keep);
         for id in dropped {
             self.windows.remove(&id);
+        }
+    }
+
+    /// Called by `delete_buffer` after a `buffers.remove(removed)` and
+    /// any `self.active` adjustment: re-points every Window's
+    /// `buffer_idx` so it stays consistent with the now-shifted buffer
+    /// list. Live `App.window` snaps to `self.active`; stashed windows
+    /// that referenced the removed slot fall back to `self.active`,
+    /// and any with an index past the removed one are decremented.
+    pub(super) fn remap_windows_after_remove(&mut self, removed: usize) {
+        self.window.buffer_idx = self.active;
+        let new_active = self.active;
+        for w in self.windows.values_mut() {
+            if w.buffer_idx == removed {
+                w.buffer_idx = new_active;
+            } else if w.buffer_idx > removed {
+                w.buffer_idx -= 1;
+            }
+        }
+    }
+
+    /// Called by `delete_all_buffers` / `buffer_only` / similar
+    /// "collapse the buffer list" operations. Every Window — live and
+    /// stashed — is pointed at `target` (typically 0 for "fresh empty
+    /// seed" or `self.active` for "kept the active one").
+    pub(super) fn remap_windows_to_single(&mut self, target: usize) {
+        self.window.buffer_idx = target;
+        for w in self.windows.values_mut() {
+            w.buffer_idx = target;
         }
     }
 }

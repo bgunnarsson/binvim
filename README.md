@@ -196,9 +196,11 @@ Hold `<space>` (or `<space>b` / `<space>d`) for ~250 ms and a which-key popup li
 | `<C-w> o`         | Close every window except the active one                     |
 | `<C-w> =`         | Reset every split ratio back to 50/50                        |
 
-Splits currently share the same buffer across panes — each window has
-its own cursor and viewport. Per-window buffer switching (`:b` only
-changes the active pane's file) is the next step.
+Each pane can show a different buffer — `:e other.txt`, `:b 2`,
+`H` / `L` all operate on the active pane's file only. Moving focus
+into a pane that points at a different buffer swaps the live buffer
+state under you, so each window keeps its own cursor, viewport,
+syntax highlighting, fold state, git stripe, and diagnostics.
 
 ## Ex commands
 

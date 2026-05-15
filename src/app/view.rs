@@ -342,6 +342,54 @@ impl super::App {
         self.editor_rect()
     }
 
+    /// Bundle of refs to every per-buffer piece of state the renderer
+    /// needs for `buffer_idx`. Routes to the live App fields when
+    /// `buffer_idx == self.active`; falls back to `App.buffers[idx]`
+    /// (a `BufferStash`) otherwise. Inactive panes call this with
+    /// their own window's `buffer_idx` so each split pane shows its
+    /// own file rather than mirroring the active buffer's content.
+    pub fn buffer_state(&self, buffer_idx: usize) -> super::state::BufferState<'_> {
+        let normal_mode = matches!(self.mode, crate::mode::Mode::Normal);
+        if buffer_idx == self.active {
+            let md_active = normal_mode
+                && matches!(
+                    self.buffer
+                        .path
+                        .as_deref()
+                        .and_then(crate::lang::Lang::detect),
+                    Some(crate::lang::Lang::Markdown)
+                );
+            super::state::BufferState {
+                buffer: &self.buffer,
+                highlight_cache: self.highlight_cache.as_ref(),
+                folds: &self.folds,
+                closed_folds: &self.closed_folds,
+                git_hunks: &self.git_hunks,
+                blame: &self.blame,
+                blame_visible: self.blame_visible,
+                markdown_meta: self.markdown_meta.as_ref(),
+                markdown_render_active: md_active,
+            }
+        } else {
+            let stash = &self.buffers[buffer_idx];
+            // Inactive panes don't carry markdown concealed-render meta
+            // (BufferStash doesn't cache it), so any markdown buffer in
+            // a non-active pane renders as raw source. Acceptable: the
+            // user can move focus to it to get the concealed view.
+            super::state::BufferState {
+                buffer: &stash.buffer,
+                highlight_cache: stash.highlight_cache.as_ref(),
+                folds: &stash.folds,
+                closed_folds: &stash.closed_folds,
+                git_hunks: &stash.git_hunks,
+                blame: &stash.blame,
+                blame_visible: stash.blame_visible,
+                markdown_meta: None,
+                markdown_render_active: false,
+            }
+        }
+    }
+
     /// Hunk kind covering `line` (0-indexed), if any. Linear scan over the
     /// active buffer's `git_hunks` — typical hunk counts are well under
     /// 100, and we call this per-visible-row at render time only.
@@ -413,24 +461,18 @@ impl super::App {
     }
 
     /// True when `line` is hidden inside a closed fold (i.e. not the start
-    /// of one — the start renders as a placeholder).
+    /// of one — the start renders as a placeholder). Convenience wrapper
+    /// around `BufferState::line_is_folded` for the active buffer; the
+    /// renderer prefers the BufferState method directly so it can answer
+    /// for inactive panes too.
     pub fn line_is_folded(&self, line: usize) -> bool {
-        for f in &self.folds {
-            if self.closed_folds.contains(&f.start_line)
-                && line > f.start_line
-                && line <= f.end_line
-            {
-                return true;
-            }
-        }
-        false
+        self.buffer_state(self.active).line_is_folded(line)
     }
 
     /// True if `line` is the start of a closed fold (rendered as the
     /// `… N lines` placeholder).
     pub fn line_is_fold_start(&self, line: usize) -> bool {
-        self.closed_folds.contains(&line)
-            && self.folds.iter().any(|f| f.start_line == line)
+        self.buffer_state(self.active).line_is_fold_start(line)
     }
 
     /// Return the innermost fold (smallest range) containing `line`.
@@ -463,15 +505,7 @@ impl super::App {
     /// Number of lines `line` represents on screen — 1 normally, the full
     /// fold span when this is the start of a closed fold.
     pub fn folded_line_span(&self, line: usize) -> usize {
-        if let Some(f) = self
-            .folds
-            .iter()
-            .find(|f| f.start_line == line && self.closed_folds.contains(&f.start_line))
-        {
-            f.end_line - f.start_line + 1
-        } else {
-            1
-        }
+        self.buffer_state(self.active).folded_line_span(line)
     }
 
     /// True when the renderer should fold markdown's syntax markers
@@ -504,12 +538,7 @@ impl super::App {
     /// row as Hidden (setext underlines, `<details>` chrome,
     /// standalone HTML comments).
     pub fn line_is_md_hidden(&self, line: usize) -> bool {
-        if !self.markdown_render_active() {
-            return false;
-        }
-        self.markdown_line_meta(line)
-            .map(|m| m.kind == crate::markdown_render::MarkdownLineKind::Hidden)
-            .unwrap_or(false)
+        self.buffer_state(self.active).line_is_md_hidden(line)
     }
 
     /// Walk forward (`dir > 0`) or backward (`dir < 0`) past any
@@ -563,20 +592,10 @@ impl super::App {
     /// Count of visible (non-folded, non-md-hidden) rows from
     /// `from` (inclusive) up to `to` (exclusive). Used by cursor
     /// placement to map a source line to its on-screen row offset
-    /// from the viewport top.
+    /// from the viewport top. Delegates to `BufferState` so inactive
+    /// panes can count rows against their own buffer's folds.
     pub fn visible_rows_between(&self, from: usize, to: usize) -> usize {
-        if to <= from {
-            return 0;
-        }
-        let mut count = 0;
-        let mut i = from;
-        while i < to {
-            if !self.line_is_folded(i) && !self.line_is_md_hidden(i) {
-                count += 1;
-            }
-            i += 1;
-        }
-        count
+        self.buffer_state(self.active).visible_rows_between(from, to)
     }
 
     /// Refresh the cache when the active buffer's path or version has

@@ -613,18 +613,37 @@ impl super::App {
         }
     }
 
+    /// Diagnostics for `line` of the active buffer. Convenience for
+    /// callers that only ever want the focused buffer's reports;
+    /// inactive panes call `line_diagnostics_for` with their own path.
     pub fn line_diagnostics(&self, line: usize) -> Vec<&Diagnostic> {
         let Some(path) = self.buffer.path.as_ref() else { return Vec::new(); };
-        let Some(diags) = self.lsp.diagnostics_for(path) else { return Vec::new(); };
-        diags
-            .iter()
-            .filter(|d| d.line == line)
-            .collect()
+        self.line_diagnostics_for(path, line)
+    }
+
+    /// Diagnostics for `line` of whichever buffer has `path`. Used by
+    /// the renderer when drawing an inactive pane — diagnostics are
+    /// keyed by path on `LspManager`, so any buffer's reports can be
+    /// fetched without needing to make that buffer "live" first.
+    pub fn line_diagnostics_for(&self, path: &std::path::Path, line: usize) -> Vec<&Diagnostic> {
+        let Some(diags) = self.lsp.diagnostics_for(path) else {
+            return Vec::new();
+        };
+        diags.iter().filter(|d| d.line == line).collect()
     }
 
     pub fn worst_diagnostic(&self, line: usize) -> Option<Severity> {
+        let Some(path) = self.buffer.path.as_ref() else { return None; };
+        self.worst_diagnostic_for(path, line)
+    }
+
+    pub fn worst_diagnostic_for(
+        &self,
+        path: &std::path::Path,
+        line: usize,
+    ) -> Option<Severity> {
         let mut worst: Option<Severity> = None;
-        for d in self.line_diagnostics(line) {
+        for d in self.line_diagnostics_for(path, line) {
             worst = match (worst, d.severity) {
                 (None, s) => Some(s),
                 (Some(Severity::Error), _) => Some(Severity::Error),

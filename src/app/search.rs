@@ -326,8 +326,21 @@ impl super::App {
         Some((s, e.min(line_len)))
     }
 
-    /// Char-column ranges of search-highlight matches on `line`.
+    /// Char-column ranges of search-highlight matches on `line` of the
+    /// active buffer.
     pub fn line_search_matches(&self, line: usize) -> Vec<(usize, usize)> {
+        self.line_search_matches_in(&self.buffer, line)
+    }
+
+    /// Char-column ranges of search-highlight matches on `line` of an
+    /// arbitrary buffer — used by the renderer when drawing inactive
+    /// panes so each pane's own buffer is searched against the global
+    /// `last_search` term.
+    pub fn line_search_matches_in(
+        &self,
+        buffer: &crate::buffer::Buffer,
+        line: usize,
+    ) -> Vec<(usize, usize)> {
         if self.search_hl_off {
             return Vec::new();
         }
@@ -337,16 +350,12 @@ impl super::App {
         if q.is_empty() {
             return Vec::new();
         }
-        let line_len = self.buffer.line_len(line);
+        let line_len = buffer.line_len(line);
         if line_len == 0 {
             return Vec::new();
         }
-        let line_start = self.buffer.line_start_idx(line);
-        // Case-insensitive — lowercase both sides. ASCII-only lowercase
-        // preserves byte lengths, so positions in `text_lower` map
-        // straight back to char columns in the original line.
-        let text_lower: String = self
-            .buffer
+        let line_start = buffer.line_start_idx(line);
+        let text_lower: String = buffer
             .rope
             .slice(line_start..(line_start + line_len))
             .to_string()
