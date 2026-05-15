@@ -252,6 +252,8 @@ pub fn buffer_prefix_entries() -> Vec<(String, String)> {
     vec![
         ("d".into(), "Delete".into()),
         ("D".into(), "Delete (force)".into()),
+        ("a".into(), "Delete all".into()),
+        ("A".into(), "Delete all (force)".into()),
         ("o".into(), "Only (close others)".into()),
         ("n".into(), "Next".into()),
         ("p".into(), "Prev".into()),

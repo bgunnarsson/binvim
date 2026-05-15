@@ -93,6 +93,11 @@ impl super::App {
                     self.status_msg = format!("error: {e}");
                 }
             }
+            Action::BufferDeleteAll { force } => {
+                if let Err(e) = self.delete_all_buffers(force) {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
             Action::BufferOnly => {
                 if let Err(e) = self.buffer_only() {
                     self.status_msg = format!("error: {e}");

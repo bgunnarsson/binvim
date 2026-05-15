@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`<leader>ba` / `<leader>bA` — close all buffers.** New buffer-prefix
+  bindings that drop every open buffer in one keystroke. Lowercase
+  refuses if any buffer is dirty (mirrors `<leader>bd`); uppercase forces
+  through unsaved changes. Lands on the start page with a single
+  `[No Name]` slot, identical terminal state to closing the last buffer
+  via `:bd`. Which-key popup and README updated to match.
+
 ## [0.1.7] - 2026-05-15
 
 ### Added

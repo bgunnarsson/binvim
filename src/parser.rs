@@ -197,6 +197,7 @@ pub enum Action {
     StartMacro { name: char },
     ReplayMacro { name: char },
     BufferDelete { force: bool },
+    BufferDeleteAll { force: bool },
     BufferOnly,
     BufferNext,
     BufferPrev,
@@ -637,6 +638,8 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let action = match ch {
             'd' => Some(Action::BufferDelete { force: false }),
             'D' => Some(Action::BufferDelete { force: true }),
+            'a' => Some(Action::BufferDeleteAll { force: false }),
+            'A' => Some(Action::BufferDeleteAll { force: true }),
             'o' => Some(Action::BufferOnly),
             'n' => Some(Action::BufferNext),
             'p' => Some(Action::BufferPrev),

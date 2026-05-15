@@ -153,6 +153,8 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>f`  | Format active buffer                  |
 | `<space>bd` | Delete buffer (refuses dirty)         |
 | `<space>bD` | Delete buffer (force)                 |
+| `<space>ba` | Delete all buffers (refuses dirty)    |
+| `<space>bA` | Delete all buffers (force)            |
 | `<space>bo` | Close other buffers                   |
 | `<space>bn` | Next buffer                           |
 | `<space>bp` | Previous buffer                       |

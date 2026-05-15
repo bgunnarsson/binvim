@@ -288,6 +288,45 @@ impl super::App {
         Ok(())
     }
 
+    /// Close every open buffer. Without `force`, refuses if any buffer is
+    /// dirty. Leaves the editor on a single empty `[No Name]` slot with the
+    /// start page resurfaced — same terminal state as deleting the last
+    /// buffer with `:bd`.
+    pub(super) fn delete_all_buffers(&mut self, force: bool) -> Result<()> {
+        if !force {
+            if self.buffer.dirty {
+                anyhow::bail!("E89: active buffer has unsaved changes (use <leader>bA)");
+            }
+            for (i, stash) in self.buffers.iter().enumerate() {
+                if i == self.active {
+                    continue;
+                }
+                if stash.buffer.dirty {
+                    anyhow::bail!(
+                        "E89: buffer {} has unsaved changes (use <leader>bA)",
+                        i + 1
+                    );
+                }
+            }
+        }
+        let count = self.buffers.len();
+        self.buffers.clear();
+        self.buffers.push(BufferStash::default());
+        self.active = 0;
+        self.buffer = Buffer::empty();
+        self.cursor = Cursor::default();
+        self.view_top = 0;
+        self.view_left = 0;
+        self.history = History::default();
+        self.visual_anchor = None;
+        self.marks.clear();
+        self.jumplist.clear();
+        self.jump_idx = 0;
+        self.show_start_page = true;
+        self.status_msg = format!("closed {count} buffer{}", if count == 1 { "" } else { "s" });
+        Ok(())
+    }
+
     /// Close every buffer except the active one. Refuses if any of them is dirty.
     pub(super) fn buffer_only(&mut self) -> Result<()> {
         // Check for dirty inactive buffers first.
