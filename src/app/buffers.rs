@@ -123,12 +123,20 @@ impl super::App {
         self.touch_recent();
         // Strip the phantom `[No Name]` seed that App::new() seeds at
         // index 0 — only on the transition from "fresh launch" (one
-        // empty no-path buffer) to a first real file. Same shape as
-        // the session-restore cleanup.
+        // empty no-path buffer) to a first real file. Skip the strip
+        // if any inactive window is still showing the phantom: that
+        // pane was opened deliberately (via `<C-w>v` / `<C-w>s` while
+        // on the start page) and dragging it onto the freshly-opened
+        // file would erase what the user explicitly split for.
+        let phantom_in_use = self
+            .windows
+            .values()
+            .any(|w| w.buffer_idx == 0);
         if self.buffers.len() > 1
             && self.active != 0
             && self.buffers[0].buffer.path.is_none()
             && self.buffers[0].buffer.rope.len_chars() == 0
+            && !phantom_in_use
         {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
@@ -418,10 +426,12 @@ impl super::App {
         // `[No Name]` slot. Index 0's stash has no path AND a fresh
         // (empty) buffer, distinguishing it from anything we just
         // restored.
+        let phantom_in_use = self.windows.values().any(|w| w.buffer_idx == 0);
         if self.buffers.len() > 1
             && self.active != 0
             && self.buffers[0].buffer.path.is_none()
             && self.buffers[0].buffer.rope.len_chars() == 0
+            && !phantom_in_use
         {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
