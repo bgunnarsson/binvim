@@ -364,10 +364,17 @@ impl App {
         // editor was launched. Buffer restoration is gated separately
         // on `path.is_none()`, so `binvim foo.rs` doesn't pull every
         // previously-open buffer back in, but it DOES keep your `:` /
-        // `/` recall warm.
+        // `/` recall warm. The session can be history-only (e.g. after
+        // `<leader>bA` closed every buffer but we kept the file alive
+        // to preserve recall) — in that case there are no buffers to
+        // restore, so we want the start page, not the bare seed buffer.
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let saved_session = crate::session::load_for_cwd(&cwd);
-        let restore_buffers = path.is_none() && saved_session.is_some();
+        let session_has_buffers = saved_session
+            .as_ref()
+            .map(|s| !s.buffers.is_empty())
+            .unwrap_or(false);
+        let restore_buffers = path.is_none() && session_has_buffers;
         let show_start_page = path.is_none() && !restore_buffers;
         let buffer = match path.as_ref() {
             Some(p) => Buffer::from_path(p.clone())?,
