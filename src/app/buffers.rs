@@ -353,9 +353,23 @@ impl super::App {
     }
 
     pub(super) fn cycle_buffer(&mut self, step: i64) {
-        // Any buffer-cycle press dismisses the start page — including the
-        // single-buffer case, where there's nothing to switch *to* but
-        // the user clearly wants to leave the welcome screen.
+        // Refusing to dismiss the start page when the only buffer is
+        // the empty `[No Name]` seed: there is literally nothing to
+        // land on. A real lone buffer (the only file from a restored
+        // session, or one passed on the CLI) doesn't hit this branch
+        // because `show_start_page` is already false for those, and
+        // even if it weren't the buffer wouldn't shape-match the seed.
+        if self.show_start_page
+            && self.buffers.len() <= 1
+            && self.buffer.path.is_none()
+            && self.buffer.rope.len_chars() == 0
+        {
+            return;
+        }
+        // Any other buffer-cycle press dismisses the start page —
+        // including the single-buffer case with a real lone buffer,
+        // where there's nothing to switch *to* but the user clearly
+        // wants to leave the welcome screen.
         self.show_start_page = false;
         if self.buffers.len() <= 1 {
             self.status_msg = "Only one buffer".into();

@@ -17,6 +17,14 @@ follows [Semantic Versioning](https://semver.org/).
   go back to). `restore_buffers` now also requires `!session.buffers.is_empty()`,
   so a history-only session falls back to the start page exactly
   like a brand-new launch.
+- **`H` / `L` on the start page no longer dismiss it when the only
+  buffer is the empty seed.** `cycle_buffer` unconditionally set
+  `show_start_page = false` before its "Only one buffer" early
+  return, so pressing `L` on a fresh launch with no restored
+  buffers dropped the user into the bare `[No Name]` slot. The
+  dismissal now checks the seed-shape (no path + empty rope); a
+  real lone buffer from a restored session or CLI arg still gets
+  the original "press `L` to land on it" behaviour.
 
 ### Added
 - **Cmdline (`:`) and search (`/` / `?`) history with `<Up>` / `<Down>`
