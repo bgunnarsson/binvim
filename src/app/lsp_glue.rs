@@ -123,6 +123,12 @@ impl super::App {
                         // dismiss the popup so it doesn't linger after the
                         // cursor leaves the function call.
                         self.signature_help = None;
+                    } else if kind == "copilot inline" {
+                        // Copilot returns no suggestion on most idle
+                        // pauses — that's normal, not an error worth
+                        // shouting about. Swallow it; the ghost render
+                        // path already shows nothing when there's
+                        // nothing to show.
                     } else {
                         self.status_msg = format!("LSP: no {kind} found");
                     }

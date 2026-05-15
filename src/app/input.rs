@@ -1073,7 +1073,24 @@ impl super::App {
                 self.completion_cycle(1);
                 true
             }
-            KeyCode::Tab | KeyCode::Enter => {
+            KeyCode::Enter => {
+                // Enter accepts the LSP completion popup item. Tab is
+                // reserved for the Copilot ghost (see below) — when
+                // both surfaces are live, Tab → Copilot, Enter → LSP.
+                self.completion_accept();
+                true
+            }
+            KeyCode::Tab => {
+                // Prefer the Copilot ghost over the LSP popup when
+                // both are visible — the popup auto-closes on the
+                // ghost insert so it doesn't keep fighting for the
+                // text that just landed. If no ghost is live, fall
+                // through to the popup-accept so users without
+                // Copilot don't lose their existing Tab-accept flow.
+                if self.copilot_accept_ghost() {
+                    self.completion = None;
+                    return true;
+                }
                 self.completion_accept();
                 true
             }
