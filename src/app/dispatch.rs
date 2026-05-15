@@ -127,6 +127,7 @@ impl super::App {
             Action::WindowClose => self.window_close(),
             Action::WindowOnly => self.window_only(),
             Action::WindowEqualize => self.layout.equalize(),
+            Action::WindowPromoteToTab => self.window_promote_to_tab(),
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),

@@ -123,6 +123,35 @@ impl super::App {
         }
     }
 
+    /// `<C-w>T` — promote the focused pane's buffer to a real tab.
+    /// Non-destructive: the split stays intact; the buffer just
+    /// becomes reachable via `H`/`L` and gains a slot in the tabline.
+    pub(super) fn window_promote_to_tab(&mut self) {
+        let idx = self.window.buffer_idx;
+        if self.tabs.insert(idx) {
+            let label = self
+                .buffer_label_for(idx)
+                .unwrap_or_else(|| format!("buffer {}", idx + 1));
+            self.status_msg = format!("promoted {label} to a tab");
+        }
+    }
+
+    /// Display label for buffer `idx` — file name when the buffer has
+    /// a path, otherwise the `display_name` set by the start page /
+    /// health scratch slot. Used by status messages.
+    fn buffer_label_for(&self, idx: usize) -> Option<String> {
+        let (path, display) = if idx == self.active {
+            (self.buffer.path.as_deref(), self.buffer.display_name.as_deref())
+        } else {
+            let stash = self.buffers.get(idx)?;
+            (stash.buffer.path.as_deref(), stash.buffer.display_name.as_deref())
+        };
+        path.and_then(|p| p.file_name())
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_string())
+            .or_else(|| display.map(|s| s.to_string()))
+    }
+
     /// `<C-w>o` — close every window except the active one.
     pub(super) fn window_only(&mut self) {
         let keep = self.active_window;

@@ -197,6 +197,7 @@ Hold `<space>` (or `<space>b` / `<space>d`) for ~250 ms and a which-key popup li
 | `<C-w> q` / `c`   | Close the active window (refuses if it's the last one)       |
 | `<C-w> o`         | Close every window except the active one                     |
 | `<C-w> =`         | Reset every split ratio back to 50/50                        |
+| `<C-w> T`         | Promote the focused pane's buffer to its own tab (non-destructive — the split stays) |
 
 By default `<C-w>v` / `<C-w>s` create a split *and* open the file
 picker so the new pane lands on a different file straight away —

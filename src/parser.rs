@@ -238,6 +238,11 @@ pub enum Action {
     WindowOnly,
     /// `<C-w>=` — reset every split ratio to 0.5.
     WindowEqualize,
+    /// `<C-w>T` — promote the focused pane's buffer to a tab in the
+    /// tabline. Non-destructive: the split stays intact, the buffer
+    /// just gains its own tab slot so it's reachable via `H`/`L`.
+    /// No-op if the focused buffer is already a tab.
+    WindowPromoteToTab,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -707,6 +712,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'q' | 'c' => Some(Action::WindowClose),
             'o' => Some(Action::WindowOnly),
             '=' => Some(Action::WindowEqualize),
+            'T' => Some(Action::WindowPromoteToTab),
             _ => None,
         };
         state.reset();
