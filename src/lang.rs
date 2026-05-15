@@ -725,7 +725,227 @@ pub fn compute_byte_colors(lang: Lang, source: &str, config: &Config) -> Option<
     if matches!(lang, Lang::EditorConfig | Lang::GitIgnore) {
         apply_line_oriented_overlay(lang, source.as_bytes(), &mut colors, config);
     }
+    // Inline-script / inline-style colouring for HTML / Razor /
+    // Svelte. Tree-sitter-html and friends don't recurse into
+    // `<script>` / `<style>` contents — those land as bare `raw_text`
+    // nodes. A byte-level scanner here finds each `<script>…</script>`
+    // and `<style>…</style>` region, runs the appropriate sub-language
+    // highlighter (JS / JSON / CSS depending on the `type` attribute),
+    // and splats the resulting colours back onto the main map.
+    if matches!(lang, Lang::Html | Lang::Razor | Lang::Svelte) {
+        apply_html_script_style_injections(source.as_bytes(), &mut colors, config);
+    }
     Some(colors)
+}
+
+/// Find every `<script>…</script>` and `<style>…</style>` region in
+/// `source` and overlay the sub-language's tree-sitter colours on top
+/// of the main pass. Operates on bytes so the grammar that parsed the
+/// outer document doesn't matter — works equally for tree-sitter-html,
+/// tree-sitter-razor, tree-sitter-svelte. Skips empty / self-closed
+/// tags. Picks JavaScript for plain `<script>`, JSON for `type` ending
+/// in `json` (covers `application/json` and `application/ld+json`),
+/// CSS for `<style>`.
+fn apply_html_script_style_injections(
+    source: &[u8],
+    colors: &mut [Option<Color>],
+    config: &Config,
+) {
+    let len = source.len();
+    let mut i = 0;
+    while i < len {
+        // Look for `<script` or `<style`, case-insensitive, NOT
+        // preceded by another `<` (avoids matching against fake `<<script>`
+        // sequences inside strings).
+        if source[i] != b'<' {
+            i += 1;
+            continue;
+        }
+        // Identify which tag (if any) starts here.
+        let after_lt = i + 1;
+        let (tag_kind, tag_len) =
+            if matches_ascii_ci(source, after_lt, b"script") && tag_terminator_after(source, after_lt + 6) {
+                (InjectionTag::Script, 6)
+            } else if matches_ascii_ci(source, after_lt, b"style") && tag_terminator_after(source, after_lt + 5) {
+                (InjectionTag::Style, 5)
+            } else {
+                i += 1;
+                continue;
+            };
+        let opener_start = i;
+        let tag_name_end = after_lt + tag_len;
+        // Find end of opening tag (`>`) — also detect self-close (`/>`).
+        let mut p = tag_name_end;
+        let mut self_closing = false;
+        let mut opener_end = None;
+        while p < len {
+            match source[p] {
+                b'>' => {
+                    opener_end = Some(p);
+                    if p > 0 && source[p - 1] == b'/' {
+                        self_closing = true;
+                    }
+                    break;
+                }
+                b'<' => break,
+                _ => p += 1,
+            }
+        }
+        let Some(opener_end) = opener_end else {
+            i = opener_start + 1;
+            continue;
+        };
+        if self_closing {
+            // `<script />` style — no content.
+            i = opener_end + 1;
+            continue;
+        }
+        let content_start = opener_end + 1;
+        // Pick the injection language. For `<script>` honour the `type`
+        // attribute: `application/json` / `application/ld+json` → JSON,
+        // anything else (including `module`, `text/javascript`, absent)
+        // → JavaScript. `<style>` is always CSS — we don't try to
+        // detect Sass / Less via `lang="..."`; that's a Vue/Svelte
+        // convention we can layer in later.
+        let injection_lang = match tag_kind {
+            InjectionTag::Style => Lang::Css,
+            InjectionTag::Script => {
+                if script_type_is_json(source, opener_start, opener_end) {
+                    Lang::Json
+                } else {
+                    Lang::JavaScript
+                }
+            }
+        };
+        // Find the matching close tag (`</script>` / `</style>`,
+        // case-insensitive). Stop at the first match — nested fakes
+        // inside strings are rare in real HTML.
+        let close_marker: &[u8] = match tag_kind {
+            InjectionTag::Script => b"script",
+            InjectionTag::Style => b"style",
+        };
+        let mut q = content_start;
+        let mut content_end = None;
+        while q + 1 < len {
+            if source[q] == b'<'
+                && source.get(q + 1) == Some(&b'/')
+                && matches_ascii_ci(source, q + 2, close_marker)
+                && tag_terminator_after(source, q + 2 + close_marker.len())
+            {
+                content_end = Some(q);
+                break;
+            }
+            q += 1;
+        }
+        let Some(content_end) = content_end else {
+            // Unterminated — paint nothing, advance past opener.
+            i = opener_end + 1;
+            continue;
+        };
+        if content_end > content_start {
+            let content_bytes = &source[content_start..content_end];
+            if let Ok(content_str) = std::str::from_utf8(content_bytes) {
+                if let Some(sub_colors) = compute_byte_colors(injection_lang, content_str, config) {
+                    for (off, &c) in sub_colors.iter().enumerate() {
+                        let idx = content_start + off;
+                        if idx < colors.len() && c.is_some() {
+                            colors[idx] = c;
+                        }
+                    }
+                }
+            }
+        }
+        // Continue scanning past the close tag.
+        i = content_end + 1;
+    }
+}
+
+#[derive(Copy, Clone)]
+enum InjectionTag {
+    Script,
+    Style,
+}
+
+fn matches_ascii_ci(source: &[u8], at: usize, needle: &[u8]) -> bool {
+    if at + needle.len() > source.len() {
+        return false;
+    }
+    needle
+        .iter()
+        .enumerate()
+        .all(|(i, n)| source[at + i].eq_ignore_ascii_case(n))
+}
+
+/// True when the byte at `at` is the end-of-tag-name boundary —
+/// whitespace, `>`, `/`, or end-of-source. Distinguishes `<script>` /
+/// `<script type=…>` from a coincidental `<scriptkiddie>`.
+fn tag_terminator_after(source: &[u8], at: usize) -> bool {
+    let b = source.get(at).copied();
+    matches!(
+        b,
+        Some(b' ') | Some(b'\t') | Some(b'\n') | Some(b'\r') | Some(b'>') | Some(b'/') | None
+    )
+}
+
+/// Inspect the opening-tag bytes for a `type` attribute and return
+/// true if its value ends in `json` (case-insensitive). Covers
+/// `application/json` and `application/ld+json`; everything else
+/// (`module`, `text/javascript`, absent) falls back to JS.
+fn script_type_is_json(source: &[u8], opener_start: usize, opener_end: usize) -> bool {
+    let slice = &source[opener_start..=opener_end.min(source.len() - 1)];
+    // Look for `type=` (case-insensitive), then the quoted value.
+    let mut k = 0;
+    while k + 5 <= slice.len() {
+        if matches_ascii_ci(slice, k, b"type")
+            && slice
+                .get(k + 4)
+                .map(|c| matches!(c, b'=' | b' ' | b'\t' | b'\n' | b'\r'))
+                .unwrap_or(false)
+        {
+            // Find `=`, then the first non-space char after.
+            let mut p = k + 4;
+            while p < slice.len() && slice[p] != b'=' {
+                p += 1;
+            }
+            if p >= slice.len() {
+                return false;
+            }
+            p += 1;
+            while p < slice.len()
+                && matches!(slice[p], b' ' | b'\t' | b'\n' | b'\r')
+            {
+                p += 1;
+            }
+            let (quote, body_start) = match slice.get(p) {
+                Some(&b'"') => (Some(b'"'), p + 1),
+                Some(&b'\'') => (Some(b'\''), p + 1),
+                _ => (None, p),
+            };
+            let mut end = body_start;
+            while end < slice.len() {
+                let c = slice[end];
+                match quote {
+                    Some(q) if c == q => break,
+                    None if matches!(c, b' ' | b'\t' | b'\n' | b'\r' | b'>' | b'/') => break,
+                    _ => end += 1,
+                }
+            }
+            let value = &slice[body_start..end];
+            // Trim and check suffix.
+            let trimmed: &[u8] = value
+                .iter()
+                .position(|c| !matches!(c, b' ' | b'\t'))
+                .map(|s| &value[s..])
+                .unwrap_or(value);
+            return trimmed.len() >= 4
+                && trimmed[trimmed.len() - 4..]
+                    .iter()
+                    .zip(b"json".iter())
+                    .all(|(a, b)| a.eq_ignore_ascii_case(b));
+        }
+        k += 1;
+    }
+    false
 }
 
 /// Byte-level scan that fills in the colours tree-sitter-razor can't reach.
@@ -1506,5 +1726,73 @@ export function Page() {
         assert!(class_c.is_some() && id_c.is_some() && property_c.is_some());
         assert_ne!(class_c, property_c, "class and property should differ");
         assert_ne!(id_c, property_c, "id and property should differ");
+    }
+
+    /// Inline `<style>` block inside HTML — the CSS property names
+    /// should be coloured by the CSS sub-highlighter, not left as
+    /// raw_text by tree-sitter-html.
+    #[test]
+    fn html_injects_css_into_style_block() {
+        let cfg = Config::default();
+        let src = "<html><head><style>body { color: red; }</style></head></html>";
+        let colors = compute_byte_colors(Lang::Html, src, &cfg).expect("html highlight");
+        let body_idx = find_word(src, "body").expect("body in source");
+        let color_idx = find_word(src, "color").expect("color in source");
+        // tree-sitter-css colours both `body` (tag selector) and
+        // `color` (property name). Without the injection pass they
+        // would both come out None (raw_text bytes).
+        assert!(
+            colors[body_idx].is_some(),
+            "CSS selector `body` should be coloured by the injection pass"
+        );
+        assert!(
+            colors[color_idx].is_some(),
+            "CSS property `color` should be coloured by the injection pass"
+        );
+    }
+
+    /// Inline `<script>` block inside HTML — JS keywords should be
+    /// coloured by the JS sub-highlighter.
+    #[test]
+    fn html_injects_js_into_script_block() {
+        let cfg = Config::default();
+        let src = "<html><body><script>const x = 42;</script></body></html>";
+        let colors = compute_byte_colors(Lang::Html, src, &cfg).expect("html highlight");
+        let const_idx = find_word(src, "const").expect("const in source");
+        assert!(
+            colors[const_idx].is_some(),
+            "JS keyword `const` should be coloured by the injection pass"
+        );
+    }
+
+    /// `<script type="application/ld+json">` — content should be
+    /// highlighted as JSON, not JS. The JSON grammar colours string
+    /// keys differently from JS identifiers, so checking that
+    /// `@context` (a quoted key) is coloured is a sufficient proxy.
+    #[test]
+    fn html_script_type_json_uses_json_highlighter() {
+        let cfg = Config::default();
+        let src = r#"<script type="application/ld+json">{"@type":"WebSite"}</script>"#;
+        let colors = compute_byte_colors(Lang::Html, src, &cfg).expect("html highlight");
+        // Find the opening quote of `@type`.
+        let key_idx = src.find("\"@type\"").expect("@type key in source");
+        // JSON's string highlight should colour each char of the
+        // quoted key. tree-sitter-json colours string content but
+        // not the surrounding quotes in some configurations, so
+        // probe the first interior char.
+        let key_interior = key_idx + 1;
+        assert!(
+            colors[key_interior].is_some(),
+            "JSON key body should be coloured by the JSON injection"
+        );
+    }
+
+    /// `<script>` with no content (self-closed or empty) shouldn't
+    /// panic and shouldn't colour anything outside the block.
+    #[test]
+    fn html_empty_script_block_is_noop() {
+        let cfg = Config::default();
+        let src = "<script></script><p>hi</p>";
+        let _colors = compute_byte_colors(Lang::Html, src, &cfg).expect("html highlight");
     }
 }

@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Inline `<script>` / `<style>` highlighting in HTML, Razor, and
+  Svelte buffers.** Tree-sitter-html (and friends) parses the
+  surrounding markup but leaves `<script>` / `<style>` contents as
+  bare `raw_text` nodes — so CSS rules and JavaScript code inside
+  them used to render as flat plain text. A new injection pass
+  scans the byte stream for `<script>…</script>` and
+  `<style>…</style>` regions, runs the appropriate sub-language
+  through `compute_byte_colors` (CSS for `<style>`; JSON for
+  `<script type="application/json">` / `application/ld+json`;
+  JavaScript otherwise — handles `module`, `text/javascript`, and
+  no-`type`), and splats the resulting colours back onto the main
+  map. Works regardless of which outer grammar parsed the document
+  (HTML / Razor / Svelte all benefit) and degrades gracefully on
+  empty / self-closed / unterminated blocks.
+
 ## [0.2.0] - 2026-05-15
 
 ### Added
