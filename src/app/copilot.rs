@@ -197,6 +197,16 @@ impl super::App {
         self.window.cursor.line = new_line;
         self.window.cursor.col = new_col;
         self.window.cursor.want_col = new_col;
+        // Backdate the keystroke timer so the next render tick fires
+        // a fresh inline request immediately rather than waiting for
+        // a full idle window. Copilot frequently returns "signature
+        // only" / "open brace only" suggestions and expects to be
+        // re-prompted for the continuation; without this, the user
+        // sits looking at `function foo() {` for 250 ms before the
+        // body suggestion arrives.
+        self.last_keystroke_at = Instant::now()
+            .checked_sub(Duration::from_millis(COPILOT_IDLE_MS + 50))
+            .unwrap_or_else(Instant::now);
         true
     }
 
