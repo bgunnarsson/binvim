@@ -350,11 +350,22 @@ impl super::App {
             self.status_msg = "Only one buffer".into();
             return;
         }
-        let n = self.buffers.len() as i64;
         // Cycle by tab rather than focused-buffer index — each buffer
-        // is its own tab in the tabline, so H/L moves between tabs
-        // (independent layouts) rather than rotating a focused pane.
-        let next = ((self.active_tab as i64) + step).rem_euclid(n) as usize;
+        // with its own tab cycles independently; split-companion
+        // buffers (no stashed layout, not the active_tab) are
+        // skipped so H/L matches the tabs the user actually sees in
+        // the bar.
+        let visible = self.visible_tab_indices();
+        if visible.is_empty() {
+            return;
+        }
+        let pos = visible
+            .iter()
+            .position(|&i| i == self.active_tab)
+            .unwrap_or(0);
+        let n = visible.len() as i64;
+        let next_pos = ((pos as i64) + step).rem_euclid(n) as usize;
+        let next = visible[next_pos];
         if let Err(e) = self.switch_tab(next) {
             self.status_msg = format!("error: {e}");
         }

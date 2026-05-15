@@ -327,6 +327,34 @@ impl super::App {
         }
     }
 
+    /// True when buffer `idx` is "promoted" — i.e., has its own tab
+    /// slot in the tabline and is reachable via `H`/`L` cycling. A
+    /// buffer is promoted if it's the currently-active tab OR it has
+    /// a stashed layout (which means the user has visited it as a
+    /// tab at some point — even just bouncing through it via `H`/`L`
+    /// is enough to leave a stash). Newly-opened files that arrived
+    /// via `<C-w>v` + picker land as buffers without a stash, so
+    /// they show in their split pane but stay out of the tabline
+    /// until the user `:b`s / `:e`s into them.
+    pub fn buffer_has_tab(&self, idx: usize) -> bool {
+        if idx == self.active_tab {
+            return true;
+        }
+        self.buffers
+            .get(idx)
+            .map(|s| s.layout.is_some())
+            .unwrap_or(false)
+    }
+
+    /// Indices of every buffer that has its own tab in the tabline,
+    /// in `App.buffers` order. Used by `H`/`L` cycling to skip
+    /// hidden split-companion buffers.
+    pub fn visible_tab_indices(&self) -> Vec<usize> {
+        (0..self.buffers.len())
+            .filter(|i| self.buffer_has_tab(*i))
+            .collect()
+    }
+
     /// Rect of the currently-focused window. Used by overlays (cursor
     /// placement, hover popup, signature popup, completion popup) that
     /// anchor on the active cursor's terminal coordinates.

@@ -2486,6 +2486,14 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
     let total_w = app.width as usize;
     let mut entries: Vec<(usize, String, bool)> = Vec::with_capacity(app.buffers.len());
     for (i, stash) in app.buffers.iter().enumerate() {
+        // Split-companion buffers (opened via <C-w>v + picker, never
+        // visited as their own tab) stay out of the tabline — they're
+        // already on screen in the split, and showing them as a tab
+        // too would be redundant. `app.buffer_has_tab` codifies the
+        // rule: active_tab OR has-a-stashed-layout.
+        if !app.buffer_has_tab(i) {
+            continue;
+        }
         let (path, dirty, display_name) = if i == app.active {
             (
                 app.buffer.path.as_ref(),
@@ -2512,13 +2520,20 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
         .map(|(_, label, dirty)| tab_width(label.chars().count(), *dirty))
         .collect();
     let total_widths: usize = widths.iter().sum();
+    // Position of the active tab within the filtered `entries` list
+    // (not the raw buffer index — those diverge once split-companion
+    // buffers are filtered out).
+    let active_entry_idx = entries
+        .iter()
+        .position(|(buf_idx, _, _)| *buf_idx == app.active_tab)
+        .unwrap_or(0);
     let mut start_idx = 0usize;
     if total_widths > total_w {
         let mut used = 0usize;
-        for i in (0..=app.active_tab).rev() {
+        for i in (0..=active_entry_idx).rev() {
             used += widths[i];
             if used > total_w / 2 {
-                start_idx = (i + 1).min(app.active_tab);
+                start_idx = (i + 1).min(active_entry_idx);
                 break;
             }
             start_idx = i;
