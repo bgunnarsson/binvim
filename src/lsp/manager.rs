@@ -32,6 +32,21 @@ pub(super) enum PendingRequest {
     /// returns without echoing the URI — can be routed back to the right
     /// buffer in the editor.
     InlayHints { path: PathBuf },
+    /// Copilot `checkStatus` — response says whether the user is signed
+    /// in and surfaces their handle.
+    CopilotCheckStatus,
+    /// Copilot `signIn` — kicks off the device-flow auth. Response
+    /// carries a verification URI + user code to display.
+    CopilotSignIn,
+    /// Copilot `textDocument/inlineCompletion`. Carries the anchor
+    /// position + buffer version so a late reply can be dropped if the
+    /// user has since edited or moved.
+    CopilotInline {
+        path: PathBuf,
+        line: usize,
+        col: usize,
+        buffer_version: u64,
+    },
 }
 
 /// Container for per-language LSP clients keyed by `ServerSpec.key`.
@@ -126,10 +141,80 @@ impl LspManager {
                 .unwrap_or_else(|| fallback_root.to_path_buf());
             let root = find_workspace_root(&start, &spec.root_markers);
             if let Some(client) = LspClient::spawn_spec(spec, &root) {
-                self.clients.insert(spec.key.clone(), client);
+                let key = spec.key.clone();
+                self.clients.insert(key.clone(), client);
+                // First time Copilot's client comes up, kick a checkStatus
+                // request so we know whether to show "signed in" / "not
+                // signed in" in the status surface. The response routes
+                // back through `handle_response` and emits LspEvent::
+                // CopilotStatus.
+                if key == "copilot" {
+                    self.request_copilot_check_status();
+                    self.copilot_status = CopilotStatus::Checking;
+                }
             }
         }
         specs.iter().any(|s| self.clients.contains_key(&s.key))
+    }
+
+    /// Send Copilot's custom `checkStatus` request. Optional `options`
+    /// payload is omitted (server defaults are fine for us).
+    pub fn request_copilot_check_status(&mut self) -> bool {
+        let Some(client) = self.clients.get("copilot") else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(id, "checkStatus", json!({}));
+        self.pending
+            .insert(("copilot".into(), id), PendingRequest::CopilotCheckStatus);
+        true
+    }
+
+    /// Send Copilot's custom `signIn` request to kick off the device-flow
+    /// auth. The response carries `verificationUri` + `userCode` which we
+    /// display in the status line.
+    pub fn request_copilot_sign_in(&mut self) -> bool {
+        let Some(client) = self.clients.get("copilot") else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(id, "signIn", json!({}));
+        self.pending
+            .insert(("copilot".into(), id), PendingRequest::CopilotSignIn);
+        true
+    }
+
+    /// Send `textDocument/inlineCompletion` (LSP 3.18) to the Copilot
+    /// client. Returns `false` when Copilot isn't attached / signed in —
+    /// the caller (idle-pause path in `app/lsp_glue.rs`) uses this to
+    /// avoid wasted bookkeeping.
+    pub fn request_copilot_inline(
+        &mut self,
+        path: &Path,
+        line: usize,
+        col: usize,
+        buffer_version: u64,
+    ) -> bool {
+        if !matches!(self.copilot_status, CopilotStatus::SignedIn { .. }) {
+            return false;
+        }
+        let Some(client) = self.clients.get("copilot") else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/inlineCompletion",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": col },
+                "context": { "triggerKind": 2 },
+            }),
+        );
+        self.pending.insert(
+            ("copilot".into(), id),
+            PendingRequest::CopilotInline {
+                path: path.to_path_buf(),
+                line,
+                col,
+                buffer_version,
+            },
+        );
+        true
     }
 
     /// What `:health` should say about the active buffer's LSP attachments.
@@ -605,6 +690,80 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
         PendingRequest::InlayHints { path } => {
             let hints = super::parse::parse_inlay_hints_response(result);
             Some(LspEvent::InlayHints { path, hints })
+        }
+        PendingRequest::CopilotCheckStatus => {
+            // Copilot returns `{ status: "OK" | "NotSignedIn" | ...,
+            // user: "..." }`. Older protocol versions used `"signedIn":
+            // bool` instead — we accept both shapes.
+            let kind = result
+                .get("status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    result
+                        .get("signedIn")
+                        .and_then(|v| v.as_bool())
+                        .map(|b| if b { "OK".to_string() } else { "NotSignedIn".to_string() })
+                })
+                .unwrap_or_else(|| "Unknown".to_string());
+            let user = result
+                .get("user")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Some(LspEvent::CopilotStatus { kind, user })
+        }
+        PendingRequest::CopilotSignIn => {
+            // signIn reply is `{ verificationUri, userCode, status }` for
+            // device flow, or `{ status: "AlreadySignedIn" }` if the
+            // user is already authenticated.
+            let kind = result
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("PromptUserDeviceFlow")
+                .to_string();
+            let user = result
+                .get("user")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            // We piggyback the device-flow fields onto LspEvent::CopilotStatus
+            // by embedding them in `kind` — the App parses them out. This
+            // keeps the LSP event surface tight.
+            let event_kind = if let (Some(uri), Some(code)) = (
+                result.get("verificationUri").and_then(|v| v.as_str()),
+                result.get("userCode").and_then(|v| v.as_str()),
+            ) {
+                format!("PendingAuth:{uri}:{code}")
+            } else {
+                kind
+            };
+            Some(LspEvent::CopilotStatus { kind: event_kind, user })
+        }
+        PendingRequest::CopilotInline {
+            path,
+            line,
+            col,
+            buffer_version,
+        } => {
+            // Response shape: { items: [{ insertText, range, command? }] }
+            // — we surface the first item's text.
+            let text = result
+                .get("items")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|item| item.get("insertText"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
+            if text.is_empty() {
+                return Some(LspEvent::NotFound("copilot inline"));
+            }
+            Some(LspEvent::CopilotInline {
+                path,
+                line,
+                col,
+                text,
+                buffer_version,
+            })
         }
     }
 }

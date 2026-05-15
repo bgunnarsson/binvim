@@ -21,6 +21,7 @@
 //! - [`health`]: `:health` command output
 
 mod buffers;
+mod copilot;
 mod dap_glue;
 mod dispatch;
 mod edit;
@@ -290,6 +291,32 @@ pub struct App {
     /// cwd). Surfaced by the `:health` dashboard so the user can tell
     /// whether the buffer list was restored or seeded fresh.
     pub session_restored: bool,
+    /// Active Copilot ghost suggestion — rendered as muted text after
+    /// the cursor in Insert mode, accepted with `<Tab>`. Cleared on
+    /// any non-Tab keystroke or when the cursor moves away.
+    pub copilot_ghost: Option<CopilotGhost>,
+    /// Wall clock of the last keystroke in Insert mode. Drives the
+    /// idle-pause that fires `textDocument/inlineCompletion` against
+    /// the Copilot LSP — we wait until ~250ms of typing-idle so we
+    /// don't spam the server with requests for every character.
+    pub last_keystroke_at: Instant,
+    /// Buffer version we last asked Copilot for an inline completion
+    /// for, keyed by path. Skips the request when nothing has changed
+    /// since the previous response (after accept / reject the ghost
+    /// is cleared, so a re-request will fire on the next idle).
+    pub last_copilot_request_version: HashMap<PathBuf, u64>,
+}
+
+/// Active Copilot ghost suggestion. `text` may be multi-line; only
+/// the portion that fits in the active pane gets rendered. `line` /
+/// `col` is the anchor (cursor) position when the request fired —
+/// the ghost is dropped if the cursor has since moved.
+#[derive(Debug, Clone)]
+pub struct CopilotGhost {
+    pub text: String,
+    pub line: usize,
+    pub col: usize,
+    pub path: PathBuf,
 }
 
 /// How quickly a second left-click must arrive at the same buffer position
@@ -400,6 +427,9 @@ impl App {
             recording: None,
             replaying: false,
             session_restored: restored_session.is_some(),
+            copilot_ghost: None,
+            last_keystroke_at: Instant::now(),
+            last_copilot_request_version: HashMap::new(),
         };
         // Mirror the user's Copilot opt-in onto the LSP manager so
         // copilot-language-server is included in every spec lookup
@@ -433,6 +463,7 @@ impl App {
                 self.ensure_folds();
                 self.lsp_sync_active_debounced();
                 self.lsp_request_inlay_hints_if_due();
+                self.copilot_maybe_request_inline();
                 render::draw(&mut stdout, self)?;
                 stdout.flush()?;
                 needs_render = false;

@@ -701,6 +701,18 @@ impl super::App {
 
     pub(super) fn handle_insert_key(&mut self, key: KeyEvent) {
         let is_esc = matches!(key.code, KeyCode::Esc);
+        // Every Insert-mode keystroke resets the Copilot idle timer.
+        // The actual `inlineCompletion` request fires from
+        // `copilot_maybe_request_inline` once ~250ms of typing-idle
+        // has passed — this just records "the user just typed."
+        self.last_keystroke_at = std::time::Instant::now();
+        // Any key other than `<Tab>` invalidates an active ghost.
+        // Tab gets its own branch below where it either consumes or
+        // falls through; we don't drop the ghost preemptively because
+        // `copilot_accept_ghost` already does so on consume.
+        if !matches!(key.code, KeyCode::Tab) {
+            self.copilot_invalidate_ghost();
+        }
         // Completion popup intercepts a small set of keys; everything else dismisses it.
         if self.completion.is_some() {
             let captured = self.handle_insert_key_with_completion(key);
@@ -903,6 +915,12 @@ impl super::App {
                 }
             }
             KeyCode::Tab => {
+                // Copilot ghost takes priority over both snippet-stop
+                // and literal-indent: if there's a live suggestion at
+                // the cursor, consume it and skip the rest.
+                if self.copilot_accept_ghost() {
+                    return;
+                }
                 // Snippet session takes priority: Tab cycles to the next
                 // stop. After advancing past the final stop we clear the
                 // session and fall through; clearing only — no indent is

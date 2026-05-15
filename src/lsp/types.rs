@@ -79,6 +79,22 @@ pub enum LspEvent {
     /// `textDocument/inlayHint` results for `path` — the App stores them
     /// per-buffer and the renderer pulls them on draw.
     InlayHints { path: PathBuf, hints: Vec<InlayHint> },
+    /// Copilot `checkStatus` reply — used to drive `App.lsp.copilot_status`
+    /// + the status-line indicator. `kind` is the raw protocol string
+    /// (`"OK"`, `"NotSignedIn"`, `"NotAuthorized"`, `"NoTelemetryConsent"`,
+    /// …); the App normalises it into a `CopilotStatus`.
+    CopilotStatus { kind: String, user: Option<String> },
+    /// Copilot `inlineCompletion` reply — at most one suggestion text is
+    /// surfaced as a ghost. `line`/`col` is the cursor position the
+    /// request was anchored on; the App drops the ghost if the cursor
+    /// has since moved off it.
+    CopilotInline {
+        path: PathBuf,
+        line: usize,
+        col: usize,
+        text: String,
+        buffer_version: u64,
+    },
     NotFound(&'static str),
 }
 

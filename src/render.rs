@@ -3484,6 +3484,38 @@ fn draw_line_with_selection(
         )?;
     }
 
+    // Copilot ghost suggestion — when the cursor is on this line in
+    // Insert mode and we have a live ghost, render its first line as
+    // muted Overlay0 text after the line's real content. We only
+    // paint the first line for now; multi-line suggestions are still
+    // accepted whole on `<Tab>`, the user just doesn't see lines 2+
+    // ghosted. Skipped for inactive panes (the ghost belongs to the
+    // focused cursor, not every viewport).
+    if is_active {
+        if let Some(ghost) = app.copilot_ghost.as_ref() {
+            if ghost.line == line_idx
+                && ghost.col == app.window.cursor.col
+                && Some(ghost.path.as_path()) == bs.buffer.path.as_deref()
+                && matches!(app.mode, Mode::Insert)
+            {
+                let first_line = ghost.text.split('\n').next().unwrap_or("");
+                // Truncate so the ghost can't wrap past the pane edge.
+                let remaining = avail.saturating_sub(visual_used);
+                if remaining > 0 && !first_line.is_empty() {
+                    let truncated: String = first_line.chars().take(remaining).collect();
+                    queue!(
+                        out,
+                        SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
+                        SetAttribute(Attribute::Italic),
+                        Print(&truncated),
+                        SetAttribute(Attribute::NoItalic),
+                        ResetColor,
+                    )?;
+                }
+            }
+        }
+    }
+
     // Error Lens-style inline diagnostic at the end of the line. We carefully
     // measure the prefix and message in display columns (not chars), and leave
     // one column of slack so any width-miscount can't push past the row edge

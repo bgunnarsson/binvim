@@ -82,6 +82,34 @@ impl super::App {
                         self.inlay_hints.insert(path, hints);
                     }
                 }
+                LspEvent::CopilotStatus { kind, user } => {
+                    self.apply_copilot_status(kind, user);
+                }
+                LspEvent::CopilotInline {
+                    path,
+                    line,
+                    col,
+                    text,
+                    buffer_version,
+                } => {
+                    // Drop the suggestion if the buffer or cursor have
+                    // moved on since the request — a stale ghost would
+                    // either render against the wrong byte range or
+                    // accept-insert into the wrong place.
+                    let stale = self.buffer.path.as_deref() != Some(&path)
+                        || self.buffer.version != buffer_version
+                        || self.window.cursor.line != line
+                        || self.window.cursor.col != col
+                        || !matches!(self.mode, crate::mode::Mode::Insert);
+                    if !stale {
+                        self.copilot_ghost = Some(crate::app::CopilotGhost {
+                            text,
+                            line,
+                            col,
+                            path,
+                        });
+                    }
+                }
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
                         // Auto-trigger fires on every keystroke; silently
