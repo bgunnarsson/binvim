@@ -79,22 +79,17 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       crates.io would catch the Rust-tooling crowd. Requires the licence story to permit it (source-available
       — verify). **considering**
 
-## AI / Completion
-
-- [ ] **Inline AI completion.** Ghost text from a model (Claude / a local LLM) rendered the same way LSP
-      completion ghosts work today. Trigger on idle pause; accept with `<Tab>`. Pluggable backend so users can
-      point at whichever endpoint. **planned**
-- [ ] **`:claude` chat sidebar.** A right-pane conversation tied to the active buffer / selection.
-      Unblocked by splits — would render as a vertical pane in the current tab's layout, with the chat
-      buffer as a normal `Buffer` so all editor affordances (yank, search, copy code blocks) just work.
-      **considering**
-
 ## Architecture / non-goals
 
 These are explicit decisions worth recording so they don't get relitigated every release.
 
 - **No plugin system.** Every language, formatter, and LSP is hard-wired. Adding a language is a five-file PR
   (see CLAUDE.md). This keeps the binary self-contained and the codebase greppable.
+- **No AI integration — chat or inline.** binvim is an editor, not an LLM client. Adding a chat sidebar
+  (`:claude`) or inline ghost completion would pull in an HTTP stack, couple a feature to a vendor's API
+  surface, and dilute the "one binary, plugin-free, terminal-native" pitch. Users who want AI assistance
+  run a dedicated tool (Claude Code, Aider, etc.) alongside binvim — terminal multiplexers and split
+  panes are the integration layer. This is a strong "no" rather than a "maybe later."
 - **Source-available, not open source.** See `LICENSE`. Contributions welcome under the existing terms;
   redistribution and forks are governed by the licence.
 - **Single binary, no runtime config beyond `~/.config/binvim/config.toml`.** No init script, no Lua /
