@@ -733,6 +733,101 @@ fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
     false
 }
 
+/// GitHub Copilot via `copilot-language-server`. Attached as an aux
+/// LSP to every buffer when `[copilot] enabled = true` in the user's
+/// config. Path-agnostic in command + key (one shared client for all
+/// files), but `language_id` is derived per-call from the file
+/// extension so the server can pick the right tokenizer for context.
+///
+/// Authentication is handled out-of-process: the language server
+/// owns `~/.config/github-copilot/hosts.json`. On first launch the
+/// server emits `signIn` requests via custom LSP methods; binvim
+/// surfaces the device-flow URL + user code in the status line so
+/// the user can complete the auth in a browser.
+///
+/// The `copilot-language-server` binary ships via npm — install with
+/// `npm i -g @github/copilot-language-server`. We also probe a
+/// project-local `node_modules/.bin/copilot-language-server` in case
+/// the user prefers per-project pins.
+pub fn copilot_spec_for_path(path: &Path) -> Option<ServerSpec> {
+    // Pick a languageId the server understands. Copilot accepts a
+    // wide range of language ids; we default to "plaintext" for
+    // unknown extensions so untagged files (`README`, `Makefile`,
+    // `Dockerfile.dev`, scratch files) still get suggestions.
+    let language_id = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|ext| match ext.to_ascii_lowercase().as_str() {
+            "rs" => "rust",
+            "ts" => "typescript",
+            "tsx" => "typescriptreact",
+            "js" | "mjs" | "cjs" => "javascript",
+            "jsx" => "javascriptreact",
+            "py" | "pyi" => "python",
+            "go" => "go",
+            "rb" => "ruby",
+            "php" => "php",
+            "c" => "c",
+            "h" | "hpp" | "hxx" | "cpp" | "cc" | "cxx" => "cpp",
+            "cs" => "csharp",
+            "razor" | "cshtml" => "razor",
+            "java" => "java",
+            "kt" | "kts" => "kotlin",
+            "swift" => "swift",
+            "lua" => "lua",
+            "html" | "htm" => "html",
+            "css" => "css",
+            "scss" => "scss",
+            "less" => "less",
+            "vue" => "vue",
+            "svelte" => "svelte",
+            "astro" => "astro",
+            "md" => "markdown",
+            "json" | "jsonc" => "json",
+            "yml" | "yaml" => "yaml",
+            "toml" => "toml",
+            "sh" | "bash" | "zsh" | "ksh" => "shellscript",
+            "sql" => "sql",
+            "xml" => "xml",
+            "ex" | "exs" => "elixir",
+            "zig" => "zig",
+            "nix" => "nix",
+            _ => "plaintext",
+        })
+        .unwrap_or("plaintext")
+        .to_string();
+    let start = path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let local_bin = find_node_modules_bin(&start, "copilot-language-server");
+    let mut cmd_candidates = Vec::new();
+    if let Some(p) = local_bin {
+        cmd_candidates.push(p);
+    }
+    cmd_candidates.push("copilot-language-server".into());
+    Some(ServerSpec {
+        key: "copilot".into(),
+        language_id,
+        cmd_candidates,
+        args: vec!["--stdio".into()],
+        // Copilot doesn't care about workspace markers the way other
+        // servers do — it just needs a rootUri. Anchor to .git for
+        // monorepo-friendliness, falling back to the file's parent.
+        root_markers: vec![".git".into()],
+        initialization_options: json!({
+            "editorInfo": {
+                "name": "binvim",
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+            "editorPluginInfo": {
+                "name": "binvim",
+                "version": env!("CARGO_PKG_VERSION"),
+            },
+        }),
+    })
+}
+
 pub(crate) fn resolve_command(candidates: &[String]) -> Option<(String, Vec<String>)> {
     for c in candidates {
         let path = if c.starts_with("~/") {

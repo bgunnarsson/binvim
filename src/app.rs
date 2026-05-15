@@ -401,6 +401,12 @@ impl App {
             replaying: false,
             session_restored: restored_session.is_some(),
         };
+        // Mirror the user's Copilot opt-in onto the LSP manager so
+        // copilot-language-server is included in every spec lookup
+        // from here forward. The flag has to be set *before* any
+        // buffer is opened (and thus before `lsp_attach_active` runs)
+        // so the initial didOpen carries the Copilot client too.
+        this.lsp.copilot_enabled = this.config.copilot.enabled;
         // Hydrate from the saved session — open every still-extant buffer,
         // restore each one's cursor + viewport, and land on the previously
         // active buffer.

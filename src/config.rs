@@ -18,6 +18,8 @@ pub struct Config {
     pub line_numbers: LineNumberConfig,
     #[serde(default)]
     pub hover: HoverConfig,
+    #[serde(default)]
+    pub copilot: CopilotConfig,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -90,6 +92,18 @@ impl Default for HoverConfig {
     }
 }
 
+/// GitHub Copilot integration. Off by default — set `enabled = true`
+/// under a `[copilot]` block in `~/.config/binvim/config.toml` to
+/// attach `copilot-language-server` as an auxiliary LSP for every
+/// buffer. Auth lives at `~/.config/github-copilot/hosts.json` and
+/// is owned by the language server itself; binvim never sees the
+/// token. Sign in via the server's device-flow prompt on first launch.
+#[derive(Debug, Default, Deserialize)]
+pub struct CopilotConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -103,6 +117,7 @@ impl Default for Config {
             whitespace: WhitespaceConfig::default(),
             line_numbers: LineNumberConfig::default(),
             hover: HoverConfig::default(),
+            copilot: CopilotConfig::default(),
         }
     }
 }

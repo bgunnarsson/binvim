@@ -41,6 +41,41 @@ pub struct LspManager {
     /// Each client allocates IDs from its own counter, so the global key is
     /// `(client_key, id)` rather than just `id` to avoid cross-server clashes.
     pending: HashMap<(String, u64), PendingRequest>,
+    /// Mirror of `Config.copilot.enabled` — when true, the Copilot
+    /// language server is attached as an aux LSP to every buffer.
+    pub copilot_enabled: bool,
+    /// Sign-in state for the Copilot LSP. `NotStarted` until the server
+    /// responds to `checkStatus`; `SignedIn` once the user's account is
+    /// usable; `Pending { url, code }` while a device-flow auth is in
+    /// progress and the user needs to visit GitHub.
+    #[allow(dead_code)]
+    pub copilot_status: CopilotStatus,
+}
+
+/// Sign-in state for the Copilot LSP. Surfaced in the status line +
+/// `:health` so the user knows whether suggestions are actually
+/// going to come back. Variants beyond `NotStarted` are populated by
+/// the sign-in / inline-completion follow-up pass; the foundation
+/// commit just adds the type + plumbing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum CopilotStatus {
+    #[default]
+    NotStarted,
+    /// `checkStatus` in flight, waiting for response.
+    Checking,
+    SignedIn {
+        user: String,
+    },
+    SignedOut,
+    /// Device-flow auth pending: the user must visit `verification_uri`
+    /// and enter `user_code`.
+    PendingAuth {
+        verification_uri: String,
+        user_code: String,
+    },
+    /// Hard error from the server (not installed, crashed, etc.).
+    Error(String),
 }
 
 impl LspManager {
@@ -49,7 +84,23 @@ impl LspManager {
             clients: HashMap::new(),
             diagnostics: HashMap::new(),
             pending: HashMap::new(),
+            copilot_enabled: false,
+            copilot_status: CopilotStatus::NotStarted,
         }
+    }
+
+    /// Wraps the path-only `specs_for_path` and conditionally adds the
+    /// Copilot spec when the user has opted in. Every call site that
+    /// used to call `specs_for_path` directly should route through this
+    /// instead so the Copilot toggle is honoured consistently.
+    fn specs_for(&self, path: &Path) -> Vec<super::specs::ServerSpec> {
+        let mut specs = specs_for_path(path);
+        if self.copilot_enabled {
+            if let Some(spec) = super::specs::copilot_spec_for_path(path) {
+                specs.push(spec);
+            }
+        }
+        specs
     }
 
     /// Spawn every spec that applies to `path` (primary + auxiliary) and
@@ -61,7 +112,7 @@ impl LspManager {
     /// *any* matching client is alive, so emmet-ls / Tailwind / etc.
     /// still get the document even when the primary binary is missing.
     pub fn ensure_for_path(&mut self, path: &Path, fallback_root: &Path) -> bool {
-        let specs = specs_for_path(path);
+        let specs = self.specs_for(path);
         if specs.is_empty() {
             return false;
         }
@@ -87,7 +138,7 @@ impl LspManager {
     /// running. Lets the user see "Tailwind matched but binary missing"
     /// without having to grep their PATH manually.
     pub fn active_buffer_status(&self, path: &Path) -> Vec<ActiveBufferLspStatus> {
-        specs_for_path(path)
+        self.specs_for(path)
             .into_iter()
             .map(|spec| ActiveBufferLspStatus {
                 resolved_binary: resolve_command(&spec.cmd_candidates).map(|(p, _)| p),
@@ -126,7 +177,7 @@ impl LspManager {
     /// Used to fan out didOpen/didChange and completion requests across the
     /// primary server and any attached auxiliaries.
     pub fn clients_for_path(&self, path: &Path) -> Vec<&LspClient> {
-        specs_for_path(path)
+        self.specs_for(path)
             .into_iter()
             .filter_map(|spec| self.clients.get(&spec.key))
             .collect()
@@ -224,7 +275,7 @@ impl LspManager {
     /// both `.ts` (`typescript`) and `.tsx` (`typescriptreact`)
     /// correctly.
     pub fn did_open_all(&self, path: &Path, text: &str) {
-        for spec in specs_for_path(path) {
+        for spec in self.specs_for(path) {
             if let Some(client) = self.clients.get(&spec.key) {
                 let _ = client.did_open(path, text, &spec.language_id);
             }
