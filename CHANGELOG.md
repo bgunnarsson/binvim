@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.8] - 2026-05-15
+
 ### Added
 - **Theme presets — `themes/<name>/theme.toml`.** Drop-in `[colors]`
   blocks for the most common editor themes: Dracula, Tokyo Night,
