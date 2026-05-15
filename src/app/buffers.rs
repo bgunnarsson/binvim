@@ -95,6 +95,16 @@ impl super::App {
         // renderer, focus-change buffer swaps in window_focus /
         // window_close) agree with App.active.
         self.window.buffer_idx = idx;
+        // Single-window tab: the tab's identity is just whichever
+        // buffer is focused in it. `:e other.txt` from a non-split
+        // view should update the tabline highlight to match, since
+        // the user perceives it as "switched to other.txt's tab."
+        // Multi-pane layouts keep their `active_tab` separately so
+        // a tab the user explicitly built (e.g. via <C-w>v + picker)
+        // stays highlighted even when focus moves between panes.
+        if matches!(self.layout.root, crate::layout::LayoutNode::Leaf(_)) {
+            self.active_tab = idx;
+        }
         Ok(())
     }
 
