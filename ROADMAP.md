@@ -13,12 +13,16 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       its own split tree), independent cursors / viewports per pane, pick-on-split (default `<C-w>v`
       opens the file picker so the new pane lands on a different file straight away), and Vim-style
       same-buffer splits via the uppercase variants. **Shipped in 0.1.8.**
-- [ ] **`<C-w>` + integer resize.** `<C-w>10>` to widen by 10 cols, `<C-w>5<` to shrink, etc. Mostly a
-      parser change — the layout tree already carries a ratio on every split node. **next**
+- [x] **`<C-w>` + integer resize.** `<C-w>10>` widens by 10 cols, `<C-w>5<` shrinks, `<C-w>[N]+` /
+      `<C-w>[N]-` adjust height. Parser accumulates digits inside the window-leader prefix; the layout
+      walks to the deepest matching-axis ancestor of the focused leaf and converts cells to a ratio
+      against that subtree's own rect (clamped to `[0.1, 0.9]`).
 - [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. The
       split work is done; this is the PTY + scrollback widget on top. **next**
-- [ ] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
-      Persist across sessions alongside the existing session file. **next**
+- [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
+      Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`.
+      Persisted to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall
+      stays warm regardless of launch mode.
 - [ ] **Tab completion in `:` ex commands.** Filenames after `:e`, buffer names after `:b`, command names from
       cold. **planned**
 - [ ] **Spell check.** Toggleable per-buffer, with `]s` / `[s` to jump between misspellings and `z=` for

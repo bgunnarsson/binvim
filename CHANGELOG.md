@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Start page survives a history-only relaunch.** With the cmdline-
+  history change keeping the per-cwd session file alive across a
+  `<leader>bA` (so recall doesn't get wiped), the next bare `binvim`
+  launch saw `saved_session.is_some()` and flipped
+  `show_start_page = false`. `hydrate_from_session` then silently
+  returned because `session.buffers` was empty, leaving the user on
+  the bare `[No Name]` seed buffer (dismissable, with no buffers to
+  go back to). `restore_buffers` now also requires `!session.buffers.is_empty()`,
+  so a history-only session falls back to the start page exactly
+  like a brand-new launch.
+
 ### Added
 - **Cmdline (`:`) and search (`/` / `?`) history with `<Up>` / `<Down>`
   recall, persisted across sessions.** Each successful Enter records
