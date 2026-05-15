@@ -115,6 +115,14 @@ impl super::App {
             Action::HunkReset => self.hunk_reset(),
             Action::WindowSplitVertical => self.window_split(crate::layout::SplitDir::Vertical),
             Action::WindowSplitHorizontal => self.window_split(crate::layout::SplitDir::Horizontal),
+            Action::WindowSplitVerticalPick => {
+                self.window_split(crate::layout::SplitDir::Vertical);
+                self.open_picker(crate::parser::PickerLeader::Files);
+            }
+            Action::WindowSplitHorizontalPick => {
+                self.window_split(crate::layout::SplitDir::Horizontal);
+                self.open_picker(crate::parser::PickerLeader::Files);
+            }
             Action::WindowFocus { dir } => self.window_focus(dir),
             Action::WindowClose => self.window_close(),
             Action::WindowOnly => self.window_only(),

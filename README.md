@@ -189,18 +189,25 @@ Hold `<space>` (or `<space>b` / `<space>d`) for ~250 ms and a which-key popup li
 
 | Keys              | Action                                                       |
 |-------------------|--------------------------------------------------------------|
-| `<C-w> v`         | Split the active window vertically (new pane on the right)   |
-| `<C-w> s`         | Split the active window horizontally (new pane below)        |
+| `<C-w> v`         | Split vertically + open the file picker for the new pane     |
+| `<C-w> s`         | Split horizontally + open the file picker for the new pane   |
+| `<C-w> V`         | Split vertically with the same buffer (Vim's `:vsplit`)      |
+| `<C-w> S`         | Split horizontally with the same buffer (Vim's `:split`)     |
 | `<C-w> h/j/k/l`   | Focus the neighbouring window on the left/down/up/right      |
 | `<C-w> q` / `c`   | Close the active window (refuses if it's the last one)       |
 | `<C-w> o`         | Close every window except the active one                     |
 | `<C-w> =`         | Reset every split ratio back to 50/50                        |
 
-Each pane can show a different buffer — `:e other.txt`, `:b 2`,
-`H` / `L` all operate on the active pane's file only. Moving focus
-into a pane that points at a different buffer swaps the live buffer
-state under you, so each window keeps its own cursor, viewport,
-syntax highlighting, fold state, git stripe, and diagnostics.
+By default `<C-w>v` / `<C-w>s` create a split *and* open the file
+picker so the new pane lands on a different file straight away —
+typical case is "show me file A on the left and file B on the right."
+The uppercase `<C-w>V` / `<C-w>S` keep Vim's classic behaviour of
+opening the *same* buffer in both panes (useful for viewing two parts
+of one long file with independent cursors). `:e other.txt` / `:b 2` /
+`H` / `L` all operate on the active pane only. Moving focus into a
+pane that points at a different buffer swaps the live buffer state
+under you, so each window keeps its own cursor, viewport, syntax
+highlighting, fold state, git stripe, and diagnostics.
 
 ## Ex commands
 

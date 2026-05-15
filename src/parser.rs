@@ -218,10 +218,18 @@ pub enum Action {
     /// `<leader>hr` — discard the working-tree change for the hunk under
     /// the cursor (reset to the staged version).
     HunkReset,
-    /// `<C-w>v` — split the active window vertically (new pane on the right).
+    /// `<C-w>V` — split the active window vertically with the *same*
+    /// buffer in the new pane (Vim default — two viewports of one file).
     WindowSplitVertical,
-    /// `<C-w>s` — split the active window horizontally (new pane below).
+    /// `<C-w>S` — split the active window horizontally with the *same*
+    /// buffer in the new pane (Vim default).
     WindowSplitHorizontal,
+    /// `<C-w>v` — split vertically, then immediately open the file
+    /// picker so the new pane lands on a *different* file. Picker
+    /// `:e`-equivalent: only the new (active-after-split) pane changes.
+    WindowSplitVerticalPick,
+    /// `<C-w>s` — split horizontally, then open the file picker.
+    WindowSplitHorizontalPick,
     /// `<C-w>h/j/k/l` — focus the spatially-nearest neighbouring window.
     WindowFocus { dir: crate::layout::FocusDir },
     /// `<C-w>q` / `<C-w>c` — close the active window. Refuses if it's the last one.
@@ -685,8 +693,13 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if state.awaiting_window_leader {
         state.awaiting_window_leader = false;
         let action = match ch {
-            'v' => Some(Action::WindowSplitVertical),
-            's' => Some(Action::WindowSplitHorizontal),
+            // Lowercase `v` / `s` — split and pick a different file in
+            // the new pane. Uppercase `V` / `S` keep Vim's two-viewports-
+            // of-the-same-buffer behaviour.
+            'v' => Some(Action::WindowSplitVerticalPick),
+            's' => Some(Action::WindowSplitHorizontalPick),
+            'V' => Some(Action::WindowSplitVertical),
+            'S' => Some(Action::WindowSplitHorizontal),
             'h' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Left }),
             'j' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Down }),
             'k' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Up }),
