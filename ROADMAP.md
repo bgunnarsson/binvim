@@ -26,12 +26,14 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [ ] **Large-file mode.** Skip tree-sitter + LSP attach when the buffer crosses a size threshold (e.g. 5MB or
       50k lines), with a status hint. The rope handles the byte volume fine; the highlight pass is what dies.
       **planned**
-- [ ] **Inline ghost completion (LSP 3.18 `textDocument/inlineCompletion`).** Render the server's
-      multi-line suggestion as muted gray text after the cursor on idle pause; `<Tab>` accepts, any
-      other key rejects. Provider-neutral — the editor implements the spec method and any server
-      that speaks it (Copilot, supermaven, codeium-lsp, tabby, future ones) gets the UI for free.
-      Reuses the existing debounce path from `didChange`. The ghost-text render layer is the meat
-      of the work (multi-line, horizontal-scroll-aware, plays nice with syntax colours). **planned**
+- [x] **Inline ghost completion (LSP 3.18 `textDocument/inlineCompletion`).** Render the server's
+      suggestion as muted italic Overlay0 after the cursor on a 250 ms idle pause; `<Tab>` accepts
+      (honours the response's `range` so typed prefix isn't duplicated, trims trailing overlap with
+      post-cursor text, auto-opens `{ … }` blocks for partial suggestions); `<Enter>` accepts the
+      LSP popup item; any other key dismisses the ghost. Provider-neutral — Copilot's the first
+      server wired but any server speaking the spec gets the UI for free. Multi-line ghost render
+      (only the first line is currently painted; accepts insert all lines) is the remaining polish
+      item.
 
 ## LSP
 
@@ -46,12 +48,11 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [ ] **`window/showMessage` and `window/logMessage` surfacing.** Server-emitted notifications and logs route
       to the notification box / a `:messages`-like buffer instead of being dropped. **planned**
-- [ ] **Copilot via `copilot-language-server`.** Wire GitHub's official LSP server as an auxiliary client
-      (same five-file pattern as any language server in `lsp/specs.rs`). Authentication happens
-      out-of-process — users sign in once via the language server's own flow, the token lives at
-      `~/.config/github-copilot/hosts.json`. Pairs with the inline-ghost-completion editor item:
-      when both land, you get muted-gray Copilot suggestions on idle pause. No HTTP client in binvim
-      itself — Node handles the networking. **planned**
+- [x] **Copilot via `copilot-language-server`.** Opt-in via `[copilot] enabled = true` in config.
+      Attached as an aux LSP to every buffer; auth is device-flow surfaced in the status line with
+      a 3 s auto-poll so the editor flips to "signed in" as soon as the user clicks through in the
+      browser. `:copilot` / `:copilot signin` / `:copilot reload` / `:copilot signout` ex commands.
+      No HTTP client in binvim — Node handles the networking.
 
 ## Debugger (DAP)
 

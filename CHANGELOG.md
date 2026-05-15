@@ -6,6 +6,44 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **GitHub Copilot integration via `copilot-language-server`.** Opt
+  in with `[copilot] enabled = true` in `~/.config/binvim/config.toml`
+  (defaults to off). binvim attaches the official npm-distributed
+  language server as an aux LSP on every buffer; no HTTP client
+  lives in binvim itself — Node handles all networking + auth. Sign
+  in is device-flow: on first launch the status line shows the
+  verification URL + user code, status auto-polls every 3 s so the
+  editor flips to "signed in as <user>" within seconds of you
+  finishing in the browser. Inline ghost completions render as
+  muted italic Overlay0 text after the cursor in Insert mode on a
+  ~250 ms idle pause. `<Tab>` accepts (wins over the LSP popup
+  when both are visible; popup auto-closes on accept), `<Enter>`
+  accepts the LSP completion popup item, any other key dismisses
+  the ghost. Accept paths are smart: the response's `range` is
+  honoured so already-typed prefix isn't duplicated; trailing
+  overlap with post-cursor text is trimmed so suggestions ending
+  in `)` against an auto-paired `()` don't land as `))`; partial
+  suggestions ending in `{` auto-open the block (`\n<indent>|\n}`)
+  so the user lands inside the body; `didChange` is flushed before
+  every inline request so Copilot never works from stale text; and
+  the next request fires immediately after accept (no 250 ms wait)
+  so chained partial suggestions feel live. New ex commands:
+  `:copilot` (report status), `:copilot signin` (re-fire auth),
+  `:copilot reload` (force a status refresh), `:copilot signout`.
+- **`<leader>/` toggle line comments.** Normal mode toggles the
+  current line; Visual mode toggles every line in the selection
+  with the all-or-nothing rule (every non-blank line commented →
+  uncomment all; any uncommented → comment all at the min-indent
+  column so indented blocks stay aligned). Per-language prefixes
+  via new `Lang::line_comment_prefix`: `//` for Rust / TS / JS /
+  JSON / Go / C# / C / C++ / Java / PHP / Svelte / Zig / Kotlin /
+  SQL; `#` for Python / Bash / Ruby / YAML / TOML / Nix / Elixir /
+  Dockerfile / `.editorconfig` / `.gitignore`; `--` for Lua. Block-
+  only languages (HTML, Markdown, XML, Razor, CSS) wrap the range
+  with their block-comment pair (`<!-- … -->` / `@* … *@` /
+  `/* … */`). Drops back to Normal after the toggle.
+
 ## [0.1.8] - 2026-05-15
 
 ### Added
@@ -1024,7 +1062,8 @@ covered by its bundled language stack.
 - `bim` symlink installed alongside the `binvim` binary.
 - binman-style local release scripts.
 
-[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/bgunnarsson/binvim/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.8
 [0.1.7]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.7
 [0.1.6]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.6
 [0.1.5]: https://github.com/bgunnarsson/binvim/releases/tag/v0.1.5
