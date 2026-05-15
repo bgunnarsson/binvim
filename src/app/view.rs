@@ -471,6 +471,86 @@ impl super::App {
         self.markdown_meta.as_ref()?.per_line.get(line)
     }
 
+    /// True when `line` should collapse out of the visible render
+    /// pass — markdown is in concealed mode AND the meta marks the
+    /// row as Hidden (setext underlines, `<details>` chrome,
+    /// standalone HTML comments).
+    pub fn line_is_md_hidden(&self, line: usize) -> bool {
+        if !self.markdown_render_active() {
+            return false;
+        }
+        self.markdown_line_meta(line)
+            .map(|m| m.kind == crate::markdown_render::MarkdownLineKind::Hidden)
+            .unwrap_or(false)
+    }
+
+    /// Walk forward (`dir > 0`) or backward (`dir < 0`) past any
+    /// run of hidden markdown rows, returning the first non-hidden
+    /// line. Used after vertical motions so the cursor never lands
+    /// on a row that has no visible representation.
+    pub fn skip_md_hidden(&self, line: usize, dir: i32) -> usize {
+        let total = self.buffer.line_count();
+        if total == 0 {
+            return 0;
+        }
+        let mut line = line.min(total - 1);
+        while self.line_is_md_hidden(line) {
+            if dir >= 0 {
+                if line + 1 >= total {
+                    return line;
+                }
+                line += 1;
+            } else {
+                if line == 0 {
+                    return line;
+                }
+                line -= 1;
+            }
+        }
+        line
+    }
+
+    /// Reposition a motion target so it doesn't land on a hidden
+    /// markdown row. Walks in `dir` direction (1 down / -1 up) until
+    /// landing on a visible row, then re-clamps the target column
+    /// to fit the new line's length.
+    pub fn adjust_target_past_md_hidden(
+        &self,
+        target: crate::cursor::Cursor,
+        dir: i32,
+    ) -> crate::cursor::Cursor {
+        let new_line = self.skip_md_hidden(target.line, dir);
+        if new_line == target.line {
+            return target;
+        }
+        let len = self.buffer.line_len(new_line);
+        let max = if len == 0 { 0 } else { len - 1 };
+        crate::cursor::Cursor {
+            line: new_line,
+            col: target.want_col.min(max),
+            want_col: target.want_col,
+        }
+    }
+
+    /// Count of visible (non-folded, non-md-hidden) rows from
+    /// `from` (inclusive) up to `to` (exclusive). Used by cursor
+    /// placement to map a source line to its on-screen row offset
+    /// from the viewport top.
+    pub fn visible_rows_between(&self, from: usize, to: usize) -> usize {
+        if to <= from {
+            return 0;
+        }
+        let mut count = 0;
+        let mut i = from;
+        while i < to {
+            if !self.line_is_folded(i) && !self.line_is_md_hidden(i) {
+                count += 1;
+            }
+            i += 1;
+        }
+        count
+    }
+
     /// Refresh the cache when the active buffer's path or version has
     /// changed. Cheap when the buffer isn't markdown — single lang
     /// detect + early return. Called once per render tick from `run`.

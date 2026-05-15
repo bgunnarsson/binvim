@@ -239,8 +239,20 @@ impl super::App {
         match m {
             MotionVerb::Left => motion::left(&self.buffer, self.cursor, count),
             MotionVerb::Right => motion::right(&self.buffer, self.cursor, count),
-            MotionVerb::Up => motion::up(&self.buffer, self.cursor, count),
-            MotionVerb::Down => motion::down(&self.buffer, self.cursor, count),
+            MotionVerb::Up => {
+                let mut r = motion::up(&self.buffer, self.cursor, count);
+                if self.markdown_render_active() {
+                    r.target = self.adjust_target_past_md_hidden(r.target, -1);
+                }
+                r
+            }
+            MotionVerb::Down => {
+                let mut r = motion::down(&self.buffer, self.cursor, count);
+                if self.markdown_render_active() {
+                    r.target = self.adjust_target_past_md_hidden(r.target, 1);
+                }
+                r
+            }
             MotionVerb::LineStart => motion::line_start(&self.buffer, self.cursor),
             MotionVerb::LineEnd => motion::line_end(&self.buffer, self.cursor),
             MotionVerb::WordForward => motion::word_forward(&self.buffer, self.cursor, count),

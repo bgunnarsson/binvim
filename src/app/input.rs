@@ -489,8 +489,23 @@ impl super::App {
         if col < gutter {
             return; // sign column / line numbers
         }
-        let buf_line = buf_row + self.view_top;
-        if buf_line >= self.buffer.line_count() {
+        // Walk forward from view_top, counting only visible (non-folded,
+        // non-md-hidden) rows, until we've passed `buf_row` of them.
+        // Without this the click would miscount when collapsed rows
+        // sit between the viewport top and the click target.
+        let mut buf_line = self.view_top;
+        let total = self.buffer.line_count();
+        let mut visible_rows_seen = 0;
+        while buf_line < total {
+            if !self.line_is_folded(buf_line) && !self.line_is_md_hidden(buf_line) {
+                if visible_rows_seen == buf_row {
+                    break;
+                }
+                visible_rows_seen += 1;
+            }
+            buf_line += 1;
+        }
+        if buf_line >= total {
             return;
         }
         let line_len = self.buffer.line_len(buf_line);

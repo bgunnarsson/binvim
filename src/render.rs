@@ -2632,9 +2632,13 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
     let avail = (app.width as usize).saturating_sub(gutter);
     let total_lines = app.buffer.line_count();
     let mut line_idx = app.view_top;
-    // Skip any lines that are hidden by a closed fold from the start of
-    // the viewport so the first visible row isn't mid-fold.
-    while line_idx < total_lines && app.line_is_folded(line_idx) {
+    // Skip any lines that are hidden — by a closed fold or by the
+    // markdown concealed-render pass (HTML chrome, setext
+    // underlines) — from the start of the viewport so the first
+    // visible row isn't on a row that has no visible body.
+    while line_idx < total_lines
+        && (app.line_is_folded(line_idx) || app.line_is_md_hidden(line_idx))
+    {
         line_idx += 1;
     }
     // Canonicalise the buffer's path once for the duration of this draw so
@@ -2771,9 +2775,13 @@ fn draw_buffer(out: &mut impl Write, app: &App) -> Result<()> {
             }
             // Advance to the next visible line — past the fold's hidden
             // body if this row was a fold start, otherwise just by one.
+            // Then keep skipping any consecutive folded / md-hidden
+            // rows so the next iteration lands on a paintable row.
             let span = app.folded_line_span(line_idx);
             line_idx += span.max(1);
-            while line_idx < total_lines && app.line_is_folded(line_idx) {
+            while line_idx < total_lines
+                && (app.line_is_folded(line_idx) || app.line_is_md_hidden(line_idx))
+            {
                 line_idx += 1;
             }
         } else {
@@ -4074,7 +4082,12 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let gutter = app.gutter_width();
-    let row = (app.cursor.line.saturating_sub(app.view_top) + app.buffer_top()) as u16;
+    // Hidden rows (folded code blocks, markdown chrome like
+    // `<details>`/`</details>`) collapse out of the visible render,
+    // so the cursor's on-screen row needs to count *visible* rows
+    // between view_top and the cursor's source line — not the raw
+    // line-index delta.
+    let row = (app.visible_rows_between(app.view_top, app.cursor.line) + app.buffer_top()) as u16;
     let line = app.buffer.rope.line(app.cursor.line);
     // Per-buffer-col inlay-hint widths so the cursor's visual position
     // accounts for them. Without this, the cursor renders at the visual

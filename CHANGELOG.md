@@ -38,6 +38,20 @@ follows [Semantic Versioning](https://semver.org/).
     `<u>` → underline, `<code>` → inline-code Green; `<br>` /
     `<br/>` / `<br />` collapse entirely; `<!--…-->` comments
     collapse on the line they appear on.
+  - **Hidden rows truly collapse.** Previously rows marked
+    `Hidden` (setext underlines, `<details>`/`</details>` chrome,
+    standalone HTML comments) painted as blank rows — they took
+    a vertical row of viewport space. They now skip the render
+    walk entirely so subsequent rows shift up. A `<details>`
+    block that used to span ~4 chrome rows of breathing room
+    now collapses tight against the surrounding prose. Cursor
+    placement, mouse-click → source-line mapping, and `j`/`k`
+    motion all walk past the same hidden runs so navigation
+    stays consistent. Tradeoff (accepted): the gutter's
+    line-number now reflects the source line painted at that
+    visible row, so `:N` jumps still land on the right source
+    line but the visible row of N may shift compared to the
+    raw-source layout.
   - **`<details>` disclosure blocks.** Standalone `<details>` /
     `</details>` rows hide as chrome; `<summary>X</summary>`
     becomes a bold-Peach `▼ X` disclosure title (always-expanded
