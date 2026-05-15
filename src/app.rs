@@ -82,11 +82,16 @@ use state::RecordingState;
 
 pub struct App {
     pub buffer: Buffer,
-    /// The active window — its cursor, viewport, and Visual anchor. Until
-    /// splits land there is exactly one of these; the field exists now so
-    /// the eventual `Vec<Window>` / split-tree move is a structural change
-    /// rather than a sweep of every cursor read in the codebase.
+    /// The active window — its cursor, viewport, Visual anchor, and the
+    /// buffer index it's pointing at. Inactive windows are stashed in
+    /// `windows` and swapped in when focus moves. The split tree lives
+    /// in `layout`; `active_window` names which leaf is the focused one.
     pub window: crate::window::Window,
+    /// Stashed view state for every non-active window. Keyed by the
+    /// `WindowId` that the layout tree references.
+    pub windows: HashMap<crate::layout::WindowId, crate::window::Window>,
+    pub layout: crate::layout::Layout,
+    pub active_window: crate::layout::WindowId,
     pub mode: Mode,
     pub pending: PendingCmd,
     pub history: History,
@@ -287,9 +292,13 @@ impl App {
             None => Buffer::empty(),
         };
         let (w, h) = crossterm::terminal::size().unwrap_or((80, 24));
+        let (layout, root_window) = crate::layout::Layout::new();
         let mut this = Self {
             buffer,
             window: crate::window::Window::default(),
+            windows: HashMap::new(),
+            layout,
+            active_window: root_window,
             mode: Mode::Normal,
             pending: PendingCmd::default(),
             history: History::new(),

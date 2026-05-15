@@ -12,6 +12,7 @@ mod editorconfig;
 mod format;
 mod git;
 mod lang;
+mod layout;
 mod lsp;
 mod markdown_render;
 mod mode;
