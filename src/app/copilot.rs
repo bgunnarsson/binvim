@@ -103,6 +103,16 @@ impl super::App {
         if self.last_copilot_request_version.get(&path).copied() == Some(key_version) {
             return;
         }
+        // Make sure Copilot sees the current buffer state before we
+        // ask it for a completion. Without this flush, the inline
+        // request races the debounced didChange — the server gets a
+        // `position` past where it thinks the buffer ends and either
+        // returns a stale completion or an empty result. Particularly
+        // visible after `<Tab>` accept: we just inserted text but
+        // hadn't synced it yet, so the follow-up request asks Copilot
+        // to complete from a position that doesn't exist in its view
+        // of the file.
+        self.lsp_sync_active();
         self.last_copilot_request_version
             .insert(path.clone(), key_version);
         self.lsp.request_copilot_inline(
