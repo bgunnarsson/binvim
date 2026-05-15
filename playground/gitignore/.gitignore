@@ -1,0 +1,32 @@
+# Build artifacts
+target/
+dist/
+build/
+out/
+
+# Dependencies
+node_modules/
+vendor/
+
+# Logs
+*.log
+logs/
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Env files — never commit secrets
+.env
+.env.*
+!.env.example
+
+# Coverage
+coverage/
+*.lcov

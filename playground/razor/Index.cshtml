@@ -1,0 +1,46 @@
+@page
+@model IndexModel
+@using System.Collections.Generic
+@inject IGreeter Greeter
+@{
+    Layout = "_Layout.cshtml";
+    ViewData["Title"] = "Home";
+
+    var products = new List<string> { "Apple", "Banana", "Cherry" };
+    int count = products.Count;
+}
+
+@* This is a Razor comment — should not appear in output. *@
+
+<section class="hero pt-[60px]">
+    <h1>@ViewData["Title"]</h1>
+    <p>@Greeter.Greet("World")</p>
+</section>
+
+<section class="products">
+    <h2>Products (@count)</h2>
+
+    @if (count == 0)
+    {
+        <p>No products yet.</p>
+    }
+    else
+    {
+        <ul>
+            @foreach (var p in products)
+            {
+                <li class="product"><span>@p</span></li>
+            }
+        </ul>
+    }
+
+    @{
+        string status = count > 2 ? "many" : "few";
+    }
+
+    <p>Status: <strong>@status</strong></p>
+</section>
+
+@functions {
+    public string FormatTitle(string raw) => raw.ToUpperInvariant();
+}

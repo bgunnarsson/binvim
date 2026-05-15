@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>binvim HTML playground</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 2rem; }
+        .card { padding: 1rem; border: 1px solid #ccc; border-radius: 6px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Welcome to binvim</h1>
+        <nav>
+            <a href="#features">Features</a>
+            <a href="#install">Install</a>
+        </nav>
+    </header>
+
+    <main>
+        <section id="features" class="card">
+            <h2>Features</h2>
+            <ul>
+                <li>Modal editing</li>
+                <li>Tree-sitter highlighting</li>
+                <li>LSP <em>everywhere</em></li>
+            </ul>
+        </section>
+
+        <section id="install" class="card">
+            <h2>Install</h2>
+            <p>Run <code>cargo install binvim</code>.</p>
+            <form action="/signup" method="post">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" required />
+                <button type="submit">Notify me</button>
+            </form>
+        </section>
+    </main>
+
+    <footer>&copy; 2026</footer>
+
+    <script>
+        document.querySelectorAll("a[href^='#']").forEach((a) => {
+            a.addEventListener("click", (e) => {
+                e.preventDefault();
+                const target = document.querySelector(a.getAttribute("href"));
+                target?.scrollIntoView({ behavior: "smooth" });
+            });
+        });
+    </script>
+</body>
+</html>

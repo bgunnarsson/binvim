@@ -1,0 +1,27 @@
+$primary: #8985ff;
+$radius: 8px;
+
+@mixin card($pad: 1rem) {
+    background: rgba(white, 0.04);
+    padding: $pad;
+    border-radius: $radius;
+}
+
+.app {
+    .header {
+        display: flex;
+        gap: 1rem;
+
+        h1 {
+            color: $primary;
+        }
+    }
+
+    .card {
+        @include card(1.25rem);
+
+        &.featured {
+            border: 2px solid $primary;
+        }
+    }
+}

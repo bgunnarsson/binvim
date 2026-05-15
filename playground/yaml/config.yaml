@@ -1,0 +1,52 @@
+# Sample config — exercises mappings, sequences, anchors, multi-line strings.
+name: binvim-playground
+version: "1.0.0"
+active: true
+retries: 3
+
+server:
+    host: 0.0.0.0
+    port: 8080
+    tls:
+        enabled: false
+        cert: /etc/ssl/cert.pem
+        key:  /etc/ssl/key.pem
+
+database: &db
+    driver: postgres
+    host: localhost
+    port: 5432
+    username: app
+    password: changeme
+
+replica:
+    <<: *db
+    host: replica.local
+    readonly: true
+
+features:
+    - logging
+    - tracing
+    - metrics
+
+description: |
+    Multi-line block scalar.
+    Preserves newlines.
+
+summary: >
+    Folded scalar — newlines
+    are turned into spaces.
+
+env:
+    NODE_ENV: production
+    LOG_LEVEL: info
+    PORT: 8080
+
+users:
+    - id: 1
+      name: Alice
+      roles: [admin, editor]
+    - id: 2
+      name: Bob
+      roles:
+          - viewer

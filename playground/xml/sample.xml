@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A sample XML document with elements, attributes, and CDATA. -->
+<library xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <book id="b1" available="true">
+        <title lang="en">The Rust Programming Language</title>
+        <dc:creator>Steve Klabnik</dc:creator>
+        <year>2019</year>
+        <tags>
+            <tag>rust</tag>
+            <tag>systems</tag>
+        </tags>
+    </book>
+    <book id="b2" available="false">
+        <title lang="en">Programming Rust</title>
+        <dc:creator>Jim Blandy</dc:creator>
+        <year>2021</year>
+        <notes><![CDATA[Contains <code> samples & special chars.]]></notes>
+    </book>
+</library>

@@ -1,0 +1,34 @@
+{
+    "name": "binvim-playground",
+    "version": "1.0.0",
+    "description": "Playground for testing binvim across languages",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "build": "tsc",
+        "lint": "eslint .",
+        "test": "vitest"
+    },
+    "dependencies": {
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0"
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "typescript": "^5.4.0",
+        "vitest": "^1.4.0"
+    },
+    "engines": {
+        "node": ">=20"
+    },
+    "keywords": ["binvim", "playground", "test"],
+    "author": "you",
+    "license": "MIT",
+    "config": {
+        "nested": {
+            "value": 42,
+            "active": true,
+            "tags": [null, "alpha", "beta"]
+        }
+    }
+}

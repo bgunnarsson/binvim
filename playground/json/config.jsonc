@@ -1,0 +1,11 @@
+{
+    // JSONC supports comments — handy for config files.
+    "name": "demo",
+    "port": 8080,
+    /* Block comments work too. */
+    "features": {
+        "logging": true,
+        "tracing": false
+    },
+    "hosts": ["localhost", "127.0.0.1"]
+}

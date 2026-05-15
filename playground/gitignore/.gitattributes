@@ -1,0 +1,10 @@
+# Force LF line endings for shell scripts regardless of platform
+*.sh text eol=lf
+
+# Treat these as binary
+*.png binary
+*.jpg binary
+*.pdf binary
+
+# Mark generated files
+package-lock.json linguist-generated=true
