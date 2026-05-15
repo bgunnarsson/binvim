@@ -207,6 +207,18 @@ impl super::App {
         self.window.cursor.line = new_line;
         self.window.cursor.col = new_col;
         self.window.cursor.want_col = new_col;
+        // Common Copilot pattern: deliberately-partial suggestion
+        // that ends with an unmatched `{` (function signature with
+        // an open body, `if` / `for` / `while` block heading, etc.).
+        // Auto-open the block — insert a newline + indented inner
+        // line + closing `}` on a new line below, land the cursor
+        // on the indented inner line. Same shape as pressing Enter
+        // inside a `{|}` pair, just triggered from the accept path.
+        // Skipped when the trimmed text ends in something else (the
+        // suggestion was complete or mid-expression).
+        if trimmed.trim_end().ends_with('{') {
+            self.auto_open_brace_block_at_cursor();
+        }
         // Backdate the keystroke timer so the next render tick fires
         // a fresh inline request immediately rather than waiting for
         // a full idle window. Copilot frequently returns "signature
@@ -218,6 +230,31 @@ impl super::App {
             .checked_sub(Duration::from_millis(COPILOT_IDLE_MS + 50))
             .unwrap_or_else(Instant::now);
         true
+    }
+
+    /// Open a `{ … }` block at the cursor's current position. The
+    /// cursor is assumed to sit immediately after a `{`. Inserts
+    /// `\n<indent + tab>\n<indent>}` and lands the cursor on the
+    /// indented inner line — the same shape pressing Enter inside
+    /// an auto-paired `{|}` produces. `indent` mirrors the current
+    /// line's leading whitespace.
+    fn auto_open_brace_block_at_cursor(&mut self) {
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
+        let line_text: String = self.buffer.rope.line(line).chars().collect();
+        let leading_indent: String = line_text
+            .chars()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+        let unit = self.editorconfig.indent_string();
+        let inner_indent = format!("{leading_indent}{unit}");
+        let close_line = format!("{leading_indent}}}");
+        let cursor_idx = self.buffer.pos_to_char(line, col);
+        let payload = format!("\n{inner_indent}\n{close_line}");
+        self.buffer.insert_at_idx(cursor_idx, &payload);
+        self.window.cursor.line = line + 1;
+        self.window.cursor.col = inner_indent.chars().count();
+        self.window.cursor.want_col = self.window.cursor.col;
     }
 
     /// Visible tail of the ghost — the portion of `text` after
