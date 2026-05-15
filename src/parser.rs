@@ -243,6 +243,14 @@ pub enum Action {
     /// just gains its own tab slot so it's reachable via `H`/`L`.
     /// No-op if the focused buffer is already a tab.
     WindowPromoteToTab,
+    /// `<leader>/` — toggle line comments. In Normal mode it toggles
+    /// the comment on the current line; in Visual mode it toggles
+    /// across every line in the selection. The "all-or-nothing"
+    /// convention applies: if every non-blank line in the range
+    /// already starts with the comment prefix, the operation
+    /// uncomments; otherwise it comments at the minimum-indent
+    /// column so a uniformly-indented block stays aligned.
+    ToggleComment,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -658,6 +666,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'r' => Some(Action::LspRename),
             'R' => Some(Action::ReplaceAllInBuffer),
             'f' => Some(Action::Format),
+            '/' => Some(Action::ToggleComment),
             _ => None,
         };
         if let Some(a) = action {

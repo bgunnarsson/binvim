@@ -151,6 +151,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>r`  | Rename (LSP-aware)                    |
 | `<space>R`  | Replace all (literal-string in buffer)|
 | `<space>f`  | Format active buffer                  |
+| `<space>/`  | Toggle line comment(s) — current line in Normal, every selected line in Visual. Per-language prefix (`//`, `#`, `--`); block-only languages (HTML / Markdown / CSS / XML / Razor) wrap with their pair |
 | `<space>bd` | Delete buffer (refuses dirty)         |
 | `<space>bD` | Delete buffer (force)                 |
 | `<space>ba` | Delete all buffers (refuses dirty)    |

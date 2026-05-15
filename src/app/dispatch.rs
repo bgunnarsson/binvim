@@ -137,6 +137,7 @@ impl super::App {
             Action::LspRename => self.start_rename_prompt(),
             Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
             Action::Format => self.format_active(),
+            Action::ToggleComment => self.toggle_comment_range(),
             Action::Debug(d) => {
                 use crate::command::DebugSubCmd;
                 use crate::parser::DebugAction;

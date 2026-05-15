@@ -21,6 +21,7 @@
 //! - [`health`]: `:health` command output
 
 mod buffers;
+mod comment;
 mod copilot;
 mod dap_glue;
 mod dispatch;

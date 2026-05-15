@@ -167,6 +167,77 @@ impl Lang {
     /// of our supported languages. Used by the hover popup when an LSP
     /// returns markdown with fenced code blocks. Case-insensitive; handles
     /// the common short and long aliases LSP servers actually emit.
+    /// Line-comment prefix for this language (e.g. `"//"` for Rust,
+    /// `"#"` for Python). `None` for languages that only support
+    /// block comments — those are handled via `block_comment_pair`.
+    ///
+    /// Used by `<leader>/` toggle. The prefix is what gets prepended
+    /// (with a trailing space) when commenting and stripped (with
+    /// surrounding whitespace) when uncommenting.
+    pub fn line_comment_prefix(self) -> Option<&'static str> {
+        match self {
+            Lang::Rust
+            | Lang::TypeScript
+            | Lang::Tsx
+            | Lang::JavaScript
+            | Lang::Json
+            | Lang::Go
+            | Lang::CSharp
+            | Lang::C
+            | Lang::Cpp
+            | Lang::Java
+            | Lang::Php
+            | Lang::Svelte
+            | Lang::Zig
+            | Lang::Kotlin
+            | Lang::Sql => Some("//"),
+            Lang::Python
+            | Lang::Bash
+            | Lang::Ruby
+            | Lang::Yaml
+            | Lang::Toml
+            | Lang::Nix
+            | Lang::Elixir
+            | Lang::Dockerfile
+            | Lang::EditorConfig
+            | Lang::GitIgnore => Some("#"),
+            Lang::Lua => Some("--"),
+            // Block-only — handled via `block_comment_pair`.
+            Lang::Html | Lang::Razor | Lang::Markdown | Lang::Xml | Lang::Css => None,
+        }
+    }
+
+    /// Block-comment pair (open, close) for languages without a line
+    /// comment, or as a fallback for languages where the user wants
+    /// to wrap an arbitrary range. Razor's native `@* … *@` is the
+    /// most-correct marker; HTML / Markdown / XML use `<!-- … -->`.
+    pub fn block_comment_pair(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Lang::Html | Lang::Markdown | Lang::Xml => Some(("<!--", "-->")),
+            Lang::Razor => Some(("@*", "*@")),
+            Lang::Css => Some(("/*", "*/")),
+            // Fallback for the C-family — useful for `<leader>/`
+            // wrapping in a Visual-block selection that doesn't
+            // align to whole lines. Not currently used by the line-
+            // comment toggle but available for future block-toggle.
+            Lang::Rust
+            | Lang::TypeScript
+            | Lang::Tsx
+            | Lang::JavaScript
+            | Lang::Go
+            | Lang::CSharp
+            | Lang::C
+            | Lang::Cpp
+            | Lang::Java
+            | Lang::Php
+            | Lang::Svelte
+            | Lang::Kotlin
+            | Lang::Sql => Some(("/*", "*/")),
+            Lang::Lua => Some(("--[[", "]]")),
+            _ => None,
+        }
+    }
+
     pub fn from_md_tag(tag: &str) -> Option<Self> {
         match tag.trim().to_ascii_lowercase().as_str() {
             "rust" | "rs" => Some(Lang::Rust),
