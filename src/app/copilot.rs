@@ -5,7 +5,7 @@
 //! that fires `textDocument/inlineCompletion`, and handles `<Tab>`
 //! accept of an active ghost suggestion.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::lsp::CopilotStatus;
 
@@ -14,6 +14,13 @@ use crate::lsp::CopilotStatus;
 /// "stopped typing" — short enough to feel responsive, long enough to
 /// not fire on every keystroke. Mirrors the GitHub Copilot defaults.
 const COPILOT_IDLE_MS: u64 = 250;
+
+/// How often to re-fire `checkStatus` while the user is mid-sign-in
+/// (status is `PendingAuth`). Three seconds matches the cadence the
+/// official GitHub Copilot plugins use for the same purpose — fast
+/// enough that "I just entered the code" feels live, slow enough to
+/// not flood the language server with status pings.
+const COPILOT_POLL_MS: u64 = 3000;
 
 impl super::App {
     /// Map a Copilot `checkStatus` / `signIn` response onto our local
@@ -167,5 +174,100 @@ impl super::App {
         if let Some(path) = self.buffer.path.as_ref() {
             self.last_copilot_request_version.remove(path);
         }
+    }
+
+    /// While the user is in the middle of a device-flow sign-in
+    /// (status = PendingAuth), poll `checkStatus` every few seconds
+    /// so we notice "user just authenticated in the browser" without
+    /// needing a manual `:copilot reload` or full editor restart.
+    /// Called from the render-tick alongside the inline-completion
+    /// poll; no-op for any other status.
+    pub(super) fn copilot_maybe_poll_status(&mut self) {
+        if !matches!(self.lsp.copilot_status, CopilotStatus::PendingAuth { .. }) {
+            return;
+        }
+        if self.last_copilot_status_poll.elapsed() < Duration::from_millis(COPILOT_POLL_MS) {
+            return;
+        }
+        self.last_copilot_status_poll = Instant::now();
+        self.lsp.request_copilot_check_status();
+    }
+
+    /// `:copilot` — report current Copilot status in the status line.
+    /// Useful for "did the language server actually start" /
+    /// "am I signed in" debugging without opening `:health`.
+    pub(super) fn copilot_show_status(&mut self) {
+        if !self.lsp.copilot_enabled {
+            self.status_msg = "Copilot: disabled (set [copilot] enabled = true in config)".into();
+            return;
+        }
+        self.status_msg = match &self.lsp.copilot_status {
+            CopilotStatus::NotStarted => {
+                "Copilot: not started (open a file to attach the LSP)".into()
+            }
+            CopilotStatus::Checking => "Copilot: checking sign-in status…".into(),
+            CopilotStatus::SignedIn { user } => format!("Copilot: signed in as {user}"),
+            CopilotStatus::SignedOut => "Copilot: signed out".into(),
+            CopilotStatus::PendingAuth {
+                verification_uri,
+                user_code,
+            } => format!(
+                "Copilot: pending auth — visit {verification_uri} and enter {user_code}"
+            ),
+            CopilotStatus::Error(msg) => format!("Copilot: error — {msg}"),
+        };
+    }
+
+    /// `:copilot signin` — re-fire the device-flow sign-in request.
+    /// Useful if the initial signIn failed (e.g. network blip on
+    /// launch) or the user cancelled the previous prompt.
+    pub(super) fn copilot_signin(&mut self) {
+        if !self.lsp.copilot_enabled {
+            self.status_msg = "Copilot: disabled (set [copilot] enabled = true in config)".into();
+            return;
+        }
+        if !self.lsp.request_copilot_sign_in() {
+            self.status_msg =
+                "Copilot: language server not running (open any file to attach it)".into();
+            return;
+        }
+        self.status_msg = "Copilot: signIn request sent…".into();
+    }
+
+    /// `:copilot reload` — re-fire `checkStatus`. The common case is
+    /// "I just finished signing in via the browser; pick up my new
+    /// state". The auto-poll handles this on a 3s loop, but the
+    /// command gives the user a knob if they're impatient or the
+    /// poll is paused (mode != PendingAuth).
+    pub(super) fn copilot_reload(&mut self) {
+        if !self.lsp.copilot_enabled {
+            self.status_msg = "Copilot: disabled (set [copilot] enabled = true in config)".into();
+            return;
+        }
+        if !self.lsp.request_copilot_check_status() {
+            self.status_msg =
+                "Copilot: language server not running (open any file to attach it)".into();
+            return;
+        }
+        self.last_copilot_status_poll = Instant::now();
+        self.status_msg = "Copilot: refreshing status…".into();
+    }
+
+    /// `:copilot signout` — call the language server's `signOut`
+    /// method and drop the local sign-in cache. The user has to
+    /// re-authenticate (via `:copilot signin`) to get suggestions
+    /// again.
+    pub(super) fn copilot_signout(&mut self) {
+        if !self.lsp.copilot_enabled {
+            self.status_msg = "Copilot: disabled (set [copilot] enabled = true in config)".into();
+            return;
+        }
+        if !self.lsp.request_copilot_sign_out() {
+            self.status_msg =
+                "Copilot: language server not running (open any file to attach it)".into();
+            return;
+        }
+        self.lsp.copilot_status = CopilotStatus::SignedOut;
+        self.status_msg = "Copilot: signed out".into();
     }
 }

@@ -180,6 +180,18 @@ impl LspManager {
         true
     }
 
+    /// Send Copilot's `signOut` request. Fire-and-forget; we update
+    /// `copilot_status` to `SignedOut` synchronously on the caller
+    /// side rather than waiting for the response, since the user
+    /// already knows they signed out.
+    pub fn request_copilot_sign_out(&mut self) -> bool {
+        let Some(client) = self.clients.get("copilot") else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(id, "signOut", json!({}));
+        // No PendingRequest variant — we don't surface the response.
+        true
+    }
+
     /// Send `textDocument/inlineCompletion` (LSP 3.18) to the Copilot
     /// client. Returns `false` when Copilot isn't attached / signed in —
     /// the caller (idle-pause path in `app/lsp_glue.rs`) uses this to

@@ -1230,6 +1230,15 @@ impl super::App {
             ExCommand::Health => self.cmd_health(),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::GitBlame => self.toggle_blame(),
+            ExCommand::Copilot(sub) => {
+                use crate::command::CopilotSubCmd;
+                match sub {
+                    CopilotSubCmd::Status => self.copilot_show_status(),
+                    CopilotSubCmd::SignIn => self.copilot_signin(),
+                    CopilotSubCmd::SignOut => self.copilot_signout(),
+                    CopilotSubCmd::Reload => self.copilot_reload(),
+                }
+            }
             ExCommand::Quickfix(sub) => {
                 use crate::command::QuickfixSubCmd;
                 match sub {

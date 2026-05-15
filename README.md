@@ -231,6 +231,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:S/pat/repl/[gr]`        | Project-wide substitute. ripgrep enumerates the files containing `pat`, opens each, applies the substitution buffer-wide, saves. `r` flips ripgrep into regex mode too. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
+| `:copilot`                | Report Copilot sign-in status in the status line. Subcommands: `signin` re-fires device-flow auth; `reload` re-checks status (auto-polled every 3s while pending); `signout` clears the local sign-in. |
 
 ## External tools
 

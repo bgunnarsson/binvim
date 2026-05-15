@@ -305,6 +305,11 @@ pub struct App {
     /// since the previous response (after accept / reject the ghost
     /// is cleared, so a re-request will fire on the next idle).
     pub last_copilot_request_version: HashMap<PathBuf, u64>,
+    /// Wall clock of the last `checkStatus` request fired while
+    /// Copilot is in `PendingAuth`. Drives a 3-second poll so binvim
+    /// picks up "user finished signing in" without needing a restart
+    /// or a manual `:copilot reload`.
+    pub last_copilot_status_poll: Instant,
 }
 
 /// Active Copilot ghost suggestion. `text` may be multi-line; only
@@ -430,6 +435,7 @@ impl App {
             copilot_ghost: None,
             last_keystroke_at: Instant::now(),
             last_copilot_request_version: HashMap::new(),
+            last_copilot_status_poll: Instant::now(),
         };
         // Mirror the user's Copilot opt-in onto the LSP manager so
         // copilot-language-server is included in every spec lookup
@@ -464,6 +470,7 @@ impl App {
                 self.lsp_sync_active_debounced();
                 self.lsp_request_inlay_hints_if_due();
                 self.copilot_maybe_request_inline();
+                self.copilot_maybe_poll_status();
                 render::draw(&mut stdout, self)?;
                 stdout.flush()?;
                 needs_render = false;

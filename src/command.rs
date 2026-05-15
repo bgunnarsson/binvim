@@ -42,7 +42,23 @@ pub enum ExCommand {
     /// `:Gblame` — toggle inline git-blame virtual text for every line
     /// of the active buffer.
     GitBlame,
+    /// `:copilot [signin|signout|reload|status]` — bare `:copilot`
+    /// reports current sign-in state; subcommands drive the auth
+    /// flow without restarting the editor.
+    Copilot(CopilotSubCmd),
     Unknown(String),
+}
+
+/// Sub-commands under `:copilot`. Bare `:copilot` falls through to
+/// `Status` so the user gets a quick "am I signed in?" answer.
+#[derive(Debug, Clone, Copy)]
+pub enum CopilotSubCmd {
+    Status,
+    SignIn,
+    SignOut,
+    /// `:copilot reload` — re-fire `checkStatus`. Used to pick up
+    /// "I just finished signing in" without waiting for the 3s poll.
+    Reload,
 }
 
 /// Quickfix sub-commands. Grouped so the dispatch arm stays tight.
@@ -179,6 +195,16 @@ pub fn parse(line: &str) -> ExCommand {
         "cdiag" | "cdiagnostics" => ExCommand::Quickfix(QuickfixSubCmd::Diagnostics),
         "cclose" => ExCommand::Quickfix(QuickfixSubCmd::Close),
         "Gblame" | "gblame" => ExCommand::GitBlame,
+        "copilot" => {
+            let sub = match rest.trim() {
+                "" | "status" => CopilotSubCmd::Status,
+                "signin" | "login" => CopilotSubCmd::SignIn,
+                "signout" | "logout" => CopilotSubCmd::SignOut,
+                "reload" | "refresh" => CopilotSubCmd::Reload,
+                _ => return ExCommand::Unknown(line.to_string()),
+            };
+            ExCommand::Copilot(sub)
+        }
         _ => ExCommand::Unknown(line.to_string()),
     }
 }
