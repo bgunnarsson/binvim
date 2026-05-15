@@ -16,10 +16,11 @@ If you can't agree to that, please don't open a PR.
 
 For anything bigger than a one-line fix, **open an issue first**. binvim is opinionated about what it includes — pre-agreed scope avoids the awkward case where a working PR gets closed because the feature isn't wanted. Good things to flag up front:
 
-- New language / LSP support — see [LSP_ADOPTION.md](LSP_ADOPTION.md), which already tiers the obvious candidates.
+- New language / LSP support.
 - New keybindings or operators — the parser is a Vim-grammar state machine; new verbs need to fit it, not bolt onto it.
 - New configuration surface — `~/.config/binvim/config.toml` is intentionally minimal.
 - New external-tool dependencies — every external binary in the README install table is one more thing that can be missing on a user's machine.
+- New DAP adapters — the adapter registry in `src/dap/specs.rs` is the only entry point; adapter-specific behaviour belongs there, not in `manager.rs`.
 
 Bug fixes, missing-LSP arms, and tree-sitter additions don't need a pre-discussion — just open the PR.
 
@@ -28,7 +29,7 @@ Bug fixes, missing-LSP arms, and tree-sitter additions don't need a pre-discussi
 ```sh
 cargo build                                  # debug build
 cargo build --release                        # release build (target/release/binvim)
-cargo test                                   # full suite, ~45 unit tests
+cargo test                                   # full suite, ~207 unit tests
 cargo test motion::tests                     # one module
 cargo test motion::tests::word_forward_basic # one test
 cargo run -- path/to/file                    # debug-build run
@@ -42,7 +43,7 @@ If you're testing changes by running `binvim` interactively, remember that **the
 
 These are not stylistic preferences — they are how the codebase is structured, and PRs that fight them tend to get bounced.
 
-- **Mostly flat `src/` layout, with two sub-module dirs.** `app/` and `lsp/` are split across multiple files (each parent file — `src/app.rs`, `src/lsp.rs` — is a slim entry that declares children and re-exports the public API). Other modules stay flat — don't introduce new `src/foo/` directories without a real reason. Inside `app/`, sibling-visible methods are `pub(super)`.
+- **Mostly flat `src/` layout, with three sub-module dirs.** `app/`, `lsp/`, and `dap/` are split across multiple files (each parent file — `src/app.rs`, `src/lsp.rs`, `src/dap.rs` — is a slim entry that declares children and re-exports the public API). Other modules stay flat — don't introduce new `src/foo/` directories without a real reason. Inside `app/`, sibling-visible methods are `pub(super)`.
 - **No new files unless necessary.** Prefer extending an existing module. New top-level files need to justify themselves.
 - **Tests live inline, in `#[cfg(test)] mod tests` at the bottom of the file under test.** No separate `tests/` directory, no `tests/integration/`. `motion.rs` and `text_object.rs` have the densest coverage and are the model.
 - **Comments explain *why*, not *what*.** The existing comments in `lang.rs` (priority resolution), `lsp/manager.rs` (debounce/drain cap), and `app/state.rs` (BufferStash shape) are the pattern: load-bearing context that isn't obvious from the code. Don't add what-comments. Don't add multi-paragraph docstrings.
@@ -54,27 +55,35 @@ These are not stylistic preferences — they are how the codebase is structured,
 
 For a longer tour see [CLAUDE.md](CLAUDE.md). The 30-second version:
 
-- `app.rs` + `app/` own the event loop, active buffer, per-buffer stashes, and all transient UI state. The `App` struct lives in `app.rs`; child files in `app/` (state, view, search, registers, buffers, save, edit, visual, dispatch, input, lsp_glue, picker_glue, health, pair) hold `impl super::App` blocks grouped by concern. Action dispatch is `app/dispatch.rs`.
+- `app.rs` + `app/` own the event loop, active buffer, per-buffer stashes, and all transient UI state. The `App` struct lives in `app.rs`; child files in `app/` (state, view, search, registers, buffers, save, edit, visual, comment, multi_cursor, dispatch, input, lsp_glue, dap_glue, git_glue, copilot, picker_glue, quickfix, windows, health, pair) hold `impl super::App` blocks grouped by concern. Action dispatch is `app/dispatch.rs`.
 - `parser.rs` turns `KeyEvent`s into `Action` values via the Vim-grammar state machine. Operators, motions, text-objects, counts, registers, leader, surround — all resolved here before `app/dispatch.rs` sees them.
 - `motion.rs` and `text_object.rs` are pure functions over `(buffer, cursor)`. New motions or text objects belong here, with tests inline.
+- `window.rs` + `layout.rs` carry the split system: `Window` is a view (cursor, viewport, visual anchor, buffer index); `Layout` is the binary split tree whose `partition()` emits `(WindowId, Rect)` per leaf and whose `focus_neighbor()` does **geometric** `h`/`j`/`k`/`l` navigation, not tree-order.
 - `lang.rs` owns tree-sitter. The non-obvious bit: **highlight captures resolve by pattern_index priority — later patterns win**. JSON ships its own embedded query because the upstream pattern order is incompatible with that scheme. If you change the priority logic, the JSON block at `lang.rs:88` is the canary.
 - `lsp.rs` + `lsp/` is a from-scratch JSON-RPC client (entry + types/specs/client/io/manager/parse). Multiple servers per buffer is supported and used (e.g. tsserver + Tailwind on `.tsx`). `didChange` is debounced with a 50ms burst window in `app/lsp_glue.rs`.
+- `dap.rs` + `dap/` is the Debug Adapter Protocol client, structurally parallel to `lsp/` (types/specs/client/io/manager). Adapter-specific behaviour stays in `dap/specs.rs`; `manager.rs` and the wire layer are adapter-agnostic.
+- `git.rs` shells out to `git diff --unified=0` for the per-line gutter stripe; `markdown_render.rs` produces the Normal-mode conceal transforms; `session.rs` persists the open-buffer set per cwd to `~/.cache/binvim/sessions/<hash>.json`.
 - `render.rs` is the only module that talks to crossterm for drawing.
 
 ## Adding a new LSP
 
-[LSP_ADOPTION.md](LSP_ADOPTION.md) is the authoritative recipe. The four-file change is always:
+The five-file change is always:
 
 1. New arm in `primary_spec_for_path` (`src/lsp/specs.rs`).
-2. Extension → `Lang` mapping in `src/lang.rs`.
-3. `tree-sitter-<lang>` crate in `Cargo.toml` (only if you also want highlighting).
-4. New row in the README install table.
+2. `Lang` variant + extension/basename entry in `Lang::detect()` plus matching `ts_language()` / `highlights_query()` arms in `src/lang.rs` (skip the tree-sitter arms only if you don't want highlighting).
+3. Icon + `lang_name` in the two exhaustive `Lang` matches in `src/render.rs`.
+4. Formatter arm in `format_buffer` (`src/format.rs`) plus `tree-sitter-<lang>` crate in `Cargo.toml`.
+5. New rows in the README install table for the LSP and the formatter.
 
 There is no plugin system. Every server is hard-wired in `lsp/specs.rs`. That is a deliberate choice; please don't propose a plugin loader as part of an LSP PR.
 
 ## Adding tree-sitter highlighting for an existing LSP
 
 Add the crate to `Cargo.toml`, then a `Lang` variant + `ts_language()` arm + `highlights_query()` arm. If the upstream highlights query is wrong under "later pattern wins" priority (see JSON), embed a corrected query inline rather than patching the priority logic.
+
+## Adding a new DAP adapter
+
+Register the adapter in `src/dap/specs.rs` (binary lookup + workspace root discovery + launch config). Adapter-specific behaviour stays in `specs.rs`; `manager.rs` and the wire layer in `types`/`io`/`client` are adapter-agnostic. Like the LSP layer, there is no plugin system — every adapter is hard-wired.
 
 ## Verifying a change
 
