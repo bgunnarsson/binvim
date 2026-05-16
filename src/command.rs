@@ -181,7 +181,7 @@ pub fn parse(line: &str) -> ExCommand {
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
-        "messages" | "mes" => ExCommand::Messages,
+        "messages" | "message" | "mes" => ExCommand::Messages,
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
         "dapbreak" | "dapb" => ExCommand::Debug(DebugSubCmd::Break),
