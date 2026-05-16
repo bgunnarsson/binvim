@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use serde_json::{json, Value};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
@@ -14,7 +14,7 @@ use std::thread;
 
 use super::io::reader_loop;
 use super::specs::{resolve_command, ServerSpec};
-use super::types::{path_to_uri, LspIncoming};
+use super::types::{path_to_uri, LspIncoming, MessageSeverity};
 
 /// State of a client's outgoing pipe. Until the server has answered the
 /// `initialize` request we buffer frames; the reader thread flushes them in
@@ -66,11 +66,12 @@ impl LspClient {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()
             .ok()?;
         let stdin = Arc::new(Mutex::new(child.stdin.take()?));
         let stdout = child.stdout.take()?;
+        let stderr = child.stderr.take();
 
         let (in_tx, in_rx) = channel();
         let init_state = Arc::new(Mutex::new(InitState::Buffering(Vec::new())));
@@ -79,15 +80,37 @@ impl LspClient {
         let semantic_tokens_legend: Arc<Mutex<Option<SemanticTokensLegend>>> =
             Arc::new(Mutex::new(None));
         let legend_for_reader = semantic_tokens_legend.clone();
+        let in_tx_for_reader = in_tx.clone();
         thread::spawn(move || {
             reader_loop(
                 stdout,
                 stdin_for_reader,
                 init_state_for_reader,
                 legend_for_reader,
-                in_tx,
+                in_tx_for_reader,
             );
         });
+        // Forward the server's stderr into the same channel as a
+        // synthetic logMessage so the user can see crash traces /
+        // panic backtraces / capability errors via `:messages`
+        // instead of having them disappear into the void.
+        if let Some(stderr) = stderr {
+            let tx = in_tx.clone();
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines() {
+                    let Ok(text) = line else { break };
+                    if text.trim().is_empty() {
+                        continue;
+                    }
+                    let _ = tx.send(LspIncoming::ServerMessage {
+                        severity: MessageSeverity::Log,
+                        text,
+                        is_show: false,
+                    });
+                }
+            });
+        }
 
         let root_uri = path_to_uri(root);
         let client = Self {
