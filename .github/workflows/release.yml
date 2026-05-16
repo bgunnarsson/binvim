@@ -21,13 +21,28 @@ permissions:
 jobs:
   build:
     name: build (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-musl
-          - aarch64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-latest
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-latest
+            use_cross: true
+          # macOS targets build natively per arch — GitHub's macos-14
+          # runner is aarch64, macos-13 is x86_64. No cross-compile
+          # toolchain to wrangle, and the resulting binary is signed
+          # by the host's codesign so it doesn't trip Gatekeeper on
+          # first launch.
+          - target: aarch64-apple-darwin
+            runner: macos-14
+            use_cross: false
+          - target: x86_64-apple-darwin
+            runner: macos-13
+            use_cross: false
     steps:
       - uses: actions/checkout@v5
         with:
@@ -44,12 +59,18 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: install cross
+        if: matrix.use_cross
         uses: taiki-e/install-action@v2
         with:
           tool: cross
 
-      - name: build
+      - name: build (cross, linux musl)
+        if: matrix.use_cross
         run: cross build --release --target ${{ matrix.target }} --locked
+
+      - name: build (native, macos)
+        if: ${{ !matrix.use_cross }}
+        run: cargo build --release --target ${{ matrix.target }} --locked
 
       - name: package
         id: package
@@ -66,7 +87,14 @@ jobs:
           cp "target/${{ matrix.target }}/release/binvim" "$STAGE/binvim"
           cp README.md LICENSE "$STAGE/"
           tar -C "$STAGE" -czf "${NAME}.tar.gz" binvim README.md LICENSE
-          sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+          # macOS runners don't ship coreutils' `sha256sum`; fall
+          # back to `shasum -a 256`, which is BSD-standard and
+          # produces the same `<digest>  <filename>` format.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+          else
+            shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
+          fi
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
 
       # Sigstore keyless signing — no static key in the repo. cosign

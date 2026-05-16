@@ -26,19 +26,15 @@ need tar
 need uname
 
 uname_s=$(uname -s 2>/dev/null || echo unknown)
-case "$uname_s" in
-    Linux) ;;
-    Darwin)
-        err "macOS detected — install with Homebrew:
-    brew install bgunnarsson/binvim/binvim" ;;
-    *) err "unsupported OS: $uname_s" ;;
-esac
-
 uname_m=$(uname -m 2>/dev/null || echo unknown)
-case "$uname_m" in
-    x86_64|amd64)        target="x86_64-unknown-linux-musl" ;;
-    aarch64|arm64)       target="aarch64-unknown-linux-musl" ;;
-    *) err "unsupported architecture: $uname_m" ;;
+case "$uname_s/$uname_m" in
+    Linux/x86_64|Linux/amd64)   target="x86_64-unknown-linux-musl" ;;
+    Linux/aarch64|Linux/arm64)  target="aarch64-unknown-linux-musl" ;;
+    Darwin/arm64|Darwin/aarch64) target="aarch64-apple-darwin" ;;
+    Darwin/x86_64|Darwin/amd64) target="x86_64-apple-darwin" ;;
+    Darwin/*)                   err "unsupported macOS architecture: $uname_m" ;;
+    Linux/*)                    err "unsupported Linux architecture: $uname_m" ;;
+    *)                          err "unsupported OS: $uname_s" ;;
 esac
 
 if [ -z "${BINVIM_VERSION:-}" ]; then
