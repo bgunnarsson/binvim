@@ -141,22 +141,30 @@ impl super::App {
                     ranges,
                 } => {
                     // Always clear the in-flight marker for this path so
-                    // the next move can re-fire even if the response was
-                    // empty / stale.
+                    // the next cursor move can re-fire.
                     self.last_document_highlight_request.remove(&path);
-                    if ranges.is_empty() {
-                        self.document_highlights.remove(&path);
-                    } else {
-                        self.document_highlights.insert(
-                            path,
-                            crate::app::DocumentHighlightCache {
-                                anchor_line,
-                                anchor_col,
-                                anchor_version,
-                                ranges,
-                            },
-                        );
-                    }
+                    // Always store the cache — even when `ranges` is
+                    // empty — so the request-due check has a "we
+                    // already asked this anchor" signal to dedupe on.
+                    // Without this, an empty reply (cursor on
+                    // whitespace / comment / no-symbol position) would
+                    // delete the cache, the next render would see no
+                    // match in `last_document_highlight_request` and
+                    // no cache anchor match, and we'd re-fire the
+                    // same request every render — leaking one pending
+                    // entry per frame. The renderer's
+                    // `line_document_highlights` already returns empty
+                    // when `ranges` is empty, so an empty cache draws
+                    // nothing.
+                    self.document_highlights.insert(
+                        path,
+                        crate::app::DocumentHighlightCache {
+                            anchor_line,
+                            anchor_col,
+                            anchor_version,
+                            ranges,
+                        },
+                    );
                 }
                 LspEvent::ServerMessage {
                     client_key,
