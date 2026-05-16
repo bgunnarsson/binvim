@@ -754,6 +754,9 @@ impl super::App {
     /// inlay hints — version dedup for the stable case, in-flight
     /// dedup for the fast-typing-against-a-busy-server case.
     pub(super) fn lsp_request_semantic_tokens_if_due(&mut self) {
+        if !self.config.lsp.semantic_tokens {
+            return;
+        }
         let Some(path) = self.buffer.path.clone() else { return; };
         let version = self.buffer.version;
         let last = self
@@ -784,6 +787,9 @@ impl super::App {
     /// in-flight request returns, the next idle render fires for
     /// wherever the cursor has settled.
     pub(super) fn lsp_request_document_highlight_if_due(&mut self) {
+        if !self.config.lsp.document_highlight {
+            return;
+        }
         // Don't fire while a popup / picker is up (those overlays
         // suspend the cursor's editing meaning) or in Insert mode
         // (we'd be requesting on every keystroke and the user can't

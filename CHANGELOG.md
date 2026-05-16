@@ -7,6 +7,25 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`[lsp]` config block toggles for semantic tokens + document
+  highlight.** Both default `true`. Set `semantic_tokens = false` /
+  `document_highlight = false` under a `[lsp]` block in
+  `~/.config/binvim/config.toml` to gate the requests off entirely —
+  the manager won't fire them and the renderer won't paint anything.
+- **Visible defaults for semantic-token modifiers.** Plain
+  `function` / `variable` / `keyword` map to the same colour as the
+  tree-sitter pass and produce no visible delta. The payoff comes
+  from modifiers: `function.async` (Lavender), `variable.mutable`
+  (Red — Rust `let mut`), `function.defaultLibrary` (Sapphire —
+  `std::` symbols), `variable.static` (Teal), `*.readonly` (Peach),
+  `*.deprecated` (Red). `default_capture_color` is the lookup table;
+  the resolver's rightmost-first dotted walk picks the modifier hit
+  over the base type, so a `let mut foo` lights up in red without
+  any user config.
+- **DocumentHighlight bg bumped to Surface2.** Surface1 was a 2-3%
+  delta vs editor background — invisible in practice. Surface2
+  matches the bracket-pair tone and reads clearly on Catppuccin
+  Mocha without strobing.
 - **Semantic tokens (`textDocument/semanticTokens/full`).** Layered on
   top of the tree-sitter highlight cache — LSP tokens win where they
   apply, tree-sitter fills in the rest. Captures the server's legend

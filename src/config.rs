@@ -20,6 +20,44 @@ pub struct Config {
     pub hover: HoverConfig,
     #[serde(default)]
     pub copilot: CopilotConfig,
+    #[serde(default)]
+    pub lsp: LspConfig,
+}
+
+/// LSP feature toggles. Both default on — semantic tokens layer
+/// richer LSP info (mutable bindings, async fns, library symbols)
+/// over the tree-sitter highlight cache, and documentHighlight paints
+/// every occurrence of the symbol under the cursor with a subtle bg
+/// shade. Either can be turned off without affecting other LSP
+/// features:
+///
+/// ```toml
+/// [lsp]
+/// semantic_tokens = false
+/// document_highlight = false
+/// ```
+#[derive(Debug, Deserialize)]
+pub struct LspConfig {
+    #[serde(default = "default_lsp_semantic_tokens")]
+    pub semantic_tokens: bool,
+    #[serde(default = "default_lsp_document_highlight")]
+    pub document_highlight: bool,
+}
+
+fn default_lsp_semantic_tokens() -> bool {
+    true
+}
+fn default_lsp_document_highlight() -> bool {
+    true
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        Self {
+            semantic_tokens: true,
+            document_highlight: true,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,6 +156,7 @@ impl Default for Config {
             line_numbers: LineNumberConfig::default(),
             hover: HoverConfig::default(),
             copilot: CopilotConfig::default(),
+            lsp: LspConfig::default(),
         }
     }
 }
@@ -225,6 +264,28 @@ const CATP_OVERLAY2: Color = Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 };
 
 fn default_capture_color(head: &str) -> Option<Color> {
     match head {
+        // LSP semantic-token modifiers. `color_for_capture` walks
+        // dotted capture names rightmost-first when looking up
+        // defaults, so a token of type "function" with modifier
+        // "async" arrives here as just `"async"` after the dotted
+        // walk strips the prefix — and a hit here wins over the
+        // base "function" default. This is what produces the
+        // visible delta vs the tree-sitter pass: plain `function`
+        // is still blue (matches tree-sitter exactly, no diff),
+        // but `function.async` paints in lavender, `function.defaultLibrary`
+        // (e.g. `std::println!`) in sapphire, `variable.mutable`
+        // (Rust `let mut`) in red, `variable.constant` / `variable.static`
+        // distinctly from local bindings. Only the visually-loud
+        // modifiers are listed — noisy ones like `declaration`,
+        // `definition`, `documentation`, `abstract` are deliberately
+        // absent so the rightmost-first walk falls through to the
+        // base type for them.
+        "async" => Some(CATP_LAVENDER),
+        "mutable" => Some(CATP_RED),
+        "static" => Some(CATP_TEAL),
+        "readonly" => Some(CATP_PEACH),
+        "defaultLibrary" => Some(CATP_SAPPHIRE),
+        "deprecated" => Some(CATP_RED),
         "comment" => Some(CATP_OVERLAY1),
         "string" => Some(CATP_GREEN),
         "character" => Some(CATP_TEAL),

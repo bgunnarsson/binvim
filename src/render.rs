@@ -3537,14 +3537,14 @@ fn draw_line_with_selection(
                 SetAttribute(Attribute::Bold)
             )?;
         } else if in_doc_highlight {
-            // Surface1 — even subtler than match-pair's Surface2, since
-            // documentHighlight covers every occurrence of the symbol
-            // under the cursor (often many per screen) and a heavier
-            // bg would turn the whole pane into a barcode. Foreground
-            // is left to the syntax cache (set below).
+            // Surface2 — same shade match-pair uses for brackets.
+            // They never collide on the same character because match-pair
+            // targets bracket / tag punctuation while documentHighlight
+            // targets identifier runs. Foreground stays on the syntax
+            // cache so the underlying token colour still reads through.
             queue!(
                 out,
-                SetBackgroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
+                SetBackgroundColor(Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }), // Surface2
             )?;
             if let Some(fg) = syntax_color {
                 queue!(out, SetForegroundColor(fg))?;
