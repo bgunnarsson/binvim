@@ -53,13 +53,15 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       way as inlay hints.
 - [x] **Document highlight.** `textDocument/documentHighlight` fires on
       cursor settle in Normal / Visual mode (skipped behind pickers /
-      completion popups); the ranges paint with a subtle Surface1 bg
-      under the syntax-coloured foreground so every other occurrence of
-      the symbol under the cursor reads at a glance. Cache is anchored
-      to (line, col, version) so a stale reply that lands after the
-      cursor moved off the symbol is dropped instead of flashing the
-      wrong highlights; in-flight dedup means holding `j` doesn't burst
-      one request per repeat.
+      completion popups); the ranges paint with a Surface2 bg under the
+      syntax-coloured foreground so every occurrence of the symbol
+      under the cursor reads at a glance. Cache stays valid while the
+      cursor sits inside any returned range — moving by one column
+      inside the same identifier doesn't blink the highlights off and
+      on between requests. Edits invalidate the cache; moving off the
+      symbol clears it. Capped at one in-flight request per buffer
+      path so fast navigation can't queue up against a slow / cold-
+      indexing server.
 - [ ] **Code lens.** `textDocument/codeLens` for things like "Run test" / "Debug test" / reference counts
       above declarations. Renders as virtual text on the line above the anchor. **planned**
 - [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling

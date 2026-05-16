@@ -7,6 +7,37 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **LSP server stderr capture.** Each spawned LSP's `stderr` was
+  previously routed to `Stdio::null()` — any panic backtrace,
+  capability error, or wrapper-binary complaint disappeared. Stderr
+  is now piped and forwarded into the same channel as protocol
+  messages as a synthetic `LspIncoming::ServerMessage` with
+  severity=Log, surfacing via `:messages` alongside real
+  `window/showMessage` / `window/logMessage` notifications. Makes
+  the common "LSP running but not responding" failure mode (e.g.
+  the rustup proxy refusing to invoke a missing `rust-analyzer`
+  component) actually diagnosable.
+- **`:health` `NOT INITIALIZED` chip + cache counters.** The LSP
+  SERVERS section flags any client still in `InitState::Buffering`
+  after startup with a red `NOT INITIALIZED` chip plus a peach hint
+  pointing at `:messages` — the chip is what you see when the
+  binary exists and "runs" but never answers `initialize`, so
+  requests pile up in the init queue forever. Per-kind pending
+  breakdown ("8× SemanticTokens stuck") replaces the flat pending
+  count. ACTIVE BUFFER section gains a `doc-hi: N cached · sem-tok:
+  M cached` row so you can tell at a glance whether the LSP is
+  producing data vs the renderer being broken.
+- **One-in-flight cap for inlay-hint / semantic-token /
+  documentHighlight requests per buffer path.** Previously the
+  throttles dedupe by `(line, col, version)` or `version` — fast
+  cursor navigation or rapid typing against a slow / cold-indexing
+  server queued hundreds of requests the server hadn't gotten to
+  yet. Now each kind has an `in_flight: HashSet<PathBuf>` on App;
+  intermediate cursor positions during the in-flight window are
+  skipped, and the next render after the response fires for
+  wherever the cursor has settled. `LspEvent::RequestFailed { kind,
+  path }` from ErrorReply frees the slot even when the server says
+  no, so a failing request can't leak the slot forever.
 - **`[lsp]` config block toggles for semantic tokens + document
   highlight.** Both default `true`. Set `semantic_tokens = false` /
   `document_highlight = false` under a `[lsp]` block in
@@ -39,13 +70,13 @@ follows [Semantic Versioning](https://semver.org/).
   range not yet implemented.
 - **Document highlight (`textDocument/documentHighlight`).** Fires on
   cursor settle in Normal / Visual mode (silent behind pickers /
-  completion); paints every other occurrence of the symbol under the
-  cursor with a subtle Surface1 background so the syntax-coloured
-  foreground still reads. Cache is anchored to (line, col, version)
-  so stale replies that arrive after the cursor moved off the symbol
-  get dropped instead of flashing yesterday's highlights; an
-  in-flight tracker dedups while a request is on the wire so holding
-  `j` doesn't burst one request per repeat.
+  completion); paints every occurrence of the symbol under the
+  cursor with a Surface2 background so the syntax-coloured foreground
+  still reads through. The cache stays valid as long as the cursor
+  sits inside *any* of the returned ranges and the buffer version
+  matches — moving by one column inside the identifier doesn't blink
+  the highlights off and on between round-trips. Edits invalidate
+  the cache; moving off the symbol clears it.
 - **`window/showMessage` and `window/logMessage` capture +
   `:messages` overlay.** Notifications previously dropped on the
   floor now flow into a bounded 500-entry ring on the App.
