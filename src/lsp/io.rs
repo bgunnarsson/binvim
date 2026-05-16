@@ -8,13 +8,16 @@ use std::process::ChildStdin;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
-use super::client::InitState;
-use super::types::{Diagnostic, DiagnosticsMessage, LspIncoming, Severity};
+use super::client::{InitState, SemanticTokensLegend};
+use super::types::{
+    Diagnostic, DiagnosticsMessage, LspIncoming, MessageSeverity, Severity,
+};
 
 pub(super) fn reader_loop(
     stdout: impl Read + Send + 'static,
     stdin: Arc<Mutex<ChildStdin>>,
     init_state: Arc<Mutex<InitState>>,
+    legend: Arc<Mutex<Option<SemanticTokensLegend>>>,
     tx: Sender<LspIncoming>,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -39,7 +42,7 @@ pub(super) fn reader_loop(
             return;
         }
         let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
-        dispatch(value, &stdin, &init_state, &tx);
+        dispatch(value, &stdin, &init_state, &legend, &tx);
     }
 }
 
@@ -47,6 +50,7 @@ fn dispatch(
     msg: Value,
     stdin: &Arc<Mutex<ChildStdin>>,
     init_state: &Arc<Mutex<InitState>>,
+    legend: &Arc<Mutex<Option<SemanticTokensLegend>>>,
     tx: &Sender<LspIncoming>,
 ) {
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
@@ -79,6 +83,13 @@ fn dispatch(
             // main-thread sends wait until we're done — preserving order.
             let mut g = init_state.lock().unwrap();
             if matches!(*g, InitState::Buffering(_)) {
+                // First response while Buffering = the initialize reply.
+                // Mine its `capabilities.semanticTokensProvider.legend`
+                // before promoting state so the manager can decode
+                // semantic-token responses against it later.
+                if let Some(l) = extract_semantic_tokens_legend(&result) {
+                    *legend.lock().unwrap() = Some(l);
+                }
                 let frames = match std::mem::replace(&mut *g, InitState::Ready) {
                     InitState::Buffering(f) => f,
                     InitState::Ready => Vec::new(),
@@ -119,12 +130,42 @@ fn dispatch(
 
     // Plain notification (no `id`).
     let Some(method) = msg.get("method").and_then(|v| v.as_str()) else { return; };
-    if method == "textDocument/publishDiagnostics" {
-        if let Some(params) = msg.get("params") {
-            if let Some(d) = parse_publish_diagnostics(params) {
-                let _ = tx.send(LspIncoming::Diagnostics(d));
+    match method {
+        "textDocument/publishDiagnostics" => {
+            if let Some(params) = msg.get("params") {
+                if let Some(d) = parse_publish_diagnostics(params) {
+                    let _ = tx.send(LspIncoming::Diagnostics(d));
+                }
             }
         }
+        // showMessage is popup-style — the server wants the user to
+        // notice. logMessage is debug-log noise — server-side stack
+        // traces, warm-up progress, etc. We carry both as the same
+        // wire variant and let the app decide how loud to be.
+        "window/showMessage" | "window/logMessage" => {
+            if let Some(params) = msg.get("params") {
+                let severity = match params.get("type").and_then(|v| v.as_u64()) {
+                    Some(1) => MessageSeverity::Error,
+                    Some(2) => MessageSeverity::Warning,
+                    Some(3) => MessageSeverity::Info,
+                    Some(4) => MessageSeverity::Log,
+                    _ => MessageSeverity::Info,
+                };
+                let text = params
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if !text.is_empty() {
+                    let _ = tx.send(LspIncoming::ServerMessage {
+                        severity,
+                        text,
+                        is_show: method == "window/showMessage",
+                    });
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -163,6 +204,34 @@ fn auto_respond(
         let _ = s.write_all(frame.as_bytes());
         let _ = s.flush();
     }
+}
+
+/// Extract the semantic-tokens legend from an `initialize` response.
+/// Returns `None` when the server doesn't advertise the capability —
+/// in which case `request_semantic_tokens_full` short-circuits.
+fn extract_semantic_tokens_legend(init_result: &Value) -> Option<SemanticTokensLegend> {
+    let legend = init_result
+        .get("capabilities")?
+        .get("semanticTokensProvider")?
+        .get("legend")?;
+    let token_types: Vec<String> = legend
+        .get("tokenTypes")?
+        .as_array()?
+        .iter()
+        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+        .collect();
+    let token_modifiers: Vec<String> = legend
+        .get("tokenModifiers")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    if token_types.is_empty() {
+        return None;
+    }
+    Some(SemanticTokensLegend {
+        token_types,
+        token_modifiers,
+    })
 }
 
 fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {

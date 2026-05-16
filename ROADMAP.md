@@ -40,17 +40,36 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## LSP
 
-- [ ] **Semantic tokens.** `textDocument/semanticTokens/full` and `…/range`, layered on top of the tree-sitter
-      pass. Servers like rust-analyzer / tsserver / clangd carry richer info than any static query (e.g.
-      mutable vs immutable bindings, async functions). **next**
-- [ ] **Document highlight.** `textDocument/documentHighlight` — highlight every other occurrence of the
-      symbol under the cursor in the current buffer. Standard editor affordance. **planned**
+- [x] **Semantic tokens (full).** `textDocument/semanticTokens/full` layered
+      on top of the tree-sitter pass — LSP tokens win where present, tree-
+      sitter fills in everything else. Server legend is captured from the
+      `initialize` response, the integer delta stream is decoded into
+      per-line ranges (binned for constant-time per-row lookup), and the
+      renderer overlays them on the per-char paint. Token type + modifiers
+      flow through the same `color_for_capture` dotted-prefix resolver the
+      tree-sitter pass uses (`function.async`, `variable.readonly`), so the
+      same `[colors]` config drives both. Delta requests / range mode not
+      yet implemented — full refresh per buffer version, throttled the same
+      way as inlay hints.
+- [x] **Document highlight.** `textDocument/documentHighlight` fires on
+      cursor settle in Normal / Visual mode (skipped behind pickers /
+      completion popups); the ranges paint with a subtle Surface1 bg
+      under the syntax-coloured foreground so every other occurrence of
+      the symbol under the cursor reads at a glance. Cache is anchored
+      to (line, col, version) so a stale reply that lands after the
+      cursor moved off the symbol is dropped instead of flashing the
+      wrong highlights; in-flight dedup means holding `j` doesn't burst
+      one request per repeat.
 - [ ] **Code lens.** `textDocument/codeLens` for things like "Run test" / "Debug test" / reference counts
       above declarations. Renders as virtual text on the line above the anchor. **planned**
 - [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
-- [ ] **`window/showMessage` and `window/logMessage` surfacing.** Server-emitted notifications and logs route
-      to the notification box / a `:messages`-like buffer instead of being dropped. **planned**
+- [x] **`window/showMessage` and `window/logMessage` surfacing.** Both
+      notifications are captured into a bounded ring (500 entries) on
+      the App. `showMessage` Error / Warning fires through `status_msg`
+      so the user sees server-emitted complaints inline; `logMessage` is
+      log-only. `:messages` opens a scrollable severity-coloured overlay
+      (Esc / q / :q to dismiss) for reading back what was missed.
 - [x] **Copilot via `copilot-language-server`.** Opt-in via `[copilot] enabled = true` in config. Attached as
       an aux LSP to every buffer; auth is device-flow surfaced in the status line with a 3 s auto-poll so the
       editor flips to "signed in" as soon as the user clicks through in the browser. `:copilot` /

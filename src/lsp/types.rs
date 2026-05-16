@@ -39,6 +39,63 @@ pub enum LspIncoming {
     /// Server-to-client `workspace/applyEdit` — the main thread applies the
     /// edit and replies with `{ applied: true }` (or false on failure).
     ApplyEditRequest { id: u64, edit: Value },
+    /// `window/showMessage` (popup-style notification) or
+    /// `window/logMessage` (debug log entry). Both share the same shape
+    /// — a severity + a string — and only differ in how the editor
+    /// surfaces them. `is_show=true` flags showMessage (loud), `false`
+    /// flags logMessage (quiet log entry).
+    ServerMessage {
+        severity: MessageSeverity,
+        text: String,
+        is_show: bool,
+    },
+}
+
+/// LSP `MessageType` enum values: 1 = Error, 2 = Warning, 3 = Info,
+/// 4 = Log. Anything else is normalised to `Info` on parse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageSeverity {
+    Error,
+    Warning,
+    Info,
+    Log,
+}
+
+/// One decoded semantic token. Coordinates are 0-based; `length` is
+/// the LSP `length` field in UTF-16 code units — same encoding the
+/// server emitted, kept opaque here. The renderer translates against
+/// the buffer's char count by treating each unit as one char (which
+/// matches the spec for ASCII / most identifiers — multi-codeunit
+/// emoji in identifiers is a rare edge we accept misalignment on).
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct SemanticToken {
+    pub line: usize,
+    pub start_col: usize,
+    pub length: usize,
+    /// Resolved name from the server's `legend.tokenTypes` — `function`,
+    /// `keyword`, `variable`, … Used as a tree-sitter-style capture
+    /// when looking up a colour in the config palette.
+    pub token_type: String,
+    /// Resolved modifier names from `legend.tokenModifiers`. Appended
+    /// to `token_type` as dotted suffixes (`function.async`,
+    /// `variable.readonly`) when resolving colours.
+    pub modifiers: Vec<String>,
+}
+
+/// One `textDocument/documentHighlight` range. `kind` is the LSP
+/// `DocumentHighlightKind` enum: 1 = Text (plain match), 2 = Read,
+/// 3 = Write. The renderer applies a subtle bg colour the same across
+/// all kinds today — the field is kept so a future pass can colour
+/// reads vs writes differently.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct DocumentHighlightRange {
+    pub start_line: usize,
+    pub start_col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+    pub kind: u8,
 }
 
 /// One inlay hint. `line`/`col` are 0-indexed buffer coordinates where
@@ -79,11 +136,43 @@ pub enum LspEvent {
     /// `textDocument/inlayHint` results for `path` — the App stores them
     /// per-buffer and the renderer pulls them on draw.
     InlayHints { path: PathBuf, hints: Vec<InlayHint> },
+    /// `textDocument/documentHighlight` reply — every range matching
+    /// the symbol the cursor was on when the request fired. Anchor
+    /// (line/col/version) lets the App drop stale replies that arrived
+    /// after the cursor moved off the symbol.
+    DocumentHighlights {
+        path: PathBuf,
+        anchor_line: usize,
+        anchor_col: usize,
+        anchor_version: u64,
+        ranges: Vec<DocumentHighlightRange>,
+    },
+    /// `textDocument/semanticTokens/full` reply — decoded against the
+    /// server's legend into flat per-token records. `buffer_version`
+    /// is the version we asked for; stale responses are dropped by
+    /// the App when it compares against the live buffer version.
+    SemanticTokens {
+        path: PathBuf,
+        buffer_version: u64,
+        tokens: Vec<SemanticToken>,
+    },
     /// Copilot `checkStatus` reply — used to drive `App.lsp.copilot_status`
     /// + the status-line indicator. `kind` is the raw protocol string
     /// (`"OK"`, `"NotSignedIn"`, `"NotAuthorized"`, `"NoTelemetryConsent"`,
     /// …); the App normalises it into a `CopilotStatus`.
     CopilotStatus { kind: String, user: Option<String> },
+    /// Server emitted a `window/showMessage` or `window/logMessage`.
+    /// `client_key` lets the app tag the message with which server it
+    /// came from so the log isn't a mystery soup of unattributed lines.
+    /// `is_show` distinguishes the loud showMessage (popup-style,
+    /// usually surfaced in the status line) from the quiet logMessage
+    /// (log-only, viewable via `:messages`).
+    ServerMessage {
+        client_key: String,
+        severity: MessageSeverity,
+        text: String,
+        is_show: bool,
+    },
     /// Copilot `inlineCompletion` reply — at most one suggestion text
     /// is surfaced as a ghost. `line`/`col` is the cursor position the
     /// request was anchored on; the App drops the ghost if the cursor

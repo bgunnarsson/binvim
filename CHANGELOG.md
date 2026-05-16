@@ -7,6 +7,37 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Semantic tokens (`textDocument/semanticTokens/full`).** Layered on
+  top of the tree-sitter highlight cache — LSP tokens win where they
+  apply, tree-sitter fills in the rest. Captures the server's legend
+  from the `initialize` response, decodes the bit-packed integer
+  stream into per-line ranges, and bins them by line for
+  constant-time lookup during the per-char paint. Token type +
+  modifiers feed the existing `color_for_capture` dotted-prefix
+  resolver (`function.async`, `variable.readonly`), so the same
+  `[colors]` config drives both layers. Refreshed once per buffer
+  version, same throttle shape as inlay hints. Full only — delta /
+  range not yet implemented.
+- **Document highlight (`textDocument/documentHighlight`).** Fires on
+  cursor settle in Normal / Visual mode (silent behind pickers /
+  completion); paints every other occurrence of the symbol under the
+  cursor with a subtle Surface1 background so the syntax-coloured
+  foreground still reads. Cache is anchored to (line, col, version)
+  so stale replies that arrive after the cursor moved off the symbol
+  get dropped instead of flashing yesterday's highlights; an
+  in-flight tracker dedups while a request is on the wire so holding
+  `j` doesn't burst one request per repeat.
+- **`window/showMessage` and `window/logMessage` capture +
+  `:messages` overlay.** Notifications previously dropped on the
+  floor now flow into a bounded 500-entry ring on the App.
+  `showMessage` Error / Warning also fires through `status_msg` (so
+  the user notices a server complaint at the moment it lands);
+  `logMessage` is log-only. `:messages` opens a scrollable
+  severity-coloured overlay — Esc / q / :q to dismiss, j / k / Ctrl-D
+  / Ctrl-U / g / G to scroll — sharing the dismiss + scroll shape
+  with `:health`. The reader thread snapshots the server's
+  semantic-tokens legend at the same time, so the same code path now
+  carries both features off `initialize`.
 - **Three new DAP adapters: delve (Go), debugpy (Python), and lldb-dap
   (Rust).** The registry that shipped in 0.2.0 was structured for this —
   each adapter is one row in `BUILTIN_ADAPTERS` plus a launch-args

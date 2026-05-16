@@ -23,6 +23,8 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     // "[No Name]" placeholder.
     if app.show_health_page {
         draw_health_page(out, app)?;
+    } else if app.show_messages_page {
+        draw_messages_page(out, app)?;
     } else if app.show_start_page {
         draw_start_page(out, app)?;
     } else {
@@ -1539,6 +1541,179 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
+/// `:messages` overlay — one row per captured `window/showMessage` /
+/// `window/logMessage` notification, scrollable. Newest is at the top
+/// so the most recent entries are visible on open. Severity colours
+/// match diagnostics (red error / yellow warn / blue info / overlay
+/// log) so the user scans them the same way as inline diagnostics.
+fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
+    let total_w = app.width as usize;
+    let rows = app.buffer_rows();
+    let top = app.buffer_top();
+    if rows == 0 || total_w < 30 {
+        return Ok(());
+    }
+    for row in 0..rows {
+        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
+    }
+    let p = DashboardPalette::default();
+    let left = 2usize;
+    let viewport_rows = rows.saturating_sub(1);
+    let body_w = total_w.saturating_sub(left + 2).max(40);
+
+    // Header row + one trailing blank.
+    let mut lines: Vec<MessageRow> = Vec::new();
+    lines.push(MessageRow::Header);
+    lines.push(MessageRow::Blank);
+
+    // Newest first — the user usually wants to read the latest server
+    // crash, not a startup banner from ten minutes ago.
+    for msg in app.lsp_messages.iter().rev() {
+        let (sev_label, sev_colour) = match msg.severity {
+            crate::lsp::MessageSeverity::Error => ("ERROR", p.red),
+            crate::lsp::MessageSeverity::Warning => ("WARN ", p.yellow),
+            crate::lsp::MessageSeverity::Info => ("INFO ", p.blue),
+            crate::lsp::MessageSeverity::Log => ("LOG  ", p.overlay1),
+        };
+        let kind = if msg.is_show { "show" } else { "log " };
+        let prefix = format!("[{sev_label}] {} ({kind}) ", msg.client_key);
+        let prefix_w = prefix.chars().count();
+        let body_max = body_w.saturating_sub(prefix_w).max(10);
+        // Servers ship multi-line messages (Java stack traces especially);
+        // each \n becomes its own wrapped continuation row, prefixed by
+        // spaces so the message body lines up visually under the first.
+        let mut first_line = true;
+        let cont_indent = " ".repeat(prefix_w);
+        for raw_line in msg.text.split('\n') {
+            let trimmed = raw_line.trim_end_matches('\r');
+            if trimmed.is_empty() && first_line {
+                lines.push(MessageRow::Entry {
+                    prefix: prefix.clone(),
+                    prefix_colour: sev_colour,
+                    body: String::new(),
+                });
+                first_line = false;
+                continue;
+            }
+            for chunk in chunk_by_width(trimmed, body_max) {
+                if first_line {
+                    lines.push(MessageRow::Entry {
+                        prefix: prefix.clone(),
+                        prefix_colour: sev_colour,
+                        body: chunk,
+                    });
+                    first_line = false;
+                } else {
+                    lines.push(MessageRow::Continuation {
+                        indent: cont_indent.clone(),
+                        body: chunk,
+                    });
+                }
+            }
+        }
+        lines.push(MessageRow::Blank);
+    }
+
+    app.messages_content_height.set(lines.len());
+    let scroll = app
+        .messages_scroll
+        .min(lines.len().saturating_sub(viewport_rows));
+
+    for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
+        let screen_y = (top + (i - scroll)) as u16;
+        match row {
+            MessageRow::Header => {
+                let title = format!(" {} captured server messages", app.lsp_messages.len());
+                queue!(
+                    out,
+                    MoveTo(left as u16, screen_y),
+                    SetForegroundColor(p.lavender),
+                    Print(truncate(&title, body_w)),
+                    ResetColor,
+                )?;
+            }
+            MessageRow::Blank => {}
+            MessageRow::Entry { prefix, prefix_colour, body } => {
+                queue!(
+                    out,
+                    MoveTo(left as u16, screen_y),
+                    SetForegroundColor(*prefix_colour),
+                    Print(prefix),
+                    SetForegroundColor(p.text),
+                    Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
+                    ResetColor,
+                )?;
+            }
+            MessageRow::Continuation { indent, body } => {
+                queue!(
+                    out,
+                    MoveTo(left as u16, screen_y),
+                    SetForegroundColor(p.overlay1),
+                    Print(indent),
+                    SetForegroundColor(p.subtext1),
+                    Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
+                    ResetColor,
+                )?;
+            }
+        }
+    }
+
+    let has_more_below = scroll + viewport_rows < lines.len();
+    let has_more_above = scroll > 0;
+    let footer = match (has_more_above, has_more_below) {
+        (false, false) => "Esc · q · :q to dismiss",
+        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
+        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
+        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
+    };
+    queue!(
+        out,
+        MoveTo(left as u16, (top + rows - 1) as u16),
+        SetForegroundColor(p.overlay0),
+        Print(truncate(footer, total_w.saturating_sub(left))),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+enum MessageRow {
+    Header,
+    Blank,
+    Entry {
+        prefix: String,
+        prefix_colour: Color,
+        body: String,
+    },
+    Continuation {
+        indent: String,
+        body: String,
+    },
+}
+
+/// Split `s` into chunks no wider than `width` display chars. Single
+/// run of slicing — no word-wrap, just hard cuts. Empty input becomes
+/// a single empty chunk so callers always emit at least one row.
+fn chunk_by_width(s: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![String::new()];
+    }
+    let mut out = Vec::new();
+    let mut current = String::new();
+    let mut count = 0usize;
+    for ch in s.chars() {
+        current.push(ch);
+        count += 1;
+        if count >= width {
+            out.push(std::mem::take(&mut current));
+            count = 0;
+        }
+    }
+    if !current.is_empty() || out.is_empty() {
+        out.push(current);
+    }
+    out
+}
+
 /// Layout the dashboard into a flat list of `DashRow`s. Splitting the
 /// build out from the paint loop lets us measure the total height once
 /// (for scroll clamping) and paint only the visible window.
@@ -2929,6 +3104,11 @@ fn draw_line_with_selection(
         Vec::new()
     };
     let search_matches = app.line_search_matches_in(bs.buffer, line_idx);
+    let doc_highlights: Vec<(usize, usize)> = if let Some(path) = bs.buffer.path.as_deref() {
+        app.line_document_highlights(path, line_idx)
+    } else {
+        Vec::new()
+    };
     let yank_flash = if is_active {
         app.line_yank_highlight(line_idx)
     } else {
@@ -2992,6 +3172,44 @@ fn draw_line_with_selection(
     } else {
         Vec::new()
     };
+    // Pre-compute per-column semantic-token colours, if a cached LSP
+    // response is available for this buffer. Tokens are anchored to a
+    // specific buffer version; we drop the cache as stale when the
+    // version no longer matches so a freshly-typed line doesn't get
+    // mis-coloured against indices computed for an older revision.
+    let mut sem_col_color: Vec<Option<Color>> = vec![None; chars.len()];
+    if !dim {
+        if let Some(path) = bs.buffer.path.as_ref() {
+            if let Some(cache) = app.semantic_tokens.get(path) {
+                if cache.buffer_version == bs.buffer.version {
+                    if let Some(row_tokens) = cache.by_line.get(line_idx) {
+                        for tok in row_tokens {
+                            // Modifier list becomes dotted suffix so
+                            // `function.async` and `variable.readonly`
+                            // both flow through the same dotted-prefix
+                            // resolver the tree-sitter pass uses.
+                            let name = if tok.modifiers.is_empty() {
+                                tok.token_type.clone()
+                            } else {
+                                let mut s = tok.token_type.clone();
+                                for m in &tok.modifiers {
+                                    s.push('.');
+                                    s.push_str(m);
+                                }
+                                s
+                            };
+                            let Some(color) = app.config.color_for_capture(&name) else { continue };
+                            let start = tok.start_col.min(chars.len());
+                            let end = (tok.start_col + tok.length).min(chars.len());
+                            for slot in &mut sem_col_color[start..end] {
+                                *slot = Some(color);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut diag_at: Vec<Option<Severity>> = vec![None; chars.len()];
     for d in &line_diags {
         let start = d.col.min(chars.len());
@@ -3243,14 +3461,29 @@ fn draw_line_with_selection(
             && !in_search
             && !in_yank_flash
             && match_pair.iter().any(|(s, e)| col >= *s && col < *e);
+        let in_doc_highlight = !in_sel
+            && !in_search
+            && !in_yank_flash
+            && !in_match_pair
+            && doc_highlights.iter().any(|(s, e)| col >= *s && col < *e);
         // Multi-cursor marker — paint the cell the cursor is sitting on
         // (i.e. the char to its right) in Lavender so the user can see
         // where their other cursors are.
         let is_multi_cursor = multi_cursors.contains(&col);
-        let syntax_color = bs
-            .highlight_cache
-            .and_then(|cache| cache.byte_colors.get(byte_off).copied())
-            .flatten();
+        // LSP semantic tokens win over the tree-sitter highlight cache
+        // when both have an opinion — the server's view of the symbol
+        // (mutable / immutable / async / parameter / etc.) is strictly
+        // richer than any static query. Falls back to tree-sitter when
+        // the LSP didn't tag this column.
+        let syntax_color = sem_col_color
+            .get(col)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                bs.highlight_cache
+                    .and_then(|cache| cache.byte_colors.get(byte_off).copied())
+                    .flatten()
+            });
         let diag_severity = if !in_sel && !in_search && !dim {
             diag_at.get(col).copied().flatten()
         } else {
@@ -3289,6 +3522,19 @@ fn draw_line_with_selection(
                 SetBackgroundColor(Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }), // Surface2
                 SetAttribute(Attribute::Bold)
             )?;
+        } else if in_doc_highlight {
+            // Surface1 — even subtler than match-pair's Surface2, since
+            // documentHighlight covers every occurrence of the symbol
+            // under the cursor (often many per screen) and a heavier
+            // bg would turn the whole pane into a barcode. Foreground
+            // is left to the syntax cache (set below).
+            queue!(
+                out,
+                SetBackgroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
+            )?;
+            if let Some(fg) = syntax_color {
+                queue!(out, SetForegroundColor(fg))?;
+            }
         } else if render_hidden {
             // Whitespace marker overrides whatever syntax colour the
             // highlight cache would have used — these glyphs need to read
@@ -3306,8 +3552,12 @@ fn draw_line_with_selection(
         // match-pair). The reset at end-of-cell would otherwise wipe
         // it; that's OK because we re-apply it per char.
         if let Some(bg) = code_block_bg {
-            let bg_already_set =
-                in_sel || in_search || in_yank_flash || is_multi_cursor || in_match_pair;
+            let bg_already_set = in_sel
+                || in_search
+                || in_yank_flash
+                || is_multi_cursor
+                || in_match_pair
+                || in_doc_highlight;
             if !bg_already_set {
                 queue!(out, SetBackgroundColor(bg))?;
             }
@@ -4209,7 +4459,7 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
 fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // On the start page, no buffer cursor — only the cmdline/picker overlays
     // ever steal focus from the logo.
-    if (app.show_start_page || app.show_health_page)
+    if (app.show_start_page || app.show_health_page || app.show_messages_page)
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
         queue!(out, Hide)?;

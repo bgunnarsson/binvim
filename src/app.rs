@@ -329,6 +329,90 @@ pub struct App {
     /// picks up "user finished signing in" without needing a restart
     /// or a manual `:copilot reload`.
     pub last_copilot_status_poll: Instant,
+    /// Per-buffer semantic-token cache from
+    /// `textDocument/semanticTokens/full`. Refreshed once per buffer
+    /// version when the server advertises the capability. The renderer
+    /// layers these over the tree-sitter highlight cache so LSP-aware
+    /// distinctions (mutable vs immutable, async functions, defaultLibrary
+    /// symbols, ...) override the static-query colour where they apply.
+    pub semantic_tokens: HashMap<PathBuf, SemanticTokensCache>,
+    /// Buffer version we last asked semantic-tokens for, per path.
+    /// Same dedupe strategy as inlay hints.
+    pub last_semantic_tokens_request_version: HashMap<PathBuf, u64>,
+    /// Per-buffer document-highlight cache, keyed by canonicalised path.
+    /// Refreshed by the idle-pause path in `app/lsp_glue.rs` whenever the
+    /// cursor lands on a new symbol. The renderer paints a subtle bg on
+    /// every range whose anchor still matches the live cursor, so a
+    /// stale cache (cursor moved off, response not back yet) doesn't
+    /// flash wrong highlights.
+    pub document_highlights: HashMap<PathBuf, DocumentHighlightCache>,
+    /// In-flight `textDocument/documentHighlight` anchors, keyed by
+    /// path. Used to skip re-firing while a response for the same
+    /// (line, col, version) is still on the wire — without this,
+    /// holding `j` would burst a request per keystroke even though
+    /// the previous one is still mid-round-trip.
+    pub last_document_highlight_request: HashMap<PathBuf, (usize, usize, u64)>,
+    /// Ring buffer of server-emitted `window/showMessage` /
+    /// `window/logMessage` notifications. Newest at the tail. Bounded
+    /// so a chatty server (jdtls warming up, OmniSharp resolving
+    /// references) can't grow it without limit. Viewable via
+    /// `:messages`; the loudest entries (showMessage Error/Warning)
+    /// also flash through `status_msg`.
+    pub lsp_messages: Vec<LspServerMessage>,
+    /// `:messages` overlay toggle. When true, the buffer area is
+    /// replaced with the scrollable list of `lsp_messages`. Dismissed
+    /// by Esc / `q` / `:q`. Scroll position in `messages_scroll`.
+    pub show_messages_page: bool,
+    pub messages_scroll: usize,
+    /// Total virtual rows the messages list occupied on the last
+    /// render — used to clamp `messages_scroll`. `Cell` because
+    /// `render::draw` borrows `App` immutably.
+    pub messages_content_height: std::cell::Cell<usize>,
+}
+
+/// Decoded `textDocument/semanticTokens/full` tokens for one buffer,
+/// plus a `(line, char_count)` lookup table that lets the renderer
+/// translate the spec's UTF-16-code-unit `start_col` / `length` into
+/// the char columns the rope pipeline operates on. We pre-bin tokens
+/// by `line` so per-row lookups are constant-time during draw.
+#[derive(Debug, Clone)]
+pub struct SemanticTokensCache {
+    pub buffer_version: u64,
+    /// Tokens grouped by line index. Each row's vec is sorted by
+    /// `start_col` ascending — the renderer assumes this when binary-
+    /// searching for the token covering a given column.
+    pub by_line: Vec<Vec<crate::lsp::SemanticToken>>,
+}
+
+/// Cached `textDocument/documentHighlight` ranges for one buffer.
+/// The anchor (cursor position + buffer version when the request fired)
+/// gates rendering — the highlights only paint while the live cursor
+/// + buffer version still match, so a stale response doesn't smear
+/// yesterday's highlights over today's code.
+#[derive(Debug, Clone)]
+pub struct DocumentHighlightCache {
+    pub anchor_line: usize,
+    pub anchor_col: usize,
+    pub anchor_version: u64,
+    pub ranges: Vec<crate::lsp::DocumentHighlightRange>,
+}
+
+/// One captured `window/showMessage` or `window/logMessage` entry.
+/// Stored in `App.lsp_messages` so the user can scroll back through
+/// server-emitted notifications via `:messages` instead of losing
+/// every line that scrolled out of `status_msg`.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct LspServerMessage {
+    pub client_key: String,
+    pub severity: crate::lsp::MessageSeverity,
+    pub text: String,
+    /// `true` when the server fired `window/showMessage` (loud);
+    /// `false` for the quieter `window/logMessage`.
+    pub is_show: bool,
+    /// Capture time — kept for a future timestamp column in the
+    /// overlay; currently unused at the renderer level.
+    pub when: Instant,
 }
 
 /// Active Copilot ghost suggestion. `text` is the FULL replacement
@@ -476,6 +560,14 @@ impl App {
             last_keystroke_at: Instant::now(),
             last_copilot_request_version: HashMap::new(),
             last_copilot_status_poll: Instant::now(),
+            semantic_tokens: HashMap::new(),
+            last_semantic_tokens_request_version: HashMap::new(),
+            document_highlights: HashMap::new(),
+            last_document_highlight_request: HashMap::new(),
+            lsp_messages: Vec::new(),
+            show_messages_page: false,
+            messages_scroll: 0,
+            messages_content_height: std::cell::Cell::new(0),
         };
         // Mirror the user's Copilot opt-in onto the LSP manager so
         // copilot-language-server is included in every spec lookup
@@ -514,6 +606,8 @@ impl App {
                 self.ensure_folds();
                 self.lsp_sync_active_debounced();
                 self.lsp_request_inlay_hints_if_due();
+                self.lsp_request_semantic_tokens_if_due();
+                self.lsp_request_document_highlight_if_due();
                 self.copilot_maybe_request_inline();
                 self.copilot_maybe_poll_status();
                 render::draw(&mut stdout, self)?;

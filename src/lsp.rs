@@ -20,6 +20,7 @@ mod types;
 pub use manager::{CopilotStatus, LspManager};
 pub use specs::{find_node_modules_bin, find_tailwind_config};
 pub use types::{
-    ActiveBufferLspStatus, CodeActionItem, CompletionItem, Diagnostic, InlayHint, LocationItem,
-    LspEvent, LspHealth, Severity, SignatureHelp, SymbolItem, uri_to_path,
+    ActiveBufferLspStatus, CodeActionItem, CompletionItem, Diagnostic, DocumentHighlightRange,
+    InlayHint, LocationItem, LspEvent, LspHealth, MessageSeverity, SemanticToken, Severity,
+    SignatureHelp, SymbolItem, uri_to_path,
 };

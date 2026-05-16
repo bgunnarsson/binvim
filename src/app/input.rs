@@ -220,71 +220,97 @@ impl super::App {
                 {
                     return Ok(());
                 }
-                // While the health dashboard is up, only Esc / `q` (in
-                // Normal mode) / `:` to enter the cmdline pass through.
-                // `:q` then dismisses via the ExCommand::Quit handler
-                // above. Other keys are swallowed so the user can't
-                // accidentally type into the underlying buffer.
-                if self.show_health_page {
+                // While the health dashboard or the messages overlay is
+                // up, only Esc / `q` (in Normal mode) / `:` to enter the
+                // cmdline pass through. `:q` then dismisses via the
+                // ExCommand::Quit handler above. Other keys are
+                // swallowed so the user can't accidentally type into
+                // the underlying buffer. The two overlays share the
+                // same scroll bindings — only the dismiss flag differs.
+                let overlay_active = self.show_health_page || self.show_messages_page;
+                if overlay_active {
                     let normal = matches!(self.mode, Mode::Normal);
                     let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+                    let messages = self.show_messages_page;
+                    let scroll = |this: &mut Self, delta: isize| {
+                        if messages {
+                            this.messages_scroll_by(delta);
+                        } else {
+                            this.health_scroll_by(delta);
+                        }
+                    };
+                    let dismiss = |this: &mut Self| {
+                        if messages {
+                            this.show_messages_page = false;
+                        } else {
+                            this.show_health_page = false;
+                        }
+                    };
                     match k.code {
                         KeyCode::Esc => {
-                            self.show_health_page = false;
+                            dismiss(self);
                             return Ok(());
                         }
                         KeyCode::Char('q') if normal && no_ctrl => {
-                            self.show_health_page = false;
+                            dismiss(self);
                             return Ok(());
                         }
-                        // Scroll the dashboard. j/k by one row, Ctrl-D/U by
-                        // half a page, PgDn/PgUp by a full page, g/G to
-                        // jump to top / bottom.
+                        // Scroll the overlay. j/k by one row, Ctrl-D/U
+                        // by half a page, PgDn/PgUp by a full page, g/G
+                        // to jump to top / bottom.
                         KeyCode::Char('j') | KeyCode::Down if normal && no_ctrl => {
-                            self.health_scroll_by(1);
+                            scroll(self, 1);
                             return Ok(());
                         }
                         KeyCode::Char('k') | KeyCode::Up if normal && no_ctrl => {
-                            self.health_scroll_by(-1);
+                            scroll(self, -1);
                             return Ok(());
                         }
                         KeyCode::Char('d') if normal && ctrl => {
                             let step = (self.buffer_rows() / 2).max(1) as isize;
-                            self.health_scroll_by(step);
+                            scroll(self, step);
                             return Ok(());
                         }
                         KeyCode::Char('u') if normal && ctrl => {
                             let step = (self.buffer_rows() / 2).max(1) as isize;
-                            self.health_scroll_by(-step);
+                            scroll(self, -step);
                             return Ok(());
                         }
                         KeyCode::Char('f') if normal && ctrl => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            self.health_scroll_by(step);
+                            scroll(self, step);
                             return Ok(());
                         }
                         KeyCode::Char('b') if normal && ctrl => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            self.health_scroll_by(-step);
+                            scroll(self, -step);
                             return Ok(());
                         }
                         KeyCode::PageDown if normal => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            self.health_scroll_by(step);
+                            scroll(self, step);
                             return Ok(());
                         }
                         KeyCode::PageUp if normal => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            self.health_scroll_by(-step);
+                            scroll(self, -step);
                             return Ok(());
                         }
                         KeyCode::Char('g') | KeyCode::Home if normal && no_ctrl => {
-                            self.health_scroll = 0;
+                            if messages {
+                                self.messages_scroll = 0;
+                            } else {
+                                self.health_scroll = 0;
+                            }
                             return Ok(());
                         }
                         KeyCode::Char('G') | KeyCode::End if normal => {
-                            self.health_scroll = self.health_max_scroll();
+                            if messages {
+                                self.messages_scroll = self.messages_max_scroll();
+                            } else {
+                                self.health_scroll = self.health_max_scroll();
+                            }
                             return Ok(());
                         }
                         KeyCode::Char(':') if normal => {
@@ -363,6 +389,8 @@ impl super::App {
                     }
                 } else if self.show_health_page {
                     self.health_scroll_by(-3);
+                } else if self.show_messages_page {
+                    self.messages_scroll_by(-3);
                 } else {
                     self.scroll_view(-3);
                 }
@@ -377,6 +405,8 @@ impl super::App {
                     }
                 } else if self.show_health_page {
                     self.health_scroll_by(3);
+                } else if self.show_messages_page {
+                    self.messages_scroll_by(3);
                 } else {
                     self.scroll_view(3);
                 }
@@ -1191,6 +1221,8 @@ impl super::App {
             ExCommand::Quit => {
                 if self.show_health_page {
                     self.show_health_page = false;
+                } else if self.show_messages_page {
+                    self.show_messages_page = false;
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
@@ -1252,6 +1284,7 @@ impl super::App {
             }
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
+            ExCommand::Messages => self.cmd_messages(),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::GitBlame => self.toggle_blame(),
             ExCommand::Copilot(sub) => {

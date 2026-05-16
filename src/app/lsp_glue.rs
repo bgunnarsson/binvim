@@ -82,6 +82,90 @@ impl super::App {
                         self.inlay_hints.insert(path, hints);
                     }
                 }
+                LspEvent::SemanticTokens {
+                    path,
+                    buffer_version,
+                    tokens,
+                } => {
+                    // Drop the reply if the buffer has moved on — the
+                    // token col indices are anchored to the version we
+                    // asked for, and re-anchoring them against a newer
+                    // buffer would mis-align them.
+                    let live_version = self
+                        .buffer
+                        .path
+                        .as_ref()
+                        .filter(|p| *p == &path)
+                        .map(|_| self.buffer.version);
+                    let stale = match live_version {
+                        Some(v) => v != buffer_version,
+                        // Different buffer is active — accept and cache;
+                        // when the user switches back, the cache is
+                        // still valid for the version it was built on.
+                        None => false,
+                    };
+                    if stale || tokens.is_empty() {
+                        self.semantic_tokens.remove(&path);
+                    } else {
+                        // Bin by line so the renderer doesn't walk the
+                        // full token list per row. Tokens already
+                        // arrive in line-then-col order from the decode.
+                        let line_count = tokens
+                            .iter()
+                            .map(|t| t.line)
+                            .max()
+                            .map(|m| m + 1)
+                            .unwrap_or(0);
+                        let mut by_line: Vec<Vec<crate::lsp::SemanticToken>> =
+                            vec![Vec::new(); line_count];
+                        for tok in tokens {
+                            let line = tok.line;
+                            if line < by_line.len() {
+                                by_line[line].push(tok);
+                            }
+                        }
+                        self.semantic_tokens.insert(
+                            path,
+                            crate::app::SemanticTokensCache {
+                                buffer_version,
+                                by_line,
+                            },
+                        );
+                    }
+                }
+                LspEvent::DocumentHighlights {
+                    path,
+                    anchor_line,
+                    anchor_col,
+                    anchor_version,
+                    ranges,
+                } => {
+                    // Always clear the in-flight marker for this path so
+                    // the next move can re-fire even if the response was
+                    // empty / stale.
+                    self.last_document_highlight_request.remove(&path);
+                    if ranges.is_empty() {
+                        self.document_highlights.remove(&path);
+                    } else {
+                        self.document_highlights.insert(
+                            path,
+                            crate::app::DocumentHighlightCache {
+                                anchor_line,
+                                anchor_col,
+                                anchor_version,
+                                ranges,
+                            },
+                        );
+                    }
+                }
+                LspEvent::ServerMessage {
+                    client_key,
+                    severity,
+                    text,
+                    is_show,
+                } => {
+                    self.handle_lsp_server_message(client_key, severity, text, is_show);
+                }
                 LspEvent::CopilotStatus { kind, user } => {
                     self.apply_copilot_status(kind, user);
                 }
@@ -639,6 +723,125 @@ impl super::App {
         }
     }
 
+    /// Fire `textDocument/semanticTokens/full` once per buffer version.
+    /// Same throttle shape as inlay hints — the debounced sync upstream
+    /// coalesces text changes, and we only re-ask once the buffer
+    /// version has bumped.
+    pub(super) fn lsp_request_semantic_tokens_if_due(&mut self) {
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let version = self.buffer.version;
+        let last = self
+            .last_semantic_tokens_request_version
+            .get(&path)
+            .copied()
+            .unwrap_or(u64::MAX);
+        if last == version {
+            return;
+        }
+        if self.lsp.request_semantic_tokens_full(&path, version) {
+            self.last_semantic_tokens_request_version.insert(path, version);
+        }
+    }
+
+    /// Fire `textDocument/documentHighlight` when the cursor has landed
+    /// on a position the server hasn't been asked about yet for the
+    /// current buffer version. The previous cache (if any) keeps
+    /// painting until the new response comes back — so cursor movement
+    /// between identifiers swaps highlights cleanly without a flicker
+    /// gap. Stale responses are filtered in `handle_lsp_events` by
+    /// matching the anchor against the live cursor + version.
+    pub(super) fn lsp_request_document_highlight_if_due(&mut self) {
+        // Don't fire while a popup / picker is up (those overlays
+        // suspend the cursor's editing meaning) or in Insert mode
+        // (we'd be requesting on every keystroke and the user can't
+        // see the highlights through the typing flow anyway).
+        if !matches!(self.mode, crate::mode::Mode::Normal | crate::mode::Mode::Visual(_)) {
+            return;
+        }
+        if self.picker.is_some() || self.completion.is_some() {
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
+        let version = self.buffer.version;
+        // Skip if the cache's anchor already matches — that means we
+        // already asked for this exact (line, col, version) combination
+        // and got a response back.
+        if let Some(cache) = self.document_highlights.get(&path) {
+            if cache.anchor_line == line
+                && cache.anchor_col == col
+                && cache.anchor_version == version
+            {
+                return;
+            }
+        }
+        // Or if an identical request is already in flight — without
+        // this guard, holding `j` would burst one request per repeat.
+        if let Some(pending) = self.last_document_highlight_request.get(&path) {
+            if *pending == (line, col, version) {
+                return;
+            }
+        }
+        if self.lsp.request_document_highlight(&path, line, col, version) {
+            self.last_document_highlight_request
+                .insert(path, (line, col, version));
+        }
+    }
+
+    /// Char-column ranges of document-highlight matches on `line` of
+    /// `path`. The cache only paints when its anchor matches the live
+    /// cursor + buffer version on the active buffer — that keeps the
+    /// highlights consistent with the symbol under the cursor without
+    /// flashing stale ranges when the cursor moves. Empty Vec when no
+    /// cache exists for `path` or the anchor doesn't match.
+    pub fn line_document_highlights(&self, path: &std::path::Path, line: usize) -> Vec<(usize, usize)> {
+        // Highlights anchor to the active buffer's cursor. If the
+        // active buffer differs from `path`, the cache for `path`
+        // (if any) is from a previous focus and isn't current.
+        let active_path = match self.buffer.path.as_deref() {
+            Some(p) => p,
+            None => return Vec::new(),
+        };
+        let Some(cache) = self.document_highlights.get(active_path) else {
+            return Vec::new();
+        };
+        // Anchor still valid?
+        let cursor_line = self.window.cursor.line;
+        let cursor_col = self.window.cursor.col;
+        if cache.anchor_line != cursor_line
+            || cache.anchor_col != cursor_col
+            || cache.anchor_version != self.buffer.version
+        {
+            return Vec::new();
+        }
+        // Only paint highlights into a pane displaying the same path —
+        // otherwise an inactive pane showing a different file would
+        // pick up the active buffer's highlights, which is just noise.
+        if active_path != path {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for r in &cache.ranges {
+            if r.start_line == line && r.end_line == line {
+                if r.end_col > r.start_col {
+                    out.push((r.start_col, r.end_col));
+                }
+            } else if r.start_line <= line && line <= r.end_line {
+                // Multi-line ranges: clip to the visible line's column
+                // span. Rare for documentHighlight (most servers return
+                // single-line ranges) but the spec allows them.
+                let buffer_len = self.buffer.line_len(line);
+                let start = if r.start_line == line { r.start_col } else { 0 };
+                let end = if r.end_line == line { r.end_col } else { buffer_len };
+                if end > start {
+                    out.push((start, end));
+                }
+            }
+        }
+        out
+    }
+
     pub(super) fn lsp_request_hover(&mut self) {
         let Some(path) = self.buffer.path.clone() else {
             self.status_msg = "LSP: buffer has no file".into();
@@ -966,6 +1169,76 @@ impl super::App {
             })
             .collect();
         crate::picker::replace_items(picker, entries);
+    }
+
+    /// Capture a `window/showMessage` or `window/logMessage` notification
+    /// into the ring buffer and — for the loud `showMessage` Error /
+    /// Warning case — flash it through the status line. logMessage
+    /// notifications are log-only; the user reads them via `:messages`.
+    pub(super) fn handle_lsp_server_message(
+        &mut self,
+        client_key: String,
+        severity: crate::lsp::MessageSeverity,
+        text: String,
+        is_show: bool,
+    ) {
+        const LSP_MESSAGE_LOG_CAP: usize = 500;
+        // Status-line surface: only for showMessage Error / Warning. Info
+        // and Log entries are kept silent so a chatty server doesn't
+        // hijack the status line; the user can still pull them up via
+        // `:messages`.
+        if is_show
+            && matches!(
+                severity,
+                crate::lsp::MessageSeverity::Error | crate::lsp::MessageSeverity::Warning
+            )
+        {
+            let tag = match severity {
+                crate::lsp::MessageSeverity::Error => "error",
+                crate::lsp::MessageSeverity::Warning => "warn",
+                _ => "lsp",
+            };
+            // Servers sometimes ship multi-line messages (stack traces).
+            // The status line is single-line, so pick the first non-empty.
+            let first = text.lines().find(|l| !l.trim().is_empty()).unwrap_or(&text);
+            self.status_msg = format!("{client_key} {tag}: {first}");
+        }
+        self.lsp_messages.push(crate::app::LspServerMessage {
+            client_key,
+            severity,
+            text,
+            is_show,
+            when: std::time::Instant::now(),
+        });
+        if self.lsp_messages.len() > LSP_MESSAGE_LOG_CAP {
+            let excess = self.lsp_messages.len() - LSP_MESSAGE_LOG_CAP;
+            self.lsp_messages.drain(0..excess);
+        }
+    }
+
+    /// `:messages` — toggle the server-messages overlay. `messages_scroll`
+    /// resets so the user always lands on the latest entry on open.
+    pub(super) fn cmd_messages(&mut self) {
+        if self.lsp_messages.is_empty() {
+            self.status_msg = "messages: nothing logged yet".into();
+            return;
+        }
+        self.show_messages_page = true;
+        self.messages_scroll = 0;
+    }
+
+    pub(super) fn messages_max_scroll(&self) -> usize {
+        let total = self.messages_content_height.get();
+        let body_rows = self
+            .height
+            .saturating_sub(2) as usize;
+        total.saturating_sub(body_rows)
+    }
+
+    pub(super) fn messages_scroll_by(&mut self, delta: isize) {
+        let max = self.messages_max_scroll();
+        let new_scroll = (self.messages_scroll as isize + delta).max(0) as usize;
+        self.messages_scroll = new_scroll.min(max);
     }
 }
 

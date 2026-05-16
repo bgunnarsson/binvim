@@ -35,6 +35,23 @@ pub struct LspClient {
     #[allow(dead_code)]
     pub root_uri: String,
     pub language_id: String,
+    /// Server's semantic-tokens `legend`, captured from the
+    /// `initialize` response. `None` until the reader thread has seen
+    /// the response (or if the server doesn't advertise the
+    /// capability). Shared with the reader thread via Arc<Mutex<…>>;
+    /// the manager reads it lazily before firing
+    /// `textDocument/semanticTokens/full`.
+    pub semantic_tokens_legend: Arc<Mutex<Option<SemanticTokensLegend>>>,
+}
+
+/// Decoded `semanticTokensProvider.legend` from the server's
+/// initialize response. `token_types[idx]` and `token_modifiers[idx]`
+/// map the integers in the response stream back to capability names
+/// the editor can colour with.
+#[derive(Debug, Clone, Default)]
+pub struct SemanticTokensLegend {
+    pub token_types: Vec<String>,
+    pub token_modifiers: Vec<String>,
 }
 
 impl LspClient {
@@ -59,8 +76,17 @@ impl LspClient {
         let init_state = Arc::new(Mutex::new(InitState::Buffering(Vec::new())));
         let init_state_for_reader = init_state.clone();
         let stdin_for_reader = stdin.clone();
+        let semantic_tokens_legend: Arc<Mutex<Option<SemanticTokensLegend>>> =
+            Arc::new(Mutex::new(None));
+        let legend_for_reader = semantic_tokens_legend.clone();
         thread::spawn(move || {
-            reader_loop(stdout, stdin_for_reader, init_state_for_reader, in_tx);
+            reader_loop(
+                stdout,
+                stdin_for_reader,
+                init_state_for_reader,
+                legend_for_reader,
+                in_tx,
+            );
         });
 
         let root_uri = path_to_uri(root);
@@ -73,6 +99,7 @@ impl LspClient {
             init_state,
             root_uri: root_uri.clone(),
             language_id: spec.language_id.clone(),
+            semantic_tokens_legend,
         };
 
         // Send initialize directly (bypassing the queue gate, which only holds
@@ -112,6 +139,7 @@ impl LspClient {
                             "linkSupport": true
                         },
                         "references": { "dynamicRegistration": false },
+                        "documentHighlight": { "dynamicRegistration": false },
                         "documentSymbol": { "dynamicRegistration": false },
                         "rename": {
                             "dynamicRegistration": false,
@@ -153,7 +181,29 @@ impl LspClient {
                                 }
                             }
                         },
-                        "formatting": { "dynamicRegistration": false }
+                        "formatting": { "dynamicRegistration": false },
+                        "semanticTokens": {
+                            "dynamicRegistration": false,
+                            "requests": {
+                                "range": false,
+                                "full": { "delta": false }
+                            },
+                            "tokenTypes": [
+                                "namespace", "type", "class", "enum", "interface",
+                                "struct", "typeParameter", "parameter", "variable",
+                                "property", "enumMember", "event", "function",
+                                "method", "macro", "keyword", "modifier", "comment",
+                                "string", "number", "regexp", "operator", "decorator"
+                            ],
+                            "tokenModifiers": [
+                                "declaration", "definition", "readonly", "static",
+                                "deprecated", "abstract", "async", "modification",
+                                "documentation", "defaultLibrary"
+                            ],
+                            "formats": ["relative"],
+                            "overlappingTokenSupport": false,
+                            "multilineTokenSupport": false
+                        }
                     },
                     "workspace": {
                         "applyEdit": true,

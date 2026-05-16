@@ -35,6 +35,9 @@ pub enum ExCommand {
     NoHighlight,
     Format,
     Health,
+    /// `:messages` — open the captured `window/showMessage` /
+    /// `window/logMessage` log as a scrollable overlay.
+    Messages,
     Debug(DebugSubCmd),
     /// Quickfix-list sub-commands — `:cn`/`:cp`/`:clist`/`:cfirst`/
     /// `:clast`/`:cdiag`/`:cclose`. Dispatch lives in `app/input.rs`.
@@ -178,6 +181,7 @@ pub fn parse(line: &str) -> ExCommand {
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
+        "messages" | "mes" => ExCommand::Messages,
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
         "dapbreak" | "dapb" => ExCommand::Debug(DebugSubCmd::Break),

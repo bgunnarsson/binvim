@@ -32,6 +32,24 @@ pub(super) enum PendingRequest {
     /// returns without echoing the URI — can be routed back to the right
     /// buffer in the editor.
     InlayHints { path: PathBuf },
+    /// `textDocument/documentHighlight` — the response handler verifies
+    /// the cursor + version anchor before storing the ranges so a stale
+    /// reply that arrives after the cursor moved off the symbol gets
+    /// discarded instead of painting yesterday's highlights.
+    DocumentHighlight {
+        path: PathBuf,
+        anchor_line: usize,
+        anchor_col: usize,
+        anchor_version: u64,
+    },
+    /// `textDocument/semanticTokens/full`. `buffer_version` is the
+    /// version that was on the wire when we sent the request — the
+    /// App drops replies whose version no longer matches the live
+    /// buffer because the token col indices would no longer line up.
+    SemanticTokens {
+        path: PathBuf,
+        buffer_version: u64,
+    },
     /// Copilot `checkStatus` — response says whether the user is signed
     /// in and surfaces their handle.
     CopilotCheckStatus,
@@ -321,7 +339,16 @@ impl LspManager {
                     }
                     LspIncoming::Response { id, result } => {
                         if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
-                            if let Some(ev) = handle_response(req, &result) {
+                            // Some replies (SemanticTokens) need the
+                            // client's legend to decode — snapshot it
+                            // here while we still have a `&LspClient`
+                            // in scope.
+                            let legend = client
+                                .semantic_tokens_legend
+                                .lock()
+                                .ok()
+                                .and_then(|g| g.clone());
+                            if let Some(ev) = handle_response(req, &result, legend.as_ref()) {
                                 events.push(ev);
                             }
                         }
@@ -334,6 +361,14 @@ impl LspManager {
                             client_key: client_key.clone(),
                             id,
                             edit,
+                        });
+                    }
+                    LspIncoming::ServerMessage { severity, text, is_show } => {
+                        events.push(LspEvent::ServerMessage {
+                            client_key: client_key.clone(),
+                            severity,
+                            text,
+                            is_show,
                         });
                     }
                 }
@@ -580,6 +615,63 @@ impl LspManager {
         true
     }
 
+    /// Request `textDocument/documentHighlight` for the cursor position.
+    /// Anchor (line/col/version) flows through `PendingRequest` so the
+    /// response handler can drop stale replies if the cursor moved or
+    /// the buffer changed between fire and reply.
+    pub fn request_document_highlight(
+        &mut self,
+        path: &Path,
+        line: usize,
+        col: usize,
+        version: u64,
+    ) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/documentHighlight",
+            json!({
+                "textDocument": { "uri": path_to_uri(path) },
+                "position": { "line": line, "character": col },
+            }),
+        );
+        self.pending.insert(
+            (client.name.clone(), id),
+            PendingRequest::DocumentHighlight {
+                path: path.to_path_buf(),
+                anchor_line: line,
+                anchor_col: col,
+                anchor_version: version,
+            },
+        );
+        true
+    }
+
+    /// Request `textDocument/semanticTokens/full`. Skipped when the
+    /// server didn't advertise the capability (no legend captured) so
+    /// we don't burn a request that's guaranteed to come back empty.
+    pub fn request_semantic_tokens_full(&mut self, path: &Path, buffer_version: u64) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        if client.semantic_tokens_legend.lock().unwrap().is_none() {
+            return false;
+        }
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/semanticTokens/full",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+        );
+        self.pending.insert(
+            (client.name.clone(), id),
+            PendingRequest::SemanticTokens {
+                path: path.to_path_buf(),
+                buffer_version,
+            },
+        );
+        true
+    }
+
     /// Request `textDocument/inlayHint` for a line range. `end_line` is
     /// exclusive (LSP `Range.end`). Skipped silently when the primary
     /// server is missing.
@@ -640,7 +732,11 @@ fn suppress_diagnostics_from(client_key: &str, path: &Path) -> bool {
     matches!(ext.as_deref(), Some("cshtml") | Some("razor"))
 }
 
-fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
+fn handle_response(
+    req: PendingRequest,
+    result: &Value,
+    legend: Option<&super::client::SemanticTokensLegend>,
+) -> Option<LspEvent> {
     match req {
         PendingRequest::GotoDef => match parse_def_response(result) {
             Some((path, line, col)) => Some(LspEvent::GotoDef { path, line, col }),
@@ -702,6 +798,37 @@ fn handle_response(req: PendingRequest, result: &Value) -> Option<LspEvent> {
         PendingRequest::InlayHints { path } => {
             let hints = super::parse::parse_inlay_hints_response(result);
             Some(LspEvent::InlayHints { path, hints })
+        }
+        PendingRequest::DocumentHighlight {
+            path,
+            anchor_line,
+            anchor_col,
+            anchor_version,
+        } => {
+            let ranges = super::parse::parse_document_highlights_response(result);
+            Some(LspEvent::DocumentHighlights {
+                path,
+                anchor_line,
+                anchor_col,
+                anchor_version,
+                ranges,
+            })
+        }
+        PendingRequest::SemanticTokens { path, buffer_version } => {
+            let tokens = match legend {
+                Some(l) => super::parse::parse_semantic_tokens_response(result, l),
+                // Server returned tokens but we never captured a legend
+                // — shouldn't happen because `request_semantic_tokens_full`
+                // gates on the legend being present. Drop the reply
+                // silently rather than emitting an event with empty
+                // tokens that would clobber a valid cache.
+                None => return None,
+            };
+            Some(LspEvent::SemanticTokens {
+                path,
+                buffer_version,
+                tokens,
+            })
         }
         PendingRequest::CopilotCheckStatus => {
             // Copilot returns `{ status: "OK" | "NotSignedIn" | ...,

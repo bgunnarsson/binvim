@@ -4,8 +4,10 @@
 use serde_json::Value;
 use std::path::PathBuf;
 
+use super::client::SemanticTokensLegend;
 use super::types::{
-    CodeActionItem, CompletionItem, InlayHint, LocationItem, SignatureHelp, SymbolItem,
+    CodeActionItem, CompletionItem, DocumentHighlightRange, InlayHint, LocationItem,
+    SemanticToken, SignatureHelp, SymbolItem,
     uri_to_path,
 };
 
@@ -445,6 +447,89 @@ pub(super) fn parse_inlay_hints_response(result: &Value) -> Vec<InlayHint> {
     out
 }
 
+/// Decode the bit-packed integer stream returned by
+/// `textDocument/semanticTokens/full`. The format is five ints per
+/// token: `deltaLine`, `deltaStartChar`, `length`, `tokenType`,
+/// `tokenModifiers`. Position deltas reset `startChar` whenever
+/// `deltaLine > 0`, otherwise accumulate on the previous token's
+/// start. Modifier bits map against `legend.token_modifiers`; any bit
+/// past the legend length is ignored (servers occasionally ship
+/// reserved bits they haven't documented). Token-type indices outside
+/// the legend are dropped — the row is meaningless without a name.
+pub(super) fn parse_semantic_tokens_response(
+    result: &Value,
+    legend: &SemanticTokensLegend,
+) -> Vec<SemanticToken> {
+    let arr = match result.get("data").and_then(|v| v.as_array()) {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len() / 5);
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut i = 0;
+    while i + 4 < arr.len() {
+        let delta_line = arr[i].as_u64().unwrap_or(0) as usize;
+        let delta_start = arr[i + 1].as_u64().unwrap_or(0) as usize;
+        let length = arr[i + 2].as_u64().unwrap_or(0) as usize;
+        let type_idx = arr[i + 3].as_u64().unwrap_or(0) as usize;
+        let mod_bits = arr[i + 4].as_u64().unwrap_or(0);
+        i += 5;
+        if delta_line > 0 {
+            line += delta_line;
+            col = delta_start;
+        } else {
+            col += delta_start;
+        }
+        let Some(type_name) = legend.token_types.get(type_idx) else { continue };
+        let mut modifiers = Vec::new();
+        for (bit, name) in legend.token_modifiers.iter().enumerate() {
+            if mod_bits & (1u64 << bit) != 0 {
+                modifiers.push(name.clone());
+            }
+        }
+        out.push(SemanticToken {
+            line,
+            start_col: col,
+            length,
+            token_type: type_name.clone(),
+            modifiers,
+        });
+    }
+    out
+}
+
+/// Parse `textDocument/documentHighlight` response. The server returns
+/// an array of `DocumentHighlight` objects, each with a `range`
+/// (start/end LSP positions) and optional `kind` (1 = Text, 2 = Read,
+/// 3 = Write). A null result means no symbol under the cursor — that
+/// becomes an empty Vec which the App treats as "clear cache."
+pub(super) fn parse_document_highlights_response(result: &Value) -> Vec<DocumentHighlightRange> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        let Some(range) = entry.get("range") else { continue };
+        let Some(start) = range.get("start") else { continue };
+        let Some(end) = range.get("end") else { continue };
+        let start_line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let start_col = start.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let end_line = end.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let end_col = end.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let kind = entry.get("kind").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
+        out.push(DocumentHighlightRange {
+            start_line,
+            start_col,
+            end_line,
+            end_col,
+            kind,
+        });
+    }
+    out
+}
+
 pub(super) fn parse_hover_response(result: &Value) -> Option<String> {
     if result.is_null() {
         return None;
@@ -477,4 +562,101 @@ pub(super) fn parse_hover_response(result: &Value) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn legend() -> SemanticTokensLegend {
+        SemanticTokensLegend {
+            token_types: vec![
+                "namespace".into(),
+                "type".into(),
+                "function".into(),
+                "variable".into(),
+                "keyword".into(),
+            ],
+            token_modifiers: vec![
+                "declaration".into(),
+                "readonly".into(),
+                "async".into(),
+            ],
+        }
+    }
+
+    #[test]
+    fn semantic_tokens_empty_data_yields_empty_vec() {
+        let r = serde_json::json!({ "data": [] });
+        assert!(parse_semantic_tokens_response(&r, &legend()).is_empty());
+    }
+
+    #[test]
+    fn semantic_tokens_resolves_type_and_modifiers() {
+        // Two tokens on line 0: `let` (keyword, decl) at col 0 length 3,
+        // then `foo` (variable, readonly) at col 4 length 3.
+        let r = serde_json::json!({
+            "data": [
+                0, 0, 3, 4, 0b0000_0001,
+                0, 4, 3, 3, 0b0000_0010,
+            ]
+        });
+        let tokens = parse_semantic_tokens_response(&r, &legend());
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens[0].token_type, "keyword");
+        assert_eq!(tokens[0].line, 0);
+        assert_eq!(tokens[0].start_col, 0);
+        assert_eq!(tokens[0].length, 3);
+        assert_eq!(tokens[0].modifiers, vec!["declaration".to_string()]);
+        assert_eq!(tokens[1].token_type, "variable");
+        assert_eq!(tokens[1].start_col, 4);
+        assert_eq!(tokens[1].modifiers, vec!["readonly".to_string()]);
+    }
+
+    #[test]
+    fn semantic_tokens_delta_line_resets_col() {
+        // First token at (0, 5); second token deltaLine=2, deltaStart=3
+        // → (2, 3), not (2, 8).
+        let r = serde_json::json!({
+            "data": [
+                0, 5, 4, 2, 0,
+                2, 3, 4, 2, 0,
+            ]
+        });
+        let tokens = parse_semantic_tokens_response(&r, &legend());
+        assert_eq!(tokens[0].line, 0);
+        assert_eq!(tokens[0].start_col, 5);
+        assert_eq!(tokens[1].line, 2);
+        assert_eq!(tokens[1].start_col, 3);
+    }
+
+    #[test]
+    fn semantic_tokens_skips_unknown_type_index() {
+        // type idx 99 — legend only has 5 entries; the row should be
+        // dropped silently rather than producing a garbled name.
+        let r = serde_json::json!({
+            "data": [
+                0, 0, 3, 99, 0,
+                0, 4, 3, 0, 0,
+            ]
+        });
+        let tokens = parse_semantic_tokens_response(&r, &legend());
+        assert_eq!(tokens.len(), 1);
+        assert_eq!(tokens[0].token_type, "namespace");
+    }
+
+    #[test]
+    fn document_highlights_parses_ranges() {
+        let r = serde_json::json!([
+            { "range": {"start": {"line": 4, "character": 2}, "end": {"line": 4, "character": 8}}, "kind": 2 },
+            { "range": {"start": {"line": 10, "character": 0}, "end": {"line": 10, "character": 5}} }
+        ]);
+        let out = parse_document_highlights_response(&r);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].start_line, 4);
+        assert_eq!(out[0].end_col, 8);
+        assert_eq!(out[0].kind, 2);
+        // No kind in input → defaults to Text (1).
+        assert_eq!(out[1].kind, 1);
+    }
 }
