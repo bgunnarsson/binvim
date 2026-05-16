@@ -1,6 +1,6 @@
 [package]
 name = "binvim"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 description = "Vim-grammar TUI editor with batteries included"
 authors = ["B. Gunnarsson (@bgunnarssonis)"]

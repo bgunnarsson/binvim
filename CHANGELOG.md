@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-16
+
 ### Added
 - **LSP server stderr capture.** Each spawned LSP's `stderr` was
   previously routed to `Stdio::null()` — any panic backtrace,
