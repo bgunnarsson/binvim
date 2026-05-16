@@ -110,7 +110,19 @@ mod tests {
     use crate::app::App;
 
     fn empty_app() -> App {
-        App::new(None).expect("App::new should succeed without a path arg")
+        // `App::new(None)` hydrates from any saved session for the
+        // current working directory. When `cargo test` runs from a
+        // repo that already has a binvim session on disk, that means
+        // `cmd_history` / `search_history` arrive pre-populated and
+        // the assertions in these tests blow up. Wipe both rings
+        // explicitly so each test starts from a clean ledger
+        // regardless of host state.
+        let mut app = App::new(None).expect("App::new should succeed without a path arg");
+        app.cmd_history.clear();
+        app.search_history.clear();
+        app.history_cursor = None;
+        app.history_draft = None;
+        app
     }
 
     #[test]
