@@ -8,21 +8,21 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Editor
 
-- [x] **Window splits — `<C-w>v` / `<C-w>s` / `<C-w>V` / `<C-w>S` / `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o`
-      / `<C-w>=` / `<C-w>T`.** Vertical and horizontal splits with per-buffer layouts (each tab carries
-      its own split tree), independent cursors / viewports per pane, pick-on-split (default `<C-w>v`
-      opens the file picker so the new pane lands on a different file straight away), and Vim-style
-      same-buffer splits via the uppercase variants. **Shipped in 0.1.8.**
-- [x] **`<C-w>` + integer resize.** `<C-w>10>` widens by 10 cols, `<C-w>5<` shrinks, `<C-w>[N]+` /
-      `<C-w>[N]-` adjust height. Parser accumulates digits inside the window-leader prefix; the layout
-      walks to the deepest matching-axis ancestor of the focused leaf and converts cells to a ratio
-      against that subtree's own rect (clamped to `[0.1, 0.9]`).
+- [x] **Window splits** — `<C-w>v` / `<C-w>s` / `<C-w>V` / `<C-w>S` / `<C-w>h/j/k/l` / `<C-w>q` / `<C-w>o` /
+      `<C-w>=` / `<C-w>T`. Vertical and horizontal splits with per-buffer layouts (each tab carries its own
+      split tree), independent cursors / viewports per pane, pick-on-split (default `<C-w>v` opens the file
+      picker so the new pane lands on a different file straight away), and Vim-style same-buffer splits via
+      the uppercase variants. **Shipped in 0.1.8.**
+- [x] **`<C-w>` + integer resize.** `<C-w>10>` widens by 10 cols, `<C-w>5<` shrinks, `<C-w>[N]+` / `<C-w>[N]-`
+      adjust height. Parser accumulates digits inside the window-leader prefix; the layout walks to the
+      deepest matching-axis ancestor of the focused leaf and converts cells to a ratio against that subtree's
+      own rect (clamped to `[0.1, 0.9]`).
 - [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. The
       split work is done; this is the PTY + scrollback widget on top. **next**
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
-      Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`.
-      Persisted to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall
-      stays warm regardless of launch mode.
+      Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
+      to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm
+      regardless of launch mode.
 - [ ] **Tab completion in `:` ex commands.** Filenames after `:e`, buffer names after `:b`, command names from
       cold. **planned**
 - [ ] **Spell check.** Toggleable per-buffer, with `]s` / `[s` to jump between misspellings and `z=` for
@@ -30,14 +30,13 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [ ] **Large-file mode.** Skip tree-sitter + LSP attach when the buffer crosses a size threshold (e.g. 5MB or
       50k lines), with a status hint. The rope handles the byte volume fine; the highlight pass is what dies.
       **planned**
-- [x] **Inline ghost completion (LSP 3.18 `textDocument/inlineCompletion`).** Render the server's
-      suggestion as muted italic Overlay0 after the cursor on a 250 ms idle pause; `<Tab>` accepts
-      (honours the response's `range` so typed prefix isn't duplicated, trims trailing overlap with
-      post-cursor text, auto-opens `{ … }` blocks for partial suggestions); `<Enter>` accepts the
-      LSP popup item; any other key dismisses the ghost. Provider-neutral — Copilot's the first
-      server wired but any server speaking the spec gets the UI for free. Multi-line ghost render
-      (only the first line is currently painted; accepts insert all lines) is the remaining polish
-      item.
+- [x] **Inline ghost completion (LSP 3.18 `textDocument/inlineCompletion`).** Render the server's suggestion
+      as muted italic Overlay0 after the cursor on a 250 ms idle pause; `<Tab>` accepts (honours the
+      response's `range` so typed prefix isn't duplicated, trims trailing overlap with post-cursor text,
+      auto-opens `{ … }` blocks for partial suggestions); `<Enter>` accepts the LSP popup item; any other key
+      dismisses the ghost. Provider-neutral — Copilot's the first server wired but any server speaking the
+      spec gets the UI for free. Multi-line ghost render (only the first line is currently painted; accepts
+      insert all lines) is the remaining polish item.
 
 ## LSP
 
@@ -52,18 +51,30 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [ ] **`window/showMessage` and `window/logMessage` surfacing.** Server-emitted notifications and logs route
       to the notification box / a `:messages`-like buffer instead of being dropped. **planned**
-- [x] **Copilot via `copilot-language-server`.** Opt-in via `[copilot] enabled = true` in config.
-      Attached as an aux LSP to every buffer; auth is device-flow surfaced in the status line with
-      a 3 s auto-poll so the editor flips to "signed in" as soon as the user clicks through in the
-      browser. `:copilot` / `:copilot signin` / `:copilot reload` / `:copilot signout` ex commands.
-      No HTTP client in binvim — Node handles the networking.
+- [x] **Copilot via `copilot-language-server`.** Opt-in via `[copilot] enabled = true` in config. Attached as
+      an aux LSP to every buffer; auth is device-flow surfaced in the status line with a 3 s auto-poll so the
+      editor flips to "signed in" as soon as the user clicks through in the browser. `:copilot` /
+      `:copilot signin` / `:copilot reload` / `:copilot signout` ex commands. No HTTP client in binvim — Node
+      handles the networking.
 
 ## Debugger (DAP)
 
-- [ ] **delve (Go).** Second adapter. The registry was built for this. **next**
-- [ ] **debugpy (Python).** Third adapter. **planned**
-- [ ] **lldb-dap (Rust / C / C++).** Native-code debugging closes the loop on the systems-language side.
-      **planned**
+- [x] **delve (Go).** `dlv dap` on stdio. `package main` directories are
+      discovered under the workspace root (with the buffer's own dir
+      preferred when it's one of them); single match auto-picks, multiple
+      open the project picker. `mode: debug` so delve handles build + run
+      — no binvim-side prelaunch.
+- [x] **debugpy (Python).** `python3 -m debugpy.adapter` on stdio. Active
+      `.py` buffer is launched directly; otherwise the workspace root's
+      `main.py` / `__main__.py` / `app.py` / `manage.py` / `run.py` /
+      `server.py` / `cli.py` candidates feed the picker. `justMyCode:
+      false`.
+- [x] **lldb-dap (Rust / C / C++).** `lldb-dap` (with legacy
+      `lldb-vscode` fallback). Cargo workspace members (incl. `crates/*`
+      globs) are walked for `[[bin]]` / `src/main.rs` / `src/bin/*.rs`;
+      each bin is one picker row. Prelaunch `cargo build --bin <name>`,
+      launch `target/debug/<name>`. `env` serialised as the
+      `["K=V", ...]` array form lldb-dap requires.
 - [ ] **Watch expressions.** A user-managed list above locals, evaluated via `evaluate` per stop. **planned**
 - [ ] **Conditional + hit-count breakpoints.** Existing breakpoints are unconditional; DAP
       `breakpoint.condition` / `hitCondition` already carry the wire format. **considering**
@@ -102,14 +113,13 @@ These are explicit decisions worth recording so they don't get relitigated every
 
 - **No plugin system.** Every language, formatter, and LSP is hard-wired. Adding a language is a five-file PR
   (see CLAUDE.md). This keeps the binary self-contained and the codebase greppable.
-- **No in-binary LLM client, no chat sidebar.** binvim doesn't embed an HTTP client to talk to
-  Anthropic / OpenAI / Gemini / etc. directly, and there's no `:claude`-style conversation pane
-  bolted onto the editor. Users who want chat-driven coding run a dedicated tool (Claude Code,
-  Aider, etc.) alongside binvim — terminal multiplexers and split panes are the integration layer.
-  This rules out direct API integrations as first-class infrastructure but **not** AI features that
-  speak LSP — Copilot, supermaven, codeium-lsp, tabby, and any future server implementing
-  `textDocument/inlineCompletion` are wired the same way as rust-analyzer or tsserver, with no
-  HTTP stack on binvim's side. See the LSP / Editor sections.
+- **No in-binary LLM client, no chat sidebar.** binvim doesn't embed an HTTP client to talk to Anthropic /
+  OpenAI / Gemini / etc. directly, and there's no `:claude`-style conversation pane bolted onto the editor.
+  Users who want chat-driven coding run a dedicated tool (Claude Code, Aider, etc.) alongside binvim —
+  terminal multiplexers and split panes are the integration layer. This rules out direct API integrations as
+  first-class infrastructure but **not** AI features that speak LSP — Copilot, supermaven, codeium-lsp, tabby,
+  and any future server implementing `textDocument/inlineCompletion` are wired the same way as rust-analyzer
+  or tsserver, with no HTTP stack on binvim's side. See the LSP / Editor sections.
 - **Source-available, not open source.** See `LICENSE`. Contributions welcome under the existing terms;
   redistribution and forks are governed by the licence.
 - **Single binary, no runtime config beyond `~/.config/binvim/config.toml`.** No init script, no Lua /

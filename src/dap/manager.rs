@@ -149,17 +149,15 @@ impl DapManager {
         }
 
         let root = ctx.root.clone();
-        // Prelaunch runs inside the *project* directory when one was
-        // picked (so `dotnet build` rebuilds the right project), and the
-        // workspace root otherwise.
-        let prelaunch_cwd = ctx
-            .project_path
-            .as_ref()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| root.clone());
-        if let Some(pre) = adapter.prelaunch {
-            let output = std::process::Command::new(pre.program)
-                .args(pre.args)
+        // Prelaunch runs inside `ctx.root` — the dispatch in `dap_glue.rs`
+        // sets this to the project / manifest / package directory the
+        // build command should run inside (e.g. the `.csproj`'s parent
+        // for .NET, the member crate's manifest dir for Rust, the
+        // package dir for Go).
+        let prelaunch_cwd = root.clone();
+        if let Some(pre) = (adapter.prelaunch)(&ctx) {
+            let output = std::process::Command::new(&pre.program)
+                .args(&pre.args)
                 .current_dir(&prelaunch_cwd)
                 .output()
                 .map_err(|e| format!("{} failed to start: {}", pre.program, e))?;
@@ -191,10 +189,10 @@ impl DapManager {
                 json!({
                     "clientID": "binvim",
                     "clientName": "binvim",
-                    // VSCode's well-known type id for .NET — netcoredbg
-                    // (and other adapters) gate behaviour on it. Our
-                    // internal `adapter.key` ("dotnet") wouldn't match.
-                    "adapterID": "coreclr",
+                    // Each adapter declares its own well-known id — netcoredbg
+                    // keys behaviour off `"coreclr"`, debugpy off `"debugpy"`,
+                    // lldb-dap off `"lldb-dap"`, delve off `"go"`.
+                    "adapterID": adapter.adapter_id,
                     "pathFormat": "path",
                     "linesStartAt1": true,
                     "columnsStartAt1": true,

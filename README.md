@@ -1,6 +1,6 @@
 # binvim
 
-A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), opt-in GitHub Copilot via `copilot-language-server` with inline ghost completions, a built-in .NET debugger via DAP (multi-project picker, launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys), per-language formatters dispatched by extension (biome, csharpier, gofmt/goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter, plus `.editorconfig` reflow on every save), window splits with per-buffer layouts and pick-on-split (`<C-w>v` → picker → instant side-by-side), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, `<leader>/` per-language comment toggle, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
+A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, signature help, snippet expansion, find-references, document & workspace symbols), opt-in GitHub Copilot via `copilot-language-server` with inline ghost completions, built-in debuggers via DAP for .NET (netcoredbg), Go (delve), Python (debugpy), and Rust / C / C++ (lldb-dap) with project / bin / script pickers, .NET launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys, per-language formatters dispatched by extension (biome, csharpier, gofmt/goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter, plus `.editorconfig` reflow on every save), window splits with per-buffer layouts and pick-on-split (`<C-w>v` → picker → instant side-by-side), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, `<leader>/` per-language comment toggle, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, and a Catppuccin Mocha palette — all in one binary, no plugins.
 
 ## Features
 
@@ -72,12 +72,21 @@ Per-language servers with `initializationOptions`, project-root detection, and a
 
 ### Debugger (DAP)
 
-Built-in .NET debugger via [netcoredbg](https://github.com/Samsung/netcoredbg). Driven by an adapter-agnostic DAP client — netcoredbg is the first entry in the registry; delve, debugpy, lldb-dap, etc. plug in with one struct.
+Built-in debuggers via an adapter-agnostic DAP client. Four adapters ship today:
+
+| Language     | Adapter binary                | Selection                                                                                                                 |
+|--------------|-------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| .NET         | [netcoredbg](https://github.com/Samsung/netcoredbg) | `*.csproj` / `*.sln` / `*.fsproj` walks up to a `.sln` / `.git` root. Two-stage picker: project, then `launchSettings.json` profile. |
+| Go           | `dlv dap`                     | `go.mod`. Picker enumerates every directory with `package main` under the workspace root; the buffer's own dir auto-picks when it matches. |
+| Python       | `python3 -m debugpy.adapter`  | `pyproject.toml` / `setup.py` / `requirements.txt` / `Pipfile`. Active `.py` buffer wins; otherwise picks from `main.py` / `manage.py` / `app.py` / `__main__.py` / `run.py` / `server.py` / `cli.py`. |
+| Rust / C / C++ | `lldb-dap` (or legacy `lldb-vscode`) | `Cargo.toml`. Picker rows are each `[[bin]]` / `src/main.rs` / `src/bin/*.rs` across the workspace; prelaunch `cargo build --bin <name>`, launch `target/debug/<name>`. |
+
+Adding a fifth adapter is one row in `dap/specs.rs`'s registry plus a `build_launch_args` fn and a `dap_resolve_*` resolver in `app/dap_glue.rs`.
 
 | Capability               | Binding              | Notes                                                                                                                                                                          |
 |--------------------------|----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Start                    | `<leader>ds` / `F5`  | Walks up from the active buffer looking for `.sln` / `.git`, enumerates every `.csproj` / `.fsproj` / `.vbproj` underneath. 0 → error, 1 → straight through, >1 → project picker. Auto-restarts an active session (collapses the old `dq → ds` round-trip into one keystroke; waits up to 1.5 s for the previous debuggee to release its listening port). |
-| Launch profile           | (after project pick) | Reads `Properties/launchSettings.json`. Profiles with `commandName: "Project"` (Kestrel hosting) are runnable. 0 → framework defaults; 1 → use directly; >1 → profile picker. The chosen profile's `applicationUrl` becomes `ASPNETCORE_URLS`; its `environmentVariables` flow into the launched process env. |
+| Start                    | `<leader>ds` / `F5`  | Walks up from the active buffer to pick the adapter, then enumerates targets (`.csproj` / `package main` / `.py` script / `[[bin]]`). 0 → error, 1 → straight through, >1 → picker. Auto-restarts an active session (collapses the old `dq → ds` round-trip into one keystroke; waits up to 1.5 s for the previous debuggee to release its listening port). |
+| Launch profile           | (after .NET project pick) | Reads `Properties/launchSettings.json`. Profiles with `commandName: "Project"` (Kestrel hosting) are runnable. 0 → framework defaults; 1 → use directly; >1 → profile picker. The chosen profile's `applicationUrl` becomes `ASPNETCORE_URLS`; its `environmentVariables` flow into the launched process env. |
 | Stop                     | `<leader>dq` / `Shift+F5` | Sends `disconnect terminateDebuggee:true`; closes the bottom pane.                                                                                                              |
 | Continue                 | `<leader>dc` / `F5` (while paused) |                                                                                                                                                                                |
 | Step over / into / out   | `<leader>dn` / `di` / `dO` / `F10` / `F11` / `Shift+F11` |                                                                                                                                            |
@@ -287,6 +296,9 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `ktfmt`                         | Kotlin formatter                         | `brew install ktfmt`                                                     |
 | `sql-formatter`                 | SQL formatter (multi-dialect)            | `npm i -g sql-formatter`                                                 |
 | `netcoredbg`                    | .NET debug adapter (DAP)                 | Build from [github.com/Samsung/netcoredbg](https://github.com/Samsung/netcoredbg). The binary and its `libdbgshim.dylib` / `ManagedPart.dll` / `Microsoft.CodeAnalysis.*.dll` siblings need to live in the same directory — symlink them next to the binary if you copy out of the build's install dir. |
+| `dlv`                           | Go debug adapter (DAP)                   | `go install github.com/go-delve/delve/cmd/dlv@latest`                    |
+| `debugpy` (Python module)       | Python debug adapter (DAP)               | `pip install debugpy` (or `pipx inject` into a venv). binvim runs it as `python3 -m debugpy.adapter`. |
+| `lldb-dap`                      | Rust / C / C++ debug adapter (DAP)       | Ships with LLVM 18+: `brew install llvm` (then add `$(brew --prefix llvm)/bin` to `$PATH`). Falls back to the legacy `lldb-vscode` if `lldb-dap` isn't present. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |
 
@@ -391,7 +403,7 @@ src/
   dap.rs           slim entry — re-exports public API
   dap/
     types.rs       wire-side types — DapIncoming / DapEvent / breakpoint / frame / variable structs
-    specs.rs       adapter registry, project / launchSettings discovery, $PATH lookup
+    specs.rs       adapter registry (.NET / Go / Python / Rust), per-adapter target discovery, $PATH lookup
     client.rs      DapClient — spawn + stdin / stdout / stderr fan-out
     io.rs          reader-thread loop (Content-Length framing, same as LSP)
     manager.rs     DapManager — protocol state machine + drain

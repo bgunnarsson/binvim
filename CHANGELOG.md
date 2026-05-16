@@ -6,6 +6,42 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Three new DAP adapters: delve (Go), debugpy (Python), and lldb-dap
+  (Rust).** The registry that shipped in 0.2.0 was structured for this —
+  each adapter is one row in `BUILTIN_ADAPTERS` plus a launch-args
+  builder. `:debug` / `<leader>ds` now picks the right adapter by
+  walking up from the active buffer looking for `go.mod`, `Cargo.toml`,
+  `pyproject.toml` / `setup.py` / `requirements.txt` / `Pipfile`, or
+  any of the existing `.csproj` / `.sln` / `.fsproj` markers.
+  - **Go** runs `dlv dap` on stdio. Discovery scans the workspace for
+    directories containing `package main`; multiple mains open a
+    picker (the buffer's own directory is preferred when it's one of
+    them). `mode: debug` so delve builds + runs in one step — no
+    prelaunch from binvim's side.
+  - **Python** runs `python3 -m debugpy.adapter` (falls back to
+    `python`). If the active buffer is a `.py` it launches that
+    directly; otherwise it picks from `main.py` / `__main__.py` /
+    `app.py` / `manage.py` / `run.py` / `server.py` / `cli.py` at the
+    workspace root. `justMyCode: false` so step-into into third-party
+    packages works.
+  - **Rust (and C / C++)** runs `lldb-dap` (falls back to the legacy
+    `lldb-vscode`). The Cargo.toml at the workspace root — plus any
+    `[workspace].members` (incl. `crates/*` globs) — is parsed for
+    `[[bin]]` entries, `src/main.rs`, and `src/bin/*.rs`. Each bin is
+    one row in the picker; a single-bin crate auto-picks. Prelaunch is
+    `cargo build --bin <name>`; the resulting binary in
+    `target/debug/<name>` becomes the `launch.program`. `env` is
+    serialised as the `["K=V", ...]` array shape lldb-dap expects
+    (not the object form the other adapters take).
+- **Generalised `DapAdapterSpec`.** `prelaunch` is now a function
+  pointer that takes the resolved `LaunchContext` so per-target build
+  commands (`cargo build --bin foo`) work without a separate codepath.
+  `adapter_id` is a spec field instead of a hard-coded constant —
+  netcoredbg keeps `coreclr`, debugpy gets `debugpy`, delve gets `go`,
+  lldb-dap gets `lldb-dap`. Adding a fifth adapter is again a single
+  row + a launch-args fn.
+
 ## [0.2.1] - 2026-05-15
 
 ### Fixed

@@ -325,10 +325,41 @@ impl super::App {
                 self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
         }
         // Start from the active buffer's directory when it's path-backed
-        // (typical Normal-mode launch), otherwise the workspace cwd. Non-
-        // .cs files are fine — adapter resolution walks up looking for a
-        // .csproj/.sln so a README open at the project root still finds
-        // the right adapter.
+        // (typical Normal-mode launch), otherwise the workspace cwd.
+        // adapter_for_workspace walks up looking for any spec's root
+        // markers, so a buffer deep inside the tree still finds the
+        // right adapter regardless of what file is open.
+        let start_dir = self
+            .buffer
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| {
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
+            });
+        let Some((adapter, root)) = crate::dap::adapter_for_workspace(&start_dir) else {
+            self.status_msg = format!(
+                "debug: no adapter for {} (need *.csproj/.sln, Cargo.toml, go.mod, or pyproject.toml/setup.py/requirements.txt/Pipfile)",
+                start_dir.display()
+            );
+            return;
+        };
+        match adapter.key {
+            "dotnet" => self.dap_resolve_dotnet(),
+            "go" => self.dap_resolve_go(&root),
+            "python" => self.dap_resolve_python(&root),
+            "lldb" => self.dap_resolve_rust(&root),
+            other => {
+                self.status_msg = format!("debug: no resolver for adapter '{other}'");
+            }
+        }
+    }
+
+    /// .NET resolver — preserves the original two-stage project + profile
+    /// flow. Splits the workspace-root + project-discovery off the
+    /// generic dispatcher so the .sln/.git widening (which is unique to
+    /// .NET) doesn't leak into other adapters.
+    fn dap_resolve_dotnet(&mut self) {
         let start_dir = self
             .buffer
             .path
@@ -351,6 +382,249 @@ impl super::App {
                 self.dap_start_session_with_project(project);
             }
             _ => self.open_debug_project_picker(projects),
+        }
+    }
+
+    /// Go resolver — find every `package main` directory under the
+    /// workspace root. Auto-pick when there's exactly one (the common
+    /// single-binary case) so the user doesn't sit through a picker
+    /// for no choice.
+    fn dap_resolve_go(&mut self, workspace_root: &std::path::Path) {
+        let mains = crate::dap::find_go_main_dirs(workspace_root);
+        // Prefer the buffer's containing directory when it's one of the
+        // main packages — saves a picker step when the user has the
+        // file they want to debug already open.
+        if let Some(buf_path) = self.buffer.path.as_ref() {
+            if let Some(buf_dir) = buf_path.parent() {
+                let canon_buf = buf_dir.canonicalize().unwrap_or_else(|_| buf_dir.to_path_buf());
+                if mains.iter().any(|d| {
+                    d.canonicalize().unwrap_or_else(|_| d.clone()) == canon_buf
+                }) {
+                    self.dap_launch_simple_target("go", canon_buf, None);
+                    return;
+                }
+            }
+        }
+        match mains.len() {
+            0 => {
+                self.status_msg = format!(
+                    "debug: no `package main` under {}",
+                    workspace_root.display()
+                );
+            }
+            1 => {
+                let dir = mains.into_iter().next().unwrap();
+                self.dap_launch_simple_target("go", dir, None);
+            }
+            _ => self.open_debug_target_picker(
+                "go",
+                "Go package",
+                workspace_root,
+                mains.into_iter().map(|p| (p, None)).collect(),
+            ),
+        }
+    }
+
+    /// Python resolver — prefer the active buffer if it's a `.py`,
+    /// otherwise fall back to common entry-script names at the
+    /// workspace root. Opens a picker when several candidates tie.
+    fn dap_resolve_python(&mut self, workspace_root: &std::path::Path) {
+        if let Some(buf_path) = self.buffer.path.clone() {
+            if buf_path.extension().and_then(|s| s.to_str()) == Some("py") {
+                self.dap_launch_simple_target("python", buf_path, None);
+                return;
+            }
+        }
+        let scripts = crate::dap::find_python_entry_scripts(workspace_root);
+        match scripts.len() {
+            0 => {
+                self.status_msg = format!(
+                    "debug: open a .py buffer or add main.py/manage.py/app.py at {}",
+                    workspace_root.display()
+                );
+            }
+            1 => {
+                let script = scripts.into_iter().next().unwrap();
+                self.dap_launch_simple_target("python", script, None);
+            }
+            _ => self.open_debug_target_picker(
+                "python",
+                "Python entry script",
+                workspace_root,
+                scripts.into_iter().map(|p| (p, None)).collect(),
+            ),
+        }
+    }
+
+    /// Rust resolver — parse `Cargo.toml` (and workspace members) for
+    /// `[[bin]]` / `src/main.rs` / `src/bin/*.rs` targets. Each candidate
+    /// carries the manifest path and the bin name so the prelaunch can
+    /// invoke `cargo build --bin <name>` and `build_launch_args` can
+    /// locate `target/debug/<name>`.
+    fn dap_resolve_rust(&mut self, workspace_root: &std::path::Path) {
+        let bins = crate::dap::find_rust_bin_targets(workspace_root);
+        match bins.len() {
+            0 => {
+                self.status_msg = format!(
+                    "debug: no Rust bin targets under {} — only library crates?",
+                    workspace_root.display()
+                );
+            }
+            1 => {
+                let bin = bins.into_iter().next().unwrap();
+                self.dap_launch_simple_target(
+                    "lldb",
+                    bin.manifest_path,
+                    Some(bin.bin_name),
+                );
+            }
+            _ => {
+                let items: Vec<(std::path::PathBuf, Option<String>)> = bins
+                    .into_iter()
+                    .map(|b| (b.manifest_path, Some(b.bin_name)))
+                    .collect();
+                self.open_debug_target_picker(
+                    "lldb",
+                    "Rust bin target",
+                    workspace_root,
+                    items,
+                );
+            }
+        }
+    }
+
+    /// Open a picker for adapters whose launch target is a single path
+    /// (Go package dir, Python script, Rust manifest+bin). The display
+    /// label is the path relative to the workspace root, with the bin
+    /// name (Rust) appended when present so users can disambiguate
+    /// multiple bins from the same crate.
+    fn open_debug_target_picker(
+        &mut self,
+        adapter_key: &str,
+        title: &str,
+        workspace_root: &std::path::Path,
+        targets: Vec<(std::path::PathBuf, Option<String>)>,
+    ) {
+        use crate::picker::{PickerKind, PickerPayload, PickerState};
+        let canon_root = workspace_root
+            .canonicalize()
+            .unwrap_or_else(|_| workspace_root.to_path_buf());
+        let items: Vec<(String, PickerPayload)> = targets
+            .into_iter()
+            .map(|(path, name)| {
+                let rel = path
+                    .strip_prefix(&canon_root)
+                    .map(|r| r.display().to_string())
+                    .unwrap_or_else(|_| path.display().to_string());
+                let label = match &name {
+                    Some(n) => format!("{n} ({rel})"),
+                    None => rel,
+                };
+                (
+                    label,
+                    PickerPayload::DebugTarget {
+                        adapter_key: adapter_key.to_string(),
+                        path,
+                        name,
+                    },
+                )
+            })
+            .collect();
+        let picker = PickerState::new(PickerKind::DebugTarget, title.into(), items);
+        self.picker = Some(picker);
+        self.mode = Mode::Picker;
+    }
+
+    /// Single-stage launch path for the Go / Python / Rust adapters.
+    /// Builds a `LaunchContext` from the picked target and kicks off
+    /// the session — no second-stage profile picker.
+    pub(super) fn dap_start_target(
+        &mut self,
+        adapter_key: &str,
+        path: std::path::PathBuf,
+        name: Option<String>,
+    ) {
+        self.dap_launch_simple_target(adapter_key, path, name);
+    }
+
+    /// Shared launch routine for non-.NET adapters. `path` is whatever
+    /// the adapter's `build_launch_args` expects in `project_path`:
+    /// package dir (Go), script file (Python), manifest path (Rust).
+    fn dap_launch_simple_target(
+        &mut self,
+        adapter_key: &str,
+        path: std::path::PathBuf,
+        name: Option<String>,
+    ) {
+        // Re-resolve the adapter from a path under the target. For
+        // .NET-style flows we'd consult the stashed pending adapter,
+        // but here the picked path is enough — the registry's marker
+        // walk will land us on the same adapter.
+        let probe = if path.is_dir() {
+            path.clone()
+        } else {
+            path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| path.clone())
+        };
+        let Some((adapter, _)) = crate::dap::adapter_for_workspace(&probe) else {
+            self.status_msg =
+                format!("debug: lost adapter '{adapter_key}' after picker close");
+            return;
+        };
+        if adapter.key != adapter_key {
+            self.status_msg = format!(
+                "debug: adapter mismatch ({} vs {}) — workspace markers changed?",
+                adapter.key, adapter_key
+            );
+            return;
+        }
+        // For Rust the prelaunch + launch want the manifest dir as cwd.
+        // For Go the package dir IS the cwd. For Python the script's
+        // parent dir is the cwd. Compute root from `path`'s shape.
+        let root = if adapter_key == "lldb" {
+            // path is the manifest file — manifest dir is the cwd.
+            path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| path.clone())
+        } else if path.is_dir() {
+            path.clone()
+        } else {
+            path.parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| path.clone())
+        };
+        let ctx = crate::dap::LaunchContext {
+            root,
+            project_path: Some(path.clone()),
+            target_name: name.clone(),
+            application_urls: Vec::new(),
+            env: Default::default(),
+        };
+        let label = match &name {
+            Some(n) => format!("{} ({n})", adapter.key),
+            None => {
+                let stem = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if stem.is_empty() {
+                    adapter.key.to_string()
+                } else {
+                    format!("{} ({stem})", adapter.key)
+                }
+            }
+        };
+        self.status_msg = format!("debug: {label}");
+        self.debug_pane_open = true;
+        self.adjust_viewport();
+        match self.dap.start_session(adapter, ctx) {
+            Ok(()) => {
+                self.status_msg = "debug: session starting".into();
+            }
+            Err(e) => {
+                self.status_msg = format!("debug: {e}");
+            }
         }
     }
 
@@ -465,6 +739,7 @@ impl super::App {
         let ctx = crate::dap::LaunchContext {
             root: project_dir.clone(),
             project_path: Some(project.clone()),
+            target_name: None,
             application_urls,
             env,
         };

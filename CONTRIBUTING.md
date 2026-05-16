@@ -83,7 +83,13 @@ Add the crate to `Cargo.toml`, then a `Lang` variant + `ts_language()` arm + `hi
 
 ## Adding a new DAP adapter
 
-Register the adapter in `src/dap/specs.rs` (binary lookup + workspace root discovery + launch config). Adapter-specific behaviour stays in `specs.rs`; `manager.rs` and the wire layer in `types`/`io`/`client` are adapter-agnostic. Like the LSP layer, there is no plugin system — every adapter is hard-wired.
+Three touchpoints:
+
+1. **`src/dap/specs.rs`** — append a `DapAdapterSpec` to `BUILTIN_ADAPTERS` with `key`, `adapter_id`, `cmd_candidates`, `args`, `root_markers`, a `prelaunch` fn (return `None` if the adapter builds implicitly, e.g. delve), and a `build_launch_args` fn that produces the `launch` request JSON. Add per-adapter target discovery here (`find_<lang>_*` helper) if the picker needs to enumerate something beyond the file the user is on.
+2. **`src/app/dap_glue.rs`** — add a `dap_resolve_<lang>` method that wraps the 0/1/many discovery → auto-pick or open the `DebugTarget` picker → call `dap_start_target`. Register the new key in `dap_start_session`'s match arm.
+3. **`src/dap.rs`** — re-export any new public helpers / types.
+
+Adapter-specific behaviour stays in `dap/specs.rs` + `app/dap_glue.rs`; `manager.rs` and the wire layer in `types`/`io`/`client` are adapter-agnostic. Like the LSP layer, there is no plugin system — every adapter is hard-wired. The four shipped adapters (netcoredbg, delve, debugpy, lldb-dap) are useful blueprints — pick the one whose discovery / prelaunch shape is closest to your target.
 
 ## Verifying a change
 

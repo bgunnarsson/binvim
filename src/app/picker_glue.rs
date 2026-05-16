@@ -192,6 +192,13 @@ impl super::App {
                                 self.status_msg = "debug: profile pick lost context".into();
                             }
                         }
+                        PickerPayload::DebugTarget {
+                            adapter_key,
+                            path,
+                            name,
+                        } => {
+                            self.dap_start_target(&adapter_key, path, name);
+                        }
                     }
                 }
             }
@@ -244,7 +251,8 @@ impl super::App {
             | PickerKind::DocumentSymbols
             | PickerKind::CodeActions
             | PickerKind::DebugProject
-            | PickerKind::DebugProfile => picker.refilter(),
+            | PickerKind::DebugProfile
+            | PickerKind::DebugTarget => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());

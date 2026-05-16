@@ -18,6 +18,11 @@ pub enum PickerKind {
     /// Pick which `launchSettings.json` profile to use when the chosen
     /// project has more than one `commandName: "Project"` profile.
     DebugProfile,
+    /// Pick a launch target for a non-.NET adapter — Go main package,
+    /// Python entry script, or Rust `[[bin]]`. Distinguished from
+    /// `DebugProject` only so the picker title + accept hint can be
+    /// adapter-flavoured.
+    DebugTarget,
 }
 
 pub struct PickerState {
@@ -54,6 +59,16 @@ pub enum PickerPayload {
     /// (path + profile list) was stashed when the picker opened, so the
     /// payload only needs to identify which profile in that list.
     DebugProfile(usize),
+    /// Adapter-agnostic launch target — used by the Go / Python / Rust
+    /// flows where there's no .NET-style two-stage project→profile
+    /// picker. `path` is the package directory (Go), entry script
+    /// (Python), or manifest path (Rust); `name` carries the `[[bin]]`
+    /// target for Rust workspaces with multiple binaries.
+    DebugTarget {
+        adapter_key: String,
+        path: PathBuf,
+        name: Option<String>,
+    },
 }
 
 impl PickerState {
