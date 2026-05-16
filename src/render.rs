@@ -1831,6 +1831,20 @@ fn build_health_rows(
             } else {
                 diagnostics_chip_row(d, p)
             });
+            // LSP cache state — a 0 here means the server hasn't
+            // replied yet (or doesn't speak that capability). Useful
+            // for diagnosing "I see no highlights" / "tokens look
+            // identical to tree-sitter": if doc-hi shows N > 0, the
+            // server is responding and the renderer is the suspect;
+            // if it's still 0 after several seconds of sitting on a
+            // symbol, the server is the suspect.
+            active_lines.push(SectionLine::plain(
+                &format!(
+                    "doc-hi: {} cached  ·  sem-tok: {} cached",
+                    ab.doc_highlights, ab.semantic_tokens
+                ),
+                p.overlay1,
+            ));
             if ab.statuses.is_empty() {
                 active_lines.push(SectionLine::plain(
                     "(no LSP specs match this extension)",

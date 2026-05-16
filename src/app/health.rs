@@ -90,6 +90,14 @@ pub struct HealthActiveBuffer {
     pub cursor_col: usize,
     pub statuses: Vec<ActiveBufferLspStatus>,
     pub diagnostics: DiagnosticsCounts,
+    /// Number of cached `textDocument/documentHighlight` ranges for
+    /// this buffer. 0 means "no cache" (server hasn't replied yet, or
+    /// the cursor isn't on a symbol the server recognises).
+    pub doc_highlights: usize,
+    /// Total decoded `textDocument/semanticTokens/full` tokens for
+    /// this buffer. 0 means no cache (server didn't advertise the
+    /// capability, hasn't replied yet, or the buffer is empty).
+    pub semantic_tokens: usize,
 }
 
 #[derive(Default, Clone, Copy)]
@@ -222,6 +230,17 @@ impl super::App {
                 })
                 .unwrap_or_default();
 
+            let doc_highlights = self
+                .document_highlights
+                .get(p)
+                .map(|c| c.ranges.len())
+                .unwrap_or(0);
+            let semantic_tokens = self
+                .semantic_tokens
+                .get(p)
+                .map(|c| c.by_line.iter().map(|row| row.len()).sum::<usize>())
+                .unwrap_or(0);
+
             HealthActiveBuffer {
                 display_path,
                 language,
@@ -231,6 +250,8 @@ impl super::App {
                 cursor_col,
                 statuses,
                 diagnostics,
+                doc_highlights,
+                semantic_tokens,
             }
         });
 
