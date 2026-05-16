@@ -1883,6 +1883,20 @@ fn build_health_rows(
                     (format!("{} pending", h.pending_requests), pending_colour),
                 ],
             });
+            // Per-kind pending breakdown on an indented follow-up row.
+            // Shown only when something is actually pending so the
+            // common-case clean state doesn't grow the section.
+            if !h.pending_breakdown.is_empty() {
+                let detail = h
+                    .pending_breakdown
+                    .iter()
+                    .map(|(kind, n)| format!("{n}× {kind}"))
+                    .collect::<Vec<_>>()
+                    .join("  ");
+                lsp_lines.push(SectionLine::Custom {
+                    parts: vec![(format!("    {detail}"), p.overlay1)],
+                });
+            }
         }
     }
     let lsp_title = format!("LSP SERVERS ({} running)", snap.lsps.len());

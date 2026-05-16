@@ -271,16 +271,26 @@ impl LspManager {
             .clients
             .iter()
             .map(|(key, client)| {
-                let pending = self
-                    .pending
-                    .keys()
-                    .filter(|(k, _)| k == key)
-                    .count();
+                let mut counts: std::collections::HashMap<&'static str, usize> =
+                    std::collections::HashMap::new();
+                for ((k, _), req) in self.pending.iter() {
+                    if k != key {
+                        continue;
+                    }
+                    *counts.entry(pending_request_kind(req)).or_insert(0) += 1;
+                }
+                let pending: usize = counts.values().sum();
+                let mut breakdown: Vec<(String, usize)> = counts
+                    .into_iter()
+                    .map(|(k, v)| (k.to_string(), v))
+                    .collect();
+                breakdown.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
                 LspHealth {
                     key: key.clone(),
                     language_id: client.language_id.clone(),
                     root_uri: client.root_uri.clone(),
                     pending_requests: pending,
+                    pending_breakdown: breakdown,
                 }
             })
             .collect();
@@ -721,6 +731,29 @@ impl LspManager {
 /// — its legacy `OmniSharp.Razor` extension is abandoned and the bundled
 /// `--languageserver` build typically lacks the Razor source generator,
 /// so every directive becomes a spurious error.
+/// Short stable label for a pending request variant — used by
+/// `:health` to surface "8× SemanticTokens stuck" instead of just a
+/// flat count.
+fn pending_request_kind(req: &PendingRequest) -> &'static str {
+    match req {
+        PendingRequest::GotoDef => "GotoDef",
+        PendingRequest::Hover => "Hover",
+        PendingRequest::Completion => "Completion",
+        PendingRequest::SignatureHelp => "SignatureHelp",
+        PendingRequest::References => "References",
+        PendingRequest::DocumentSymbols => "DocumentSymbols",
+        PendingRequest::WorkspaceSymbols => "WorkspaceSymbols",
+        PendingRequest::CodeActions => "CodeActions",
+        PendingRequest::Rename => "Rename",
+        PendingRequest::InlayHints { .. } => "InlayHints",
+        PendingRequest::DocumentHighlight { .. } => "DocumentHighlight",
+        PendingRequest::SemanticTokens { .. } => "SemanticTokens",
+        PendingRequest::CopilotCheckStatus => "CopilotCheckStatus",
+        PendingRequest::CopilotSignIn => "CopilotSignIn",
+        PendingRequest::CopilotInline { .. } => "CopilotInline",
+    }
+}
+
 fn suppress_diagnostics_from(client_key: &str, path: &Path) -> bool {
     if client_key != "omnisharp" {
         return false;

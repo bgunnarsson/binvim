@@ -272,6 +272,11 @@ pub struct LspHealth {
     pub language_id: String,
     pub root_uri: String,
     pub pending_requests: usize,
+    /// Breakdown of pending requests by kind, sorted descending by
+    /// count. Lets `:health` surface "8× SemanticTokens stuck" instead
+    /// of the flat "8 pending" — load-bearing for diagnosing slow /
+    /// hung servers.
+    pub pending_breakdown: Vec<(String, usize)>,
 }
 
 #[derive(Debug, Clone)]
