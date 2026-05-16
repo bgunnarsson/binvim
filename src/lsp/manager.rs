@@ -291,6 +291,8 @@ impl LspManager {
                     root_uri: client.root_uri.clone(),
                     pending_requests: pending,
                     pending_breakdown: breakdown,
+                    initialized: client.is_initialized(),
+                    queued_init_frames: client.queued_init_frames(),
                 }
             })
             .collect();

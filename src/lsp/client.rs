@@ -250,6 +250,29 @@ impl LspClient {
         id
     }
 
+    /// True once the server has answered `initialize` and the reader
+    /// thread has promoted the queue to Ready. Stays false when the
+    /// "server" turns out to be a non-functional wrapper that exits
+    /// without sending a response (a common failure mode with the
+    /// rustup proxy when the toolchain doesn't have a real
+    /// rust-analyzer component installed) — in that case the LSP
+    /// looks "running" but requests pile up in the init queue
+    /// forever and never go on the wire.
+    pub fn is_initialized(&self) -> bool {
+        matches!(*self.init_state.lock().unwrap(), InitState::Ready)
+    }
+
+    /// Number of frames waiting in the init buffer to be flushed
+    /// once `initialize` resolves. Anything > 0 alongside
+    /// `is_initialized() == false` after a few seconds means the
+    /// server is wedged at startup.
+    pub fn queued_init_frames(&self) -> usize {
+        match &*self.init_state.lock().unwrap() {
+            InitState::Buffering(q) => q.len(),
+            InitState::Ready => 0,
+        }
+    }
+
     /// Write a frame straight to stdin. Used by `send_request_direct` for the
     /// initialize request and by the reader thread when flushing the queue.
     fn write_frame_unconditional(&self, frame: &[u8]) -> std::io::Result<()> {

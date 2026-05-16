@@ -288,6 +288,15 @@ pub struct LspHealth {
     /// of the flat "8 pending" — load-bearing for diagnosing slow /
     /// hung servers.
     pub pending_breakdown: Vec<(String, usize)>,
+    /// True once the server has answered `initialize`. False means the
+    /// init queue is still buffering — anything > 0 in
+    /// `queued_init_frames` here is a request that won't go on the
+    /// wire until initialize lands, and if that never happens (e.g.
+    /// rustup proxy invoking a non-installed rust-analyzer
+    /// component, or the binary being a non-LSP wrapper) the server
+    /// is effectively a no-op even though the process is "running".
+    pub initialized: bool,
+    pub queued_init_frames: usize,
 }
 
 #[derive(Debug, Clone)]

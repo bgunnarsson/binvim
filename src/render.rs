@@ -1889,17 +1889,39 @@ fn build_health_rows(
         for h in &snap.lsps {
             let root = display_lsp_root(&h.root_uri, 40);
             let pending_colour = if h.pending_requests > 0 { p.peach } else { p.overlay1 };
-            lsp_lines.push(SectionLine::Custom {
-                parts: vec![
-                    (format!("• {:<18} ", h.key), p.text),
-                    (format!("{:<16} ", h.language_id), p.subtext1),
-                    (format!("{:<40} ", root), p.overlay1),
-                    (format!("{} pending", h.pending_requests), pending_colour),
-                ],
-            });
-            // Per-kind pending breakdown on an indented follow-up row.
-            // Shown only when something is actually pending so the
-            // common-case clean state doesn't grow the section.
+            // A server stuck in the init buffer is the "looks alive
+            // but isn't" failure mode — surface it as a loud Red
+            // marker on the main row so the user can't miss it.
+            let status_chip = if !h.initialized {
+                Some(("NOT INITIALIZED", p.red))
+            } else {
+                None
+            };
+            let mut parts = vec![
+                (format!("• {:<18} ", h.key), p.text),
+                (format!("{:<16} ", h.language_id), p.subtext1),
+                (format!("{:<40} ", root), p.overlay1),
+            ];
+            if let Some((label, colour)) = status_chip {
+                parts.push((format!("{label}  "), colour));
+            }
+            parts.push((format!("{} pending", h.pending_requests), pending_colour));
+            lsp_lines.push(SectionLine::Custom { parts });
+            // Indented follow-ups: stuck-init hint, then per-kind
+            // pending breakdown. Either appears only when there's
+            // something to say so the clean-state view doesn't grow.
+            if !h.initialized && h.queued_init_frames > 0 {
+                lsp_lines.push(SectionLine::Custom {
+                    parts: vec![(
+                        format!(
+                            "    {} frames queued — server hasn't answered initialize. \
+                             Likely a missing / wrapper binary; check `:messages` for stderr.",
+                            h.queued_init_frames
+                        ),
+                        p.peach,
+                    )],
+                });
+            }
             if !h.pending_breakdown.is_empty() {
                 let detail = h
                     .pending_breakdown
