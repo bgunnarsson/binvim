@@ -364,7 +364,11 @@ impl LspManager {
                         }
                     }
                     LspIncoming::ErrorReply { id, .. } => {
-                        self.pending.remove(&(client_key.clone(), id));
+                        if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
+                            let kind = pending_request_kind(&req);
+                            let path = pending_request_path(&req);
+                            events.push(LspEvent::RequestFailed { kind, path });
+                        }
                     }
                     LspIncoming::ApplyEditRequest { id, edit } => {
                         events.push(LspEvent::ApplyEditRequest {
@@ -731,6 +735,20 @@ impl LspManager {
 /// — its legacy `OmniSharp.Razor` extension is abandoned and the bundled
 /// `--languageserver` build typically lacks the Razor source generator,
 /// so every directive becomes a spurious error.
+/// Path the request was anchored to, when meaningful. Used by the
+/// `RequestFailed` event so the App can free the right in-flight
+/// throttle slot. Returns `None` for kinds whose pending entry
+/// doesn't carry a path.
+fn pending_request_path(req: &PendingRequest) -> Option<PathBuf> {
+    match req {
+        PendingRequest::InlayHints { path } => Some(path.clone()),
+        PendingRequest::DocumentHighlight { path, .. } => Some(path.clone()),
+        PendingRequest::SemanticTokens { path, .. } => Some(path.clone()),
+        PendingRequest::CopilotInline { path, .. } => Some(path.clone()),
+        _ => None,
+    }
+}
+
 /// Short stable label for a pending request variant — used by
 /// `:health` to surface "8× SemanticTokens stuck" instead of just a
 /// flat count.

@@ -346,12 +346,20 @@ pub struct App {
     /// stale cache (cursor moved off, response not back yet) doesn't
     /// flash wrong highlights.
     pub document_highlights: HashMap<PathBuf, DocumentHighlightCache>,
-    /// In-flight `textDocument/documentHighlight` anchors, keyed by
-    /// path. Used to skip re-firing while a response for the same
-    /// (line, col, version) is still on the wire — without this,
-    /// holding `j` would burst a request per keystroke even though
-    /// the previous one is still mid-round-trip.
-    pub last_document_highlight_request: HashMap<PathBuf, (usize, usize, u64)>,
+    /// Paths with an in-flight `textDocument/documentHighlight`
+    /// request. Capped at one per path so a user navigating fast (or
+    /// firing during a server's cold-start indexing window) can't
+    /// queue up hundreds of requests that the server hasn't gotten to
+    /// yet — intermediate positions get skipped, and the next idle
+    /// render after the response fires for wherever the cursor has
+    /// settled.
+    pub document_highlight_in_flight: std::collections::HashSet<PathBuf>,
+    /// Paths with an in-flight `textDocument/inlayHint` request. Same
+    /// cap-to-one semantics as `document_highlight_in_flight`.
+    pub inlay_hints_in_flight: std::collections::HashSet<PathBuf>,
+    /// Paths with an in-flight `textDocument/semanticTokens/full`
+    /// request. Same cap-to-one semantics as the others.
+    pub semantic_tokens_in_flight: std::collections::HashSet<PathBuf>,
     /// Ring buffer of server-emitted `window/showMessage` /
     /// `window/logMessage` notifications. Newest at the tail. Bounded
     /// so a chatty server (jdtls warming up, OmniSharp resolving
@@ -563,7 +571,9 @@ impl App {
             semantic_tokens: HashMap::new(),
             last_semantic_tokens_request_version: HashMap::new(),
             document_highlights: HashMap::new(),
-            last_document_highlight_request: HashMap::new(),
+            document_highlight_in_flight: std::collections::HashSet::new(),
+            inlay_hints_in_flight: std::collections::HashSet::new(),
+            semantic_tokens_in_flight: std::collections::HashSet::new(),
             lsp_messages: Vec::new(),
             show_messages_page: false,
             messages_scroll: 0,

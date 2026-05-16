@@ -193,6 +193,17 @@ pub enum LspEvent {
         buffer_version: u64,
     },
     NotFound(&'static str),
+    /// Server returned an error reply (not a successful result) for a
+    /// tracked request — used by the App to free in-flight throttle
+    /// slots so we don't deadlock waiting forever for a response that
+    /// will never arrive. `kind` is the short label from
+    /// `pending_request_kind`; `path` is the buffer the request was
+    /// anchored to (None for kinds without a path, e.g. workspace
+    /// symbols or Copilot status).
+    RequestFailed {
+        kind: &'static str,
+        path: Option<PathBuf>,
+    },
 }
 
 /// A code action the user can pick from `<leader>a`. We keep the raw

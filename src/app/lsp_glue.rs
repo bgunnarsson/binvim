@@ -76,6 +76,7 @@ impl super::App {
                 }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::InlayHints { path, hints } => {
+                    self.inlay_hints_in_flight.remove(&path);
                     if hints.is_empty() {
                         self.inlay_hints.remove(&path);
                     } else {
@@ -87,6 +88,7 @@ impl super::App {
                     buffer_version,
                     tokens,
                 } => {
+                    self.semantic_tokens_in_flight.remove(&path);
                     // Drop the reply if the buffer has moved on — the
                     // token col indices are anchored to the version we
                     // asked for, and re-anchoring them against a newer
@@ -140,22 +142,16 @@ impl super::App {
                     anchor_version,
                     ranges,
                 } => {
-                    // Always clear the in-flight marker for this path so
-                    // the next cursor move can re-fire.
-                    self.last_document_highlight_request.remove(&path);
+                    // Free the in-flight slot for this path so the
+                    // next idle render can fire for wherever the
+                    // cursor has moved to in the meantime.
+                    self.document_highlight_in_flight.remove(&path);
                     // Always store the cache — even when `ranges` is
-                    // empty — so the request-due check has a "we
-                    // already asked this anchor" signal to dedupe on.
-                    // Without this, an empty reply (cursor on
-                    // whitespace / comment / no-symbol position) would
-                    // delete the cache, the next render would see no
-                    // match in `last_document_highlight_request` and
-                    // no cache anchor match, and we'd re-fire the
-                    // same request every render — leaking one pending
-                    // entry per frame. The renderer's
-                    // `line_document_highlights` already returns empty
-                    // when `ranges` is empty, so an empty cache draws
-                    // nothing.
+                    // empty — so the cache-anchor check has a "we
+                    // already asked this anchor" signal. The
+                    // renderer's `line_document_highlights` already
+                    // returns empty when `ranges` is empty, so an
+                    // empty cache draws nothing.
                     self.document_highlights.insert(
                         path,
                         crate::app::DocumentHighlightCache {
@@ -204,6 +200,22 @@ impl super::App {
                             replace_start_col,
                             path,
                         });
+                    }
+                }
+                LspEvent::RequestFailed { kind, path } => {
+                    if let Some(p) = path {
+                        match kind {
+                            "InlayHints" => {
+                                self.inlay_hints_in_flight.remove(&p);
+                            }
+                            "DocumentHighlight" => {
+                                self.document_highlight_in_flight.remove(&p);
+                            }
+                            "SemanticTokens" => {
+                                self.semantic_tokens_in_flight.remove(&p);
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 LspEvent::NotFound(kind) => {
@@ -711,9 +723,11 @@ impl super::App {
     }
 
     /// Ask the active buffer's LSP for inlay hints — once per buffer
-    /// version. Throttled by `last_inlay_request_version` so we don't
-    /// spam the server on every keystroke; the debounced sync upstream
-    /// already coalesces text changes.
+    /// version, capped to one in-flight per path. Throttled by both
+    /// `last_inlay_request_version` (so a stable buffer doesn't ask
+    /// repeatedly for the same version) and `inlay_hints_in_flight`
+    /// (so rapid typing across many versions can't queue up against
+    /// a slow / indexing server).
     pub(super) fn lsp_request_inlay_hints_if_due(&mut self) {
         let Some(path) = self.buffer.path.clone() else { return; };
         let version = self.buffer.version;
@@ -725,16 +739,20 @@ impl super::App {
         if last == version {
             return;
         }
+        if self.inlay_hints_in_flight.contains(&path) {
+            return;
+        }
         let end_line = self.buffer.line_count();
         if self.lsp.request_inlay_hints(&path, end_line) {
-            self.last_inlay_request_version.insert(path, version);
+            self.last_inlay_request_version.insert(path.clone(), version);
+            self.inlay_hints_in_flight.insert(path);
         }
     }
 
-    /// Fire `textDocument/semanticTokens/full` once per buffer version.
-    /// Same throttle shape as inlay hints — the debounced sync upstream
-    /// coalesces text changes, and we only re-ask once the buffer
-    /// version has bumped.
+    /// Fire `textDocument/semanticTokens/full` once per buffer version,
+    /// capped to one in-flight per path. Same dual-throttle shape as
+    /// inlay hints — version dedup for the stable case, in-flight
+    /// dedup for the fast-typing-against-a-busy-server case.
     pub(super) fn lsp_request_semantic_tokens_if_due(&mut self) {
         let Some(path) = self.buffer.path.clone() else { return; };
         let version = self.buffer.version;
@@ -746,18 +764,25 @@ impl super::App {
         if last == version {
             return;
         }
+        if self.semantic_tokens_in_flight.contains(&path) {
+            return;
+        }
         if self.lsp.request_semantic_tokens_full(&path, version) {
-            self.last_semantic_tokens_request_version.insert(path, version);
+            self.last_semantic_tokens_request_version.insert(path.clone(), version);
+            self.semantic_tokens_in_flight.insert(path);
         }
     }
 
     /// Fire `textDocument/documentHighlight` when the cursor has landed
     /// on a position the server hasn't been asked about yet for the
-    /// current buffer version. The previous cache (if any) keeps
-    /// painting until the new response comes back — so cursor movement
-    /// between identifiers swaps highlights cleanly without a flicker
-    /// gap. Stale responses are filtered in `handle_lsp_events` by
-    /// matching the anchor against the live cursor + version.
+    /// current buffer version. Only one request is allowed in flight
+    /// per buffer path at a time — fast cursor movement while the
+    /// server is busy (cold-start indexing in particular) would
+    /// otherwise queue hundreds of requests against a server that
+    /// can't drain them, and we'd never catch up. Intermediate cursor
+    /// positions get skipped when the user moves fast; once the
+    /// in-flight request returns, the next idle render fires for
+    /// wherever the cursor has settled.
     pub(super) fn lsp_request_document_highlight_if_due(&mut self) {
         // Don't fire while a popup / picker is up (those overlays
         // suspend the cursor's editing meaning) or in Insert mode
@@ -773,9 +798,8 @@ impl super::App {
         let line = self.window.cursor.line;
         let col = self.window.cursor.col;
         let version = self.buffer.version;
-        // Skip if the cache's anchor already matches — that means we
-        // already asked for this exact (line, col, version) combination
-        // and got a response back.
+        // Skip if the cache's anchor already matches the live cursor —
+        // we already have the answer and the renderer is painting it.
         if let Some(cache) = self.document_highlights.get(&path) {
             if cache.anchor_line == line
                 && cache.anchor_col == col
@@ -784,16 +808,15 @@ impl super::App {
                 return;
             }
         }
-        // Or if an identical request is already in flight — without
-        // this guard, holding `j` would burst one request per repeat.
-        if let Some(pending) = self.last_document_highlight_request.get(&path) {
-            if *pending == (line, col, version) {
-                return;
-            }
+        // Skip if any documentHighlight request for this path is
+        // already in flight. The response handler clears the marker,
+        // so the next render after the reply fires for wherever the
+        // cursor has moved to in the meantime.
+        if self.document_highlight_in_flight.contains(&path) {
+            return;
         }
         if self.lsp.request_document_highlight(&path, line, col, version) {
-            self.last_document_highlight_request
-                .insert(path, (line, col, version));
+            self.document_highlight_in_flight.insert(path);
         }
     }
 
