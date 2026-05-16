@@ -804,12 +804,18 @@ impl super::App {
         let line = self.window.cursor.line;
         let col = self.window.cursor.col;
         let version = self.buffer.version;
-        // Skip if the cache's anchor already matches the live cursor —
-        // we already have the answer and the renderer is painting it.
+        // Skip if the cache covers the current cursor position — we
+        // already have the answer for this symbol and the renderer is
+        // painting it. Buffer version still has to match exactly so
+        // an edit invalidates the column indices and forces a refetch.
         if let Some(cache) = self.document_highlights.get(&path) {
-            if cache.anchor_line == line
-                && cache.anchor_col == col
-                && cache.anchor_version == version
+            if cache.anchor_version == version
+                && cache.ranges.iter().any(|r| {
+                    r.start_line == line
+                        && line == r.end_line
+                        && col >= r.start_col
+                        && col < r.end_col
+                })
             {
                 return;
             }
@@ -827,15 +833,16 @@ impl super::App {
     }
 
     /// Char-column ranges of document-highlight matches on `line` of
-    /// `path`. The cache only paints when its anchor matches the live
-    /// cursor + buffer version on the active buffer — that keeps the
-    /// highlights consistent with the symbol under the cursor without
-    /// flashing stale ranges when the cursor moves. Empty Vec when no
-    /// cache exists for `path` or the anchor doesn't match.
+    /// `path`. Paints whenever the live cursor sits inside any of the
+    /// cached ranges (i.e. still on the same symbol the request was
+    /// anchored to) — moving the cursor within a multi-char identifier
+    /// doesn't blink the highlights off and on between requests, and
+    /// stale ranges from a previous symbol stop painting the moment
+    /// the cursor leaves them. Buffer version still has to match
+    /// exactly: a single edit invalidates the column indices the
+    /// server returned, and re-anchoring them blind would smear
+    /// highlights onto unrelated tokens.
     pub fn line_document_highlights(&self, path: &std::path::Path, line: usize) -> Vec<(usize, usize)> {
-        // Highlights anchor to the active buffer's cursor. If the
-        // active buffer differs from `path`, the cache for `path`
-        // (if any) is from a previous focus and isn't current.
         let active_path = match self.buffer.path.as_deref() {
             Some(p) => p,
             None => return Vec::new(),
@@ -843,18 +850,23 @@ impl super::App {
         let Some(cache) = self.document_highlights.get(active_path) else {
             return Vec::new();
         };
-        // Anchor still valid?
-        let cursor_line = self.window.cursor.line;
-        let cursor_col = self.window.cursor.col;
-        if cache.anchor_line != cursor_line
-            || cache.anchor_col != cursor_col
-            || cache.anchor_version != self.buffer.version
-        {
+        if cache.anchor_version != self.buffer.version {
             return Vec::new();
         }
-        // Only paint highlights into a pane displaying the same path —
-        // otherwise an inactive pane showing a different file would
-        // pick up the active buffer's highlights, which is just noise.
+        let cursor_line = self.window.cursor.line;
+        let cursor_col = self.window.cursor.col;
+        let cursor_in_match = cache.ranges.iter().any(|r| {
+            r.start_line == cursor_line
+                && cursor_line == r.end_line
+                && cursor_col >= r.start_col
+                && cursor_col < r.end_col
+        });
+        if !cursor_in_match {
+            return Vec::new();
+        }
+        // Only paint into a pane displaying the same path — otherwise
+        // an inactive pane showing a different file would pick up the
+        // active buffer's highlights, which is just noise.
         if active_path != path {
             return Vec::new();
         }
