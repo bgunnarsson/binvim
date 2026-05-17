@@ -93,7 +93,15 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       path so fast navigation can't queue up against a slow / cold-
       indexing server.
 - [ ] **Code lens.** `textDocument/codeLens` for things like "Run test" / "Debug test" / reference counts
-      above declarations. Renders as virtual text on the line above the anchor. **planned**
+      above declarations. Renders as virtual text on the line above the anchor. Click (or a keybind on the
+      anchor line) invokes the lens's `command` field; server-side commands like rust-analyzer's
+      `rust-analyzer.runSingle` are intercepted client-side and routed into the integrated test runner
+      (`cmd_test_nearest` codepath) so the lens and `:testnearest` share one engine instead of each lens
+      being a separate shell-out. Two prereqs: (1) a new render path for virtual text *above* a line
+      (`:Gblame` does inline-on-a-line, not the row above — would need a per-row vertical offset in the
+      render walk and a re-measure of viewport math against it), (2) a `code_lens` cache parallel to
+      `inlay_hints` / `semantic_tokens` (per-buffer + version-keyed, request-on-due in the render loop, one
+      in-flight at a time per buffer path). **planned**
 - [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [x] **`window/showMessage` and `window/logMessage` surfacing.** Both
