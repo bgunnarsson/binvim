@@ -362,6 +362,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("b".into(), "+Buffer".into()),
         ("d".into(), "+Debug".into()),
         ("h".into(), "+Hunk".into()),
+        ("s".into(), "+Test".into()),
         ("t".into(), "+Terminal".into()),
         ("g".into(), "Grep".into()),
         ("e".into(), "Yazi".into()),
@@ -378,6 +379,17 @@ pub fn terminal_prefix_entries() -> Vec<(String, String)> {
         ("p".into(), "Toggle terminal".into()),
         ("f".into(), "Focus terminal".into()),
         ("q".into(), "Close terminal".into()),
+    ]
+}
+
+pub fn test_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("s".into(), "Test picker".into()),
+        ("n".into(), "Test nearest".into()),
+        ("f".into(), "Test file".into()),
+        ("l".into(), "Test last".into()),
+        ("q".into(), "Cancel run".into()),
+        ("r".into(), "Results overlay".into()),
     ]
 }
 

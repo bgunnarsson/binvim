@@ -134,6 +134,12 @@ impl super::App {
                 }
             }
             Action::TerminalToggle => self.toggle_terminal_pane(),
+            Action::TestPicker => self.cmd_test_picker(),
+            Action::TestNearest => self.cmd_test_nearest(),
+            Action::TestFile => self.cmd_test_file(),
+            Action::TestLast => self.cmd_test_last(),
+            Action::TestCancel => self.cmd_test_cancel(),
+            Action::TestResults => self.cmd_test_results(),
             Action::WindowSplitVertical => self.window_split(crate::layout::SplitDir::Vertical),
             Action::WindowSplitHorizontal => self.window_split(crate::layout::SplitDir::Horizontal),
             Action::WindowSplitVerticalPick => {

@@ -866,6 +866,11 @@ impl App {
                             title: "Terminal".into(),
                             entries: state::terminal_prefix_entries(),
                         })
+                    } else if self.pending.awaiting_test_leader {
+                        Some(WhichKeyState {
+                            title: "Test".into(),
+                            entries: state::test_prefix_entries(),
+                        })
                     } else {
                         None
                     };

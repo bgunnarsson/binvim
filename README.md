@@ -188,8 +188,14 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>tp` | Toggle terminal pane visibility — PTYs stay alive in the background while hidden |
 | `<space>tf` | Focus the terminal pane (drop into `Mode::Terminal` — typing flows to the shell again) |
 | `<space>tq` | Close the active terminal tab (pane hides when the last one goes) |
+| `<space>ss` | Test picker (same as `:test`)         |
+| `<space>sn` | Run the nearest test (same as `:testnearest`) |
+| `<space>sf` | Run every test in the active file (same as `:testfile`) |
+| `<space>sl` | Re-run the most recent test (same as `:testlast`) |
+| `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
+| `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
 
-Hold `<space>` (or `<space>b` / `<space>d` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
+Hold `<space>` (or `<space>b` / `<space>d` / `<space>h` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 

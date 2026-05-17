@@ -233,6 +233,24 @@ pub enum Action {
     /// `<leader>dp` for the debug pane: open + focus if not alive,
     /// close if it is.
     TerminalToggle,
+    /// `<leader>ss` — open the integrated test runner's picker.
+    /// Same effect as `:test`.
+    TestPicker,
+    /// `<leader>sn` — run the test enclosing the cursor. Same as
+    /// `:testnearest`.
+    TestNearest,
+    /// `<leader>sf` — run every test in the active buffer's file.
+    /// Same as `:testfile`.
+    TestFile,
+    /// `<leader>sl` — re-run the most recent test invocation. Same
+    /// as `:testlast`.
+    TestLast,
+    /// `<leader>sq` — kill the running test adapter. Same as
+    /// `:testcancel`.
+    TestCancel,
+    /// `<leader>sr` — toggle the streaming results overlay. Same as
+    /// `:testresults`.
+    TestResults,
     /// `<C-w>V` — split the active window vertically with the *same*
     /// buffer in the new pane (Vim default — two viewports of one file).
     WindowSplitVertical,
@@ -322,6 +340,10 @@ pub struct PendingCmd {
     /// Set after `<leader>t` — next char picks a terminal action
     /// (`o` open, `q` close).
     pub awaiting_terminal_leader: bool,
+    /// Set after `<leader>s` — next char picks a test-runner action
+    /// (`s` picker, `n` nearest, `f` file, `l` last, `q` cancel,
+    /// `r` results overlay).
+    pub awaiting_test_leader: bool,
     /// Set after `<C-w>` — next char picks a window action
     /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
     /// Wired in Normal mode only; cancels on any unrecognised follow-up.
@@ -682,6 +704,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_terminal_leader = true;
             return ParseResult::Pending;
         }
+        // `s` opens the test-runner sub-menu (`<leader>ss` picker,
+        // `<leader>sn` nearest, `<leader>sf` file, …).
+        if ch == 's' {
+            state.awaiting_test_leader = true;
+            return ParseResult::Pending;
+        }
         let action = match ch {
             ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
             '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
@@ -812,6 +840,25 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'q' => Some(Action::TerminalClose),
             'f' => Some(Action::TerminalFocus),
             'p' => Some(Action::TerminalToggle),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Test-runner prefix dispatch (after `<leader>s`).
+    if state.awaiting_test_leader {
+        state.awaiting_test_leader = false;
+        let action = match ch {
+            's' => Some(Action::TestPicker),
+            'n' => Some(Action::TestNearest),
+            'f' => Some(Action::TestFile),
+            'l' => Some(Action::TestLast),
+            'q' => Some(Action::TestCancel),
+            'r' => Some(Action::TestResults),
             _ => None,
         };
         state.reset();
