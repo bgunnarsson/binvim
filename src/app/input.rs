@@ -778,7 +778,8 @@ impl super::App {
             || self.pending.awaiting_buffer_leader
             || self.pending.awaiting_debug_leader
             || self.pending.awaiting_hunk_leader
-            || self.pending.awaiting_terminal_leader;
+            || self.pending.awaiting_terminal_leader
+            || self.pending.awaiting_test_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());
