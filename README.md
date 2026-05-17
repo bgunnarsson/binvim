@@ -98,6 +98,7 @@ Adding a fifth adapter is one row in `dap/specs.rs`'s registry plus a `build_lau
 | Toggle pane              | `<leader>dp`         | Bottom split. Frames + locals on the left, debug-console on the right. Auto-opens on session start, auto-closes on session end.                                                  |
 | Focus pane               | `<leader>df`         | Enters `Mode::DebugPane`. `j`/`k`/`g`/`G` move locals selection; Enter/Tab/Space expands a structured value; `Ctrl-Y`/`Ctrl-E` free-scroll the left column; `J`/`K` page the console; `c`/`n`/`i`/`O` step without leaving the pane; `:` enters the command line; `Esc` returns to Normal. |
 | Doc / Workspace symbols  | `<leader>do` / `dS`  | LSP pickers, scoped under the debug menu so "navigate around code while debugging" actions cluster in one place.                                                                 |
+| Watch expressions        | `:dapwatch <expr>` / `:dapunwatch <n>` / `:dapunwatch all` / `:dapwatches` | User-managed list, evaluated against the top frame on every `stopped` event. Rendered above frames in the debug pane (red value when the server returns an error for the expression — typo, name not in scope at the current frame). Survives across sessions; only the cached value clears between stops. |
 
 **Variable expansion** — structured locals render with `▶`/`▼` markers; expansion lazily fetches `children` per `variables_reference` and caches them across re-renders. All caches clear on `stopped`/`continued` (DAP doesn't promise vref stability between stops).
 

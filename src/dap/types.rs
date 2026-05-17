@@ -146,6 +146,41 @@ pub struct Variable {
     pub variables_reference: u64,
 }
 
+/// A user-managed watch expression — typed once via `:dapwatch
+/// <expr>`, evaluated against the top stack frame on every `stopped`
+/// event, displayed above locals in the debug pane. Survives across
+/// debug sessions (the manager keeps the list; only the evaluated
+/// `result` clears between sessions). Adapter-agnostic — DAP's
+/// `evaluate` request is supported by every adapter we ship.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct DapWatch {
+    pub expr: String,
+    /// Most recent evaluation. None while a request is in flight or
+    /// before the first evaluation has fired. Cleared on session
+    /// start and on every `stopped` (the manager re-fires).
+    pub result: Option<DapWatchResult>,
+}
+
+/// One evaluation of a `DapWatch.expr` against a stack frame.
+/// Mirrors the shape of the DAP `evaluate` response.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct DapWatchResult {
+    pub value: String,
+    pub type_name: Option<String>,
+    /// Non-zero when the result is structured and could be expanded.
+    /// Not yet driven by the pane — present so a future
+    /// "press Enter on a watch to expand its children" can land
+    /// without re-plumbing the wire layer.
+    pub variables_reference: u64,
+    /// True when the server returned an error (`response.success ==
+    /// false`) or refused the expression (typed wrong, name not in
+    /// scope at the current frame, …). `value` holds the error
+    /// message in that case.
+    pub error: bool,
+}
+
 /// The high-level state machine for an active session. Transitions are
 /// driven by responses + events from the adapter; the renderer reads this
 /// to decide which placeholder to paint.

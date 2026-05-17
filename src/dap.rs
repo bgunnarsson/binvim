@@ -31,6 +31,6 @@ pub use specs::{
 };
 #[allow(unused_imports)]
 pub use types::{
-    Breakpoint, DapEvent, DapIncoming, OutputLine, Scope, SessionState, SourceBreakpoint,
-    StackFrame, Variable,
+    Breakpoint, DapEvent, DapIncoming, DapWatch, DapWatchResult, OutputLine, Scope, SessionState,
+    SourceBreakpoint, StackFrame, Variable,
 };

@@ -96,7 +96,15 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       each bin is one picker row. Prelaunch `cargo build --bin <name>`,
       launch `target/debug/<name>`. `env` serialised as the
       `["K=V", ...]` array form lldb-dap requires.
-- [ ] **Watch expressions.** A user-managed list above locals, evaluated via `evaluate` per stop. **planned**
+- [x] **Watch expressions.** `:dapwatch <expr>` appends; `:dapunwatch
+      <n>` removes one (1-based); `:dapunwatch all` clears.
+      `:dapwatches` dumps the current list + last values to the status
+      line. The manager re-evaluates every watch against the top frame
+      on every `stopped` event via DAP `evaluate`; results render above
+      the frame list in the debug pane (red value when the server
+      reports an error for the expression). Survives across sessions
+      — the user list is on `DapManager`; only the cached `result`
+      clears at session start.
 - [ ] **Conditional + hit-count breakpoints.** Existing breakpoints are unconditional; DAP
       `breakpoint.condition` / `hitCondition` already carry the wire format. **considering**
 

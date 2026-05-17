@@ -11,7 +11,8 @@ use std::path::{Path, PathBuf};
 use super::client::DapClient;
 use super::specs::DapAdapterSpec;
 use super::types::{
-    DapEvent, DapIncoming, OutputLine, Scope, SessionState, SourceBreakpoint, StackFrame, Variable,
+    DapEvent, DapIncoming, DapWatch, DapWatchResult, OutputLine, Scope, SessionState,
+    SourceBreakpoint, StackFrame, Variable,
 };
 
 #[derive(Default)]
@@ -26,6 +27,10 @@ pub struct DapManager {
     /// Rolling debug-console log. Newest at the tail. Bounded so a chatty
     /// program doesn't grow it without limit.
     pub output_buffer: Vec<OutputLine>,
+    /// User-managed watch expressions, evaluated against the top frame on
+    /// every `stopped` event. The list survives across sessions — only the
+    /// `result` field on each entry clears between sessions.
+    pub watches: Vec<DapWatch>,
 }
 
 const OUTPUT_LOG_CAP: usize = 2000;
@@ -58,6 +63,10 @@ pub struct DapSession {
     /// several fetches are outstanding (e.g. user expands a deeply-nested
     /// branch quickly).
     pub pending_variable_fetches: HashMap<u64, u64>,
+    /// In-flight `evaluate` requests for watch expressions —
+    /// `request_seq → index into DapManager.watches`. The response
+    /// handler uses this to update the right watch entry's `result`.
+    pub pending_watch_evals: HashMap<u64, usize>,
     /// Spawned adapter process + reader channel. Dropping the session
     /// drops the child, which closes the reader thread on its own.
     pub client: DapClient,
@@ -214,6 +223,7 @@ impl DapManager {
             children: HashMap::new(),
             expanded: HashSet::new(),
             pending_variable_fetches: HashMap::new(),
+            pending_watch_evals: HashMap::new(),
             client,
             launch_args,
             status_line: "initialising adapter…".into(),
@@ -329,6 +339,89 @@ impl DapManager {
         }
         if let Some(s) = self.session.as_mut() {
             s.pending_variable_fetches.insert(seq, vref);
+        }
+    }
+
+    /// Append `expr` to the watch list. Re-evaluates on the next
+    /// stop. Skips duplicates so repeatedly `:dapwatch foo`'ing
+    /// the same expression doesn't multiply the row count.
+    pub fn add_watch(&mut self, expr: String) -> bool {
+        if expr.trim().is_empty() {
+            return false;
+        }
+        if self.watches.iter().any(|w| w.expr == expr) {
+            return false;
+        }
+        self.watches.push(DapWatch { expr, result: None });
+        // If we're currently stopped, fire eval right away so the
+        // user sees the result without waiting for the next stop.
+        self.evaluate_pending_watches();
+        true
+    }
+
+    /// Drop the watch at `idx`. Returns the removed expression so
+    /// the caller can echo "removed `foo`" — or None if the index
+    /// was out of range.
+    pub fn remove_watch(&mut self, idx: usize) -> Option<String> {
+        if idx >= self.watches.len() {
+            return None;
+        }
+        Some(self.watches.remove(idx).expr)
+    }
+
+    /// Fire `evaluate` for every watch whose result is currently
+    /// missing. Called automatically when a stop's stackTrace
+    /// response lands (frame_id becomes available) and on
+    /// `add_watch` if the session is already stopped.
+    fn evaluate_pending_watches(&mut self) {
+        // Snapshot the frame_id + pending list while only-immutable-
+        // borrowing self.session; release that borrow before each
+        // mutable update into pending_watch_evals.
+        let frame_id = match self.session.as_ref().and_then(|s| s.frames.first()) {
+            Some(f) => f.id,
+            None => return,
+        };
+        let pending: Vec<(usize, String)> = self
+            .watches
+            .iter()
+            .enumerate()
+            .filter_map(|(i, w)| {
+                if w.result.is_none() {
+                    Some((i, w.expr.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for (idx, expr) in pending {
+            // Alloc + send under an immutable borrow (alloc_seq /
+            // send_request only need &client). Then drop and take
+            // a mutable borrow for the pending-map insert.
+            let seq = match self.session.as_ref() {
+                Some(session) => {
+                    let seq = session.client.alloc_seq();
+                    if session
+                        .client
+                        .send_request(
+                            seq,
+                            "evaluate",
+                            json!({
+                                "expression": expr,
+                                "frameId": frame_id,
+                                "context": "watch",
+                            }),
+                        )
+                        .is_err()
+                    {
+                        continue;
+                    }
+                    seq
+                }
+                None => return,
+            };
+            if let Some(s) = self.session.as_mut() {
+                s.pending_watch_evals.insert(seq, idx);
+            }
         }
     }
 
@@ -448,6 +541,25 @@ impl DapManager {
         events: &mut Vec<DapEvent>,
     ) {
         if !success {
+            // Evaluate failures are normal — typos, names not in
+            // scope at the current frame, side-effects refused.
+            // Surface them on the watch row instead of as a top-line
+            // AdapterError that would clobber the status line.
+            if command == "evaluate" {
+                if let Some(s) = self.session.as_mut() {
+                    if let Some(idx) = s.pending_watch_evals.remove(&request_seq) {
+                        if let Some(w) = self.watches.get_mut(idx) {
+                            w.result = Some(DapWatchResult {
+                                value: message.unwrap_or_else(|| "(no message)".into()),
+                                type_name: None,
+                                variables_reference: 0,
+                                error: true,
+                            });
+                        }
+                        return;
+                    }
+                }
+            }
             let detail = message.unwrap_or_else(|| "(no message)".into());
             let err = format!("{} failed: {}", command, detail);
             if let Some(s) = self.session.as_mut() {
@@ -568,6 +680,13 @@ impl DapManager {
                         json!({ "frameId": id }),
                     );
                 }
+                // Now that frames are populated and we have a
+                // valid top frame_id, fire watch evaluations.
+                // Skipped on empty-stackTrace (no frame to anchor
+                // against — the user would see stale results).
+                if top_id.is_some() {
+                    self.evaluate_pending_watches();
+                }
             }
             "scopes" => {
                 let scopes = parse_scopes(&body);
@@ -596,6 +715,38 @@ impl DapManager {
                     } else {
                         // No mapping — most likely a stale response from
                         // before the last stop. Discard quietly.
+                    }
+                }
+            }
+            "evaluate" => {
+                // Watch expression result. Match the request_seq
+                // against pending_watch_evals to find which watch
+                // row this answers, then drop the value onto it.
+                let idx = match self.session.as_mut() {
+                    Some(s) => s.pending_watch_evals.remove(&request_seq),
+                    None => None,
+                };
+                if let Some(idx) = idx {
+                    let value = body
+                        .get("result")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let type_name = body
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let variables_reference = body
+                        .get("variablesReference")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    if let Some(w) = self.watches.get_mut(idx) {
+                        w.result = Some(DapWatchResult {
+                            value,
+                            type_name,
+                            variables_reference,
+                            error: false,
+                        });
                     }
                 }
             }
@@ -642,6 +793,13 @@ impl DapManager {
                     s.children.clear();
                     s.expanded.clear();
                     s.pending_variable_fetches.clear();
+                    s.pending_watch_evals.clear();
+                }
+                // Watch results from the previous frame don't
+                // apply at the new stop — clear so the pane shows
+                // "evaluating…" until the new responses arrive.
+                for w in &mut self.watches {
+                    w.result = None;
                 }
                 // Ask for the live thread list and the top frame's stack
                 // back-to-back. netcoredbg in particular needs the
@@ -1028,5 +1186,39 @@ mod tests {
         m.step(StepKind::Next);
         m.step(StepKind::StepIn);
         m.step(StepKind::StepOut);
+    }
+
+    #[test]
+    fn add_watch_appends_and_dedups() {
+        let mut m = DapManager::new();
+        assert!(m.add_watch("foo".into()));
+        assert!(m.add_watch("bar".into()));
+        // Duplicate expr → refused (returns false, no duplicate row).
+        assert!(!m.add_watch("foo".into()));
+        assert_eq!(m.watches.len(), 2);
+        assert_eq!(m.watches[0].expr, "foo");
+        assert_eq!(m.watches[1].expr, "bar");
+    }
+
+    #[test]
+    fn add_watch_rejects_empty_and_whitespace() {
+        let mut m = DapManager::new();
+        assert!(!m.add_watch("".into()));
+        assert!(!m.add_watch("   ".into()));
+        assert!(m.watches.is_empty());
+    }
+
+    #[test]
+    fn remove_watch_returns_expr_and_shifts_indices() {
+        let mut m = DapManager::new();
+        m.add_watch("a".into());
+        m.add_watch("b".into());
+        m.add_watch("c".into());
+        assert_eq!(m.remove_watch(1).as_deref(), Some("b"));
+        assert_eq!(m.watches.len(), 2);
+        assert_eq!(m.watches[0].expr, "a");
+        assert_eq!(m.watches[1].expr, "c");
+        // Out-of-range → None.
+        assert!(m.remove_watch(99).is_none());
     }
 }

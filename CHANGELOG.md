@@ -6,6 +6,50 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Crash handler.** A global `panic::set_hook` installed before any
+  terminal-touching code best-effort restores the terminal (disable
+  raw mode, leave alt screen, show cursor, drop kitty keyboard flags)
+  and writes a diagnostic log with payload + location + force-captured
+  backtrace + binvim version + unix timestamp to
+  `~/.cache/binvim/crash/<ts>.log`. Path is echoed to stderr after the
+  unwind so the user knows where to look. No more "panic leaves the
+  terminal stuck in raw mode" failure mode.
+- **CI.** `cargo test --locked` and `cargo clippy --locked
+  --all-targets` run on every push to main and every PR via
+  `.github/workflows/ci.yml`. Concurrent runs cancel on rapid pushes
+  to the same ref. `cargo fmt --check` deliberately skipped — codebase
+  has hand-rolled formatting (compact let-else, single-line method
+  chains) that stock rustfmt would rewrite across ~560 places; needs a
+  conscious style-policy decision before turning the gate on.
+- **macOS prebuilt binaries.** `release.yml` matrix gains
+  `aarch64-apple-darwin` (macos-14 runner) and `x86_64-apple-darwin`
+  (macos-13). Targets build natively per arch — no cross-compile
+  toolchain to wrangle, and the resulting binary picks up the host's
+  codesigning so Gatekeeper doesn't trip on first launch. Homebrew
+  first install drops from minutes (compile from source) to seconds.
+  `install.sh` now resolves Darwin/{arm64,x86_64} so the `curl … | sh`
+  path works on Mac too.
+- **Terminal model (PTY + vte parser + grid + scrollback).** New
+  self-contained `terminal` module — not yet integrated with the
+  editor (waits on follow-up session). PTY spawn via `portable-pty`,
+  reader thread funnels bytes into an mpsc channel, vte 0.15 parses
+  escape sequences and mutates a `Cell` grid + cursor + pen state.
+  Covers CUP / CUF / CUB / CUU / CUD / CHA, ED / EL, SGR (basic +
+  bright + 256-colour + truecolor RGB + bold / italic / underline /
+  reverse), IND / RI / DECSC / DECRC / RIS, line wrap with bounded
+  scrollback (10k rows). 12 tests (10 pure-model, 2 end-to-end against
+  /bin/sh).
+- **Watch expressions (DAP).** User-managed list evaluated against the
+  top frame on every `stopped` event via DAP `evaluate`. Add via
+  `:dapwatch <expr>`, remove via `:dapunwatch <n>` / `:dapunwatch
+  all`, dump current state to status line via `:dapwatches`. Renders
+  above the frame list in the debug pane; failed evaluations
+  (typo / name-not-in-scope) show in red instead of the default
+  text colour. Survives across sessions — the list lives on
+  `DapManager`; only the cached `result` clears at session start /
+  every stop.
+
 ## [0.3.0] - 2026-05-16
 
 ### Added

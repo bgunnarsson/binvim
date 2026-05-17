@@ -1286,6 +1286,8 @@ impl super::App {
             ExCommand::Health => self.cmd_health(),
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
+            ExCommand::DebugWatch(sub) => self.dispatch_debug_watch(sub),
+            ExCommand::DebugWatchesShow => self.dispatch_debug_watches_show(),
             ExCommand::GitBlame => self.toggle_blame(),
             ExCommand::Copilot(sub) => {
                 use crate::command::CopilotSubCmd;

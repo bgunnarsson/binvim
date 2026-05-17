@@ -35,6 +35,78 @@ impl super::App {
         }
     }
 
+    pub(super) fn dispatch_debug_watch(&mut self, sub: crate::command::DebugWatchCmd) {
+        match sub {
+            crate::command::DebugWatchCmd::Add(expr) => {
+                let display = expr.clone();
+                if self.dap.add_watch(expr) {
+                    let n = self.dap.watches.len();
+                    self.status_msg = format!("watch [{n}]: {display}");
+                    // Auto-open the pane so the user sees their
+                    // watch appear without an extra :dappane.
+                    if !self.debug_pane_open {
+                        self.debug_pane_open = true;
+                        self.adjust_viewport();
+                    }
+                } else {
+                    self.status_msg = format!("watch already present: {display}");
+                }
+            }
+            crate::command::DebugWatchCmd::Remove(idx) => match idx {
+                None => {
+                    let n = self.dap.watches.len();
+                    self.dap.watches.clear();
+                    self.status_msg = match n {
+                        0 => "no watches to clear".into(),
+                        1 => "cleared 1 watch".into(),
+                        n => format!("cleared {n} watches"),
+                    };
+                }
+                Some(one_based) => {
+                    let zero_based = one_based - 1;
+                    match self.dap.remove_watch(zero_based) {
+                        Some(expr) => {
+                            self.status_msg = format!("removed watch: {expr}");
+                        }
+                        None => {
+                            self.status_msg = format!(
+                                "watch [{one_based}] out of range (have {})",
+                                self.dap.watches.len()
+                            );
+                        }
+                    }
+                }
+            },
+        }
+    }
+
+    /// `:dapwatches` — dump the watch list to the status line.
+    /// Cheap inline format for the no-stop / pre-eval case where
+    /// the user hasn't run the session yet but wants to confirm
+    /// what they've queued up. Real listing lives in the debug
+    /// pane once values are flowing.
+    pub(super) fn dispatch_debug_watches_show(&mut self) {
+        if self.dap.watches.is_empty() {
+            self.status_msg = "no watches (add via `:dapwatch <expr>`)".into();
+            return;
+        }
+        let summary: Vec<String> = self
+            .dap
+            .watches
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let n = i + 1;
+                match &w.result {
+                    Some(r) if r.error => format!("[{n}] {} = ERR", w.expr),
+                    Some(r) => format!("[{n}] {} = {}", w.expr, r.value),
+                    None => format!("[{n}] {} = …", w.expr),
+                }
+            })
+            .collect();
+        self.status_msg = summary.join("  ·  ");
+    }
+
     fn dap_enter_pane_focus(&mut self) {
         if !self.dap.is_active() {
             self.status_msg = "debug: no active session".into();

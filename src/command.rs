@@ -39,6 +39,12 @@ pub enum ExCommand {
     /// `window/logMessage` log as a scrollable overlay.
     Messages,
     Debug(DebugSubCmd),
+    /// `:dapwatch <expr>` / `:dapunwatch <idx>` / `:dapunwatch all`.
+    DebugWatch(DebugWatchCmd),
+    /// `:dapwatches` — open the watch list overlay (for listing /
+    /// inspecting more than fits in the pane). For v1 we just
+    /// surface this as a status line dump.
+    DebugWatchesShow,
     /// Quickfix-list sub-commands — `:cn`/`:cp`/`:clist`/`:cfirst`/
     /// `:clast`/`:cdiag`/`:cclose`. Dispatch lives in `app/input.rs`.
     Quickfix(QuickfixSubCmd),
@@ -94,6 +100,17 @@ pub enum DebugSubCmd {
     StepOut,
     PaneToggle,
     FocusPane,
+}
+
+/// Watch-expression sub-commands accessible via `:dapwatch <expr>`
+/// and `:dapunwatch <index>` / `:dapunwatch all`.
+#[derive(Debug, Clone)]
+pub enum DebugWatchCmd {
+    /// Add `expr` to the watch list. Re-evaluated on every stop.
+    Add(String),
+    /// Remove the watch at `index` (1-based, matches `:health`-style
+    /// listing). `None` = clear all watches.
+    Remove(Option<usize>),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -191,6 +208,30 @@ pub fn parse(line: &str) -> ExCommand {
         "dapin" | "dapi" => ExCommand::Debug(DebugSubCmd::StepIn),
         "dapout" | "dapo" => ExCommand::Debug(DebugSubCmd::StepOut),
         "dappane" => ExCommand::Debug(DebugSubCmd::PaneToggle),
+        "dapwatch" | "dapw" => {
+            if rest.is_empty() {
+                ExCommand::Unknown("dapwatch needs an expression".into())
+            } else {
+                ExCommand::DebugWatch(DebugWatchCmd::Add(rest.to_string()))
+            }
+        }
+        "dapunwatch" | "dapuw" => {
+            if rest.is_empty() {
+                ExCommand::Unknown("dapunwatch needs an index or 'all'".into())
+            } else if rest == "all" || rest == "*" {
+                ExCommand::DebugWatch(DebugWatchCmd::Remove(None))
+            } else {
+                match rest.parse::<usize>() {
+                    Ok(n) if n >= 1 => {
+                        ExCommand::DebugWatch(DebugWatchCmd::Remove(Some(n)))
+                    }
+                    _ => ExCommand::Unknown(format!(
+                        "dapunwatch: expected positive integer or 'all', got `{rest}`"
+                    )),
+                }
+            }
+        }
+        "dapwatches" => ExCommand::DebugWatchesShow,
         "cn" | "cnext" => ExCommand::Quickfix(QuickfixSubCmd::Next),
         "cp" | "cprev" | "cprevious" | "cN" => ExCommand::Quickfix(QuickfixSubCmd::Prev),
         "cfirst" | "cr" | "crewind" => ExCommand::Quickfix(QuickfixSubCmd::First),

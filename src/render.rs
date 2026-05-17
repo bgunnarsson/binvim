@@ -4144,6 +4144,15 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
             value: &'a str,
             selected: bool,
         },
+        /// Watch row — `name` is the user expression, `value` is the
+        /// latest evaluated result (or "evaluating…" / error text).
+        /// `error` toggles a red value colour so failed evaluations
+        /// stand out.
+        Watch {
+            name: &'a str,
+            value: &'a str,
+            error: bool,
+        },
     }
 
     // Flat locals tree — computed once so the key handler and renderer
@@ -4163,6 +4172,32 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     };
 
     let mut left_rows: Vec<LeftRow> = Vec::new();
+    // Watches first — they tend to be a short list, and showing
+    // them above the frames keeps them visible without scrolling
+    // when the stack is deep. Only render when there's at least
+    // one watch; an empty list would just waste a separator row.
+    let watch_values: Vec<(String, String, bool)> = app
+        .dap
+        .watches
+        .iter()
+        .map(|w| {
+            let (val, err) = match &w.result {
+                Some(r) => (r.value.clone(), r.error),
+                None => ("…".to_string(), false),
+            };
+            (w.expr.clone(), val, err)
+        })
+        .collect();
+    if !watch_values.is_empty() {
+        left_rows.push(LeftRow::Separator(" Watches "));
+        for (name, value, error) in &watch_values {
+            left_rows.push(LeftRow::Watch {
+                name,
+                value,
+                error: *error,
+            });
+        }
+    }
     if let Some(session) = app.dap.session.as_ref() {
         if session.frames.is_empty() {
             // Tag the empty-frames note with the actual state so a
@@ -4283,6 +4318,24 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                     Print(" "),
                 )?;
                 pad_right(out, 2 + bar_room + label.chars().count(), left_w)?;
+            }
+            LeftRow::Watch { name, value, error } => {
+                let value_fg = if *error {
+                    // Catppuccin Red — failed evaluations need to
+                    // stand out from valid results.
+                    Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }
+                } else {
+                    header_fg
+                };
+                let entry = format!("{} = {}", name, value);
+                let max_inner = inner_w.saturating_sub(1);
+                let visible = truncate_left(&entry, max_inner);
+                queue!(
+                    out,
+                    SetForegroundColor(value_fg),
+                    Print(format!(" {} ", visible)),
+                )?;
+                pad_right(out, 2 + visible.chars().count(), left_w)?;
             }
             LeftRow::Local {
                 depth,
