@@ -50,11 +50,15 @@ impl super::App {
                 self.mode = Mode::Terminal;
                 self.adjust_viewport();
                 self.status_msg.clear();
-                // Resize every terminal to the body height the pane
-                // currently has — adding a tab doesn't change the
-                // pane size, but it ensures the new tab gets a
-                // consistent winsize.
-                self.resize_all_terminals();
+                // Deliberately NOT calling resize_all_terminals
+                // here. The new PTY was opened at the exact size we
+                // want (`rows`/`cols` above match the pane body),
+                // and existing tabs haven't lost any rows because
+                // pane height doesn't depend on tab count. Firing a
+                // SIGWINCH on the freshly spawned shell while it
+                // hasn't even printed its first prompt yet causes
+                // zsh + starship to emit extra clearing sequences,
+                // which renders as a blank line between prompts.
             }
             Err(e) => {
                 if was_empty {
