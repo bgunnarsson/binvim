@@ -308,6 +308,11 @@ pub struct App {
     /// like a normal scroll viewport. Stored per-tab so switching
     /// doesn't lose the user's reading position.
     pub dap_tab_scrolls: HashMap<DapPaneTab, usize>,
+    /// Per-tab horizontal scroll. Long rows (deep stack frames,
+    /// wide log lines, expanded structured values) need a way to
+    /// see content past the pane's right edge — same pattern as
+    /// the editor's `view_left`.
+    pub dap_tab_h_scrolls: HashMap<DapPaneTab, usize>,
     /// Index into the flat locals tree of the currently-selected row
     /// when the Locals tab has focus. Bounded against the live tree
     /// at access time — vrefs can shift across stops, so the
@@ -633,6 +638,7 @@ impl App {
             dap_pane_cursor: 0,
             dap_pane_tab: DapPaneTab::Console,
             dap_tab_scrolls: HashMap::new(),
+            dap_tab_h_scrolls: HashMap::new(),
             dap_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             dap_console_selection: None,
             yank_highlight: None,

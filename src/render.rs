@@ -4,7 +4,7 @@ use crate::lsp::Severity;
 use crate::mode::{Mode, VisualKind};
 use anyhow::Result;
 use crossterm::{
-    cursor::{Hide, MoveTo, SetCursorStyle, Show},
+    cursor::{Hide, MoveTo, MoveToColumn, SetCursorStyle, Show},
     queue,
     style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor, SetUnderlineColor},
     terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
@@ -2762,17 +2762,8 @@ fn home_relative_with(path: &str, home: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        display_lsp_root, home_relative_with, tokenize_console_line, truncate, truncate_right,
-        DebugPalette,
+        display_lsp_root, home_relative_with, tokenize_console_line, truncate, DebugPalette,
     };
-
-    #[test]
-    fn truncate_right_keeps_left_and_appends_ellipsis() {
-        assert_eq!(truncate_right("hello world", 11), "hello world");
-        assert_eq!(truncate_right("hello world", 5), "hell…");
-        assert_eq!(truncate_right("x", 0), "");
-        assert_eq!(truncate_right("hello", 1), "…");
-    }
 
     #[test]
     fn tokenizer_splits_log_prefix_and_url() {
@@ -4253,23 +4244,6 @@ fn lang_label(path: Option<&std::path::Path>, lang: Lang) -> (char, &'static str
     (lang_icon(lang), lang_name(lang))
 }
 
-/// Truncate `s` to `max` display chars, dropping characters off the
-/// END and appending `…`. Counterpart of `truncate_left` for cases
-/// where the leading content is what carries meaning (log lines,
-/// variable names, frame labels).
-fn truncate_right(s: &str, max: usize) -> String {
-    let count = s.chars().count();
-    if count <= max || max == 0 {
-        return s.chars().take(max).collect();
-    }
-    if max == 1 {
-        return "…".to_string();
-    }
-    let mut out: String = s.chars().take(max - 1).collect();
-    out.push('…');
-    out
-}
-
 fn truncate_left(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count <= max || max == 0 {
@@ -4397,6 +4371,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         scroll.min(total.saturating_sub(body_rows))
     };
 
+    let h_skip = app.dap_tab_h_scroll(app.dap_pane_tab);
     for r in 0..body_rows {
         let screen_y = (body_top + r) as u16;
         // `Clear(CurrentLine)` resets the row to the terminal's
@@ -4409,7 +4384,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, MoveTo(0, screen_y), SetBackgroundColor(body_bg))?;
         let idx = visible_start + r;
         if let Some(row) = rows_buf.get(idx) {
-            paint_dap_row(out, row, width)?;
+            paint_dap_row(out, row, width, h_skip)?;
         } else {
             queue!(out, Print(" ".repeat(width)))?;
         }
@@ -4473,6 +4448,7 @@ fn paint_dap_row(
     out: &mut impl Write,
     row: &DapTabRow,
     width: usize,
+    h_skip: usize,
 ) -> Result<()> {
     let row_bg = if row.selected {
         Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 } // Surface2 — whole-row select
@@ -4480,82 +4456,113 @@ fn paint_dap_row(
         Color::Rgb { r: 0x18, g: 0x18, b: 0x25 } // Mantle
     };
     let sel_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2 — partial select
+    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };  // Overlay0
     let sel_range = row.selection_range;
-    // Cell-col tracks position WITHIN the row's content (i.e.
-    // 0 = first content char after the leading pad). The
-    // selection_range from `build_console_rows` is in that space.
-    queue!(out, SetBackgroundColor(row_bg))?;
-    queue!(out, Print(" "))?;
-    let mut used = 1usize; // screen cols consumed (incl. leading pad)
-    let mut cell_col = 0usize; // chars emitted into row content
-    for part in &row.parts {
-        if used >= width {
-            break;
-        }
-        let max = width.saturating_sub(used);
-        // Right-truncate — leading content carries meaning across
-        // every dap row shape (log lines start with timestamp +
-        // level, locals start with the variable name, etc.).
-        let text = truncate_right(&part.text, max);
-        let count = text.chars().count();
+    if width == 0 {
+        return Ok(());
+    }
 
-        // If this part overlaps a selection range, split it at
-        // the boundaries and paint each slice with the right bg.
-        // The renderer makes three calls (pre / in-sel / post),
-        // each of which sets bg + fg + attrs + prints its slice.
-        let mut slice_start = 0usize;
-        for (slice_text, in_sel) in
-            split_part_by_selection(&text, cell_col, sel_range, &mut slice_start)
-        {
-            if slice_text.is_empty() {
+    let total_chars: usize = row.parts.iter().map(|p| p.text.chars().count()).sum();
+
+    // Leading single cell. If we've scrolled right past col 0 we
+    // hint at the hidden content with a muted ellipsis instead of
+    // the usual blank pad — matches how editor `set listchars`
+    // marks horizontal overflow.
+    queue!(out, SetBackgroundColor(row_bg))?;
+    if h_skip > 0 {
+        queue!(
+            out,
+            SetForegroundColor(muted),
+            SetAttribute(Attribute::NormalIntensity),
+            SetAttribute(Attribute::NoItalic),
+            Print("«"),
+        )?;
+    } else {
+        queue!(out, Print(" "))?;
+    }
+    let mut used = 1usize;
+    let mut logical_col = 0usize;
+
+    // Per-cell paint with attr deduplication. Walking parts
+    // directly would emit fewer SetBackgroundColor/SetForegroundColor
+    // calls but the partial-skip / partial-take bookkeeping for an
+    // h_skip that lands in the middle of a part — and the selection
+    // range overlay on top of that — would be much messier. The
+    // debug pane is rendered at most once per event; the extra
+    // queue! calls don't matter here.
+    let mut last_bg: Option<Color> = None;
+    let mut last_fg: Option<Color> = None;
+    let mut last_bold = false;
+    let mut last_italic = false;
+
+    'outer: for part in &row.parts {
+        for ch in part.text.chars() {
+            if logical_col < h_skip {
+                logical_col += 1;
                 continue;
             }
-            let bg = if in_sel { sel_bg } else { row_bg };
-            queue!(out, SetBackgroundColor(bg))?;
-            if let Some(fg) = part.fg {
-                queue!(out, SetForegroundColor(fg))?;
-            } else {
-                queue!(out, SetForegroundColor(Color::Reset))?;
+            if used >= width {
+                break 'outer;
             }
-            if part.bold {
-                queue!(out, SetAttribute(Attribute::Bold))?;
-            } else {
-                queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            let in_sel = sel_range
+                .map(|(s, e)| logical_col >= s && logical_col < e)
+                .unwrap_or(false);
+            let want_bg = if in_sel { sel_bg } else { row_bg };
+            if last_bg != Some(want_bg) {
+                queue!(out, SetBackgroundColor(want_bg))?;
+                last_bg = Some(want_bg);
             }
-            if part.italic {
-                queue!(out, SetAttribute(Attribute::Italic))?;
-            } else {
-                queue!(out, SetAttribute(Attribute::NoItalic))?;
+            let want_fg = part.fg.unwrap_or(Color::Reset);
+            if last_fg != Some(want_fg) {
+                queue!(out, SetForegroundColor(want_fg))?;
+                last_fg = Some(want_fg);
             }
-            queue!(out, Print(&slice_text))?;
+            if part.bold != last_bold {
+                if part.bold {
+                    queue!(out, SetAttribute(Attribute::Bold))?;
+                } else {
+                    queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+                }
+                last_bold = part.bold;
+            }
+            if part.italic != last_italic {
+                if part.italic {
+                    queue!(out, SetAttribute(Attribute::Italic))?;
+                } else {
+                    queue!(out, SetAttribute(Attribute::NoItalic))?;
+                }
+                last_italic = part.italic;
+            }
+            queue!(out, Print(ch))?;
+            used += 1;
+            logical_col += 1;
         }
-        cell_col += count;
-        used += count;
     }
-    // End-of-row pad. Selection ranges that extend past the last
-    // content char paint trailing pad cells too — gives the user
-    // visual feedback that they selected "to end of line."
+
     queue!(
         out,
         SetAttribute(Attribute::NormalIntensity),
         SetAttribute(Attribute::NoItalic),
     )?;
+
     if used < width {
         let pad = width - used;
         if let Some((sel_from, sel_to)) = sel_range {
-            // Paint the trailing pad in two segments if the
-            // selection straddles the content-end boundary.
-            let pad_start = cell_col;
-            let pad_end = cell_col + pad;
-            let sel_seg = pad_start.max(sel_from)..pad_end.min(sel_to);
+            // Trailing pad in logical-col space. Selection ranges
+            // that extend past the last content char paint over
+            // pad cells too — gives "selected through EOL" feedback.
+            let pad_start = logical_col;
+            let pad_end = pad_start + pad;
+            let sel_seg_start = pad_start.max(sel_from);
+            let sel_seg_end = pad_end.min(sel_to);
             let mut emitted = 0usize;
-            if sel_seg.start > pad_start {
-                let n = sel_seg.start - pad_start;
+            if sel_seg_start > pad_start {
+                let n = sel_seg_start - pad_start;
                 queue!(out, SetBackgroundColor(row_bg), Print(" ".repeat(n)))?;
                 emitted += n;
             }
-            if sel_seg.end > sel_seg.start {
-                let n = sel_seg.end - sel_seg.start;
+            if sel_seg_end > sel_seg_start {
+                let n = sel_seg_end - sel_seg_start;
                 queue!(out, SetBackgroundColor(sel_bg), Print(" ".repeat(n)))?;
                 emitted += n;
             }
@@ -4570,46 +4577,20 @@ fn paint_dap_row(
             queue!(out, SetBackgroundColor(row_bg), Print(" ".repeat(pad)))?;
         }
     }
-    Ok(())
-}
 
-/// Walk a single part's text and yield `(slice, in_selection)`
-/// pairs covering it left-to-right. `start_col` is the part's
-/// starting char-col within the row content; `sel` is the row's
-/// selection range. The yielded slices concatenate back to the
-/// original text. `_consumed` is a scratch counter the caller
-/// doesn't use; kept for legacy lifetime convenience.
-fn split_part_by_selection(
-    text: &str,
-    start_col: usize,
-    sel: Option<(usize, usize)>,
-    _consumed: &mut usize,
-) -> Vec<(String, bool)> {
-    let Some((from, to)) = sel else {
-        return vec![(text.to_string(), false)];
-    };
-    let chars: Vec<char> = text.chars().collect();
-    let len = chars.len();
-    if len == 0 {
-        return Vec::new();
+    // Right-edge overflow marker. If the row still has content past
+    // what we drew, overwrite the rightmost visible cell with `»`
+    // so the user can see there is more to scroll to.
+    if logical_col < total_chars && width >= 1 {
+        queue!(
+            out,
+            MoveToColumn(width as u16 - 1),
+            SetBackgroundColor(row_bg),
+            SetForegroundColor(muted),
+            Print("»"),
+        )?;
     }
-    let end_col = start_col + len;
-    if to <= start_col || from >= end_col {
-        return vec![(text.to_string(), false)];
-    }
-    let sel_lo = from.saturating_sub(start_col).min(len);
-    let sel_hi = to.saturating_sub(start_col).min(len);
-    let mut out = Vec::with_capacity(3);
-    if sel_lo > 0 {
-        out.push((chars[..sel_lo].iter().collect(), false));
-    }
-    if sel_hi > sel_lo {
-        out.push((chars[sel_lo..sel_hi].iter().collect(), true));
-    }
-    if sel_hi < len {
-        out.push((chars[sel_hi..].iter().collect(), false));
-    }
-    out
+    Ok(())
 }
 
 // ---------------------------------------------------------------------

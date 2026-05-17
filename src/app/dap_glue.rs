@@ -138,7 +138,7 @@ impl super::App {
         row: usize,
         col: usize,
     ) -> bool {
-        use crossterm::event::{MouseButton, MouseEventKind};
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
         let pane_rows = self.debug_pane_rows();
         if pane_rows == 0 {
             return false;
@@ -153,16 +153,39 @@ impl super::App {
         let header_row = pane_top;
         let body_top = pane_top + 1;
 
+        let shift_held = ev.modifiers.contains(KeyModifiers::SHIFT);
         match ev.kind {
             MouseEventKind::ScrollUp => {
-                self.dap_tab_scroll_by(-3);
+                if shift_held {
+                    self.dap_tab_h_scroll_by(-3);
+                } else {
+                    self.dap_tab_scroll_by(-3);
+                }
                 if !matches!(self.mode, Mode::DebugPane) {
                     self.mode = Mode::DebugPane;
                 }
                 return true;
             }
             MouseEventKind::ScrollDown => {
-                self.dap_tab_scroll_by(3);
+                if shift_held {
+                    self.dap_tab_h_scroll_by(3);
+                } else {
+                    self.dap_tab_scroll_by(3);
+                }
+                if !matches!(self.mode, Mode::DebugPane) {
+                    self.mode = Mode::DebugPane;
+                }
+                return true;
+            }
+            MouseEventKind::ScrollLeft => {
+                self.dap_tab_h_scroll_by(-3);
+                if !matches!(self.mode, Mode::DebugPane) {
+                    self.mode = Mode::DebugPane;
+                }
+                return true;
+            }
+            MouseEventKind::ScrollRight => {
+                self.dap_tab_h_scroll_by(3);
                 if !matches!(self.mode, Mode::DebugPane) {
                     self.mode = Mode::DebugPane;
                 }
@@ -260,8 +283,10 @@ impl super::App {
             return false;
         }
         // `1` is the leading-space pad paint_dap_row emits before
-        // any content. Map screen col back to char-col in the line.
-        let line_col = col.saturating_sub(1);
+        // any content; the per-tab horizontal offset shifts the
+        // visible window further right, so we map both back here.
+        let h_scroll = self.dap_tab_h_scroll(crate::app::DapPaneTab::Console);
+        let line_col = col.saturating_sub(1) + h_scroll;
 
         let cmd_modifier = ev.modifiers.contains(KeyModifiers::SUPER)
             || ev.modifiers.contains(KeyModifiers::CONTROL);
@@ -462,6 +487,14 @@ impl super::App {
         }
     }
 
+    /// Reset horizontal scroll for the active tab — bound to `0` and
+    /// also called when the user explicitly clicks a different tab
+    /// so each tab's column-0 start is predictable.
+    #[allow(dead_code)]
+    pub(super) fn dap_reset_h_scroll(&mut self) {
+        self.dap_tab_h_scrolls.insert(self.dap_pane_tab, 0);
+    }
+
     /// Key dispatch for `Mode::DebugPane`. Returns `true` if the key was
     /// consumed (the caller skips the normal-mode dispatch in that case).
     pub(super) fn handle_debug_pane_key(&mut self, key: KeyEvent) -> bool {
@@ -492,8 +525,9 @@ impl super::App {
                 true
             }
             // Number row → jump to tab by index (1-based, matches the
-            // labels' visible order).
-            KeyCode::Char(d) if d.is_ascii_digit() => {
+            // labels' visible order). `0` is reserved as "reset
+            // horizontal scroll to column 0" — matches Vim's `0`.
+            KeyCode::Char(d) if ('1'..='9').contains(&d) => {
                 let idx = (d as u8 - b'1') as usize;
                 let tabs = crate::app::DapPaneTab::all();
                 if idx < tabs.len() {
@@ -507,6 +541,33 @@ impl super::App {
             }
             KeyCode::Char('e') if ctrl => {
                 self.dap_tab_scroll_by(1);
+                true
+            }
+            // h/l (and Shift-Left/Right) scroll the active tab
+            // horizontally. Unshifted arrows are kept for tab cycling
+            // — long stack-frame paths and console log lines are the
+            // main thing that needs this, and they appear far enough
+            // from the row cursor that hijacking j/k would feel wrong.
+            KeyCode::Char('h') => {
+                let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                self.dap_tab_h_scroll_by(-step);
+                true
+            }
+            KeyCode::Char('l') => {
+                let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                self.dap_tab_h_scroll_by(step);
+                true
+            }
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.dap_tab_h_scroll_by(-10);
+                true
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.dap_tab_h_scroll_by(10);
+                true
+            }
+            KeyCode::Char('0') if !ctrl => {
+                self.dap_tab_h_scrolls.insert(self.dap_pane_tab, 0);
                 true
             }
             KeyCode::Char('j') | KeyCode::Down => {
@@ -618,6 +679,22 @@ impl super::App {
     /// the tab labels on a single line).
     pub(super) fn dap_body_rows(&self) -> usize {
         self.debug_pane_rows().saturating_sub(1)
+    }
+
+    /// Current horizontal scroll offset for the active tab.
+    pub fn dap_tab_h_scroll(&self, tab: crate::app::DapPaneTab) -> usize {
+        self.dap_tab_h_scrolls.get(&tab).copied().unwrap_or(0)
+    }
+
+    /// Shift the active tab horizontally. We don't know the longest
+    /// row from here without re-rendering, so we clamp lazily —
+    /// values past content length just stop emitting cells and the
+    /// next `h`/`Left` brings them back.
+    pub(super) fn dap_tab_h_scroll_by(&mut self, delta: i32) {
+        let tab = self.dap_pane_tab;
+        let cur = self.dap_tab_h_scroll(tab) as i32;
+        let next = (cur + delta).max(0) as usize;
+        self.dap_tab_h_scrolls.insert(tab, next);
     }
 
     /// Adjust scroll so the cursor row in the active tab stays
@@ -1176,6 +1253,7 @@ impl super::App {
         self.dap_pane_tab = crate::app::DapPaneTab::Console;
         self.dap_pane_cursor = 0;
         self.dap_tab_scrolls.clear();
+        self.dap_tab_h_scrolls.clear();
         self.adjust_viewport();
         // Clear pending state so a subsequent <leader>ds doesn't see
         // stale data from this run.
@@ -1270,6 +1348,7 @@ impl super::App {
                     // stop's viewport happened to land.
                     self.dap_pane_cursor = 0;
                     self.dap_tab_scrolls.clear();
+                    self.dap_tab_h_scrolls.clear();
                     self.dap_jump_to_top_frame();
                 }
                 DapEvent::Continued { .. } => {

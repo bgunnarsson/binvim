@@ -7,6 +7,19 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Horizontal scrolling in the debug pane.** Long rows (deep
+  stack-frame paths, expanded structured locals, log lines that
+  outgrow the pane width) now scroll horizontally. `h`/`l`,
+  `Shift-←`/`Shift-→`, or `Shift+ScrollWheel` shift one column
+  (capital / shift variants jump by 10); `0` snaps back to column
+  0. A muted `«` replaces the leading pad once scrolled right, and
+  the rightmost cell becomes `»` when there's content beyond the
+  pane edge. Per-tab — each of Console / Locals / Frames / Watches
+  / Breakpoints remembers its own offset. Resets on `stopped` and
+  on session start. Console mouse selection (drag-select + Cmd-
+  click on URLs) accounts for the offset when mapping screen col
+  back to char col, so selecting hidden text after scrolling right
+  still produces the correct clipboard payload.
 - **Crash handler.** A global `panic::set_hook` installed before any
   terminal-touching code best-effort restores the terminal (disable
   raw mode, leave alt screen, show cursor, drop kitty keyboard flags)
