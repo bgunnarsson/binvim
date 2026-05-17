@@ -22,6 +22,7 @@ mod parser;
 mod picker;
 mod render;
 mod session;
+mod terminal;
 mod text_object;
 mod undo;
 mod window;

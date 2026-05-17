@@ -49,6 +49,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 arboard = { version = "3", default-features = false }
+# `portable-pty` provides forkpty + ConPTY behind a unified API so
+# the same `:terminal` code works on macOS / Linux / (eventually)
+# Windows. `vte` is the WezTerm-derived VT100/xterm escape parser —
+# we feed it PTY bytes and it calls our callbacks to mutate the
+# terminal grid. No allocation per byte, no dependence on a renderer.
+portable-pty = "0.9"
+vte = "0.15"
 
 [profile.release]
 lto = "thin"
