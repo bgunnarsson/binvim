@@ -4287,7 +4287,10 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         let chip = format!("  {}  ", label);
         let chip_w = chip.chars().count() as u16;
         let is_active = *tab == app.dap_pane_tab;
-        let fg = if is_active { accent } else { muted };
+        // Active tab: bright text + bold + underline so it reads as
+        // "selected" without competing with the DEBUG chip's peach.
+        // Inactive tabs use the muted overlay tone.
+        let fg = if is_active { header_fg } else { muted };
         queue!(
             out,
             MoveTo(tab_x, tab_row_y),
@@ -4295,7 +4298,11 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
             SetForegroundColor(fg),
         )?;
         if is_active {
-            queue!(out, SetAttribute(Attribute::Bold))?;
+            queue!(
+                out,
+                SetAttribute(Attribute::Bold),
+                SetAttribute(Attribute::Underlined),
+            )?;
         }
         queue!(out, Print(&chip))?;
         queue!(out, SetAttribute(Attribute::Reset))?;
