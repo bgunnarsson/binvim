@@ -6,7 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-17
+
 ### Added
+- **Monokai theme.** Classic Wimer Hazenberg palette (`#272822`
+  background, pink keywords, green functions, cyan types, purple
+  constants, yellow strings, orange parameters). Brings the
+  bundled-theme count to 15.
 - **Namespaced `[colors]` keys for fine-grained control.** Every
   themable role has both a broad key and an optional namespaced
   override. Set the broad one to retint a whole class; set the
@@ -37,6 +43,15 @@ follows [Semantic Versioning](https://semver.org/).
   Catppuccin tint leaking through Dracula / Tokyo Night / Light Owl.
 
 ### Changed
+- **Chrome bg always differs from the buffer bg.** Tabs and popups
+  (whichkey, hover, signature, notification, floating cmdline,
+  picker, completion, terminal/debug headers) used to share the
+  buffer's background when only `background` was set, so chrome
+  visually merged with the editor surface. `chrome_bg` now derives
+  by mixing the configured background toward black (15% on dark
+  themes, 5% on light) — the same Mantle/Base relationship
+  Catppuccin uses — and `chrome_bg = "#…"` can override it
+  explicitly per theme.
 - **One-line themes now produce coherent chrome.** When only
   `background` is set in `[colors]`, `surface`, `border`,
   `foreground`, and `dim` auto-derive from it via luminance-
@@ -46,6 +61,14 @@ follows [Semantic Versioning](https://semver.org/).
   consistent light UI — no more Catppuccin Surface1 active-tab
   bg leaking through a light theme. Setting any of the four
   neutrals explicitly still wins.
+
+### Fixed
+- **Debug pane: no buffer leak between tab labels.** The 1-col
+  gap between Console / Locals / Frames / Watches / Breakpoints
+  tabs was advancing the cursor without painting that column,
+  so git-stripe glyphs from the buffer beneath leaked through
+  on every frame. Paint the gap with `pane_bg` (same pattern
+  the terminal pane already uses).
 
 ### Added
 - **Full chrome palette in `[colors]`.** Twelve new keys in
