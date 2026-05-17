@@ -626,18 +626,24 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "namespace" | "module" => Some(CATP_YELLOW),
         "constant" | "boolean" | "number" | "float" => Some(CATP_PEACH),
         "operator" => Some(CATP_SKY),
-        // Attribute family — peach, deliberately distinct from
-        // @keyword (mauve) and @type (yellow) so `#[derive(Debug,
+        // HTML attribute names (`class=`, `href=`, JSX `className=`,
+        // …) are all `@attribute` from tree-sitter and there are
+        // *many* of them per line — peach is overwhelming in that
+        // context. Keep them on yellow.
+        "attribute" => Some(CATP_YELLOW),
+        // Rust attribute family — peach, deliberately distinct from
+        // `@keyword` (mauve) and `@type` (yellow) so `#[derive(Debug,
         // Clone, Copy)]` reads as its own visual unit instead of
-        // bleeding into the `pub struct Foo` line below it. All the
+        // bleeding into the `pub struct Foo` line below. Routed
+        // through `@decorator` (Rust query override in `lang.rs`
+        // re-captures `(attribute_item)` as `@decorator`) plus the
         // rust-analyzer-specific semantic-token types that fall inside
         // an attribute (`decorator` is the LSP-standard one;
         // `attributeBracket` / `derive` / `builtinAttribute` /
-        // `deriveHelper` / `toolModule` are rust-analyzer extensions)
-        // are routed to the same colour so the line paints uniformly
+        // `deriveHelper` / `toolModule` are rust-analyzer extensions).
+        // All routed to the same colour so the line paints uniformly
         // whether tree-sitter or the LSP wins the priority race.
-        "attribute"
-        | "decorator"
+        "decorator"
         | "attributeBracket"
         | "derive"
         | "builtinAttribute"

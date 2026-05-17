@@ -323,7 +323,19 @@ impl Lang {
 
     fn highlights_query(self) -> String {
         match self {
-            Lang::Rust => tree_sitter_rust::HIGHLIGHTS_QUERY.into(),
+            // Rust: append two overrides so `#[derive(...)]` / `#![...]`
+            // capture as `@decorator` instead of the bundled `@attribute`.
+            // Tree-sitter resolves later patterns at higher priority (see
+            // `compute_byte_colors`), so the appended captures win on
+            // every byte they touch. This decouples Rust attribute
+            // colouring from HTML/JSX/Razor `@attribute` (which is also
+            // the capture for HTML attribute names like `class=` /
+            // `href=`); peach for `#[derive(...)]` is great, but peach
+            // for every HTML attribute name is overwhelming.
+            Lang::Rust => format!(
+                "{}\n(attribute_item) @decorator\n(inner_attribute_item) @decorator\n",
+                tree_sitter_rust::HIGHLIGHTS_QUERY,
+            ),
             // tree-sitter-typescript ships only a TS-specific overlay (5
             // captures). Combine with the tree-sitter-javascript query for
             // full coverage. *Pure* TypeScript's grammar has no JSX nodes,
@@ -1217,14 +1229,13 @@ mod tests {
 
     #[test]
     fn rust_derive_attribute_paints_distinct_from_pub_struct() {
-        // Regression: tree-sitter-rust's `(attribute_item) @attribute`
-        // is one of the last patterns in the bundled query, so under
-        // "later pattern wins" priority the whole `#[derive(Debug,
-        // Clone, Copy)]` range should paint as @attribute — which now
-        // resolves to peach, distinct from @keyword (mauve) on the
-        // `pub struct` line below. The earlier bug surfaced as the
-        // attribute being the same hue as the keyword line, making
-        // the visual unit indistinguishable.
+        // Regression: the Rust query override in `highlights_query`
+        // re-captures `(attribute_item)` as `@decorator` so the whole
+        // `#[derive(Debug, Clone, Copy)]` range paints peach, distinct
+        // from @keyword (mauve) on the `pub struct` line below AND
+        // from @type (yellow) on `Foo`. The earlier bug surfaced as
+        // the attribute being the same hue as one of those two,
+        // making the visual unit indistinguishable.
         let config = Config::load();
         let source = "#[derive(Debug, Clone, Copy)]\npub struct Foo;\n";
         let colors = compute_byte_colors(Lang::Rust, source, &config)
@@ -1232,20 +1243,43 @@ mod tests {
 
         let derive_at = find_word(source, "derive").expect("derive token present");
         let pub_at = find_word(source, "pub").expect("pub token present");
+        let foo_at = find_word(source, "Foo").expect("Foo token present");
         let attribute_color = colors[derive_at];
         let keyword_color = colors[pub_at];
+        let type_color = colors[foo_at];
         assert!(
             attribute_color.is_some(),
-            "@attribute should resolve to a colour, got None"
-        );
-        assert!(
-            keyword_color.is_some(),
-            "@keyword should resolve to a colour, got None"
+            "@decorator should resolve to a colour, got None"
         );
         assert_ne!(
             attribute_color, keyword_color,
-            "#[derive(...)] should not share a colour with `pub` — current attribute={:?}, keyword={:?}",
+            "#[derive(...)] should not share a colour with `pub` — attribute={:?}, keyword={:?}",
             attribute_color, keyword_color,
+        );
+        assert_ne!(
+            attribute_color, type_color,
+            "#[derive(...)] should not share a colour with `Foo` — attribute={:?}, type={:?}",
+            attribute_color, type_color,
+        );
+    }
+
+    #[test]
+    fn html_attribute_name_stays_yellow_not_peach() {
+        // Regression for the HTML/JSX/Razor side: HTML `@attribute`
+        // must NOT pick up the Rust attribute-family peach. Yellow is
+        // the right colour because HTML attribute names appear many
+        // per line — peach would visually drown the file.
+        let config = Config::load();
+        let source = "<div class=\"foo\"></div>\n";
+        let colors = compute_byte_colors(Lang::Html, source, &config)
+            .expect("highlight pass should succeed");
+        let class_at = find_word(source, "class").expect("class attribute present");
+        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        assert_eq!(
+            colors[class_at],
+            Some(yellow),
+            "HTML `class` attribute name should stay yellow (got {:?})",
+            colors[class_at],
         );
     }
 
@@ -1328,12 +1362,7 @@ mod tests {
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
         let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-        // HTML attribute names share the `@attribute` capture with
-        // Rust attribute items (`#[derive(...)]`). Both render peach
-        // so the attribute family is uniformly distinct from
-        // @keyword / @type / @tag — see config.rs's
-        // `default_capture_color`.
-        let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
         let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
 
         // The first broken `<div class="…px-[12px]…">` opener.
@@ -1346,8 +1375,8 @@ mod tests {
         let class_idx = div_idx + 4; // skip `div `
         assert_eq!(
             cache.byte_colors.get(class_idx).copied().flatten(),
-            Some(peach),
-            "broken `class` attribute name should be Peach (attribute family)",
+            Some(yellow),
+            "broken `class` attribute name should be Yellow",
         );
 
         // `else` inside @if/else body — bare token, no parent node.
@@ -1385,12 +1414,7 @@ mod tests {
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
         let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-        // HTML attribute names share the `@attribute` capture with
-        // Rust attribute items (`#[derive(...)]`). Both render peach
-        // so the attribute family is uniformly distinct from
-        // @keyword / @type / @tag — see config.rs's
-        // `default_capture_color`.
-        let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
         let section_idx = source.find("<section").unwrap() + 1;
         assert_eq!(
             cache.byte_colors.get(section_idx).copied().flatten(),
@@ -1400,8 +1424,8 @@ mod tests {
         let class_idx = source.find(" class=").unwrap() + 1;
         assert_eq!(
             cache.byte_colors.get(class_idx).copied().flatten(),
-            Some(peach),
-            "attribute `class=` should be Peach (attribute family)",
+            Some(yellow),
+            "attribute `class=` should be Yellow",
         );
     }
 
