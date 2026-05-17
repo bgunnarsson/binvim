@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 mod app;
 mod buffer;
+mod code_lens_synth;
 mod command;
 mod config;
 mod crash;
@@ -22,6 +23,7 @@ mod parser;
 mod picker;
 mod render;
 mod session;
+mod spell;
 mod terminal;
 mod test;
 mod text_object;

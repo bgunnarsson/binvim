@@ -5,6 +5,19 @@ use std::io::{BufWriter, Read};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Bytes above which a buffer is considered "large" — the rope still
+/// handles the volume fine, but tree-sitter highlight passes take
+/// seconds (blocking the event loop) and most LSPs choke on initial
+/// didOpen. Large-file mode disables both. 5MB picks up typical
+/// generated bundles / minified JS / SQL dumps without false-tripping
+/// on regular source files.
+pub const LARGE_FILE_BYTES: usize = 5 * 1024 * 1024;
+/// Line-count threshold for the same gate. Some files (machine-
+/// generated JSON, log captures) sit under the byte cap but still
+/// have enough lines to drag tree-sitter through tens of thousands of
+/// captures per refresh.
+pub const LARGE_FILE_LINES: usize = 50_000;
+
 #[derive(Clone)]
 pub struct Buffer {
     pub rope: Rope,
@@ -173,5 +186,54 @@ impl Buffer {
 
     pub fn total_chars(&self) -> usize {
         self.rope.len_chars()
+    }
+
+    /// True when the buffer trips the large-file threshold by either
+    /// byte volume or line count. Callers (highlight cache, LSP
+    /// attach, render hot paths) bail early when this returns true so
+    /// the editor stays responsive on huge files.
+    pub fn is_large(&self) -> bool {
+        self.rope.len_bytes() > LARGE_FILE_BYTES
+            || self.rope.len_lines() > LARGE_FILE_LINES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buf_with_text(s: &str) -> Buffer {
+        let mut b = Buffer::empty();
+        b.rope = ropey::Rope::from_str(s);
+        b
+    }
+
+    #[test]
+    fn small_buffer_is_not_large() {
+        let b = buf_with_text("fn main() { println!(\"hello\"); }\n");
+        assert!(!b.is_large());
+    }
+
+    #[test]
+    fn buffer_over_byte_threshold_is_large() {
+        let big = "x".repeat(LARGE_FILE_BYTES + 1);
+        let b = buf_with_text(&big);
+        assert!(b.is_large());
+    }
+
+    #[test]
+    fn buffer_over_line_threshold_is_large() {
+        let many = "a\n".repeat(LARGE_FILE_LINES + 1);
+        let b = buf_with_text(&many);
+        assert!(b.is_large());
+    }
+
+    #[test]
+    fn buffer_just_under_thresholds_is_not_large() {
+        // (LARGE_FILE_LINES - 1) lines of one char each ≈ 100KB, well
+        // under the byte cap.
+        let text = "a\n".repeat(LARGE_FILE_LINES - 1);
+        let b = buf_with_text(&text);
+        assert!(!b.is_large());
     }
 }

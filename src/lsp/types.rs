@@ -98,6 +98,31 @@ pub struct DocumentHighlightRange {
     pub kind: u8,
 }
 
+/// One `textDocument/codeLens` entry. `line`/`col` is the anchor —
+/// LSP's `range.start`, i.e. the position the lens decorates (a `fn`
+/// keyword, a class header, …). `command` may be `None` for an
+/// "unresolved" lens that needs a follow-up `codeLens/resolve`; the
+/// renderer hides those today rather than printing a blank slot.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct CodeLensItem {
+    pub line: usize,
+    pub col: usize,
+    pub command: Option<LspCommand>,
+}
+
+/// LSP `Command` — what gets invoked when the user activates a code
+/// lens (or a code action that's a bare command rather than a workspace
+/// edit). `title` is the human-readable label rendered as virtual text
+/// above the lens's anchor line.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct LspCommand {
+    pub title: String,
+    pub command: String,
+    pub arguments: Vec<Value>,
+}
+
 /// One inlay hint. `line`/`col` are 0-indexed buffer coordinates where
 /// the hint should appear; `label` is the displayable text. `kind` is
 /// the LSP `InlayHintKind` enum (1 = Type, 2 = Parameter).
@@ -155,6 +180,15 @@ pub enum LspEvent {
         path: PathBuf,
         buffer_version: u64,
         tokens: Vec<SemanticToken>,
+    },
+    /// `textDocument/codeLens` reply — the resolved (or partially
+    /// resolved) lenses for `path`. `buffer_version` is the version
+    /// that was on the wire when the request fired; stale responses
+    /// are dropped by the App when they no longer match.
+    CodeLens {
+        path: PathBuf,
+        buffer_version: u64,
+        lenses: Vec<CodeLensItem>,
     },
     /// Copilot `checkStatus` reply — used to drive `App.lsp.copilot_status`
     /// + the status-line indicator. `kind` is the raw protocol string

@@ -39,6 +39,12 @@ fn visual_col_to_char_col(
     visual_col: usize,
     line_len: usize,
 ) -> usize {
+    // Insert mode lets the cursor sit past the last char (col == line_len);
+    // Normal / Visual clamp to `line_len - 1` so the cursor always sits on a
+    // character. Same rule for clicks: an Insert-mode click past EOL parks
+    // the cursor at end-of-line; a Normal-mode click past EOL snaps it to
+    // the last char.
+    let allow_past_eol = matches!(app.mode, crate::mode::Mode::Insert);
     // Markdown concealed mode warps source spans (`**` hidden, `- `
     // replaced by `•`, …), so the click → buffer-col mapping has to
     // walk the same per-line transforms the renderer used. Without
@@ -59,22 +65,38 @@ fn visual_col_to_char_col(
                 visual_col,
                 crate::render::TAB_WIDTH,
             );
-            return col.min(line_len.saturating_sub(1));
+            let cap = if allow_past_eol {
+                line_len
+            } else {
+                line_len.saturating_sub(1)
+            };
+            return col.min(cap);
         }
     }
     let hint_widths = crate::render::inlay_hint_widths_for_line(app, line);
-    visual_col_to_char_col_with_hints(&app.buffer, line, visual_col, line_len, &hint_widths)
+    visual_col_to_char_col_with_hints(
+        &app.buffer,
+        line,
+        visual_col,
+        line_len,
+        &hint_widths,
+        allow_past_eol,
+    )
 }
 
 /// Inner walk — extracted so tests can drive it without spinning up a
 /// full `App`. `hint_widths[i]` is the total cell width of inlay hints
 /// anchored at buffer col `i` on the line; empty slice = no hints.
+/// `allow_past_eol` lifts the trailing clamp from `line_len - 1` (the
+/// Normal-mode "cursor sits on a char" rule) to `line_len` (the
+/// Insert-mode "cursor can sit past the last char" rule).
 fn visual_col_to_char_col_with_hints(
     buffer: &crate::buffer::Buffer,
     line: usize,
     visual_col: usize,
     line_len: usize,
     hint_widths: &[usize],
+    allow_past_eol: bool,
 ) -> usize {
     if line_len == 0 {
         return 0;
@@ -103,7 +125,11 @@ fn visual_col_to_char_col_with_hints(
         visual += w;
         chars += 1;
     }
-    chars.min(line_len - 1)
+    if allow_past_eol {
+        chars.min(line_len)
+    } else {
+        chars.min(line_len - 1)
+    }
 }
 
 /// Find the char column to delete back to for an Alt/Ctrl-Backspace on
@@ -212,7 +238,8 @@ impl super::App {
                 let leader_pending = self.pending.awaiting_leader
                     || self.pending.awaiting_buffer_leader
                     || self.pending.awaiting_debug_leader
-                    || self.pending.awaiting_hunk_leader;
+                    || self.pending.awaiting_hunk_leader
+                    || self.pending.awaiting_ai_leader;
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
@@ -228,19 +255,24 @@ impl super::App {
                 // accidentally type into the underlying buffer. The
                 // three overlays share the same scroll bindings — only
                 // the dismiss flag differs.
-                let overlay_active =
-                    self.show_health_page || self.show_messages_page || self.show_test_results_page;
+                let overlay_active = self.show_health_page
+                    || self.show_messages_page
+                    || self.show_test_results_page
+                    || self.show_registers_page;
                 if overlay_active {
                     let normal = matches!(self.mode, Mode::Normal);
                     let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
                     let messages = self.show_messages_page;
                     let test_results = self.show_test_results_page;
+                    let registers = self.show_registers_page;
                     let scroll = |this: &mut Self, delta: isize| {
                         if test_results {
                             this.test_results_scroll_by(delta);
                         } else if messages {
                             this.messages_scroll_by(delta);
+                        } else if registers {
+                            this.registers_scroll_by(delta);
                         } else {
                             this.health_scroll_by(delta);
                         }
@@ -250,6 +282,8 @@ impl super::App {
                             this.show_test_results_page = false;
                         } else if messages {
                             this.show_messages_page = false;
+                        } else if registers {
+                            this.show_registers_page = false;
                         } else {
                             this.show_health_page = false;
                         }
@@ -312,6 +346,8 @@ impl super::App {
                                 self.test_results_scroll = 0;
                             } else if messages {
                                 self.messages_scroll = 0;
+                            } else if registers {
+                                self.registers_scroll = 0;
                             } else {
                                 self.health_scroll = 0;
                             }
@@ -325,6 +361,8 @@ impl super::App {
                                 self.test_results_at_tail = true;
                             } else if messages {
                                 self.messages_scroll = self.messages_max_scroll();
+                            } else if registers {
+                                self.registers_scroll = self.registers_max_scroll();
                             } else {
                                 self.health_scroll = self.health_max_scroll();
                             }
@@ -351,6 +389,7 @@ impl super::App {
                         self.handle_debug_pane_key(k);
                     }
                     Mode::Terminal => self.handle_terminal_key(k),
+                    Mode::FileTree => self.handle_file_tree_key(k),
                 }
             }
             crossterm::event::Event::Mouse(me) => {
@@ -366,6 +405,7 @@ impl super::App {
                 // its shell should already have the current
                 // winsize so we don't see a reflow flash on switch.
                 self.resize_all_terminals();
+                self.resize_all_side_terminals();
             }
             _ => {}
         }
@@ -388,10 +428,124 @@ impl super::App {
         if self.terminal_pane_open && self.handle_terminal_mouse_event(&ev, row, col) {
             return;
         }
+        // Side-pane (`:claude` etc.) mouse handling. Header row
+        // clicks switch tabs via the hit-box table the renderer
+        // populated; clicks anywhere else in the pane pull focus to
+        // the side terminal. Everything inside the pane is swallowed
+        // so editor windows behind don't also fire.
+        if self.side_terminal_pane_open
+            && self.side_pane_cols() > 0
+            && col >= self.side_pane_left()
+            && row >= self.buffer_top()
+            && row < self.buffer_top() + self.buffer_rows()
+        {
+            // Header row = the first row of the pane. Same row the
+            // tab strip sits on.
+            let header_row = self.buffer_top();
+            if row == header_row
+                && matches!(
+                    ev.kind,
+                    MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+                )
+            {
+                let hits = self.side_terminal_tab_hitboxes.take();
+                let mut clicked: Option<usize> = None;
+                for (idx, x_start, x_end) in &hits {
+                    if (col as u16) >= *x_start && (col as u16) < *x_end {
+                        clicked = Some(*idx);
+                        break;
+                    }
+                }
+                self.side_terminal_tab_hitboxes.set(hits);
+                if let Some(idx) = clicked {
+                    if idx < self.side_terminals.len()
+                        && idx != self.active_side_terminal_idx
+                    {
+                        self.active_side_terminal_idx = idx;
+                    }
+                }
+                self.terminal_focus = crate::app::TerminalFocus::Side;
+                self.mode = Mode::Terminal;
+                return;
+            }
+            if matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+            ) {
+                self.terminal_focus = crate::app::TerminalFocus::Side;
+                self.mode = Mode::Terminal;
+            }
+            return;
+        }
         // Same gating for the debug pane — clicks land focus on the
         // pane (Mode::DebugPane), clicks on the tab bar switch tabs,
         // scroll wheel pages the active tab's body.
         if self.debug_pane_open && self.handle_debug_pane_mouse_event(&ev, row, col) {
+            return;
+        }
+        // File-tree sidebar — clicks land focus on the pane and pick
+        // a row when they're inside the body. Everything inside the
+        // pane is swallowed so editor windows behind don't also fire.
+        if self.file_tree.is_some()
+            && self.file_tree_cols() > 0
+            && col < self.file_tree_cols()
+            && row >= self.buffer_top()
+            && row < self.buffer_top() + self.buffer_rows()
+        {
+            if matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+            ) {
+                self.mode = Mode::FileTree;
+                // Pane layout: chip row | spacer row | body…
+                // Body therefore starts at `buffer_top + 2`.
+                let body_start = self.buffer_top() + 2;
+                let mut clicked_entry: Option<usize> = None;
+                if row >= body_start {
+                    let body_row = (row - body_start) as usize;
+                    let body_rows = self
+                        .buffer_rows()
+                        .saturating_sub(2);
+                    if let Some(state) = self.file_tree.as_mut() {
+                        let scroll = if body_rows == 0
+                            || state.entries.len() <= body_rows
+                        {
+                            0
+                        } else {
+                            let half = body_rows / 2;
+                            let max_scroll =
+                                state.entries.len().saturating_sub(body_rows);
+                            state.cursor.saturating_sub(half).min(max_scroll)
+                        };
+                        let target = scroll + body_row;
+                        if target < state.entries.len() {
+                            state.cursor = target;
+                            clicked_entry = Some(target);
+                        }
+                    }
+                }
+                // Double-click detection: a second click on the same
+                // entry inside DOUBLE_CLICK_WINDOW opens the file (or
+                // toggles the folder), matching the buffer-area click
+                // convention.
+                if let Some(idx) = clicked_entry {
+                    let now = std::time::Instant::now();
+                    let is_double = self
+                        .last_tree_click
+                        .filter(|(t, i)| {
+                            now.duration_since(*t)
+                                <= crate::app::DOUBLE_CLICK_WINDOW
+                                && *i == idx
+                        })
+                        .is_some();
+                    if is_double {
+                        self.last_tree_click = None;
+                        self.file_tree_activate_cursor();
+                    } else {
+                        self.last_tree_click = Some((now, idx));
+                    }
+                }
+            }
             return;
         }
         // Click outside the terminal / debug panes while one of
@@ -400,7 +554,7 @@ impl super::App {
         // event. Otherwise the click would fall through but the
         // mode would still be Terminal / DebugPane and the next
         // keystroke would route to the wrong place.
-        if matches!(self.mode, Mode::Terminal | Mode::DebugPane)
+        if matches!(self.mode, Mode::Terminal | Mode::DebugPane | Mode::FileTree)
             && matches!(
                 ev.kind,
                 MouseEventKind::Down(MouseButton::Left | MouseButton::Middle | MouseButton::Right)
@@ -445,6 +599,8 @@ impl super::App {
                     self.health_scroll_by(-3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(-3);
+                } else if self.show_registers_page {
+                    self.registers_scroll_by(-3);
                 } else if self.show_test_results_page {
                     self.test_results_scroll_by(-3);
                 } else {
@@ -463,6 +619,8 @@ impl super::App {
                     self.health_scroll_by(3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(3);
+                } else if self.show_registers_page {
+                    self.registers_scroll_by(3);
                 } else if self.show_test_results_page {
                     self.test_results_scroll_by(3);
                 } else {
@@ -573,25 +731,58 @@ impl super::App {
         if buf_row >= buffer_rows {
             return; // status line / off-buffer area
         }
+        // Translate the click into editor-pane-local coords. The pane's
+        // left edge shifts right when the sidebar tree (or any
+        // future left-anchored pane) is open, so a click at screen
+        // col 30 inside an editor pane that starts at screen col 30
+        // should read as pane col 0, not pane col 30. Without this
+        // adjustment the gutter check passes spuriously and
+        // `visual_col` ends up `tree_width` cells too far to the
+        // right — clicking the first char lands the cursor at EOL.
+        let pane_left = self.active_pane_rect().x as usize;
+        if col < pane_left {
+            return; // click landed in a left-side pane (tree), not the editor
+        }
+        let pane_col = col - pane_left;
         let gutter = self.gutter_width();
-        if col < gutter {
+        if pane_col < gutter {
             return; // sign column / line numbers
         }
         // Walk forward from view_top, counting only visible (non-folded,
         // non-md-hidden) rows, until we've passed `buf_row` of them.
         // Without this the click would miscount when collapsed rows
-        // sit between the viewport top and the click target.
+        // sit between the viewport top and the click target. Lines
+        // with code lenses contribute *two* rows (a phantom above
+        // the buffer line); a click on the phantom routes through
+        // `click_code_lens` instead of falling through to cursor
+        // placement.
         let mut buf_line = self.window.view_top;
         let total = self.buffer.line_count();
         let mut visible_rows_seen = 0;
+        let mut clicked_lens_line: Option<usize> = None;
         while buf_line < total {
-            if !self.line_is_folded(buf_line) && !self.line_is_md_hidden(buf_line) {
+            if self.line_is_folded(buf_line) || self.line_is_md_hidden(buf_line) {
+                buf_line += 1;
+                continue;
+            }
+            if self.line_has_code_lens(buf_line) {
                 if visible_rows_seen == buf_row {
+                    clicked_lens_line = Some(buf_line);
                     break;
                 }
                 visible_rows_seen += 1;
             }
+            if visible_rows_seen == buf_row {
+                break;
+            }
+            visible_rows_seen += 1;
             buf_line += 1;
+        }
+        if let Some(line) = clicked_lens_line {
+            if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left)) {
+                self.click_code_lens_row(line, pane_col, gutter);
+            }
+            return;
         }
         if buf_line >= total {
             return;
@@ -603,7 +794,7 @@ impl super::App {
         // cursor several chars past tab-indented text. We replay the same
         // width rule the renderer uses (tab = TAB_WIDTH, everything else
         // = 1) walking the line until we've consumed `visual_col` cells.
-        let visual_col = col.saturating_sub(gutter) + self.window.view_left;
+        let visual_col = pane_col.saturating_sub(gutter) + self.window.view_left;
         let buf_col = visual_col_to_char_col(self, buf_line, visual_col, line_len);
 
         match ev.kind {
@@ -647,6 +838,9 @@ impl super::App {
                 // Any fresh Down resets word-drag tracking; only a
                 // double-click re-arms it below.
                 self.word_drag_origin = None;
+                // A click is an explicit "put my cursor here" — drop any
+                // lens-phantom hop the user had parked from the keyboard.
+                self.phantom_lens_idx = None;
                 self.window.cursor.line = buf_line;
                 self.window.cursor.col = buf_col;
                 self.window.cursor.want_col = buf_col;
@@ -684,6 +878,7 @@ impl super::App {
                         self.mode = Mode::Visual(VisualKind::Char);
                         self.window.visual_anchor = Some(anchor);
                     }
+                    self.phantom_lens_idx = None;
                     self.window.cursor.line = buf_line;
                     self.window.cursor.col = buf_col;
                     self.window.cursor.want_col = buf_col;
@@ -764,6 +959,19 @@ impl super::App {
     }
 
     pub(super) fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
+        // Bare ENTER on a lens-bearing line invokes the lens, same as
+        // `<leader>l` and the mouse click. Only fires when the parser
+        // has no partial state (no pending operator / count / prefix)
+        // so `d<CR>` and similar future motions stay future-compatible.
+        if matches!(ctx, parser::ParseCtx::Normal)
+            && matches!(key.code, KeyCode::Enter)
+            && key.modifiers.is_empty()
+            && self.pending.is_clean()
+            && self.line_has_code_lens(self.window.cursor.line)
+        {
+            self.apply_action(parser::Action::LspExecuteCodeLens);
+            return;
+        }
         match parser::parse(&mut self.pending, key, ctx) {
             ParseResult::Pending => {}
             ParseResult::Cancelled => {
@@ -779,7 +987,8 @@ impl super::App {
             || self.pending.awaiting_debug_leader
             || self.pending.awaiting_hunk_leader
             || self.pending.awaiting_terminal_leader
-            || self.pending.awaiting_test_leader;
+            || self.pending.awaiting_test_leader
+            || self.pending.awaiting_ai_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());
@@ -1220,17 +1429,20 @@ impl super::App {
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
+                self.cmdline_completion_reset();
                 self.history_reset();
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
                 let line = std::mem::take(&mut self.cmdline);
+                self.cmdline_completion_reset();
                 self.history_record(HistoryKind::Command, &line);
                 self.history_reset();
                 self.mode = Mode::Normal;
                 self.exec_command(&line);
             }
             KeyCode::Backspace => {
+                self.cmdline_completion_reset();
                 if self.cmdline.is_empty() {
                     self.history_reset();
                     self.mode = Mode::Normal;
@@ -1238,9 +1450,18 @@ impl super::App {
                     self.cmdline.pop();
                 }
             }
-            KeyCode::Up => self.history_walk_back(HistoryKind::Command),
-            KeyCode::Down => self.history_walk_forward(HistoryKind::Command),
+            KeyCode::Tab => self.cmdline_tab(false),
+            KeyCode::BackTab => self.cmdline_tab(true),
+            KeyCode::Up => {
+                self.cmdline_completion_reset();
+                self.history_walk_back(HistoryKind::Command);
+            }
+            KeyCode::Down => {
+                self.cmdline_completion_reset();
+                self.history_walk_forward(HistoryKind::Command);
+            }
             KeyCode::Char(c) => {
+                self.cmdline_completion_reset();
                 self.cmdline.push(c);
             }
             _ => {}
@@ -1283,6 +1504,8 @@ impl super::App {
                     self.show_health_page = false;
                 } else if self.show_messages_page {
                     self.show_messages_page = false;
+                } else if self.show_registers_page {
+                    self.show_registers_page = false;
                 } else if self.show_test_results_page {
                     self.show_test_results_page = false;
                 } else if self.buffer.dirty {
@@ -1292,21 +1515,28 @@ impl super::App {
                     // background processes (`pnpm dev`, `cargo
                     // watch`, an SSH session, …) get SIGHUP when
                     // their master PTY fd is released, rather than
-                    // orphaning on the OS until we exit.
+                    // orphaning on the OS until we exit. Side-pane
+                    // AI sessions get the same treatment.
                     self.terminals.clear();
                     self.terminal_pane_open = false;
+                    self.side_terminals.clear();
+                    self.side_terminal_pane_open = false;
                     self.should_quit = true;
                 }
             }
             ExCommand::QuitForce => {
                 self.terminals.clear();
                 self.terminal_pane_open = false;
+                self.side_terminals.clear();
+                self.side_terminal_pane_open = false;
                 self.should_quit = true;
             }
             ExCommand::WriteQuit => match self.save_active() {
                 Ok(_) => {
                     self.terminals.clear();
                     self.terminal_pane_open = false;
+                    self.side_terminals.clear();
+                    self.side_terminal_pane_open = false;
                     self.should_quit = true;
                 }
                 Err(e) => self.status_msg = format!("error: {e}"),
@@ -1362,7 +1592,10 @@ impl super::App {
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
             ExCommand::Messages => self.cmd_messages(),
+            ExCommand::Registers => self.cmd_registers(),
+            ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
+            ExCommand::AiTool(tool) => self.open_side_terminal(tool.label(), tool.command()),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::DebugWatch(sub) => self.dispatch_debug_watch(sub),
             ExCommand::DebugWatchesShow => self.dispatch_debug_watches_show(),
@@ -1388,6 +1621,8 @@ impl super::App {
                     QuickfixSubCmd::Close => self.qf_close(),
                 }
             }
+            ExCommand::SpellToggle => self.cmd_spell_toggle(),
+            ExCommand::DebugTestNearest => self.cmd_debug_test_nearest(),
             ExCommand::Test(sub) => {
                 use crate::command::TestSubCmd;
                 match sub {
@@ -1421,11 +1656,25 @@ impl super::App {
                 };
                 let input = std::mem::take(&mut self.cmdline);
                 match kind {
-                    crate::mode::PromptKind::Rename => self.finish_rename(input),
-                    crate::mode::PromptKind::ReplaceAll => self.finish_replace_all(input),
+                    crate::mode::PromptKind::Rename => {
+                        self.finish_rename(input);
+                        self.mode = Mode::Normal;
+                        self.rename_anchor = None;
+                    }
+                    crate::mode::PromptKind::ReplaceAll => {
+                        self.finish_replace_all(input);
+                        self.mode = Mode::Normal;
+                        self.rename_anchor = None;
+                    }
+                    crate::mode::PromptKind::FileTreeCreate => {
+                        // Finisher owns mode transition — it returns
+                        // to `FileTree` so the pane stays the focus.
+                        self.finish_file_tree_create(input);
+                    }
+                    crate::mode::PromptKind::FileTreeRename => {
+                        self.finish_file_tree_rename(input);
+                    }
                 }
-                self.mode = Mode::Normal;
-                self.rename_anchor = None;
             }
             KeyCode::Backspace => {
                 self.cmdline.pop();
@@ -1438,9 +1687,26 @@ impl super::App {
     }
 
     pub(super) fn cancel_prompt(&mut self) {
+        let kind = match self.mode {
+            Mode::Prompt(k) => Some(k),
+            _ => None,
+        };
         self.cmdline.clear();
-        self.mode = Mode::Normal;
-        self.rename_anchor = None;
+        match kind {
+            Some(
+                crate::mode::PromptKind::FileTreeCreate
+                | crate::mode::PromptKind::FileTreeRename,
+            ) => {
+                if let Some(state) = self.file_tree.as_mut() {
+                    state.pending_op = None;
+                }
+                self.mode = Mode::FileTree;
+            }
+            _ => {
+                self.mode = Mode::Normal;
+                self.rename_anchor = None;
+            }
+        }
     }
 
     /// Resolve an `ExRange` to a 0-based inclusive `(start_line, end_line)` pair,
@@ -1697,11 +1963,22 @@ mod tests {
     fn visual_col_to_char_col_no_tabs() {
         // `hello world` — visual col == char col on plain ASCII.
         let b = buf("hello world\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 11, &[]), 0);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[]), 6);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 10, 11, &[]), 10);
-        // Click past EOL clamps to the last char.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[]), 10);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 11, &[], false), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], false), 6);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 10, 11, &[], false), 10);
+        // Click past EOL in Normal mode clamps to the last char.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[], false), 10);
+    }
+
+    #[test]
+    fn visual_col_to_char_col_insert_past_eol() {
+        // Same line, Insert-mode behaviour: a click past the last char
+        // parks the cursor at `line_len` so the user can append.
+        let b = buf("hello world\n");
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 11, 11, &[], true), 11);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[], true), 11);
+        // Inside the line, both modes agree.
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], true), 6);
     }
 
     #[test]
@@ -1710,14 +1987,14 @@ mod tests {
         //   0 = first tab, 1 = second tab, 2 = 'x'. Visual positions:
         //   0..4 = first tab, 4..8 = second tab, 8 = 'x'.
         let b = buf("\t\tx\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 3, &[]), 0);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 2, 3, &[]), 0); // mid first tab
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 3, &[]), 1); // start of second tab
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 3, &[]), 1); // mid second tab
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 3, &[]), 2); // on `x`
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 3, &[], false), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 2, 3, &[], false), 0); // mid first tab
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 3, &[], false), 1); // start of second tab
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 3, &[], false), 1); // mid second tab
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 3, &[], false), 2); // on `x`
         // The original bug: clicking at visual col 8 used to land at char 8
         // (past EOL). Now it clamps to the last char (`x`).
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 3, &[]), 2);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 3, &[], false), 2);
     }
 
     #[test]
@@ -1727,16 +2004,16 @@ mod tests {
         let line = "\t\t<partial";
         let b = buf(&format!("{}\n", line));
         let line_len = line.chars().count();
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, line_len, &[]), 2);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, line_len, &[], false), 2);
         // Click 3 cells in (between the two tabs visually) clamps to char 0.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, line_len, &[]), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, line_len, &[], false), 0);
     }
 
     #[test]
     fn visual_col_to_char_col_empty_line() {
         let b = buf("\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 0, &[]), 0);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 99, 0, &[]), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 0, &[], false), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 99, 0, &[], false), 0);
     }
 
     #[test]
@@ -1751,19 +2028,19 @@ mod tests {
         let mut hints = vec![0usize; 8]; // line_len + 1 = 7 + 1
         hints[4] = 10;
         // Click on `f` (visual col 0) → buffer col 0.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 7, &hints), 0);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 7, &hints, false), 0);
         // Click on the space (visual col 3) → buffer col 3.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, 7, &hints), 3);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, 7, &hints, false), 3);
         // Click anywhere inside the hint (visual cols 4..13) → snap to
         // buffer col 4 (the `b` immediately after the hint), NOT col 5+
         // which would land inside `bar`.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 7, &hints), 4);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 7, &hints), 4);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 13, 7, &hints), 4);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 7, &hints, false), 4);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 7, &hints, false), 4);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 13, 7, &hints, false), 4);
         // Click on `b` (visual col 14) → buffer col 4.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 14, 7, &hints), 4);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 14, 7, &hints, false), 4);
         // Click on `r` (visual col 16) → buffer col 6.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 16, 7, &hints), 6);
+        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 16, 7, &hints, false), 6);
     }
 
     #[test]

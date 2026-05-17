@@ -10,7 +10,9 @@
 //!   `binvim foo.rs` always means "I want foo.rs", never "restore."
 //! - Buffers that no longer exist on disk are silently dropped.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +28,11 @@ pub struct Session {
     /// Search query history (`/` / `?`) — oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub search_history: Vec<String>,
+    /// Recorded macros — register name → key stream. Persisted in a
+    /// serde-friendly shape so the in-memory `Vec<KeyEvent>` survives a
+    /// restart. Defaulted for forward-compat with old session files.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub macros: HashMap<char, Vec<SessionKey>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,6 +53,98 @@ pub struct SessionBuffer {
 
 fn is_zero(n: &usize) -> bool {
     *n == 0
+}
+
+fn is_zero_u8(n: &u8) -> bool {
+    *n == 0
+}
+
+/// Serde-friendly snapshot of one `crossterm::event::KeyEvent`. We can't
+/// derive `Serialize` on the upstream type, so this carries a tagged
+/// `KeyCode` plus the modifier bitset (matching `KeyModifiers::bits()`).
+/// Variants outside `SessionKeyCode` (kitty-keyboard release/repeat,
+/// media keys, etc.) are dropped on save — macros that recorded one
+/// silently lose that key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionKey {
+    pub code: SessionKeyCode,
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub mods: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "k", content = "v")]
+pub enum SessionKeyCode {
+    Char(char),
+    F(u8),
+    Backspace,
+    BackTab,
+    Delete,
+    Down,
+    End,
+    Enter,
+    Esc,
+    Home,
+    Insert,
+    Left,
+    PageDown,
+    PageUp,
+    Right,
+    Tab,
+    Up,
+}
+
+impl SessionKey {
+    /// Best-effort capture of a `KeyEvent` for persistence. Returns `None`
+    /// for variants we can't round-trip (media keys, kitty-keyboard
+    /// `Modifier`/`Release`/`Repeat` events). Callers drop those — a macro
+    /// is a stream, not a structure, so missing keys just shorten it.
+    pub fn from_event(k: &KeyEvent) -> Option<Self> {
+        let code = match k.code {
+            KeyCode::Char(c) => SessionKeyCode::Char(c),
+            KeyCode::F(n) => SessionKeyCode::F(n),
+            KeyCode::Backspace => SessionKeyCode::Backspace,
+            KeyCode::BackTab => SessionKeyCode::BackTab,
+            KeyCode::Delete => SessionKeyCode::Delete,
+            KeyCode::Down => SessionKeyCode::Down,
+            KeyCode::End => SessionKeyCode::End,
+            KeyCode::Enter => SessionKeyCode::Enter,
+            KeyCode::Esc => SessionKeyCode::Esc,
+            KeyCode::Home => SessionKeyCode::Home,
+            KeyCode::Insert => SessionKeyCode::Insert,
+            KeyCode::Left => SessionKeyCode::Left,
+            KeyCode::PageDown => SessionKeyCode::PageDown,
+            KeyCode::PageUp => SessionKeyCode::PageUp,
+            KeyCode::Right => SessionKeyCode::Right,
+            KeyCode::Tab => SessionKeyCode::Tab,
+            KeyCode::Up => SessionKeyCode::Up,
+            _ => return None,
+        };
+        Some(SessionKey { code, mods: k.modifiers.bits() })
+    }
+
+    pub fn to_event(&self) -> KeyEvent {
+        let code = match self.code {
+            SessionKeyCode::Char(c) => KeyCode::Char(c),
+            SessionKeyCode::F(n) => KeyCode::F(n),
+            SessionKeyCode::Backspace => KeyCode::Backspace,
+            SessionKeyCode::BackTab => KeyCode::BackTab,
+            SessionKeyCode::Delete => KeyCode::Delete,
+            SessionKeyCode::Down => KeyCode::Down,
+            SessionKeyCode::End => KeyCode::End,
+            SessionKeyCode::Enter => KeyCode::Enter,
+            SessionKeyCode::Esc => KeyCode::Esc,
+            SessionKeyCode::Home => KeyCode::Home,
+            SessionKeyCode::Insert => KeyCode::Insert,
+            SessionKeyCode::Left => KeyCode::Left,
+            SessionKeyCode::PageDown => KeyCode::PageDown,
+            SessionKeyCode::PageUp => KeyCode::PageUp,
+            SessionKeyCode::Right => KeyCode::Right,
+            SessionKeyCode::Tab => KeyCode::Tab,
+            SessionKeyCode::Up => KeyCode::Up,
+        };
+        KeyEvent::new(code, KeyModifiers::from_bits_truncate(self.mods))
+    }
 }
 
 /// `~/.cache/binvim/sessions/<hash>.json` for the given cwd. Returns `None`

@@ -38,10 +38,25 @@ pub enum ExCommand {
     /// `:messages` — open the captured `window/showMessage` /
     /// `window/logMessage` log as a scrollable overlay.
     Messages,
+    /// `:reg` / `:registers` — open a scrollable overlay listing every
+    /// yank register and recorded macro register with a short preview.
+    Registers,
+    /// `:codelens` — dump the active buffer's code-lens cache to the
+    /// status line. Diagnostic aid for when the lens row isn't
+    /// showing up: surfaces whether lenses were received, what lines
+    /// they're anchored on, and the resolved-command state.
+    CodeLensStatus,
     /// `:terminal [cmd]` — open the embedded terminal overlay. With
     /// no argument, spawns `$SHELL` (fallback `/bin/sh`); with an
     /// argument, spawns that command line.
     Terminal(Option<String>),
+    /// `:claude` / `:codex` / `:opencode` — open (or focus) the
+    /// right-side AI-assistant terminal pane and start the named
+    /// tool inside a fresh shell tab. Re-running the same command
+    /// focuses the existing tab rather than spawning a duplicate.
+    /// The PTY inherits the editor's cwd, so the tool runs from the
+    /// project root.
+    AiTool(AiTool),
     Debug(DebugSubCmd),
     /// `:dapwatch <expr>` / `:dapunwatch <idx>` / `:dapunwatch all`.
     DebugWatch(DebugWatchCmd),
@@ -63,7 +78,47 @@ pub enum ExCommand {
     /// / `:testcancel` / `:testresults`. Dispatched into
     /// `app/test_glue.rs`.
     Test(TestSubCmd),
+    /// `:spell` — toggle spell-check on the active buffer. Dispatched
+    /// into `app/spell_glue.rs::cmd_spell_toggle`.
+    SpellToggle,
+    /// `:debugtest` — find the test enclosing the cursor and run it
+    /// under the debugger. Dispatched into
+    /// `app/dap_glue.rs::cmd_debug_test_nearest`.
+    DebugTestNearest,
     Unknown(String),
+}
+
+/// AI-assistant launcher tags — one per shell command we know how
+/// to spawn in the right-side terminal pane. Each variant maps to a
+/// stable label + command via `label()` / `command()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AiTool {
+    Claude,
+    Codex,
+    Opencode,
+}
+
+impl AiTool {
+    /// Tab label + dedup key. Re-running `:claude` while a side tab
+    /// labelled "claude" already exists focuses that tab.
+    pub fn label(self) -> &'static str {
+        match self {
+            AiTool::Claude => "claude",
+            AiTool::Codex => "codex",
+            AiTool::Opencode => "opencode",
+        }
+    }
+
+    /// Shell command written to the freshly-spawned PTY's stdin
+    /// (followed by `\n`). Defaults to the tool's name — assumes the
+    /// binary is on the user's `$PATH`.
+    pub fn command(self) -> &'static str {
+        match self {
+            AiTool::Claude => "claude",
+            AiTool::Codex => "codex",
+            AiTool::Opencode => "opencode",
+        }
+    }
 }
 
 /// Test-runner sub-commands. Grouped so the dispatch arm stays tight.
@@ -224,6 +279,8 @@ pub fn parse(line: &str) -> ExCommand {
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
         "messages" | "message" | "mes" => ExCommand::Messages,
+        "reg" | "registers" | "display" => ExCommand::Registers,
+        "codelens" | "codelenses" => ExCommand::CodeLensStatus,
         "terminal" | "term" => {
             if rest.is_empty() {
                 ExCommand::Terminal(None)
@@ -231,6 +288,9 @@ pub fn parse(line: &str) -> ExCommand {
                 ExCommand::Terminal(Some(rest.to_string()))
             }
         }
+        "claude" => ExCommand::AiTool(AiTool::Claude),
+        "codex" => ExCommand::AiTool(AiTool::Codex),
+        "opencode" => ExCommand::AiTool(AiTool::Opencode),
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
         "dapbreak" | "dapb" => ExCommand::Debug(DebugSubCmd::Break),
@@ -282,6 +342,8 @@ pub fn parse(line: &str) -> ExCommand {
             };
             ExCommand::Copilot(sub)
         }
+        "spell" | "spelltoggle" => ExCommand::SpellToggle,
+        "debugtest" | "dt" | "dapdt" => ExCommand::DebugTestNearest,
         "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
         "testnearest" | "testn" | "tn" => ExCommand::Test(TestSubCmd::Nearest),
         "testfile" | "testf" | "tf" => ExCommand::Test(TestSubCmd::File),

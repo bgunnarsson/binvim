@@ -27,6 +27,12 @@ pub enum PickerKind {
     /// Items are adapter-canonical test names (e.g. `motion::tests::foo`
     /// for the cargo adapter).
     TestTarget,
+    /// Pick which code lens to invoke when more than one is anchored
+    /// on the cursor's line (e.g. rust-analyzer's "Run" + "Debug" pair).
+    CodeLens,
+    /// `z=` suggestion picker — choose one of the up-to-12 single-edit
+    /// neighbours of the misspelled word under the cursor.
+    SpellSuggestions,
 }
 
 pub struct PickerState {
@@ -80,6 +86,20 @@ pub enum PickerPayload {
     TestTarget {
         adapter_key: String,
         name: String,
+    },
+    /// Index into a separately-stored vector of pending code-lens
+    /// commands on the app. Same pattern as `CodeActionIdx`: the
+    /// `LspCommand` is too clumsy to carry inside the payload (it
+    /// contains a `serde_json::Value` arguments list), so we stash
+    /// the actual list on App and route by index.
+    CodeLensIdx(usize),
+    /// One spell-correction suggestion accepted by the user. `word`
+    /// is the misspelled token at the cursor (kept so we can verify
+    /// the cursor still sits on the right word at accept time);
+    /// `replacement` is the dictionary form to substitute in.
+    SpellSuggestion {
+        word: String,
+        replacement: String,
     },
 }
 

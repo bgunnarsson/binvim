@@ -12,9 +12,13 @@
 //! - [`manager`]: `TestManager` owns the active run + drain loop
 
 pub mod cargo;
+pub mod dotnet;
+pub mod gotest;
 pub mod manager;
+pub mod pytest;
 pub mod specs;
 pub mod types;
+pub mod vitest;
 
 pub use manager::TestManager;
 pub use specs::{adapter_for_workspace, TestAdapterSpec};

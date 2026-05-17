@@ -49,17 +49,87 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       broadcast to every PTY so background tabs don't reflow on
       switch. Keyboard nav between tabs is left for a follow-up
       (click is the path today).
+- [x] **Built-in sidebar tree file explorer.** Opt in via
+      `[file_explorer] tree = true` in `~/.config/binvim/config.toml`
+      (default `false` keeps yazi). `<leader>e` toggles a left-side
+      tree pane rooted at the cwd; `editor_rect` trims width from
+      the left so buffer panes and the right-side AI terminal pane
+      sit cleanly to its right. j/k navigate, Enter/l opens a file
+      or expands a folder, h collapses or jumps to parent, g/G top
+      / bottom, r rebuilds. Three-state `<leader>e` toggle (closed →
+      focused → unfocused-but-visible → closed) so a click into the
+      editor drops focus without losing the pane. Two row styles:
+      a `theme_surface` highlight follows the j/k cursor; the file
+      open in the focused editor window renders in the accent
+      colour + bold so it stays identifiable independently. Same
+      `icon_for_basename` Nerd Font glyph the picker uses for
+      files; `\u{f07b}` / `\u{f07c}` for folders. Double-click in
+      the pane opens. File ops: `a` creates an entry under the
+      cursor's parent directory (trailing `/` makes a folder;
+      intermediate dirs are auto-created; refuses paths containing
+      `..` or leading `/`); `r` renames the cursor entry, prompt
+      pre-filled with the basename (basename-only — `/` is refused;
+      the buffer's path is rewritten if the renamed file is open so
+      saves keep landing); `d` arms a delete and the next key
+      consumes the y/N confirmation (`remove_dir_all` for folders;
+      anything other than `y`/`Y` cancels). `R` rebuilds (was both
+      `r` and `R`; `r` moved to rename).
+- [ ] **AI side pane file-context handoff.** When the active buffer
+      has a path, pre-type `@<project-relative path> ` into the
+      newly-opened `:claude` / `:codex` / `:opencode` side pane so
+      the tool starts the conversation already aware of what the
+      user is editing. Universal — all three tools accept `@`-prefix
+      file references — and tool-agnostic (no per-tool CLI flag
+      coupling). Doesn't disable each tool's normal project-wide
+      context (CLAUDE.md / AGENTS.md auto-load, on-demand file
+      reads); the `@` reference is additive, not exclusive. The
+      cost worth flagging: `@<path>` inlines the file's contents
+      into the first turn for most tools, so every open of an
+      assistant against a large file (think 1k+ lines, generated
+      schemas, JSON dumps) eats 3–5k+ tokens before the user types
+      anything. Two design knobs to decide before shipping:
+      (a) every invocation vs. only the first focus per session
+      (so re-focusing an existing tab doesn't keep stuffing
+      `@path` into an ongoing conversation); (b) selection-aware
+      ranges (`@src/foo.rs:42-58`) when Visual mode is active vs.
+      file-only. **considering**
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm
       regardless of launch mode.
-- [ ] **Tab completion in `:` ex commands.** Filenames after `:e`, buffer names after `:b`, command names from
-      cold. **planned**
-- [ ] **Spell check.** Toggleable per-buffer, with `]s` / `[s` to jump between misspellings and `z=` for
-      suggestions. Useful for prose + comments. **considering**
-- [ ] **Large-file mode.** Skip tree-sitter + LSP attach when the buffer crosses a size threshold (e.g. 5MB or
-      50k lines), with a status hint. The rope handles the byte volume fine; the highlight pass is what dies.
-      **planned**
+- [x] **Tab completion in `:` ex commands.** Cycle on `Tab` / `Shift-Tab`. Three completion kinds picked
+      by the head of the cmdline: command names from a static list before the first space; filesystem
+      entries (with `/` suffix on directories, dotfiles hidden unless the basename starts with `.`) after
+      `:e` / `:edit` / `:w` / `:write`; open-buffer basenames after `:b` / `:buffer`. Any non-Tab key
+      (typing, Backspace, history walk) drops the cached cycle so the next Tab re-derives candidates
+      against the latest cmdline text.
+- [x] **Macro polish.** Macros (`q<reg>` record, `@<reg>` replay, `@@` repeat) had been shipping bare;
+      five gaps on top of that are now in: (1) count prefix on replay — `5@a` runs the macro five times;
+      (2) `Q` as a one-keystroke alias for `@@`; (3) `macros: HashMap<char, Vec<KeyEvent>>` persists to the
+      per-cwd session JSON alongside the existing cmdline / search history (the in-memory `KeyEvent` is
+      mapped to a serde-friendly `SessionKey` — tagged code + modifier bitset — on save, mapped back on
+      load); (4) `:reg` / `:registers` opens a scrollable overlay listing yank registers AND macro
+      registers in one view, control chars rendered as `^X`, macro keys as `<C-x>`/`<Esc>`/`<CR>`/etc.;
+      (5) `MACRO_REPLAY_DEPTH_LIMIT` (200, Vim's default) caps nested replay so `qa@aq` then `@a` aborts
+      with a status message rather than wedging the editor.
+- [x] **Spell check.** Toggleable per-buffer via `:spell`; `]s` / `[s` walk between misspellings;
+      `z=` opens a suggestion picker for the word under the cursor. No external library — the wordlist
+      loads from `~/.local/share/binvim/words` (override) or `/usr/share/dict/words` (system default);
+      check is a `HashSet` membership against lowercased tokens, suggestions enumerate every
+      single-edit neighbour (insert / delete / substitute / transpose) and filter against the same
+      set. The tokeniser splits camelCase / snake_case / kebab-case so a `getPlayerName` only trips
+      on the constituents the dictionary doesn't know; pure-uppercase abbreviations and tokens
+      shorter than 3 chars are skipped to keep the false-positive rate low on source code. The cache
+      is version-keyed per buffer; recomputation happens lazily the next time `]s` / `[s` is
+      pressed after an edit. Render-side undercurl on misspelled spans isn't wired yet — navigation
+      is the source of truth for now.
+- [x] **Large-file mode.** `Buffer::is_large()` trips when the rope crosses 5MB or 50k lines (constants
+      `LARGE_FILE_BYTES` / `LARGE_FILE_LINES` in `src/buffer.rs`). The gate short-circuits
+      `ensure_highlights` (so tree-sitter never runs against multi-MB buffers), `lsp_attach_active`,
+      `lsp_sync_active`, and `lsp_sync_active_debounced` (so no server ever sees the file). A status-line
+      hint ("large file — tree-sitter + LSP disabled") fires on the first open via either the CLI
+      (`binvim huge.json`) or `:e`. The rope itself handles the byte volume fine, so editing / scrolling
+      / yank / undo all work — only the syntax pass and LSP traffic are suppressed.
 - [x] **Inline ghost completion (LSP 3.18 `textDocument/inlineCompletion`).** Render the server's suggestion
       as muted italic Overlay0 after the cursor on a 250 ms idle pause; `<Tab>` accepts (honours the
       response's `range` so typed prefix isn't duplicated, trims trailing overlap with post-cursor text,
@@ -92,16 +162,17 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       symbol clears it. Capped at one in-flight request per buffer
       path so fast navigation can't queue up against a slow / cold-
       indexing server.
-- [ ] **Code lens.** `textDocument/codeLens` for things like "Run test" / "Debug test" / reference counts
-      above declarations. Renders as virtual text on the line above the anchor. Click (or a keybind on the
-      anchor line) invokes the lens's `command` field; server-side commands like rust-analyzer's
-      `rust-analyzer.runSingle` are intercepted client-side and routed into the integrated test runner
-      (`cmd_test_nearest` codepath) so the lens and `:testnearest` share one engine instead of each lens
-      being a separate shell-out. Two prereqs: (1) a new render path for virtual text *above* a line
-      (`:Gblame` does inline-on-a-line, not the row above — would need a per-row vertical offset in the
-      render walk and a re-measure of viewport math against it), (2) a `code_lens` cache parallel to
-      `inlay_hints` / `semantic_tokens` (per-buffer + version-keyed, request-on-due in the render loop, one
-      in-flight at a time per buffer path). **planned**
+- [x] **Code lens.** `textDocument/codeLens` for "Run test" / "Debug test" / reference counts above
+      declarations, opt in via `[lsp] code_lens = true`. Renders as virtual text on the row above the
+      anchor (per-line vertical offset in the render walk + viewport re-measure against it). The cache
+      lives parallel to `inlay_hints` / `semantic_tokens` (per-buffer + version-keyed, request-on-due in
+      the render loop, one in-flight at a time per path) and merges LSP-only results with a synthesized
+      fallback (`src/code_lens_synth.rs`) so languages whose servers don't ship the capability — or ship
+      it gated behind an experimental flag — still get a "Run test" / "Debug test" lens above each
+      detected test function. Click (or a keybind on the anchor line) invokes the lens's `command` field;
+      server-side commands like rust-analyzer's `rust-analyzer.runSingle` are intercepted client-side and
+      routed into the integrated test runner (`cmd_test_nearest` codepath) so lens + `:testnearest` share
+      one engine.
 - [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [x] **`window/showMessage` and `window/logMessage` surfacing.** Both
@@ -143,8 +214,10 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       reports an error for the expression). Survives across sessions
       — the user list is on `DapManager`; only the cached `result`
       clears at session start.
-- [ ] **Conditional + hit-count breakpoints.** Existing breakpoints are unconditional; DAP
-      `breakpoint.condition` / `hitCondition` already carry the wire format. **considering**
+- [ ] **Conditional + hit-count breakpoints.** Wire format is already plumbed — `BreakpointSpec`
+      carries an `Option<String> condition` field that flows through `setBreakpoints`
+      (`dap/manager.rs:964`). What's missing is the UI to set it: an ex-command (`:dapbreak <expr>`
+      style) or a keybind that prompts for the condition on the current line. **considering**
 
 ## Test runner
 
@@ -158,12 +231,38 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       into a `:health`-style scrollable overlay (`j`/`k`/`Ctrl-D`/`Ctrl-U`/`g`/`G`, dismiss with Esc /
       `q` / `:q`); pass / fail / ignored counts surface in the status line on completion. Failures populate
       the quickfix list with parsed `panicked at FILE:LINE:COL` locations so `]q` / `[q` walks them.
-- [ ] **More adapters: go / pytest / vitest / dotnet.** Each adds one `TestAdapterSpec` entry +
-      a sibling parser module (mirrors the LSP/DAP per-language flow). The framework — picker, overlay,
-      quickfix, status line, ex-commands — is shared. **planned**
-- [ ] **Debug test.** Route a `:testnearest`-style pick through the DAP layer instead of running it
-      directly. Adapter dispatch picks the matching `DapAdapterSpec` and hands it the test name as launch
-      args. **considering**
+- [x] **vitest adapter.** `src/test/vitest.rs` + `VITEST` entry in `BUILTIN_ADAPTERS`. Root markers walk
+      for `vitest.config.{ts,mts,js,mjs,cjs}`; the workspace lookup prefers vitest over cargo so a nested
+      JS project inside a cargo workspace picks the right runner. Streaming JSON reporter parser feeds
+      the same overlay + quickfix as cargo.
+- [x] **pytest adapter.** `src/test/pytest.rs` + `PYTEST` entry in `BUILTIN_ADAPTERS`. Root markers
+      `pytest.ini`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `conftest.py`. Runs with `pytest -v
+      --tb=line --color=no`; the streaming verdict line is `path::test_name PASSED [ NN%]`. Failure
+      locations come from the `--tb=line` `<path>:<line>: ExceptionName: msg` row; messages fall back to
+      the `FAILED path::test - …` short-summary row when `--tb=line` couldn't pin a location.
+      `filter_for_nearest` walks upward for the closest `def test_*` / `async def test_*`; class-based
+      tests rely on `-k <method_name>` substring matching, which xUnit / unittest also recognise.
+- [x] **go test adapter.** `src/test/gotest.rs` + `GOTEST` entry. Root marker `go.mod`. Runs with `go
+      test -v -run ^<name>$ ./...` (or a positional `./pkg/...` path filter); the parser tracks `=== RUN`
+      → `--- PASS/FAIL/SKIP` pairings and grabs the indented `    file_test.go:LINE: msg` line for
+      failure locations. Subtests (`TestParent/case_one`) keep their full slash-separated names so
+      `:testlast` re-runs them faithfully. `filter_for_nearest` recognises `func Test* / Benchmark* /
+      Example* / Fuzz*`.
+- [x] **dotnet test adapter.** `src/test/dotnet.rs` + `DOTNET` entry. Root markers `*.sln`,
+      `*.csproj`, `*.fsproj`. Runs with `dotnet test --logger:"console;verbosity=normal"`; the
+      streaming reporter prints `Passed FQN [Nms]` / `Failed FQN [Nms]` / `Skipped FQN [Nms]` per test.
+      `Error Message:` blocks collapse into the per-failure message, `Stack Trace:` `in <path>:line N`
+      rows feed the location. `FullyQualifiedName~<filter>` substring matching by default; raw
+      `--filter` expressions (containing `=` / `!=` / `&` / `|`) pass through verbatim.
+      `filter_for_nearest` recognises `[Fact]` / `[Theory]` / `[Test]` / `[TestMethod]` / `[TestCase]`
+      attribute-decorated methods.
+- [x] **Debug test.** `:debugtest` (alias `:dt`) walks up from the cursor for the enclosing test
+      function, then routes through the DAP layer instead of the test runner. `LaunchContext` carries
+      two new fields — `test_filter` (the name) and `test_file` (the source path) — which the per-
+      adapter `build_launch_args` consults to emit a test-mode invocation. Wired for pytest
+      (`module: pytest`, `args: [<file>::<test>, -s]`) and go (`mode: test`, `args: ["-test.run",
+      "^<name>$", "-test.v"]`). cargo / dotnet / vitest fall back to a "not yet supported" status
+      message — wire format is in place, the per-adapter test-binary discovery is the open part.
 
 ## Quality / Tooling
 

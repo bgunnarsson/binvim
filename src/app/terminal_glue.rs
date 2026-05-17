@@ -48,6 +48,7 @@ impl super::App {
                 self.terminals.push(t);
                 self.active_terminal_idx = self.terminals.len() - 1;
                 self.mode = Mode::Terminal;
+                self.terminal_focus = crate::app::TerminalFocus::Bottom;
                 self.adjust_viewport();
                 self.status_msg.clear();
                 // Deliberately NOT calling resize_all_terminals
@@ -59,6 +60,14 @@ impl super::App {
                 // hasn't even printed its first prompt yet causes
                 // zsh + starship to emit extra clearing sequences,
                 // which renders as a blank line between prompts.
+                //
+                // The side terminals DO need a SIGWINCH though —
+                // opening the bottom pane shrinks `buffer_rows()`,
+                // which is the height the side pane PTYs were sized
+                // to. Without this, a Claude / opencode / codex
+                // session opened first stays at its original height
+                // and renders content past where we paint it.
+                self.resize_all_side_terminals();
             }
             Err(e) => {
                 if was_empty {
@@ -77,16 +86,25 @@ impl super::App {
         }
         let idx = self.active_terminal_idx.min(self.terminals.len() - 1);
         self.terminals.remove(idx);
-        if self.terminals.is_empty() {
+        let pane_closed = if self.terminals.is_empty() {
             self.active_terminal_idx = 0;
             self.terminal_pane_open = false;
             if matches!(self.mode, Mode::Terminal) {
                 self.mode = Mode::Normal;
             }
-        } else if self.active_terminal_idx >= self.terminals.len() {
-            self.active_terminal_idx = self.terminals.len() - 1;
-        }
+            true
+        } else {
+            if self.active_terminal_idx >= self.terminals.len() {
+                self.active_terminal_idx = self.terminals.len() - 1;
+            }
+            false
+        };
         self.adjust_viewport();
+        // Closing the pane grows the editor band — side terminals
+        // need a SIGWINCH so their PTY catches up to the new height.
+        if pane_closed {
+            self.resize_all_side_terminals();
+        }
     }
 
     /// Switch the active tab — bounds-checked. Called from the
@@ -140,13 +158,20 @@ impl super::App {
                 self.mode = Mode::Normal;
             }
             self.adjust_viewport();
+            // Pane just disappeared → editor band grew → side
+            // terminals need the new height.
+            self.resize_all_side_terminals();
             return;
         }
         if !self.terminals.is_empty() {
             self.terminal_pane_open = true;
             self.adjust_viewport();
             self.resize_all_terminals();
+            // Pane just appeared → editor band shrank → side
+            // terminals need the new height.
+            self.resize_all_side_terminals();
             self.mode = Mode::Terminal;
+            self.terminal_focus = crate::app::TerminalFocus::Bottom;
             return;
         }
         self.cmd_open_terminal(None);
@@ -190,12 +215,79 @@ impl super::App {
             self.pending.awaiting_window_leader = true;
             return;
         }
+        // Tab switching inside the focused pane. We intercept these
+        // BEFORE forwarding to the PTY so the user can cycle tabs
+        // without leaving terminal mode:
+        //   Ctrl-H / Ctrl-Left  → previous tab
+        //   Ctrl-L / Ctrl-Right → next tab
+        // The trade-off: Ctrl-H normally maps to Backspace and
+        // Ctrl-L to "clear screen" inside the embedded program. We
+        // accept that loss inside the pane because tab-switching
+        // is the more frequent gesture for users running multiple
+        // assistants side-by-side.
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            let dir: Option<i32> = match key.code {
+                KeyCode::Char('h') | KeyCode::Left => Some(-1),
+                KeyCode::Char('l') | KeyCode::Right => Some(1),
+                _ => None,
+            };
+            if let Some(delta) = dir {
+                self.cycle_terminal_tab(delta);
+                return;
+            }
+        }
         let bytes = match keyevent_to_bytes(key) {
             Some(b) => b,
             None => return,
         };
-        if let Some(t) = self.active_terminal() {
-            let _ = t.write_bytes(&bytes);
+        // Route the keystroke to whichever pane currently holds focus.
+        // The side pane (`:claude` etc.) and the bottom pane share
+        // `Mode::Terminal` — `terminal_focus` is what disambiguates
+        // them. Falls back to the bottom pane when the side pane has
+        // gone away mid-session.
+        match self.terminal_focus {
+            crate::app::TerminalFocus::Side => {
+                if let Some(t) = self.active_side_terminal() {
+                    let _ = t.write_bytes(&bytes);
+                    return;
+                }
+                if let Some(t) = self.active_terminal() {
+                    let _ = t.write_bytes(&bytes);
+                }
+            }
+            crate::app::TerminalFocus::Bottom => {
+                if let Some(t) = self.active_terminal() {
+                    let _ = t.write_bytes(&bytes);
+                }
+            }
+        }
+    }
+
+    /// Cycle the focused pane's active tab by `delta` (+1 = next, -1
+    /// = previous). Wraps at both ends. No-op when the focused pane
+    /// has 0 or 1 tabs — the wrap would be visually a no-op anyway
+    /// and we'd rather not consume the keystroke than swallow it
+    /// silently.
+    pub(super) fn cycle_terminal_tab(&mut self, delta: i32) {
+        match self.terminal_focus {
+            crate::app::TerminalFocus::Side => {
+                let n = self.side_terminals.len();
+                if n < 2 {
+                    return;
+                }
+                let cur = self.active_side_terminal_idx as i32;
+                let next = ((cur + delta).rem_euclid(n as i32)) as usize;
+                self.active_side_terminal_idx = next;
+            }
+            crate::app::TerminalFocus::Bottom => {
+                let n = self.terminals.len();
+                if n < 2 {
+                    return;
+                }
+                let cur = self.active_terminal_idx as i32;
+                let next = ((cur + delta).rem_euclid(n as i32)) as usize;
+                self.active_terminal_idx = next;
+            }
         }
     }
 
@@ -249,6 +341,7 @@ impl super::App {
                     }
                 }
                 self.mode = Mode::Terminal;
+                self.terminal_focus = crate::app::TerminalFocus::Bottom;
             }
             return true;
         }
@@ -269,6 +362,7 @@ impl super::App {
             ) {
                 if !matches!(self.mode, Mode::Terminal) {
                     self.mode = Mode::Terminal;
+                    self.terminal_focus = crate::app::TerminalFocus::Bottom;
                 }
             }
             return true;
@@ -310,6 +404,7 @@ impl super::App {
             && !matches!(self.mode, Mode::Terminal)
         {
             self.mode = Mode::Terminal;
+            self.terminal_focus = crate::app::TerminalFocus::Bottom;
         }
         true
     }

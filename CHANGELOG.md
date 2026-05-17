@@ -6,6 +6,141 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Debug test.** `:debugtest` (alias `:dt`) walks up from the
+  cursor for the enclosing test function, then routes through the
+  DAP layer instead of the test runner. `LaunchContext` gained
+  two fields — `test_filter` (the name) and `test_file` (the
+  source path) — which the per-adapter `build_launch_args`
+  consults to emit a test-mode invocation. Wired for pytest
+  (`module: pytest`, `args: [<file>::<test>, -s]`) and go (delve
+  `mode: test`, `args: ["-test.run", "^<name>$", "-test.v"]`).
+  cargo / dotnet / vitest surface a "not yet supported" status —
+  the wire path is in place, per-adapter test-binary discovery is
+  the remaining work.
+- **Spell check.** `:spell` toggles spell-check on the active
+  buffer; `]s` / `[s` walk between misspelled words; `z=` opens a
+  suggestion picker for the word under the cursor (single-edit
+  neighbours filtered against the dictionary, capped at 12). No
+  external library — the wordlist loads from
+  `~/.local/share/binvim/words` (user override) or
+  `/usr/share/dict/words` (system default). The tokeniser splits
+  camelCase / snake_case / kebab-case so identifiers only trip on
+  unknown constituents; pure-uppercase abbreviations and tokens
+  under 3 chars are skipped. Per-buffer enable flag, version-keyed
+  cache.
+- **Test adapters for pytest, go test, and dotnet test.** Three
+  new `TestAdapterSpec` entries in `BUILTIN_ADAPTERS` alongside
+  cargo / vitest, each with its own sibling parser module:
+  - `src/test/pytest.rs` — root markers `pytest.ini`,
+    `pyproject.toml`, `setup.cfg`, `tox.ini`, `conftest.py`. Runs
+    `pytest -v --tb=line --color=no`; the streaming verdict comes
+    from `path::test_name PASSED / FAILED / SKIPPED` rows; failure
+    locations + messages come from the `--tb=line` row and the
+    `FAILED path::test - …` short-summary block.
+  - `src/test/gotest.rs` — root marker `go.mod`. Runs `go test -v
+    -run ^<name>$ ./...` (or a positional `./pkg/...` filter); the
+    parser pairs `=== RUN` / `--- PASS/FAIL/SKIP` and harvests the
+    indented `    foo_test.go:14: msg` line for failure location.
+    Subtest paths (`TestParent/case_one`) stay intact for re-run.
+  - `src/test/dotnet.rs` — root markers `*.sln`, `*.csproj`,
+    `*.fsproj`. Runs `dotnet test
+    --logger:"console;verbosity=normal"`; per-test verdicts are
+    `Passed/Failed/Skipped FQN [Nms]`. `Error Message:` blocks fold
+    into the failure message; `Stack Trace:` `in <path>:line N`
+    rows feed the location. `FullyQualifiedName~<name>` filter by
+    default; raw `--filter` expressions pass through verbatim.
+- **File-tree create / delete / rename.** Inside the sidebar tree
+  pane (`[file_explorer] tree = true`): `a` creates an entry under
+  the cursor's parent directory — trailing `/` makes a folder, any
+  intermediate dirs are auto-created, and inputs containing `..`
+  or starting with `/` are refused so stray edits stay inside the
+  project. `r` renames the cursor entry with a basename pre-filled
+  prompt; if the renamed file is open in a buffer, the buffer's
+  path is rewritten so saves keep landing in the right file. `d`
+  arms a delete and the next key consumes the y/N confirmation —
+  any non-`y` cancels (so a double-`d` doesn't unlink). `R` keeps
+  the rebuild action; `r` moved to rename. Errors (already exists,
+  permission denied, …) surface through the status line.
+- **Large-file mode.** `Buffer::is_large()` trips when the rope
+  crosses 5MB (`LARGE_FILE_BYTES`) or 50k lines
+  (`LARGE_FILE_LINES`). The gate short-circuits
+  `ensure_highlights` (tree-sitter never runs), `lsp_attach_active`,
+  `lsp_sync_active`, and `lsp_sync_active_debounced` (no server ever
+  sees the file). Status-line hint fires on first open via the CLI
+  or `:e`. Editing, scrolling, yank, and undo still work — only the
+  syntax pass and LSP traffic are suppressed.
+- **Tab completion inside `:` ex commands.** `Tab` / `Shift-Tab`
+  cycle candidates in the cmdline. Three modes picked by the head:
+  command names before the first space (every alias the parser
+  knows, filtered by prefix); filesystem entries after `:e` /
+  `:edit` / `:w` / `:write` (directories get a trailing `/`,
+  dotfiles hidden unless the basename starts with `.`); open-buffer
+  basenames after `:b` / `:buffer`. Any non-Tab key (typing,
+  Backspace, history walk) drops the cycle so the next `Tab`
+  re-derives candidates against the latest cmdline text.
+- **Built-in sidebar tree file explorer.** Opt in via
+  `[file_explorer] tree = true` in `~/.config/binvim/config.toml`
+  (default `false` keeps the existing yazi shell-out). When
+  enabled, `<leader>e` toggles a left-side tree pane rooted at
+  the cwd in place of yazi. `j` / `k` / arrows navigate, `Enter`
+  or `l` opens a file (or expands a folder), `h` collapses (or
+  jumps to the parent), `g` / `G` top / bottom, `r` rebuilds
+  after external file changes, `<space>e` from inside the pane
+  closes it. Three-state `<leader>e` toggle from the editor:
+  closed → focused → unfocused-but-visible → closed, so clicking
+  into a buffer drops focus without losing the pane and
+  `<leader>e` pulls focus back. Two row styles: a `theme_surface`
+  bg highlight follows the j/k cursor; the file currently open
+  in the focused editor window renders its name in the accent
+  colour + bold so it stays identifiable when the cursor moves
+  elsewhere. Path icons use the same `icon_for_basename` helper
+  the picker uses (per-language Nerd Font glyph + generic
+  fallback); folders use `\u{f07b}` / `\u{f07c}` (closed / open).
+  Click in the pane focuses + moves the cursor; a second click
+  on the same entry inside the editor's 350ms double-click
+  window opens the file (same as Enter). Leader-popup label
+  renamed `Yazi` → `File explorer` so it reads correctly
+  regardless of which mode is enabled.
+
+### Changed
+- **Powerline lang chip wedge: bg/fg swap.** The right-edge
+  `\u{e0b2}` glyph between the path segment and the language
+  chip had its background / foreground flipped, so the triangle
+  was filled with the dark path colour on the right half of the
+  cell — reading as a dark block butted up against the chip
+  rather than a slanted divider. The wedge cell now takes the
+  path colour as bg (left half) and the chip colour as fg (right
+  half), tapering cleanly between segments. Same pattern the
+  left-side mode → branch → path transitions use.
+
+### Fixed
+- **Click past EOL in Insert mode parks the cursor at end of
+  line.** `visual_col_to_char_col` was clamping every past-EOL
+  click to `line_len - 1` so the cursor sat on the last char
+  instead of after it — correct for Normal / Visual (cursor sits
+  *on* a character) but wrong for Insert (cursor sits *between*
+  characters, can be at `line_len`). The mapper is now mode-
+  aware: Insert allows past-EOL, Normal / Visual still snap to
+  the last char.
+- **Cursor placement and horizontal scroll respect the active
+  pane's width.** `adjust_viewport` and `adjust_viewport_to`
+  were computing the horizontal scroll budget against
+  `self.width` (the full terminal width), not the active pane's
+  width — so when the left tree pane (or the right AI pane) was
+  open, the cursor could slip off the editor pane's right edge
+  before view_left bumped. Both now use
+  `active_pane_rect().w - gutter`.
+- **Buffer click → cursor mapping respects the active pane's
+  left offset.** The buffer-area mouse handler was passing the
+  raw screen `col` straight into the gutter check and
+  `visual_col` math. With the tree pane open, a click on the
+  first character of a line landed at column `tree_width`
+  cells past EOL — the past-EOL clamp then snapped the cursor
+  to the last char. The click is now translated to a pane-local
+  column (`col - active_pane_rect().x`) before either check;
+  same translation applied to the code-lens click hit-test.
+
 ## [0.3.2] - 2026-05-17
 
 ### Added

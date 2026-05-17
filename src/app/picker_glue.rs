@@ -125,6 +125,7 @@ impl super::App {
                 // half-finished flow doesn't leak into the next picker.
                 self.pending_debug_project = None;
                 self.pending_debug_profiles.clear();
+                self.pending_code_lens_commands.clear();
             }
             KeyCode::Enter => {
                 let payload = picker.current().cloned();
@@ -202,6 +203,12 @@ impl super::App {
                         PickerPayload::TestTarget { adapter_key, name } => {
                             self.test_run_picked_target(adapter_key, name);
                         }
+                        PickerPayload::CodeLensIdx(idx) => {
+                            self.run_picked_code_lens(idx);
+                        }
+                        PickerPayload::SpellSuggestion { word, replacement } => {
+                            self.apply_spell_suggestion(&word, &replacement);
+                        }
                     }
                 }
             }
@@ -256,7 +263,9 @@ impl super::App {
             | PickerKind::DebugProject
             | PickerKind::DebugProfile
             | PickerKind::DebugTarget
-            | PickerKind::TestTarget => picker.refilter(),
+            | PickerKind::TestTarget
+            | PickerKind::CodeLens
+            | PickerKind::SpellSuggestions => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());

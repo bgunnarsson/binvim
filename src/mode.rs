@@ -23,6 +23,11 @@ pub enum Mode {
     /// copy works through the host terminal app's native Shift+drag
     /// → Cmd-C path.
     Terminal,
+    /// Focus is in the left-side file-tree pane. `j`/`k` move the
+    /// cursor, `Enter` / `l` opens the file or expands the folder,
+    /// `h` collapses, `q` / `Esc` closes the pane and returns to
+    /// Normal in the editor.
+    FileTree,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +39,16 @@ pub enum PromptKind {
     /// under the cursor in the current buffer. Literal-string match, not
     /// LSP-aware (use `<leader>r` for that).
     ReplaceAll,
+    /// `a` inside the file-tree pane — typed string is the new
+    /// basename inside the cursor's parent dir (or the cursor dir
+    /// itself, if the cursor is on a folder). Trailing `/` creates a
+    /// directory; otherwise a regular file. Returns focus to the
+    /// file-tree pane on Enter / Esc.
+    FileTreeCreate,
+    /// `r` inside the file-tree pane — typed string replaces the
+    /// basename of the cursor entry. Pre-fills with the current
+    /// basename. Returns focus to the file-tree pane on Enter / Esc.
+    FileTreeRename,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +74,7 @@ impl Mode {
             Mode::Prompt(_) => "PROMPT",
             Mode::DebugPane => "DEBUG",
             Mode::Terminal => "TERMINAL",
+            Mode::FileTree => "FILES",
         }
     }
 }

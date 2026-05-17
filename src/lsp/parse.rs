@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 use super::client::SemanticTokensLegend;
 use super::types::{
-    CodeActionItem, CompletionItem, DocumentHighlightRange, InlayHint, LocationItem,
-    SemanticToken, SignatureHelp, SymbolItem,
+    CodeActionItem, CodeLensItem, CompletionItem, DocumentHighlightRange, InlayHint, LocationItem,
+    LspCommand, SemanticToken, SignatureHelp, SymbolItem,
     uri_to_path,
 };
 
@@ -530,6 +530,57 @@ pub(super) fn parse_document_highlights_response(result: &Value) -> Vec<Document
     out
 }
 
+/// Parse `textDocument/codeLens` response. The server returns an array
+/// of `CodeLens` objects, each with a `range` and an optional
+/// `command` (omitted on lenses that require a follow-up
+/// `codeLens/resolve`). Unresolved lenses are kept in the list — their
+/// anchor position is still useful for the renderer, and dropping them
+/// would silently lose half a lens batch from servers that defer
+/// resolution.
+pub(super) fn parse_code_lens_response(result: &Value) -> Vec<CodeLensItem> {
+    let arr = match result.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        let Some(range) = entry.get("range") else { continue };
+        let Some(start) = range.get("start") else { continue };
+        let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let col = start.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+        let command = entry.get("command").and_then(parse_command);
+        out.push(CodeLensItem { line, col, command });
+    }
+    out
+}
+
+/// Decode an LSP `Command` object — used by `codeLens` and `codeAction`
+/// alike. Returns `None` when the command name is missing or empty;
+/// `arguments` falls back to an empty Vec, matching the optional spec
+/// field.
+fn parse_command(value: &Value) -> Option<LspCommand> {
+    let obj = value.as_object()?;
+    let title = obj
+        .get("title")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let command = obj.get("command").and_then(|v| v.as_str())?.to_string();
+    if command.is_empty() {
+        return None;
+    }
+    let arguments = obj
+        .get("arguments")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    Some(LspCommand {
+        title,
+        command,
+        arguments,
+    })
+}
+
 pub(super) fn parse_hover_response(result: &Value) -> Option<String> {
     if result.is_null() {
         return None;
@@ -643,6 +694,105 @@ mod tests {
         let tokens = parse_semantic_tokens_response(&r, &legend());
         assert_eq!(tokens.len(), 1);
         assert_eq!(tokens[0].token_type, "namespace");
+    }
+
+    #[test]
+    fn code_lens_null_result_is_empty() {
+        // Servers commonly return JSON null when the file has no lenses
+        // — must not panic, must round-trip to an empty Vec.
+        assert!(parse_code_lens_response(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn code_lens_empty_array_is_empty() {
+        assert!(parse_code_lens_response(&serde_json::json!([])).is_empty());
+    }
+
+    #[test]
+    fn code_lens_with_command_decodes_full_shape() {
+        let r = serde_json::json!([
+            {
+                "range": {
+                    "start": {"line": 12, "character": 0},
+                    "end":   {"line": 12, "character": 3}
+                },
+                "command": {
+                    "title": "▶ Run Test",
+                    "command": "rust-analyzer.runSingle",
+                    "arguments": [{ "label": "test motion::tests::foo" }]
+                }
+            }
+        ]);
+        let out = parse_code_lens_response(&r);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].line, 12);
+        assert_eq!(out[0].col, 0);
+        let cmd = out[0].command.as_ref().expect("command resolved");
+        assert_eq!(cmd.title, "▶ Run Test");
+        assert_eq!(cmd.command, "rust-analyzer.runSingle");
+        assert_eq!(cmd.arguments.len(), 1);
+    }
+
+    #[test]
+    fn code_lens_unresolved_keeps_anchor_drops_command() {
+        // Per LSP spec, `command` is optional — the lens may need
+        // `codeLens/resolve` to fill it in. The anchor must still
+        // survive parsing so the renderer can position the lens.
+        let r = serde_json::json!([
+            {
+                "range": {
+                    "start": {"line": 4, "character": 2},
+                    "end":   {"line": 4, "character": 5}
+                }
+            }
+        ]);
+        let out = parse_code_lens_response(&r);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].line, 4);
+        assert_eq!(out[0].col, 2);
+        assert!(out[0].command.is_none());
+    }
+
+    #[test]
+    fn code_lens_command_missing_name_is_unresolved() {
+        // `command: { title: "...", arguments: [...] }` without a
+        // `command` string is treated as unresolved — we can't invoke
+        // anything against a blank command name.
+        let r = serde_json::json!([
+            {
+                "range": {
+                    "start": {"line": 0, "character": 0},
+                    "end":   {"line": 0, "character": 1}
+                },
+                "command": { "title": "loading..." }
+            }
+        ]);
+        let out = parse_code_lens_response(&r);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].command.is_none());
+    }
+
+    #[test]
+    fn code_lens_multiple_anchors_preserved_in_order() {
+        let r = serde_json::json!([
+            {
+                "range": { "start": {"line": 1, "character": 0}, "end": {"line": 1, "character": 1} },
+                "command": { "title": "Run", "command": "test.run" }
+            },
+            {
+                "range": { "start": {"line": 5, "character": 4}, "end": {"line": 5, "character": 8} },
+                "command": { "title": "Debug", "command": "test.debug", "arguments": [] }
+            }
+        ]);
+        let out = parse_code_lens_response(&r);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].line, 1);
+        assert_eq!(out[1].line, 5);
+        assert_eq!(out[1].col, 4);
+        assert_eq!(
+            out[1].command.as_ref().map(|c| c.command.as_str()),
+            Some("test.debug"),
+        );
     }
 
     #[test]

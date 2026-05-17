@@ -22,19 +22,24 @@ pub struct Config {
     pub copilot: CopilotConfig,
     #[serde(default)]
     pub lsp: LspConfig,
+    #[serde(default)]
+    pub file_explorer: FileExplorerConfig,
 }
 
-/// LSP feature toggles. Both default on — semantic tokens layer
+/// LSP feature toggles. All default on — semantic tokens layer
 /// richer LSP info (mutable bindings, async fns, library symbols)
-/// over the tree-sitter highlight cache, and documentHighlight paints
+/// over the tree-sitter highlight cache, documentHighlight paints
 /// every occurrence of the symbol under the cursor with a subtle bg
-/// shade. Either can be turned off without affecting other LSP
-/// features:
+/// shade, and code_lens drives the phantom row above test functions
+/// (rust-analyzer's "▶ Run | Debug" plus the binvim-side synthetic
+/// lenses for vitest / pytest / etc.). Any of them can be turned off
+/// without affecting other LSP features:
 ///
 /// ```toml
 /// [lsp]
 /// semantic_tokens = false
 /// document_highlight = false
+/// code_lens = false
 /// ```
 #[derive(Debug, Deserialize)]
 pub struct LspConfig {
@@ -42,6 +47,14 @@ pub struct LspConfig {
     pub semantic_tokens: bool,
     #[serde(default = "default_lsp_document_highlight")]
     pub document_highlight: bool,
+    /// Master switch for everything code-lens — gates both the LSP
+    /// `textDocument/codeLens` request and the in-tree synthetic
+    /// lenses (vitest / pytest / etc.). When false the phantom row
+    /// never paints, `<leader>l` is a no-op, click-to-invoke
+    /// ignores the lens row, and no requests / tree-sitter walks
+    /// fire. Default on.
+    #[serde(default = "default_lsp_code_lens")]
+    pub code_lens: bool,
 }
 
 fn default_lsp_semantic_tokens() -> bool {
@@ -50,12 +63,16 @@ fn default_lsp_semantic_tokens() -> bool {
 fn default_lsp_document_highlight() -> bool {
     true
 }
+fn default_lsp_code_lens() -> bool {
+    true
+}
 
 impl Default for LspConfig {
     fn default() -> Self {
         Self {
             semantic_tokens: true,
             document_highlight: true,
+            code_lens: true,
         }
     }
 }
@@ -142,6 +159,20 @@ pub struct CopilotConfig {
     pub enabled: bool,
 }
 
+/// File-explorer selection. `<leader>e` shells out to `yazi` by
+/// default; setting `tree = true` switches it to the built-in
+/// sidebar tree explorer instead:
+///
+/// ```toml
+/// [file_explorer]
+/// tree = true
+/// ```
+#[derive(Debug, Default, Deserialize)]
+pub struct FileExplorerConfig {
+    #[serde(default)]
+    pub tree: bool,
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -157,6 +188,7 @@ impl Default for Config {
             hover: HoverConfig::default(),
             copilot: CopilotConfig::default(),
             lsp: LspConfig::default(),
+            file_explorer: FileExplorerConfig::default(),
         }
     }
 }

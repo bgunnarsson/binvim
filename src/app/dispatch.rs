@@ -13,8 +13,74 @@ use super::state::{is_jump_motion, FindRecord};
 impl super::App {
     pub(super) fn apply_action(&mut self, action: Action) {
         self.maybe_record_edit(&action);
+        // Self-heal: if the lens vanished between the motion that set
+        // the index and now (server response cleared the cache), drop
+        // the index so the next vertical motion behaves as if the
+        // cursor was already on the content row.
+        if self.phantom_lens_idx.is_some()
+            && !self.line_has_code_lens(self.window.cursor.line)
+        {
+            self.phantom_lens_idx = None;
+        }
+        // Phantom is preserved only across single-step h/j/k/l (and arrow
+        // equivalents). Everything else ungrounds the visual cursor back
+        // to its content row.
+        let preserve_phantom = matches!(
+            action,
+            Action::Move {
+                motion: MotionVerb::Up
+                    | MotionVerb::Down
+                    | MotionVerb::Left
+                    | MotionVerb::Right,
+                count: 1,
+            }
+        );
+        if !preserve_phantom {
+            self.phantom_lens_idx = None;
+        }
         match action {
             Action::Move { motion, count } => {
+                if count == 1 {
+                    // `k` from content with a lens → hop up to segment 0.
+                    if matches!(motion, MotionVerb::Up)
+                        && self.phantom_lens_idx.is_none()
+                        && self.line_has_code_lens(self.window.cursor.line)
+                    {
+                        self.phantom_lens_idx = Some(0);
+                        return;
+                    }
+                    // While on the phantom, h/l walk between segments;
+                    // j drops back to content; k walks up off the
+                    // phantom to the line above.
+                    if let Some(idx) = self.phantom_lens_idx {
+                        match motion {
+                            MotionVerb::Right => {
+                                let total = self.lens_count_on_line(self.window.cursor.line);
+                                if idx + 1 < total {
+                                    self.phantom_lens_idx = Some(idx + 1);
+                                }
+                                return;
+                            }
+                            MotionVerb::Left => {
+                                if idx > 0 {
+                                    self.phantom_lens_idx = Some(idx - 1);
+                                }
+                                return;
+                            }
+                            MotionVerb::Down => {
+                                self.phantom_lens_idx = None;
+                                return;
+                            }
+                            MotionVerb::Up => {
+                                self.phantom_lens_idx = None;
+                                // Fall through and let `k` walk up by
+                                // one line normally.
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                self.phantom_lens_idx = None;
                 if is_jump_motion(motion) {
                     self.push_jump();
                 }
@@ -89,7 +155,7 @@ impl super::App {
             }
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
             Action::StartMacro { name } => self.start_macro_recording(name),
-            Action::ReplayMacro { name } => self.replay_macro(name),
+            Action::ReplayMacro { name, count } => self.replay_macro(name, count),
             Action::BufferDelete { force } => {
                 if let Err(e) = self.delete_buffer(force) {
                     self.status_msg = format!("error: {e}");
@@ -111,6 +177,9 @@ impl super::App {
             Action::QuickfixPrev => self.qf_prev(),
             Action::HunkNext => self.hunk_jump(true),
             Action::HunkPrev => self.hunk_jump(false),
+            Action::SpellNext => self.cmd_spell_next(),
+            Action::SpellPrev => self.cmd_spell_prev(),
+            Action::SpellSuggest => self.cmd_spell_suggest(),
             Action::HunkPreview => self.hunk_preview(),
             Action::HunkStage => self.hunk_stage(),
             Action::HunkUnstage => self.hunk_unstage(),
@@ -127,6 +196,7 @@ impl super::App {
                 if !self.terminals.is_empty() {
                     self.terminal_pane_open = true;
                     self.mode = crate::mode::Mode::Terminal;
+                    self.terminal_focus = crate::app::TerminalFocus::Bottom;
                     self.adjust_viewport();
                 } else {
                     self.status_msg =
@@ -134,6 +204,28 @@ impl super::App {
                 }
             }
             Action::TerminalToggle => self.toggle_terminal_pane(),
+            Action::AiClaude => {
+                use crate::command::AiTool;
+                let t = AiTool::Claude;
+                self.open_side_terminal(t.label(), t.command());
+            }
+            Action::AiCodex => {
+                use crate::command::AiTool;
+                let t = AiTool::Codex;
+                self.open_side_terminal(t.label(), t.command());
+            }
+            Action::AiOpencode => {
+                use crate::command::AiTool;
+                let t = AiTool::Opencode;
+                self.open_side_terminal(t.label(), t.command());
+            }
+            Action::AiClose => {
+                if self.side_terminals.is_empty() {
+                    self.status_msg = "ai: no side pane to close".into();
+                } else {
+                    self.close_side_terminal();
+                }
+            }
             Action::TestPicker => self.cmd_test_picker(),
             Action::TestNearest => self.cmd_test_nearest(),
             Action::TestFile => self.cmd_test_file(),
@@ -162,10 +254,17 @@ impl super::App {
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),
-            Action::OpenYazi => self.open_yazi(),
+            Action::OpenYazi => {
+                if self.config.file_explorer.tree {
+                    self.toggle_file_tree();
+                } else {
+                    self.open_yazi();
+                }
+            }
             Action::LspGotoDefinition => self.lsp_request_goto(),
             Action::LspFindReferences => self.lsp_request_references(),
             Action::LspRename => self.start_rename_prompt(),
+            Action::LspExecuteCodeLens => self.execute_code_lens_under_cursor(),
             Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
             Action::Format => self.format_active(),
             Action::ToggleComment => self.toggle_comment_range(),

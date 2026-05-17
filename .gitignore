@@ -1,3 +1,54 @@
+# Rust
 /target
+playground/**/target/
+
+# .NET / C# / Razor
 playground/**/bin/
 playground/**/obj/
+
+# Node / TypeScript / JavaScript
+playground/**/node_modules/
+playground/**/dist/
+playground/**/.next/
+playground/**/.svelte-kit/
+playground/**/.astro/
+*.tsbuildinfo
+
+# Python
+playground/**/__pycache__/
+*.pyc
+playground/**/.venv/
+playground/**/venv/
+
+# JVM (Java / Kotlin)
+playground/**/build/
+*.class
+
+# Ruby
+playground/**/.bundle/
+playground/**/vendor/bundle/
+
+# PHP
+playground/**/vendor/
+
+# Elixir
+playground/**/_build/
+playground/**/deps/
+
+# Zig
+playground/**/zig-cache/
+playground/**/zig-out/
+playground/**/.zig-cache/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+
+# Local environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log

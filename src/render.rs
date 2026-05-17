@@ -45,6 +45,8 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         draw_health_page(out, app)?;
     } else if app.show_messages_page {
         draw_messages_page(out, app)?;
+    } else if app.show_registers_page {
+        draw_registers_page(out, app)?;
     } else if app.show_test_results_page {
         draw_test_results_page(out, app)?;
     } else if app.show_start_page {
@@ -66,7 +68,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         }
         draw_pane_dividers(out, app, editor_rect)?;
     }
+    draw_file_tree_pane(out, app)?;
     draw_terminal_pane(out, app)?;
+    draw_side_terminal_pane(out, app)?;
     draw_debug_pane(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
@@ -510,6 +514,54 @@ fn paint_code_line(
         }
     }
     Ok(written)
+}
+
+/// Paint a phantom row above a buffer line carrying its
+/// `textDocument/codeLens` titles. Empty gutter (no line number, no
+/// git stripe — phantom rows have no buffer position to anchor on),
+/// then the lens titles joined by ` │ ` in the dim theme tone so the
+/// row scans as commentary rather than code. Truncated to the line's
+/// available width.
+fn paint_code_lens_row(
+    out: &mut impl Write,
+    app: &App,
+    line_idx: usize,
+    gutter: usize,
+    avail: usize,
+    buf_bg: Option<Color>,
+) -> Result<()> {
+    let Some(path) = app.buffer.path.as_ref() else { return Ok(()); };
+    let Some(cache) = app.code_lens.get(path) else { return Ok(()); };
+    if cache.buffer_version != app.buffer.version {
+        return Ok(());
+    }
+    // Pad the gutter so the lens text aligns with the buffer body
+    // column, not the line-number column. Without this the title
+    // would start at col 0 and overlap any future gutter glyph.
+    queue!(out, Print(" ".repeat(gutter)))?;
+    let mut parts: Vec<&str> = Vec::new();
+    for lens in &cache.lenses {
+        if lens.line != line_idx {
+            continue;
+        }
+        if let Some(cmd) = &lens.command {
+            if !cmd.title.is_empty() {
+                parts.push(cmd.title.as_str());
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Ok(());
+    }
+    let text = parts.join(" │ ");
+    let truncated: String = text.chars().take(avail).collect();
+    queue!(
+        out,
+        SetForegroundColor(app.config.theme_dim()),
+        Print(truncated),
+    )?;
+    reset_to_buf_bg(out, buf_bg)?;
+    Ok(())
 }
 
 /// Classify a status message by content into a Catppuccin severity colour. We
@@ -1752,6 +1804,17 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 
 /// Translate one `crate::terminal::Cell` to crossterm style + glyph
 /// and emit. Reverse attribute swaps fg/bg before applying.
+///
+/// Underline is intentionally *not* forwarded to the outer terminal.
+/// Claude / Codex / opencode all use SGR 4 as the visual marker for
+/// OSC 8 hyperlinks and wrap nearly every clickable chunk of text —
+/// rendered into a side pane that doesn't carry the hyperlink
+/// affordance, those underlines just stack into what reads as a row
+/// of horizontal borders under every line. Stripping the attribute
+/// here is lossy (we also lose underline as a styling signal in
+/// `man` pages, prompts, etc.) but the trade-off favours the
+/// pane-style UX. SGR 4 is still tracked in the cell so the call
+/// can be flipped back on with one line if the policy changes.
 fn paint_terminal_cell(
     out: &mut impl Write,
     cell: crate::terminal::Cell,
@@ -1765,6 +1828,7 @@ fn paint_terminal_cell(
         out,
         SetForegroundColor(fg),
         SetBackgroundColor(bg),
+        SetAttribute(Attribute::NoUnderline),
     )?;
     if cell.bold {
         queue!(out, SetAttribute(Attribute::Bold))?;
@@ -1776,12 +1840,518 @@ fn paint_terminal_cell(
     } else {
         queue!(out, SetAttribute(Attribute::NoItalic))?;
     }
-    if cell.underline {
-        queue!(out, SetAttribute(Attribute::Underlined))?;
-    } else {
-        queue!(out, SetAttribute(Attribute::NoUnderline))?;
-    }
     queue!(out, Print(cell.ch))?;
+    Ok(())
+}
+
+/// Right-side terminal pane — dedicated to AI assistants (`:claude`,
+/// `:codex`, `:opencode`). Sits flush against the right edge of the
+/// editor band, spanning `buffer_top()..buffer_top()+buffer_rows()`
+/// vertically. Header row at the top carries either the active tab's
+/// label (single tab) or a clickable tab strip (2+ tabs). Cell-for-
+/// cell paint with the bottom pane's SGR fidelity — see
+/// `paint_terminal_cell` for the cell painter.
+fn draw_file_tree_pane(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(tree) = app.file_tree.as_ref() else {
+        return Ok(());
+    };
+    let pane_cols = app.file_tree_cols();
+    if pane_cols == 0 {
+        return Ok(());
+    }
+    let pane_rows = app.buffer_rows();
+    if pane_rows == 0 {
+        return Ok(());
+    }
+    let top = app.buffer_top() as u16;
+    let content_cols = pane_cols;
+
+    let pane_bg = app.config.chrome_bg();
+    let muted = app.config.theme_dim();
+    let dir_fg = app.config.color_for_capture("keyword")
+        .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+    let file_fg = app.config.theme_fg();
+    let accent = app.config.mode_picker();
+    let title_fg = app.config.theme_emphasis();
+    let focused = matches!(app.mode, Mode::FileTree);
+
+    // Header row — title chip + truncated cwd. Highlights when
+    // focused so the user can tell at a glance whether keystrokes
+    // are going here or to a buffer pane.
+    let title = " FILES ";
+    let chip_bg = if focused { accent } else { muted };
+    let chip = title.chars().take(content_cols).collect::<String>();
+    let chip_w = chip.chars().count();
+    queue!(
+        out,
+        MoveTo(0, top),
+        SetBackgroundColor(chip_bg),
+        SetForegroundColor(app.config.terminal_chip_fg()),
+        SetAttribute(Attribute::Bold),
+        Print(&chip),
+        SetAttribute(Attribute::Reset),
+    )?;
+    // Pad the rest of the row with pane bg.
+    if chip_w < content_cols {
+        queue!(
+            out,
+            SetBackgroundColor(pane_bg),
+            SetForegroundColor(title_fg),
+            Print(" ".repeat(content_cols - chip_w)),
+        )?;
+    }
+
+    // Spacer row between the title chip and the first entry — pure
+    // breathing room so the FILES chip doesn't crowd the tree.
+    let spacer_y = top + 1;
+    queue!(
+        out,
+        MoveTo(0, spacer_y),
+        SetBackgroundColor(pane_bg),
+        Print(" ".repeat(content_cols)),
+    )?;
+
+    // Body — each visible row paints one tree entry (or blanks).
+    // Scroll position is derived per-frame from the cursor: anchor
+    // the cursor in the middle of the viewport (or as close as the
+    // bounds permit). The state struct holds no scroll field —
+    // renderer math is enough for the MVP, and recomputing every
+    // frame matches whatever the cursor has done since last paint.
+    let body_top = top + 2;
+    let body_rows = pane_rows.saturating_sub(2);
+    let scroll = if body_rows == 0 {
+        0
+    } else if tree.entries.len() <= body_rows {
+        0
+    } else {
+        let half = body_rows / 2;
+        let max_scroll = tree.entries.len().saturating_sub(body_rows);
+        tree.cursor.saturating_sub(half).min(max_scroll)
+    };
+
+    // Canonicalise the focused buffer's path once so the per-row
+    // "is this the open file" check is a straight comparison rather
+    // than a syscall per entry. `canonicalize` resolves symlinks +
+    // makes the path absolute; entries from `read_dir` are already
+    // absolute relative to cwd, but a symlinked cwd would otherwise
+    // produce a mismatched literal path.
+    let active_canon = app
+        .buffer
+        .path
+        .as_ref()
+        .and_then(|p| std::fs::canonicalize(p).ok());
+
+    for row in 0..body_rows {
+        let entry_idx = scroll + row;
+        let y = body_top + row as u16;
+        queue!(
+            out,
+            MoveTo(0, y),
+            SetBackgroundColor(pane_bg),
+        )?;
+        if entry_idx >= tree.entries.len() {
+            queue!(out, Print(" ".repeat(content_cols)))?;
+            continue;
+        }
+        let entry = &tree.entries[entry_idx];
+        let is_cursor = entry_idx == tree.cursor;
+        // Is this entry the file currently open in the focused editor
+        // window? Canonicalise the entry too so a cwd reached through
+        // a symlink still matches the buffer's canonical path.
+        let is_active = !entry.is_dir
+            && active_canon.is_some()
+            && std::fs::canonicalize(&entry.path).ok() == active_canon;
+        // Selected row sits just above the pane bg — `theme_surface` is
+        // the "one layer above bg" helper (~12% shift toward white on
+        // dark themes). Reads as a subtle highlight rather than the
+        // saturated accent the picker uses.
+        let row_bg = if is_cursor {
+            app.config.theme_surface()
+        } else {
+            pane_bg
+        };
+        let name = entry
+            .path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("?");
+        // Nerd Font glyphs: folder-closed / folder-open for dirs,
+        // language-specific icon (via `icon_for_basename`) for files.
+        let icon = if entry.is_dir {
+            if tree.expanded.contains(&entry.path) {
+                '\u{f07c}'
+            } else {
+                '\u{f07b}'
+            }
+        } else {
+            icon_for_basename(name)
+        };
+        // Two cells of indent per depth level.
+        let indent = "  ".repeat(entry.depth);
+        let icon_fg = if entry.is_dir { dir_fg } else { file_fg };
+        // Filename colour: the active open file shines in the accent
+        // colour (and bold) so it stays visible even when the j/k
+        // hover sits elsewhere. Non-active rows just use file_fg.
+        let name_fg = if is_active { accent } else { file_fg };
+
+        // Print indent + icon (icon keeps its file-type colour),
+        // then a separator space, then the name (accent + bold when
+        // active). Truncate at the pane edge.
+        let prefix = format!(" {indent}{icon}  ");
+        let prefix_chars: String = prefix.chars().take(content_cols).collect();
+        let prefix_w = prefix_chars.chars().count();
+        queue!(
+            out,
+            SetBackgroundColor(row_bg),
+            SetForegroundColor(icon_fg),
+            Print(&prefix_chars),
+        )?;
+        let name_budget = content_cols.saturating_sub(prefix_w);
+        let name_chars: String = name.chars().take(name_budget).collect();
+        let name_w = name_chars.chars().count();
+        queue!(out, SetForegroundColor(name_fg))?;
+        if is_active {
+            queue!(out, SetAttribute(Attribute::Bold))?;
+        }
+        queue!(out, Print(&name_chars))?;
+        if is_active {
+            queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+        }
+        let written = prefix_w + name_w;
+        if written < content_cols {
+            queue!(
+                out,
+                SetBackgroundColor(row_bg),
+                Print(" ".repeat(content_cols - written)),
+            )?;
+        }
+    }
+    queue!(out, ResetColor)?;
+    Ok(())
+}
+
+fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
+    if !app.side_terminal_pane_open {
+        return Ok(());
+    }
+    let pane_cols = app.side_pane_cols();
+    if pane_cols == 0 {
+        return Ok(());
+    }
+    let pane_rows = app.buffer_rows();
+    if pane_rows == 0 {
+        return Ok(());
+    }
+    let left = app.side_pane_left() as u16;
+    let content_left = app.side_pane_content_left() as u16;
+    let content_cols = app.side_pane_content_cols();
+    let top = app.buffer_top() as u16;
+
+    let pane_bg = app.config.chrome_bg();
+    let muted = app.config.theme_dim();
+    let base = app.config.terminal_chip_fg();
+    let accent_terminal = app.config.terminal_chip_bg();
+    let active_tab_bg = app.config.terminal_active_tab_bg();
+    let border_fg = app.config.theme_border();
+
+    let term_count = app.side_terminals.len();
+    let active_label = app
+        .side_terminals
+        .get(app.active_side_terminal_idx)
+        .map(|s| s.label.as_str())
+        .unwrap_or("AI");
+    let header_text = format!(" {} ", active_label.to_uppercase());
+    let chip_bg = if matches!(app.mode, Mode::Terminal)
+        && matches!(app.terminal_focus, crate::app::TerminalFocus::Side)
+    {
+        accent_terminal
+    } else {
+        muted
+    };
+
+    // Left border — a `│` glyph at column `left`, one per row of
+    // pane height. Paint it first so subsequent header / body
+    // writes layered on top can rely on the border already being
+    // there for any cell they don't cover.
+    for r in 0..pane_rows {
+        queue!(
+            out,
+            MoveTo(left, top + r as u16),
+            SetBackgroundColor(pane_bg),
+            SetForegroundColor(border_fg),
+            Print("│"),
+        )?;
+    }
+
+    // Header row layout: tabs on the LEFT (starting at content_left,
+    // one cell past the border), label chip RIGHT-aligned against
+    // the pane's right edge, blank background in between. We draw
+    // in three phases so the chip width is known before we pad.
+    //
+    //   [tab][tab]…<-- gap -->[CLAUDE]
+    //
+    // The chip doubles as a focus indicator — its background shifts
+    // to the accent colour while the side pane is the active
+    // `Mode::Terminal` target.
+    let mut hitboxes: Vec<(usize, u16, u16)> = Vec::new();
+    let chip_print = header_text.chars().take(content_cols).collect::<String>();
+    let chip_w = chip_print.chars().count();
+    // Budget the chip takes from the right edge; tabs get the rest.
+    let tabs_budget = content_cols.saturating_sub(chip_w);
+
+    // Phase 1: tabs from content_left. Each tab is ` N ` with a
+    // single-cell gap; the leading gap balances the trailing one.
+    queue!(out, MoveTo(content_left, top))?;
+    let mut used: u16 = 0;
+    if term_count > 1 {
+        // Leading gap so the first tab doesn't butt into the border.
+        if (used as usize) < tabs_budget {
+            queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
+            used += 1;
+        }
+        let mut tab_x = content_left + used;
+        for idx in 0..term_count {
+            let tab_label = format!(" {} ", idx + 1);
+            let chip_chars = tab_label.chars().count() as u16;
+            if (used + chip_chars) as usize > tabs_budget {
+                break;
+            }
+            let is_active = idx == app.active_side_terminal_idx;
+            let (bg, fg) = if is_active {
+                (active_tab_bg, base)
+            } else {
+                (pane_bg, muted)
+            };
+            queue!(
+                out,
+                MoveTo(tab_x, top),
+                SetBackgroundColor(bg),
+                SetForegroundColor(fg),
+            )?;
+            if is_active {
+                queue!(out, SetAttribute(Attribute::Bold))?;
+            } else {
+                queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            }
+            queue!(out, Print(&tab_label))?;
+            queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            hitboxes.push((idx, tab_x, tab_x + chip_chars));
+            tab_x += chip_chars;
+            used += chip_chars;
+            if (used as usize) < tabs_budget {
+                queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
+                tab_x += 1;
+                used += 1;
+            }
+        }
+    }
+
+    // Phase 2: pad the gap between tabs and the right-aligned chip.
+    if (used as usize) < tabs_budget {
+        let pad = tabs_budget - used as usize;
+        queue!(out, SetBackgroundColor(pane_bg), Print(" ".repeat(pad)))?;
+    }
+
+    // Phase 3: right-aligned chip. MoveTo the exact column so we
+    // don't accumulate width-arithmetic drift across the gap.
+    let chip_left = content_left + (content_cols.saturating_sub(chip_w)) as u16;
+    queue!(
+        out,
+        MoveTo(chip_left, top),
+        SetBackgroundColor(chip_bg),
+        SetForegroundColor(base),
+        SetAttribute(Attribute::Bold),
+        Print(&chip_print),
+        SetAttribute(Attribute::Reset),
+    )?;
+    queue!(out, ResetColor)?;
+    app.side_terminal_tab_hitboxes.set(hitboxes);
+
+    // Body = pane minus the header row.
+    let body_top = top + 1;
+    let body_rows = pane_rows.saturating_sub(1);
+    let Some(side) = app.side_terminals.get(app.active_side_terminal_idx) else {
+        for r in 0..body_rows {
+            queue!(
+                out,
+                MoveTo(content_left, body_top + r as u16),
+                SetBackgroundColor(pane_bg),
+                Print(" ".repeat(content_cols)),
+            )?;
+        }
+        queue!(out, ResetColor)?;
+        return Ok(());
+    };
+    // While the embedded tool is still settling, paint the binvim
+    // loading splash instead of whatever transient frame the PTY
+    // currently holds. claude / opencode / codex all paint a busy
+    // splash + border decoration before their main UI lands, which
+    // reads as broken when shown half-rendered.
+    if crate::app::side_terminal_loading(side) {
+        draw_side_loading_splash(
+            out,
+            app,
+            content_left,
+            body_top,
+            content_cols,
+            body_rows,
+            &side.label,
+        )?;
+        return Ok(());
+    }
+    let term = &side.terminal;
+    let inner = term.grid();
+    let grid = &inner.handler.grid;
+    let grid_rows = grid.rows.min(body_rows);
+    let grid_cols = grid.cols.min(content_cols);
+    for row in 0..body_rows {
+        let screen_y = body_top + row as u16;
+        queue!(out, MoveTo(content_left, screen_y))?;
+        if row < grid_rows {
+            let mut painted = 0usize;
+            for col in 0..grid_cols {
+                let cell = grid.cells[row][col];
+                if cell.ch == '\0' {
+                    continue;
+                }
+                paint_terminal_cell(out, cell)?;
+                painted += 1;
+            }
+            // Backfill any uncovered columns so editor content from a
+            // prior frame can't bleed through under a short PTY line.
+            if painted < content_cols {
+                queue!(
+                    out,
+                    SetBackgroundColor(pane_bg),
+                    Print(" ".repeat(content_cols - painted)),
+                )?;
+            }
+        } else {
+            queue!(
+                out,
+                SetBackgroundColor(pane_bg),
+                Print(" ".repeat(content_cols)),
+            )?;
+        }
+    }
+    queue!(out, ResetColor)?;
+    Ok(())
+}
+
+/// Wide ANSI Shadow "binvim" logo — same one the start page uses
+/// when the pane is wide enough to hold it. 6 rows × 44 cols.
+const SIDE_LOADING_LOGO_WIDE: &[&str] = &[
+    "██████╗ ██╗███╗   ██╗██╗   ██╗██╗███╗   ███╗",
+    "██╔══██╗██║████╗  ██║██║   ██║██║████╗ ████║",
+    "██████╔╝██║██╔██╗ ██║██║   ██║██║██╔████╔██║",
+    "██╔══██╗██║██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║",
+    "██████╔╝██║██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║",
+    "╚═════╝ ╚═╝╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝",
+];
+
+/// Compact "bin·vim" mark used when the pane is too narrow for the
+/// ANSI Shadow block. Half-height block characters give a tidy
+/// rectangular logo that still reads as binvim.
+const SIDE_LOADING_LOGO_SMALL: &[&str] = &[
+    "▛▀▖▗ ▗▖ ▌▌▌▌▛▚▞▌",
+    "▙▄▘▌▌▌▚▌▚▘▌▌▌ ▌",
+];
+
+/// Braille spinner frames — 10 frames at ~80ms each rotates once
+/// per second. Matches the conventional dotted-spinner pattern
+/// every modern TUI loader uses (oh-my-zsh, npm, etc.).
+const SIDE_LOADING_SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// Paint the binvim loading splash over the body of the right-side
+/// terminal pane. Vertically centres a logo + spinner + caption;
+/// the spinner frame is derived from the system clock so successive
+/// renders show it advancing without per-frame state on the App.
+fn draw_side_loading_splash(
+    out: &mut impl Write,
+    app: &App,
+    left: u16,
+    body_top: u16,
+    pane_cols: usize,
+    body_rows: usize,
+    label: &str,
+) -> Result<()> {
+    let pane_bg = app.config.chrome_bg();
+    let logo_fg = app.config.theme_info();
+    let caption_fg = app.config.theme_fg();
+    let muted_fg = app.config.theme_dim();
+    // Blank the body first so leftover PTY content can't bleed
+    // through under a logo line that doesn't reach the edge.
+    let blank: String = " ".repeat(pane_cols);
+    for r in 0..body_rows {
+        queue!(
+            out,
+            MoveTo(left, body_top + r as u16),
+            SetBackgroundColor(pane_bg),
+            Print(&blank),
+        )?;
+    }
+    // Pick the widest logo that fits with a 2-cell margin either
+    // side. Falls back to the compact mark on narrow panes, and to
+    // no logo at all if even the compact mark is too wide.
+    let logo: &[&str] = if pane_cols >= SIDE_LOADING_LOGO_WIDE[0].chars().count() + 4 {
+        SIDE_LOADING_LOGO_WIDE
+    } else if pane_cols >= SIDE_LOADING_LOGO_SMALL[0].chars().count() + 4 {
+        SIDE_LOADING_LOGO_SMALL
+    } else {
+        &[]
+    };
+    // Spinner frame indexed by wall-clock millis. 150ms per frame
+    // (~6.7 fps) reads as a smooth rotation; 80ms looked like
+    // blinking dots because the eye sees each braille glyph
+    // discretely at high refresh rates.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let frame = SIDE_LOADING_SPINNER[(now / 150) as usize % SIDE_LOADING_SPINNER.len()];
+    let caption = format!("{frame}  loading {label}…");
+    let caption_w = caption.chars().count();
+    let logo_h = logo.len();
+    let caption_h = if caption_w + 2 <= pane_cols { 1 } else { 0 };
+    let total_block_h = logo_h + if logo_h > 0 && caption_h > 0 { 1 } else { 0 } + caption_h;
+    if total_block_h == 0 || total_block_h > body_rows {
+        queue!(out, ResetColor)?;
+        return Ok(());
+    }
+    let block_top = (body_rows.saturating_sub(total_block_h)) / 2;
+    // Logo lines, centred horizontally.
+    for (i, line) in logo.iter().enumerate() {
+        let line_w = line.chars().count();
+        if line_w > pane_cols {
+            continue;
+        }
+        let inner_left = left + ((pane_cols - line_w) / 2) as u16;
+        queue!(
+            out,
+            MoveTo(inner_left, body_top + (block_top + i) as u16),
+            SetBackgroundColor(pane_bg),
+            SetForegroundColor(logo_fg),
+            SetAttribute(Attribute::Bold),
+            Print(line),
+            SetAttribute(Attribute::NormalIntensity),
+        )?;
+    }
+    // Caption row, one blank line below the logo block.
+    if caption_h > 0 {
+        let caption_row = body_top + (block_top + logo_h + 1) as u16;
+        let inner_left = left + ((pane_cols - caption_w) / 2) as u16;
+        // Spinner segment in the accent colour, "loading …" in muted.
+        queue!(
+            out,
+            MoveTo(inner_left, caption_row),
+            SetBackgroundColor(pane_bg),
+            SetForegroundColor(caption_fg),
+            Print(frame),
+            SetForegroundColor(muted_fg),
+            Print(format!("  loading {label}…")),
+        )?;
+    }
+    queue!(out, ResetColor)?;
     Ok(())
 }
 
@@ -1924,6 +2494,252 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())
+}
+
+fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
+    let total_w = app.width as usize;
+    let rows = app.buffer_rows();
+    let top = app.buffer_top();
+    if rows == 0 || total_w < 30 {
+        return Ok(());
+    }
+    let page_bg = app.config.background_color();
+    let blank_row: String = " ".repeat(total_w);
+    for row in 0..rows {
+        queue!(out, MoveTo(0, (row + top) as u16))?;
+        if let Some(c) = page_bg {
+            queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
+        } else {
+            queue!(out, Clear(ClearType::CurrentLine))?;
+        }
+    }
+    let p = DashboardPalette::from_config(&app.config);
+    let left = 2usize;
+    let viewport_rows = rows.saturating_sub(1);
+    let body_w = total_w.saturating_sub(left + 2).max(40);
+
+    let mut lines: Vec<MessageRow> = Vec::new();
+
+    // Yank registers — Vim's `:reg` order is `"`, `0`, `1`-`9`,
+    // then named (`a`-`z`), then specials (`+`, `*`, `-`, `_`, `:`,
+    // `.`, `/`, `=`, `#`). We surface whatever's actually populated.
+    let mut yank_keys: Vec<char> = app.registers.keys().copied().collect();
+    yank_keys.sort_by_key(|c| register_sort_key(*c));
+    lines.push(MessageRow::Entry {
+        prefix: format!(" Registers ({} populated)", yank_keys.len()),
+        prefix_colour: p.lavender,
+        body: String::new(),
+    });
+    lines.push(MessageRow::Blank);
+    if yank_keys.is_empty() {
+        lines.push(MessageRow::Continuation {
+            indent: "  ".into(),
+            body: "(no yank registers populated)".into(),
+        });
+    } else {
+        for name in yank_keys {
+            let r = app.registers.get(&name).unwrap();
+            let preview = preview_register_text(&r.text, body_w.saturating_sub(8));
+            let kind = if r.linewise { "L " } else { "  " };
+            lines.push(MessageRow::Entry {
+                prefix: format!("  \"{}  {}", name, kind),
+                prefix_colour: p.blue,
+                body: preview,
+            });
+        }
+    }
+
+    lines.push(MessageRow::Blank);
+
+    // Macro registers — separate section so users can tell at a glance
+    // that "g" holding 12 keys is a macro, not a yanked literal "g".
+    let mut macro_keys: Vec<char> = app.macros.keys().copied().collect();
+    macro_keys.sort();
+    lines.push(MessageRow::Entry {
+        prefix: format!(" Macros ({} recorded)", macro_keys.len()),
+        prefix_colour: p.lavender,
+        body: String::new(),
+    });
+    lines.push(MessageRow::Blank);
+    if macro_keys.is_empty() {
+        lines.push(MessageRow::Continuation {
+            indent: "  ".into(),
+            body: "(no macros — record with q<reg>…q)".into(),
+        });
+    } else {
+        for name in macro_keys {
+            let keys = app.macros.get(&name).unwrap();
+            let preview = preview_macro_keys(keys, body_w.saturating_sub(10));
+            lines.push(MessageRow::Entry {
+                prefix: format!("  @{}  ({:>3}) ", name, keys.len()),
+                prefix_colour: p.green,
+                body: preview,
+            });
+        }
+    }
+
+    app.registers_content_height.set(lines.len());
+    let scroll = app
+        .registers_scroll
+        .min(lines.len().saturating_sub(viewport_rows));
+
+    for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
+        let screen_y = (top + (i - scroll)) as u16;
+        match row {
+            MessageRow::Header => {}
+            MessageRow::Blank => {}
+            MessageRow::Entry { prefix, prefix_colour, body } => {
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
+                queue!(
+                    out,
+                    SetForegroundColor(*prefix_colour),
+                    Print(prefix),
+                    SetForegroundColor(p.text),
+                    Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
+                )?;
+                reset_to_buf_bg(out, page_bg)?;
+            }
+            MessageRow::Continuation { indent, body } => {
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
+                queue!(
+                    out,
+                    SetForegroundColor(p.overlay1),
+                    Print(indent),
+                    SetForegroundColor(p.subtext1),
+                    Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
+                )?;
+                reset_to_buf_bg(out, page_bg)?;
+            }
+        }
+    }
+
+    let has_more_below = scroll + viewport_rows < lines.len();
+    let has_more_above = scroll > 0;
+    let footer = match (has_more_above, has_more_below) {
+        (false, false) => "Esc · q · :q to dismiss",
+        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
+        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
+        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
+    };
+    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
+    apply_buf_bg(out, page_bg)?;
+    queue!(
+        out,
+        SetForegroundColor(p.overlay0),
+        Print(truncate(footer, total_w.saturating_sub(left))),
+    )?;
+    reset_to_buf_bg(out, page_bg)?;
+    Ok(())
+}
+
+/// Sort key matching Vim's `:reg` ordering — unnamed first, then yank
+/// (`0`), then the numeric ring (`1`-`9`), named (`a`-`z`), then OS
+/// clipboard mirrors and small specials.
+fn register_sort_key(c: char) -> u32 {
+    match c {
+        '"' => 0,
+        '0' => 1,
+        '1'..='9' => 2 + (c as u32 - '1' as u32),
+        'a'..='z' => 100 + (c as u32 - 'a' as u32),
+        '+' => 200,
+        '*' => 201,
+        '-' => 202,
+        _ => 300 + c as u32,
+    }
+}
+
+/// Make a register's payload printable on a single line. Control chars
+/// are shown as `^X`; newlines become a visible glyph; the string is
+/// truncated to fit and tagged with a `…` when shortened.
+fn preview_register_text(text: &str, max_chars: usize) -> String {
+    let max = max_chars.max(8);
+    let mut out = String::new();
+    let mut count = 0usize;
+    for c in text.chars() {
+        let rendered: String = match c {
+            '\n' => "↵".into(),
+            '\t' => "→".into(),
+            '\r' => "^M".into(),
+            c if (c as u32) < 0x20 => format!("^{}", ((c as u8) + b'@') as char),
+            c => c.to_string(),
+        };
+        let w = rendered.chars().count();
+        if count + w > max {
+            out.push('…');
+            return out;
+        }
+        out.push_str(&rendered);
+        count += w;
+    }
+    out
+}
+
+fn preview_macro_keys(keys: &[crossterm::event::KeyEvent], max_chars: usize) -> String {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let max = max_chars.max(8);
+    let mut out = String::new();
+    let mut count = 0usize;
+    for k in keys {
+        let rendered = match k.code {
+            KeyCode::Char(c) => {
+                let with_mods = format_key_with_mods(c, k.modifiers);
+                with_mods
+            }
+            KeyCode::Enter => "<CR>".into(),
+            KeyCode::Esc => "<Esc>".into(),
+            KeyCode::Tab => "<Tab>".into(),
+            KeyCode::BackTab => "<S-Tab>".into(),
+            KeyCode::Backspace => "<BS>".into(),
+            KeyCode::Delete => "<Del>".into(),
+            KeyCode::Up => "<Up>".into(),
+            KeyCode::Down => "<Down>".into(),
+            KeyCode::Left => "<Left>".into(),
+            KeyCode::Right => "<Right>".into(),
+            KeyCode::Home => "<Home>".into(),
+            KeyCode::End => "<End>".into(),
+            KeyCode::PageUp => "<PgUp>".into(),
+            KeyCode::PageDown => "<PgDn>".into(),
+            KeyCode::Insert => "<Ins>".into(),
+            KeyCode::F(n) => format!("<F{n}>"),
+            _ => "?".into(),
+        };
+        let _ = KeyModifiers::NONE;
+        let w = rendered.chars().count();
+        if count + w > max {
+            out.push('…');
+            return out;
+        }
+        out.push_str(&rendered);
+        count += w;
+    }
+    out
+}
+
+fn format_key_with_mods(c: char, mods: crossterm::event::KeyModifiers) -> String {
+    use crossterm::event::KeyModifiers;
+    if mods.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+        let mut tag = String::new();
+        tag.push('<');
+        if mods.contains(KeyModifiers::CONTROL) {
+            tag.push_str("C-");
+        }
+        if mods.contains(KeyModifiers::ALT) {
+            tag.push_str("A-");
+        }
+        if mods.contains(KeyModifiers::SUPER) {
+            tag.push_str("D-");
+        }
+        if mods.contains(KeyModifiers::SHIFT) && c.is_ascii_lowercase() {
+            tag.push_str("S-");
+        }
+        tag.push(c);
+        tag.push('>');
+        tag
+    } else {
+        c.to_string()
+    }
 }
 
 fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
@@ -3497,6 +4313,10 @@ fn draw_buffer(
     // to the left or right of us on the same terminal row.
     let pane_blank: String = " ".repeat(pane_w);
     let buf_bg = app.config.background_color();
+    // A lens anchored to the topmost visible line carries a phantom
+    // row *above* the line. We paint it first, on the very next loop
+    // iteration the real line paints below.
+    let mut pending_lens = line_idx < total_lines && bs.line_has_code_lens(line_idx);
     for row in 0..rows {
         // Wipe this pane's row (leaves adjacent panes untouched), then
         // return the cursor to the pane's left edge so the per-line draw
@@ -3509,6 +4329,11 @@ fn draw_buffer(
             Print(&pane_blank),
             MoveTo(left as u16, (row + top) as u16),
         )?;
+        if pending_lens && line_idx < total_lines {
+            paint_code_lens_row(out, app, line_idx, gutter, avail, buf_bg)?;
+            pending_lens = false;
+            continue;
+        }
         if line_idx < total_lines {
             // Git stripe — leftmost gutter column. Mirrors gitsigns /
             // GitGutter conventions: a coloured vertical block for
@@ -3605,6 +4430,9 @@ fn draw_buffer(
             {
                 line_idx += 1;
             }
+            // Tee up a phantom lens row for the next iteration if the
+            // line we just advanced to has any lenses anchored on it.
+            pending_lens = line_idx < total_lines && bs.line_has_code_lens(line_idx);
         } else {
             queue!(out, SetForegroundColor(app.config.theme_surface()), Print("~"))?;
             reset_to_buf_bg(out, buf_bg)?;
@@ -4431,6 +5259,7 @@ fn mode_color(app: &App, mode: Mode) -> Color {
         Mode::Prompt(_) => app.config.mode_prompt(),
         Mode::DebugPane => app.config.mode_debug(),
         Mode::Terminal => app.config.mode_terminal(),
+        Mode::FileTree => app.config.mode_picker(),
     }
 }
 
@@ -5600,11 +6429,18 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     )?;
 
     // === Right segment (language) ===
+    // PL_LEFT (`\u{e0b2}`) is a triangle that fills the *right* half
+    // of the cell. To taper from the path segment (left, dark) into
+    // the lang chip (right, lighter), the wedge cell needs the path
+    // colour as its bg (covering the cell's left half) and the chip
+    // colour as its fg (the triangle on the right half). Reversing
+    // the pair paints the triangle dark and leaves a dark block
+    // butted up against the chip.
     if !right_text.is_empty() {
         queue!(
             out,
-            SetBackgroundColor(right_bg),
-            SetForegroundColor(path_bg),
+            SetBackgroundColor(path_bg),
+            SetForegroundColor(right_bg),
             Print(PL_LEFT.to_string()),
             SetBackgroundColor(right_bg),
             SetForegroundColor(right_fg),
@@ -5623,6 +6459,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     if (app.show_start_page
         || app.show_health_page
         || app.show_messages_page
+        || app.show_registers_page
         || app.show_test_results_page)
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
@@ -5634,19 +6471,48 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // move of the frame so the subsequent flush leaves it where
     // we want it, instead of wherever the last Print landed.
     if matches!(app.mode, Mode::Terminal) {
-        if let Some(t) = app.active_terminal() {
-            let (cur_row, cur_col) = t.cursor();
-            // Body of the pane starts one row below `terminal_pane_top()`
-            // (the first pane row is the header chip).
-            let body_top = app.terminal_pane_top() + 1;
-            let screen_y = body_top + cur_row;
-            if (screen_y as u16) < app.height && (cur_col as u16) < app.width {
-                queue!(
-                    out,
-                    Show,
-                    MoveTo(cur_col as u16, screen_y as u16),
-                )?;
-                return Ok(());
+        // Route cursor placement to whichever pane is focused. The
+        // bottom pane sits below the editor; the side pane sits flush
+        // against the right edge of the editor band.
+        match app.terminal_focus {
+            crate::app::TerminalFocus::Side => {
+                // Loading splash is up — hide the cursor entirely; it
+                // would otherwise blink over the centred logo at
+                // whatever stale position the PTY's first frame put
+                // it. Once the splash drops, the real PTY cursor
+                // resumes positioning.
+                if let Some(side) = app
+                    .side_terminals
+                    .get(app.active_side_terminal_idx)
+                {
+                    if crate::app::side_terminal_loading(side) {
+                        queue!(out, Hide)?;
+                        return Ok(());
+                    }
+                }
+                if let Some(t) = app.active_side_terminal() {
+                    let (cur_row, cur_col) = t.cursor();
+                    let body_top = app.buffer_top() + 1;
+                    let screen_y = body_top + cur_row;
+                    let screen_x = app.side_pane_content_left() + cur_col;
+                    if (screen_y as u16) < app.height && (screen_x as u16) < app.width {
+                        queue!(out, Show, MoveTo(screen_x as u16, screen_y as u16))?;
+                        return Ok(());
+                    }
+                }
+            }
+            crate::app::TerminalFocus::Bottom => {
+                if let Some(t) = app.active_terminal() {
+                    let (cur_row, cur_col) = t.cursor();
+                    // Body of the pane starts one row below `terminal_pane_top()`
+                    // (the first pane row is the header chip).
+                    let body_top = app.terminal_pane_top() + 1;
+                    let screen_y = body_top + cur_row;
+                    if (screen_y as u16) < app.height && (cur_col as u16) < app.width {
+                        queue!(out, Show, MoveTo(cur_col as u16, screen_y as u16))?;
+                        return Ok(());
+                    }
+                }
             }
         }
         queue!(out, Hide)?;
@@ -5656,6 +6522,12 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // is the user's "cursor" — the editor's terminal cursor would just
     // distract.
     if app.mode == Mode::DebugPane {
+        queue!(out, Hide)?;
+        return Ok(());
+    }
+    // Same for the file-tree pane — the highlighted row IS the cursor;
+    // a flashing block in the buffer area would just be noise.
+    if app.mode == Mode::FileTree {
         queue!(out, Hide)?;
         return Ok(());
     }
@@ -5698,9 +6570,41 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // so the cursor's on-screen row needs to count *visible* rows
     // between view_top and the cursor's source line — not the raw
     // line-index delta.
-    let row = pane.y
-        + app
-            .visible_rows_between(app.window.view_top, app.window.cursor.line) as u16;
+    let content_row = app
+        .visible_rows_between(app.window.view_top, app.window.cursor.line) as u16;
+    // Phantom hop: park the visual cursor on the lens row above the
+    // content line. `cursor.line` is unchanged so edits / ENTER target
+    // the right line. Self-heals if the lens vanished between the
+    // motion and this frame (server response cleared the cache).
+    let phantom_idx = app
+        .phantom_lens_idx
+        .filter(|_| app.line_has_code_lens(app.window.cursor.line) && content_row > 0);
+    let row = pane.y + if phantom_idx.is_some() { content_row - 1 } else { content_row };
+    if let Some(idx) = phantom_idx {
+        // Phantom row paints `gutter` blanks, then lens titles joined by
+        // " │ ". Replay the join widths so the visual cursor lands on the
+        // first cell of the selected segment.
+        let titles = app
+            .buffer
+            .path
+            .as_ref()
+            .map(|p| app.lens_commands_on_line(p, app.window.cursor.line))
+            .unwrap_or_default();
+        let mut text_col = 0usize;
+        let separator_w = " │ ".chars().count();
+        for (i, cmd) in titles.iter().enumerate() {
+            if i == idx {
+                break;
+            }
+            text_col += cmd.title.chars().count();
+            if i + 1 < titles.len() {
+                text_col += separator_w;
+            }
+        }
+        let col = pane.x + (gutter + text_col) as u16;
+        queue!(out, MoveTo(col, row))?;
+        return Ok(());
+    }
     let line = app.buffer.rope.line(app.window.cursor.line);
     // Per-buffer-col inlay-hint widths so the cursor's visual position
     // accounts for them. Without this, the cursor renders at the visual

@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::mode::{Mode, Operator};
 use crate::parser::{Action, ParseCtx};
 
-use super::state::{LastEdit, RecordingState, Register};
+use super::state::{LastEdit, RecordingState, Register, MACRO_REPLAY_DEPTH_LIMIT};
 
 impl super::App {
     pub(super) fn write_register(&mut self, target: Option<char>, text: String, linewise: bool) {
@@ -93,7 +93,7 @@ impl super::App {
         self.status_msg = format!("recording @{}", name);
     }
 
-    pub(super) fn replay_macro(&mut self, name: char) {
+    pub(super) fn replay_macro(&mut self, name: char, count: usize) {
         let target = if name == '@' {
             self.last_replayed_macro
         } else {
@@ -108,26 +108,62 @@ impl super::App {
             return;
         };
         self.last_replayed_macro = Some(name);
+        let count = count.max(1);
         self.replaying_macro = true;
-        for k in keys {
-            match self.mode {
-                Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
-                Mode::Insert => self.handle_insert_key(k),
-                Mode::Command => self.handle_command_key(k),
-                Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
-                Mode::Search { .. } => self.handle_search_key(k),
-                Mode::Picker => self.handle_picker_key(k),
-                Mode::Prompt(_) => self.handle_prompt_key(k),
-                // Macros don't navigate the debug pane — replay aborts if
-                // the user happened to start recording while focused there.
-                Mode::DebugPane => break,
-                // Same for the terminal pane — macro replay doesn't
-                // forward keys into a PTY, so abort cleanly if focus
-                // happens to land there mid-replay.
-                Mode::Terminal => break,
+        self.macro_replay_depth = self.macro_replay_depth.saturating_add(1);
+        if self.macro_replay_depth > MACRO_REPLAY_DEPTH_LIMIT {
+            self.macro_replay_depth = self.macro_replay_depth.saturating_sub(1);
+            self.replaying_macro = false;
+            self.status_msg =
+                format!("macro recursion limit ({}) reached", MACRO_REPLAY_DEPTH_LIMIT);
+            return;
+        }
+        'outer: for _ in 0..count {
+            for k in keys.iter().copied() {
+                match self.mode {
+                    Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
+                    Mode::Insert => self.handle_insert_key(k),
+                    Mode::Command => self.handle_command_key(k),
+                    Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
+                    Mode::Search { .. } => self.handle_search_key(k),
+                    Mode::Picker => self.handle_picker_key(k),
+                    Mode::Prompt(_) => self.handle_prompt_key(k),
+                    // Macros don't navigate the debug pane — replay aborts if
+                    // the user happened to start recording while focused there.
+                    Mode::DebugPane => break 'outer,
+                    // Same for the terminal pane — macro replay doesn't
+                    // forward keys into a PTY, so abort cleanly if focus
+                    // happens to land there mid-replay.
+                    Mode::Terminal => break 'outer,
+                    // And the same for the file-tree pane — replay can't
+                    // open files from a sidebar mid-record cleanly, so
+                    // bail rather than fire half-meaningful keystrokes.
+                    Mode::FileTree => break 'outer,
+                }
             }
         }
+        self.macro_replay_depth = self.macro_replay_depth.saturating_sub(1);
         self.replaying_macro = false;
+    }
+
+    /// `:reg` / `:registers` — toggle the registers overlay. Yank
+    /// registers and macro registers both render. Scroll resets so the
+    /// user lands on the first row (the header).
+    pub(super) fn cmd_registers(&mut self) {
+        self.show_registers_page = true;
+        self.registers_scroll = 0;
+    }
+
+    pub(super) fn registers_max_scroll(&self) -> usize {
+        let total = self.registers_content_height.get();
+        let body_rows = self.height.saturating_sub(2) as usize;
+        total.saturating_sub(body_rows)
+    }
+
+    pub(super) fn registers_scroll_by(&mut self, delta: isize) {
+        let max = self.registers_max_scroll();
+        let new_scroll = (self.registers_scroll as isize + delta).max(0) as usize;
+        self.registers_scroll = new_scroll.min(max);
     }
 
     /// Decide whether an about-to-fire action should set up a recording for `.` repeat.

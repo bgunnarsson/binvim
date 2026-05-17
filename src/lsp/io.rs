@@ -18,6 +18,7 @@ pub(super) fn reader_loop(
     stdin: Arc<Mutex<ChildStdin>>,
     init_state: Arc<Mutex<InitState>>,
     legend: Arc<Mutex<Option<SemanticTokensLegend>>>,
+    code_lens_provider: Arc<Mutex<bool>>,
     tx: Sender<LspIncoming>,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -42,7 +43,7 @@ pub(super) fn reader_loop(
             return;
         }
         let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
-        dispatch(value, &stdin, &init_state, &legend, &tx);
+        dispatch(value, &stdin, &init_state, &legend, &code_lens_provider, &tx);
     }
 }
 
@@ -51,6 +52,7 @@ fn dispatch(
     stdin: &Arc<Mutex<ChildStdin>>,
     init_state: &Arc<Mutex<InitState>>,
     legend: &Arc<Mutex<Option<SemanticTokensLegend>>>,
+    code_lens_provider: &Arc<Mutex<bool>>,
     tx: &Sender<LspIncoming>,
 ) {
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
@@ -89,6 +91,9 @@ fn dispatch(
                 // semantic-token responses against it later.
                 if let Some(l) = extract_semantic_tokens_legend(&result) {
                     *legend.lock().unwrap() = Some(l);
+                }
+                if extract_code_lens_provider(&result) {
+                    *code_lens_provider.lock().unwrap() = true;
                 }
                 let frames = match std::mem::replace(&mut *g, InitState::Ready) {
                     InitState::Buffering(f) => f,
@@ -232,6 +237,21 @@ fn extract_semantic_tokens_legend(init_result: &Value) -> Option<SemanticTokensL
         token_types,
         token_modifiers,
     })
+}
+
+/// True when the server advertised `codeLensProvider` in the initialize
+/// response. Accepts both the boolean shorthand (`codeLensProvider:
+/// true`) and the object form (`codeLensProvider: { resolveProvider:
+/// bool }`) — presence of the key is what gates the request, the
+/// resolveProvider sub-field is consulted later when (and if) we wire
+/// `codeLens/resolve`.
+fn extract_code_lens_provider(init_result: &Value) -> bool {
+    let Some(caps) = init_result.get("capabilities") else { return false; };
+    match caps.get("codeLensProvider") {
+        Some(v) if v.is_object() => true,
+        Some(v) => v.as_bool().unwrap_or(false),
+        None => false,
+    }
 }
 
 fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {

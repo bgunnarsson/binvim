@@ -277,7 +277,7 @@ impl Lang {
         }
     }
 
-    fn ts_language(self) -> Language {
+    pub(crate) fn ts_language(self) -> Language {
         match self {
             Lang::Rust => tree_sitter_rust::LANGUAGE.into(),
             Lang::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),

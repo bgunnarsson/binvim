@@ -63,11 +63,21 @@ pub struct TestAdapterSpec {
 #[derive(Debug, Default)]
 pub struct LineParseState {
     pub cargo: super::cargo::CargoParseState,
+    pub vitest: super::vitest::VitestParseState,
+    pub pytest: super::pytest::PytestParseState,
+    pub gotest: super::gotest::GoTestParseState,
+    pub dotnet: super::dotnet::DotnetParseState,
 }
 
 /// All test adapters binvim ships with. Walked in order by
-/// `adapter_for_workspace`; first match wins.
-const BUILTIN_ADAPTERS: &[TestAdapterSpec] = &[CARGO];
+/// `adapter_for_workspace`; first match wins. Vitest comes before
+/// cargo so a vitest project nested inside a cargo workspace (e.g.
+/// binvim's `playground/typescript/vitest/`) picks the right runner
+/// for that subtree; the walk anchors on the closest `vitest.config.*`
+/// before climbing further up to a `Cargo.toml`. Pytest / Go / dotnet
+/// each pick by their own root markers (`pyproject.toml` / `pytest.ini`,
+/// `go.mod`, `*.csproj` / `*.sln`).
+const BUILTIN_ADAPTERS: &[TestAdapterSpec] = &[VITEST, PYTEST, GOTEST, DOTNET, CARGO];
 
 const CARGO: TestAdapterSpec = TestAdapterSpec {
     key: "cargo",
@@ -80,6 +90,70 @@ const CARGO: TestAdapterSpec = TestAdapterSpec {
     flush_parser: super::cargo::flush_parser,
     filter_for_file: super::cargo::filter_for_file,
     filter_for_nearest: super::cargo::filter_for_nearest,
+};
+
+const VITEST: TestAdapterSpec = TestAdapterSpec {
+    key: "vitest",
+    display_name: "vitest",
+    root_markers: &[
+        "vitest.config.ts",
+        "vitest.config.mts",
+        "vitest.config.js",
+        "vitest.config.mjs",
+        "vitest.config.cjs",
+    ],
+    build_list_command: super::vitest::build_list_command,
+    parse_list_output: super::vitest::parse_list_output,
+    build_run_command: super::vitest::build_run_command,
+    parse_event_line: super::vitest::parse_event_line,
+    flush_parser: super::vitest::flush_parser,
+    filter_for_file: super::vitest::filter_for_file,
+    filter_for_nearest: super::vitest::filter_for_nearest,
+};
+
+const PYTEST: TestAdapterSpec = TestAdapterSpec {
+    key: "pytest",
+    display_name: "pytest",
+    root_markers: &[
+        "pytest.ini",
+        "pyproject.toml",
+        "setup.cfg",
+        "tox.ini",
+        "conftest.py",
+    ],
+    build_list_command: super::pytest::build_list_command,
+    parse_list_output: super::pytest::parse_list_output,
+    build_run_command: super::pytest::build_run_command,
+    parse_event_line: super::pytest::parse_event_line,
+    flush_parser: super::pytest::flush_parser,
+    filter_for_file: super::pytest::filter_for_file,
+    filter_for_nearest: super::pytest::filter_for_nearest,
+};
+
+const GOTEST: TestAdapterSpec = TestAdapterSpec {
+    key: "go",
+    display_name: "go test",
+    root_markers: &["go.mod"],
+    build_list_command: super::gotest::build_list_command,
+    parse_list_output: super::gotest::parse_list_output,
+    build_run_command: super::gotest::build_run_command,
+    parse_event_line: super::gotest::parse_event_line,
+    flush_parser: super::gotest::flush_parser,
+    filter_for_file: super::gotest::filter_for_file,
+    filter_for_nearest: super::gotest::filter_for_nearest,
+};
+
+const DOTNET: TestAdapterSpec = TestAdapterSpec {
+    key: "dotnet",
+    display_name: "dotnet test",
+    root_markers: &["*.sln", "*.csproj", "*.fsproj"],
+    build_list_command: super::dotnet::build_list_command,
+    parse_list_output: super::dotnet::parse_list_output,
+    build_run_command: super::dotnet::build_run_command,
+    parse_event_line: super::dotnet::parse_event_line,
+    flush_parser: super::dotnet::flush_parser,
+    filter_for_file: super::dotnet::filter_for_file,
+    filter_for_nearest: super::dotnet::filter_for_nearest,
 };
 
 /// Pick the first adapter whose root markers match a directory at or

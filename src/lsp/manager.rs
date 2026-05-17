@@ -50,6 +50,14 @@ pub(super) enum PendingRequest {
         path: PathBuf,
         buffer_version: u64,
     },
+    /// `textDocument/codeLens` — same shape as SemanticTokens. The
+    /// version anchor lets the App invalidate stale replies whose
+    /// lens line indices would no longer line up against the live
+    /// buffer.
+    CodeLens {
+        path: PathBuf,
+        buffer_version: u64,
+    },
     /// Copilot `checkStatus` — response says whether the user is signed
     /// in and surfaces their handle.
     CopilotCheckStatus,
@@ -688,6 +696,43 @@ impl LspManager {
         true
     }
 
+    /// `Some(bool)` reflecting the primary LSP client's
+    /// `codeLensProvider` advertisement for `path`; `None` when no
+    /// client is attached. Used by `:codelens` to diagnose "the lens
+    /// row isn't showing up" — the answer is usually "server didn't
+    /// advertise the capability" or "no client is attached yet."
+    pub fn code_lens_capability(&self, path: &Path) -> Option<bool> {
+        let client = self.client_for_path(path)?;
+        Some(*client.code_lens_provider.lock().unwrap())
+    }
+
+    /// Request `textDocument/codeLens` for the whole buffer. Skipped
+    /// when the server didn't advertise `codeLensProvider` so we don't
+    /// burn a request that's guaranteed to come back empty.
+    /// `buffer_version` is the version on the wire; the App drops
+    /// replies that arrive after a later edit so stale line indices
+    /// don't smear lenses onto unrelated rows.
+    pub fn request_code_lens(&mut self, path: &Path, buffer_version: u64) -> bool {
+        let Some(client) = self.client_for_path(path) else { return false; };
+        if !*client.code_lens_provider.lock().unwrap() {
+            return false;
+        }
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/codeLens",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+        );
+        self.pending.insert(
+            (client.name.clone(), id),
+            PendingRequest::CodeLens {
+                path: path.to_path_buf(),
+                buffer_version,
+            },
+        );
+        true
+    }
+
     /// Request `textDocument/inlayHint` for a line range. `end_line` is
     /// exclusive (LSP `Range.end`). Skipped silently when the primary
     /// server is missing.
@@ -746,6 +791,7 @@ fn pending_request_path(req: &PendingRequest) -> Option<PathBuf> {
         PendingRequest::InlayHints { path } => Some(path.clone()),
         PendingRequest::DocumentHighlight { path, .. } => Some(path.clone()),
         PendingRequest::SemanticTokens { path, .. } => Some(path.clone()),
+        PendingRequest::CodeLens { path, .. } => Some(path.clone()),
         PendingRequest::CopilotInline { path, .. } => Some(path.clone()),
         _ => None,
     }
@@ -768,6 +814,7 @@ fn pending_request_kind(req: &PendingRequest) -> &'static str {
         PendingRequest::InlayHints { .. } => "InlayHints",
         PendingRequest::DocumentHighlight { .. } => "DocumentHighlight",
         PendingRequest::SemanticTokens { .. } => "SemanticTokens",
+        PendingRequest::CodeLens { .. } => "CodeLens",
         PendingRequest::CopilotCheckStatus => "CopilotCheckStatus",
         PendingRequest::CopilotSignIn => "CopilotSignIn",
         PendingRequest::CopilotInline { .. } => "CopilotInline",
@@ -881,6 +928,14 @@ fn handle_response(
                 path,
                 buffer_version,
                 tokens,
+            })
+        }
+        PendingRequest::CodeLens { path, buffer_version } => {
+            let lenses = super::parse::parse_code_lens_response(result);
+            Some(LspEvent::CodeLens {
+                path,
+                buffer_version,
+                lenses,
             })
         }
         PendingRequest::CopilotCheckStatus => {

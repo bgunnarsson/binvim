@@ -25,7 +25,7 @@
 
 use anyhow::{Context, Result};
 use crossterm::style::Color;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
@@ -165,6 +165,33 @@ pub struct VteHandler {
     /// byte each). When set, mouse events go out as
     /// `\x1b[<{btn};{x};{y}{M|m}` instead of the legacy form.
     pub(crate) mouse_sgr: bool,
+    /// xterm DECAWM "deferred wrap" — writing a glyph that lands at
+    /// the last column leaves the cursor *at* that column with this
+    /// flag set; the wrap only fires when the next glyph is written.
+    /// CR / explicit cursor motion / LF / SGR-style erases all clear
+    /// the flag. Without this, zsh's `PROMPT_SP` trick (print
+    /// `width` spaces + `\r` whether or not the prev output ended
+    /// with `\n`) wraps one row too eagerly and a stray blank row
+    /// shows up between every consecutive prompt.
+    pending_wrap: bool,
+    /// xterm DEC private modes 47 / 1047 / 1049 — when a TUI like
+    /// vim, htop, claude, opencode enters alt-screen we stash the
+    /// current main-screen state here and clear the live grid so
+    /// the TUI gets a fresh canvas. On exit we swap it back. The
+    /// `Option` is `Some` exactly when alt-screen is active.
+    saved_main: Option<SavedScreen>,
+}
+
+/// Snapshot of the main screen taken when a TUI enters alt-screen
+/// mode. Restored verbatim on exit so the shell prompt the user
+/// was looking at before reappears intact.
+pub(crate) struct SavedScreen {
+    pub cells: Vec<Vec<Cell>>,
+    pub cur_row: usize,
+    pub cur_col: usize,
+    pub pen: Cell,
+    pub pending_wrap: bool,
+    pub saved: Option<(usize, usize)>,
 }
 
 /// Snapshot of which mouse-tracking modes the terminal currently
@@ -191,26 +218,98 @@ impl VteHandler {
             mouse_drag_mode: false,
             mouse_motion_mode: false,
             mouse_sgr: false,
+            pending_wrap: false,
+            saved_main: None,
         }
+    }
+
+    /// Enter alt-screen: snapshot the current grid + cursor + pen,
+    /// then wipe the live grid so the TUI starts on a clean canvas.
+    /// No-op if alt-screen is already active (a second 1049h shouldn't
+    /// stack snapshots — the inner program would never recover the
+    /// outer shell's prompt).
+    fn enter_alt_screen(&mut self) {
+        if self.saved_main.is_some() {
+            return;
+        }
+        self.saved_main = Some(SavedScreen {
+            cells: self.grid.cells.clone(),
+            cur_row: self.cur_row,
+            cur_col: self.cur_col,
+            pen: self.pen,
+            pending_wrap: self.pending_wrap,
+            saved: self.saved,
+        });
+        self.grid.clear();
+        self.cur_row = 0;
+        self.cur_col = 0;
+        self.pen = Cell::blank();
+        self.pending_wrap = false;
+    }
+
+    /// Exit alt-screen: restore the snapshot taken on entry. No-op if
+    /// alt-screen isn't active (a stray 1049l before an h would
+    /// otherwise wipe live shell output).
+    fn exit_alt_screen(&mut self) {
+        let Some(saved) = self.saved_main.take() else {
+            return;
+        };
+        // Restored cells might be shorter / narrower than the current
+        // grid (resize while inside alt-screen). Pad rows + columns
+        // back out to the live grid dimensions with blanks so the
+        // renderer doesn't read past the end of any row.
+        let mut cells = saved.cells;
+        for row in cells.iter_mut() {
+            if row.len() < self.grid.cols {
+                row.resize(self.grid.cols, Cell::blank());
+            } else if row.len() > self.grid.cols {
+                row.truncate(self.grid.cols);
+            }
+        }
+        while cells.len() < self.grid.rows {
+            cells.push(vec![Cell::blank(); self.grid.cols]);
+        }
+        if cells.len() > self.grid.rows {
+            cells.truncate(self.grid.rows);
+        }
+        self.grid.cells = cells;
+        self.cur_row = saved.cur_row.min(self.grid.rows.saturating_sub(1));
+        self.cur_col = saved.cur_col.min(self.grid.cols.saturating_sub(1));
+        self.pen = saved.pen;
+        self.pending_wrap = saved.pending_wrap;
+        self.saved = saved.saved;
+    }
+
+    /// True when a TUI has switched us into alt-screen mode. Used by
+    /// the side-terminal pane's loading-screen heuristic — once a TUI
+    /// is rendering into the alt buffer we know it's settled enough
+    /// to drop the loading splash.
+    pub fn alt_screen_active(&self) -> bool {
+        self.saved_main.is_some()
     }
 
     fn move_to(&mut self, row: usize, col: usize) {
         self.cur_row = row.min(self.grid.rows.saturating_sub(1));
         self.cur_col = col.min(self.grid.cols.saturating_sub(1));
+        self.pending_wrap = false;
     }
 
     /// Move down one row; if we'd fall off the bottom, scroll the
-    /// grid up. This is what LF / IND do.
+    /// grid up. This is what LF / IND do. Also clears any deferred
+    /// wrap — once we've explicitly moved down, the "still on last
+    /// col" state is gone.
     fn line_feed(&mut self) {
         if self.cur_row + 1 >= self.grid.rows {
             self.grid.scroll_up();
         } else {
             self.cur_row += 1;
         }
+        self.pending_wrap = false;
     }
 
     fn carriage_return(&mut self) {
         self.cur_col = 0;
+        self.pending_wrap = false;
     }
 
     fn write_glyph(&mut self, c: char) {
@@ -240,9 +339,25 @@ impl VteHandler {
             }
             return;
         }
-        if self.cur_row >= self.grid.rows || self.cur_col >= self.grid.cols {
-            self.advance_by(w);
+        // Resolve a deferred wrap from the previous glyph BEFORE
+        // writing this one. xterm's DECAWM rule: the wrap fires on
+        // the next glyph, not when the cursor reaches the margin.
+        if self.pending_wrap {
+            self.pending_wrap = false;
+            self.cur_col = 0;
+            self.line_feed();
+        }
+        if self.cur_row >= self.grid.rows {
             return;
+        }
+        if self.cur_col >= self.grid.cols {
+            // Defensive — shouldn't happen given pending_wrap above,
+            // but guards against drift if cols shrunk under us.
+            self.cur_col = 0;
+            self.line_feed();
+            if self.cur_row >= self.grid.rows {
+                return;
+            }
         }
         let mut cell = self.pen;
         cell.ch = c;
@@ -257,17 +372,18 @@ impl VteHandler {
             cont.ch = '\0';
             self.grid.cells[self.cur_row][self.cur_col + 1] = cont;
         }
-        self.advance_by(w);
-    }
-
-    /// Advance the cursor by `n` columns, wrapping + scrolling at
-    /// EOL exactly the same way `advance()` does for a 1-column
-    /// glyph. Wide glyphs use this with `n = 2`.
-    fn advance_by(&mut self, n: usize) {
-        self.cur_col += n;
-        if self.cur_col >= self.grid.cols {
-            self.cur_col = 0;
-            self.line_feed();
+        // Advance — but defer the wrap if this glyph filled the row.
+        // The cursor visually stays at the last column with
+        // pending_wrap set; the NEXT glyph will resolve the wrap.
+        // CR / cursor motion clears it without ever wrapping, which
+        // is what makes zsh's PROMPT_SP trick (fill row + CR) leave
+        // the cursor on the same row.
+        let next_col = self.cur_col + w;
+        if next_col >= self.grid.cols {
+            self.cur_col = self.grid.cols.saturating_sub(1);
+            self.pending_wrap = true;
+        } else {
+            self.cur_col = next_col;
         }
     }
 
@@ -287,7 +403,17 @@ impl VteHandler {
                 0 => self.pen = Cell::blank(),
                 1 => self.pen.bold = true,
                 3 => self.pen.italic = true,
-                4 => self.pen.underline = true,
+                4 => {
+                    // Kitty / vte extended underline-style: `\e[4m` (bare)
+                    // is single underline, but `\e[4:0m` means "no
+                    // underline" (sub-params 1..5 = single/double/curly/
+                    // dotted/dashed). Claude Code wraps hyperlinks with
+                    // `\e[4:3m ... \e[4:0m`; reading the bare primary
+                    // would leave underline stuck on after the link ends
+                    // and smear it across every cell that followed.
+                    let style = param.get(1).copied().unwrap_or(1);
+                    self.pen.underline = style != 0;
+                }
                 7 => self.pen.reverse = true,
                 22 => self.pen.bold = false,
                 23 => self.pen.italic = false,
@@ -295,14 +421,14 @@ impl VteHandler {
                 27 => self.pen.reverse = false,
                 30..=37 => self.pen.fg = Some(ansi_basic_colour(n - 30)),
                 38 => {
-                    if let Some(c) = parse_extended_colour(&mut iter) {
+                    if let Some(c) = parse_extended_colour(param, &mut iter) {
                         self.pen.fg = Some(c);
                     }
                 }
                 39 => self.pen.fg = None,
                 40..=47 => self.pen.bg = Some(ansi_basic_colour(n - 40)),
                 48 => {
-                    if let Some(c) = parse_extended_colour(&mut iter) {
+                    if let Some(c) = parse_extended_colour(param, &mut iter) {
                         self.pen.bg = Some(c);
                     }
                 }
@@ -315,14 +441,61 @@ impl VteHandler {
     }
 }
 
-/// Parse the `38;5;N` (256-colour) or `38;2;R;G;B` (truecolor) tail
-/// after the leading 38 / 48. Advances the iterator past whatever
-/// it consumed. Returns the resolved Color, or None if the form
-/// wasn't recognised (in which case the iterator's position is
-/// undefined — the caller treats it as a noop).
+/// Parse the `38 ⟨…⟩` / `48 ⟨…⟩` extended-colour tail and return
+/// the resolved `Color`, or `None` if the form wasn't recognised.
+///
+/// Two wire forms appear in the wild for the same colour:
+///
+///   - Semicolon form: `\e[38;2;R;G;Bm`. Each value is its own
+///     `Param`; we walk the outer `iter` to collect `kind` (`2` or
+///     `5`) and the channel values, consuming three / four `next()`
+///     calls. Without this branch, opencode's heavy use of
+///     truecolour fg/bg via `38;…` / `48;…` would never colourise.
+///
+///   - Colon sub-param form: `\e[38:2:R:G:Bm`. Every value lands
+///     inside ONE `Param` (the same one that carries the leading
+///     `38`), so we read from that param's tail and DO NOT touch
+///     `iter`. Touching `iter` here is what caused the
+///     "underline stuck on" rendering opencode triggers: it emits
+///     `\e[38:2:R:G:B;24m` to set an RGB fg and then turn off
+///     underline, and the old impl swallowed the `24` looking for
+///     a non-existent colour-spec word.
 fn parse_extended_colour(
+    param: &[u16],
     iter: &mut vte::ParamsIter<'_>,
 ) -> Option<Color> {
+    // Colon form: the sub-params are sub-values of `param`.
+    // param[0] is the leading 38/48; param[1] is `kind`; the rest
+    // is channel data. Detect this when the leading word came with
+    // sub-values attached.
+    if param.len() > 1 {
+        let kind = *param.get(1)?;
+        return match kind {
+            5 => {
+                let idx = *param.get(2)? as u8;
+                Some(ansi_256(idx))
+            }
+            2 => {
+                // The CSI spec also tolerates a colour-space-id
+                // sentinel between `2` and the RGB triple: the long
+                // form is `38:2::R:G:B`. When the second sub-value
+                // is absent / zero / 1, prefer the trailing three
+                // positions; when only three values follow `2`,
+                // they ARE the R/G/B. Pick whichever shape matches
+                // the param length so both wire forms map to the
+                // same colour.
+                let len = param.len();
+                let (r, g, b) = if len >= 6 {
+                    (*param.get(3)? as u8, *param.get(4)? as u8, *param.get(5)? as u8)
+                } else {
+                    (*param.get(2)? as u8, *param.get(3)? as u8, *param.get(4)? as u8)
+                };
+                Some(Color::Rgb { r, g, b })
+            }
+            _ => None,
+        };
+    }
+    // Semicolon form: walk the outer iter for kind + channels.
     let kind = iter.next()?.first().copied()?;
     match kind {
         5 => {
@@ -408,12 +581,14 @@ impl Perform for VteHandler {
                 if self.cur_col > 0 {
                     self.cur_col -= 1;
                 }
+                self.pending_wrap = false;
             }
             b'\t' => {
                 // Tab — advance to the next 8-column stop.
                 let next = (self.cur_col / 8 + 1) * 8;
                 let cap = self.grid.cols.saturating_sub(1);
                 self.cur_col = next.min(cap);
+                self.pending_wrap = false;
             }
             // BEL, NUL, and the rest fall through silently.
             _ => {}
@@ -441,23 +616,28 @@ impl Perform for VteHandler {
             'A' => {
                 let n = (first as usize).max(1);
                 self.cur_row = self.cur_row.saturating_sub(n);
+                self.pending_wrap = false;
             }
             'B' => {
                 let n = (first as usize).max(1);
                 self.cur_row = (self.cur_row + n).min(self.grid.rows.saturating_sub(1));
+                self.pending_wrap = false;
             }
             'C' => {
                 let n = (first as usize).max(1);
                 self.cur_col = (self.cur_col + n).min(self.grid.cols.saturating_sub(1));
+                self.pending_wrap = false;
             }
             'D' => {
                 let n = (first as usize).max(1);
                 self.cur_col = self.cur_col.saturating_sub(n);
+                self.pending_wrap = false;
             }
             'G' => {
                 // CHA — Cursor Horizontal Absolute (1-based).
                 let col = (first as usize).saturating_sub(1);
                 self.cur_col = col.min(self.grid.cols.saturating_sub(1));
+                self.pending_wrap = false;
             }
             'J' => match first {
                 0 => self.erase_below_cursor(),
@@ -495,6 +675,26 @@ impl Perform for VteHandler {
                         1002 => self.mouse_drag_mode = enable,
                         1003 => self.mouse_motion_mode = enable,
                         1006 => self.mouse_sgr = enable,
+                        // 47 / 1047 / 1049 — alt-screen variants.
+                        // 1049 is the modern form (save cursor + swap
+                        // + clear on enter, swap + restore cursor on
+                        // exit); 47 / 1047 are the older shapes most
+                        // editors and pagers still emit. They all map
+                        // to the same enter_/exit_alt_screen pair —
+                        // the difference between the variants
+                        // historically was "do you also save the
+                        // cursor?", which our snapshot does
+                        // unconditionally, and "do you clear the alt
+                        // screen on entry?", which we also do
+                        // unconditionally so vim / htop / claude /
+                        // opencode all start on a clean canvas.
+                        47 | 1047 | 1049 => {
+                            if enable {
+                                self.enter_alt_screen();
+                            } else {
+                                self.exit_alt_screen();
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -529,6 +729,7 @@ impl Perform for VteHandler {
                 self.cur_col = 0;
                 self.saved = None;
                 self.pen = Cell::blank();
+                self.pending_wrap = false;
             }
             _ => {}
         }
@@ -610,6 +811,14 @@ pub struct Terminal {
     /// Mutex so a future renderer-side read can lock for a snapshot
     /// without racing with `drain`.
     inner: Mutex<TerminalInner>,
+    /// Handle to the spawned PTY child process. Kept so `Drop` can
+    /// `wait()` on it and reap the zombie — without this the child
+    /// process slot lingers in the kernel until binvim itself exits,
+    /// which during a long session leaves the user's `jobs -p` /
+    /// shell prompt counting every closed terminal as a "hanging
+    /// shell". `Option` because Drop takes the handle out to move it
+    /// into the reaper thread.
+    child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
 }
 
 pub struct TerminalInner {
@@ -626,6 +835,20 @@ impl Terminal {
     /// callers should drive `drain()` on each frame so the grid
     /// reflects the latest output.
     pub fn spawn(rows: u16, cols: u16, shell: Option<&str>) -> Result<Self> {
+        let shell_cmd = match shell {
+            Some(s) => s.to_string(),
+            None => std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
+        };
+        Self::spawn_program(rows, cols, &shell_cmd, &[])
+    }
+
+    /// Spawn `program` with `args` in a `rows × cols` PTY. Same env
+    /// + cwd treatment as `spawn`. Used by the side-pane AI launcher
+    /// to start the user's shell with `-l -i -c "exec <tool>"` so
+    /// the shell sources its rc files (login + interactive), picks
+    /// up nvm / asdf / direnv shims, and then `exec`s into the tool
+    /// — replacing the shell process so the tool owns the PTY.
+    pub fn spawn_program(rows: u16, cols: u16, program: &str, args: &[&str]) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -636,13 +859,26 @@ impl Terminal {
             })
             .context("openpty failed")?;
 
-        let shell_cmd = match shell {
-            Some(s) => s.to_string(),
-            None => std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
-        };
-        let mut cmd = CommandBuilder::new(&shell_cmd);
+        let mut cmd = CommandBuilder::new(program);
+        for a in args {
+            cmd.arg(a);
+        }
         if let Ok(cwd) = std::env::current_dir() {
             cmd.cwd(cwd);
+        }
+        // Pass through binvim's env so the spawned shell sees the
+        // same `HOME`, `PATH`, `NVM_DIR`, `XDG_*`, etc. that we
+        // were launched with. `portable_pty`'s `CommandBuilder`
+        // ships with an empty env by default — without this loop
+        // the child gets only the vars we set explicitly below,
+        // and any rc-file logic that branches on `NVM_DIR` /
+        // `HOMEBREW_PREFIX` / etc. silently falls through (which
+        // is why `:claude` worked when launched via `zsh -i -c
+        // "exec claude"` but `:codex` couldn't find its node
+        // shebang interpreter — nvm's `.zshrc` block read an
+        // unset `NVM_DIR`).
+        for (k, v) in std::env::vars() {
+            cmd.env(k, v);
         }
         // TERM=xterm-256color gives shells the modern colour
         // expectations without lying about features we don't have
@@ -656,7 +892,7 @@ impl Terminal {
         // ignore this env entirely.
         cmd.env("PROMPT_EOL_MARK", "");
 
-        let _child = pair
+        let child = pair
             .slave
             .spawn_command(cmd)
             .context("spawn_command failed")?;
@@ -686,8 +922,30 @@ impl Terminal {
                 handler: VteHandler::new(rows as usize, cols as usize),
                 exited: false,
             }),
+            child: Mutex::new(Some(child)),
         })
     }
+}
+
+impl Drop for Terminal {
+    /// Reap the PTY's child process so it doesn't linger as a zombie
+    /// after the user closes the terminal. The actual SIGHUP arrives
+    /// when the `master` Arc drops (its FD close hangs up the PTY);
+    /// here we move the child handle into a detached thread that
+    /// blocks on `wait()`, which the kernel resolves the instant the
+    /// shell exits. Without this the child sits as `<defunct>` in
+    /// `ps` until binvim itself dies — visible to the user as a
+    /// growing count in their shell prompt's job indicator.
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.lock().unwrap().take() {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+    }
+}
+
+impl Terminal {
 
     /// Forward `bytes` to the PTY master — i.e. into the child's
     /// stdin. Used to wire user keystrokes through to the shell.
@@ -728,6 +986,13 @@ impl Terminal {
     pub fn cursor(&self) -> (usize, usize) {
         let inner = self.inner.lock().unwrap();
         (inner.handler.cur_row, inner.handler.cur_col)
+    }
+
+    /// True when the embedded program has switched into alt-screen
+    /// mode (vim, htop, claude, opencode, codex). Side-pane loading
+    /// uses this as the "we're a real TUI now" signal.
+    pub fn alt_screen_active(&self) -> bool {
+        self.inner.lock().unwrap().handler.alt_screen_active()
     }
 
     /// Snapshot of which DEC private mouse modes the inner program
@@ -880,6 +1145,90 @@ mod tests {
     }
 
     #[test]
+    fn writing_to_last_column_defers_wrap_until_next_glyph() {
+        // xterm DECAWM behaviour: writing the 5th glyph on a 5-col
+        // terminal leaves the cursor at col 4 with a wrap pending,
+        // NOT at (row 1, col 0). The wrap fires only on the next
+        // glyph. Without this, zsh's PROMPT_SP trick (fill row + CR
+        // to land at col 0 of the same row) takes us one row too far.
+        let h = parse_bytes(b"hello", 3, 5);
+        assert_eq!(h.cur_row, 0);
+        assert_eq!(h.cur_col, 4);
+        // Next glyph triggers the wrap.
+        let h = parse_bytes(b"hello!", 3, 5);
+        assert_eq!(h.cur_row, 1);
+        assert_eq!(h.cur_col, 1);
+    }
+
+    #[test]
+    fn cr_after_row_fill_stays_on_same_row() {
+        // The actual zsh PROMPT_SP shape: fill the row with spaces,
+        // then CR. The CR should clear the pending wrap and land us
+        // at (row 0, col 0), NOT (row 1, col 0). This is what
+        // previously cost us a blank row between consecutive prompts.
+        let h = parse_bytes(b"     \r", 3, 5);
+        assert_eq!(h.cur_row, 0);
+        assert_eq!(h.cur_col, 0);
+    }
+
+    #[test]
+    fn alt_screen_enter_clears_and_exit_restores_main() {
+        // Write "hello" on the main screen, enter alt-screen, write
+        // "alt", exit, and the main screen content should be back
+        // exactly as it was on entry. This is the contract vim,
+        // htop, claude, etc. depend on — without it, every TUI
+        // close would smear its last frame over the user's shell.
+        let h = parse_bytes(
+            b"hello\x1b[?1049h\x1b[2J\x1b[Halt\x1b[?1049l",
+            3,
+            10,
+        );
+        assert_eq!(line_text(&h.grid, 0), "hello");
+        assert!(!h.alt_screen_active());
+    }
+
+    #[test]
+    fn alt_screen_active_flag_tracks_mode() {
+        let h = parse_bytes(b"\x1b[?1049h", 3, 10);
+        assert!(h.alt_screen_active());
+        let h = parse_bytes(b"\x1b[?1049h\x1b[?1049l", 3, 10);
+        assert!(!h.alt_screen_active());
+    }
+
+    #[test]
+    fn alt_screen_legacy_47_and_1047_also_swap() {
+        // Older shapes — vim and friends still emit these on terms
+        // without 1049 in terminfo. They must hit the same code path.
+        let h = parse_bytes(b"main\x1b[?47halt", 2, 10);
+        assert!(h.alt_screen_active());
+        let h = parse_bytes(b"main\x1b[?47halt\x1b[?47l", 2, 10);
+        assert!(!h.alt_screen_active());
+        assert_eq!(line_text(&h.grid, 0), "main");
+    }
+
+    #[test]
+    fn sgr_extended_underline_style_zero_disables_underline() {
+        // \x1b[4:3m turns on a curly underline; \x1b[4:0m turns it
+        // off — Claude Code's hyperlink wrap convention. Reading
+        // the bare primary `4` as "on" used to leave underline stuck
+        // across every cell that followed the link, smearing a line
+        // under the rest of the welcome screen.
+        let h = parse_bytes(b"\x1b[4:3mAB\x1b[4:0mC", 1, 4);
+        assert!(h.grid.cells[0][0].underline);
+        assert!(h.grid.cells[0][1].underline);
+        assert!(!h.grid.cells[0][2].underline);
+    }
+
+    #[test]
+    fn sgr_bare_4_enables_underline() {
+        // Sanity: the unadorned `\x1b[4m` (no sub-param) still
+        // enables single underline.
+        let h = parse_bytes(b"\x1b[4mAB\x1b[24mC", 1, 4);
+        assert!(h.grid.cells[0][0].underline);
+        assert!(!h.grid.cells[0][2].underline);
+    }
+
+    #[test]
     fn sgr_truecolour_24bit() {
         // \x1b[38;2;255;128;0m — orange foreground.
         let h = parse_bytes(b"\x1b[38;2;255;128;0mX", 1, 3);
@@ -887,6 +1236,35 @@ mod tests {
             h.grid.cells[0][0].fg,
             Some(Color::Rgb { r: 255, g: 128, b: 0 })
         );
+    }
+
+    #[test]
+    fn sgr_truecolour_24bit_colon_form() {
+        // \x1b[38:2:255:128:0m — same colour, colon-separated
+        // sub-params. opencode emits this shape; we must read the
+        // R/G/B out of the same param rather than walking the outer
+        // iter (which would eat unrelated trailing params).
+        let h = parse_bytes(b"\x1b[38:2:255:128:0mX", 1, 3);
+        assert_eq!(
+            h.grid.cells[0][0].fg,
+            Some(Color::Rgb { r: 255, g: 128, b: 0 })
+        );
+    }
+
+    #[test]
+    fn sgr_colon_truecolour_then_underline_off_clears_underline() {
+        // Regression for the opencode rendering bug: setting RGB fg
+        // via the colon form and then turning underline off in the
+        // SAME CSI used to leave underline stuck because parsing
+        // `38:2:R:G:B` walked the outer iter and ate the trailing
+        // `24` looking for a colour kind. After the fix, the `24`
+        // arrives at the SGR loop and underline gets cleared.
+        let h = parse_bytes(b"\x1b[4m\x1b[38:2:100:150:200;24mX", 1, 3);
+        assert_eq!(
+            h.grid.cells[0][0].fg,
+            Some(Color::Rgb { r: 100, g: 150, b: 200 })
+        );
+        assert!(!h.grid.cells[0][0].underline);
     }
 
     #[test]
@@ -923,22 +1301,29 @@ mod tests {
         assert_eq!((h.cur_row, h.cur_col), (0, 4));
     }
 
-    #[test]
-    fn wide_glyph_at_end_wraps_one_cell_early() {
-        // Cols = 3, so `ab⚡` can't fit (⚡ needs cols 2..=3 but col 2
-        // exists and col 3 doesn't). The wide glyph wraps to next
-        // row. We approximate: write 'a' (col 0), 'b' (col 1), ⚡
-        // lead at col 2 + cont would go off the right — current
-        // impl writes the lead in col 2 with no continuation, then
-        // advances past the right edge → wrap.
+    fn wide_glyph_at_end_defers_wrap_until_next_glyph() {
+        // Cols = 3, so `ab⚡` lands the wide ⚡ at col 2 with no
+        // continuation cell (col 3 is out of bounds). Under xterm
+        // DECAWM the cursor stays at col 2 with a wrap pending; the
+        // wrap only fires on the next glyph write. This is what
+        // makes zsh's right-prompt + PROMPT_SP idioms work without
+        // eating an extra row.
         let h = parse_bytes("ab⚡".as_bytes(), 2, 3);
-        // 'a' at (0, 0), 'b' at (0, 1), ⚡ at (0, 2). Continuation
-        // would be at col 3 (out of bounds); skip. Cursor advances
-        // to col 4 → wrap to (1, 0).
         assert_eq!(h.grid.cells[0][0].ch, 'a');
         assert_eq!(h.grid.cells[0][1].ch, 'b');
         assert_eq!(h.grid.cells[0][2].ch, '⚡');
-        assert_eq!((h.cur_row, h.cur_col), (1, 0));
+        assert_eq!((h.cur_row, h.cur_col), (0, 2));
+        // One more glyph triggers the deferred wrap.
+        let h = parse_bytes("ab⚡x".as_bytes(), 2, 3);
+        assert_eq!((h.cur_row, h.cur_col), (1, 1));
+    }
+
+    #[test]
+    fn wide_glyph_at_end_wraps_one_cell_early() {
+        // Retained name for tooling pinned to it. Kept as a thin
+        // wrapper around the deferred-wrap variant above.
+        let h = parse_bytes("ab⚡".as_bytes(), 2, 3);
+        assert_eq!(h.grid.cells[0][2].ch, '⚡');
     }
 
     #[test]
@@ -958,11 +1343,18 @@ mod tests {
     }
 
     #[test]
-    fn decset_alt_screen_is_accepted_silently() {
-        // The alt-screen toggle (1049) isn't modelled but must not
-        // panic / leak state into other handlers.
+    fn decset_alt_screen_isolates_writes_from_main_buffer() {
+        // 1049h → write "hello" into the alt buffer → 1049l. The
+        // main buffer was empty at the swap-in point, so after the
+        // round-trip it should still be empty — "hello" lived only
+        // in alt-screen and got discarded on swap-back. Previously
+        // this test pinned the "we ignore 1049 entirely" behaviour
+        // and asserted "hello" ended up on the main grid; the new
+        // alt-screen plumbing means that would be wrong (vim's
+        // last frame would smear onto the user's shell).
         let h = parse_bytes(b"\x1b[?1049hhello\x1b[?1049l", 4, 10);
-        assert_eq!(line_text(&h.grid, 0), "hello");
+        assert_eq!(line_text(&h.grid, 0), "");
+        assert!(!h.alt_screen_active());
     }
 
     #[test]

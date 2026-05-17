@@ -21,12 +21,14 @@
 //! - [`health`]: `:health` command output
 
 mod buffers;
+mod cmdline_complete;
 mod cmdline_history;
 mod comment;
 mod copilot;
 mod dap_glue;
 mod dispatch;
 mod edit;
+mod file_tree;
 mod git_glue;
 mod health;
 mod input;
@@ -38,6 +40,8 @@ mod quickfix;
 mod registers;
 mod save;
 mod search;
+mod side_terminal_glue;
+mod spell_glue;
 pub(crate) mod state;
 mod terminal_glue;
 mod test_glue;
@@ -46,6 +50,7 @@ mod visual;
 mod windows;
 
 pub use health::{DiagnosticsCounts, HealthSnapshot};
+pub use side_terminal_glue::{side_terminal_loading, SideTerminal, TerminalFocus};
 pub use state::{
     BufferStash, CompletionState, FindRecord, FoldRange, HoverCodeBlock, HoverLine, HoverState,
     LastEdit, Register, WhichKeyState, YankHighlight, HOVER_MAX_HEIGHT,
@@ -77,7 +82,7 @@ use crate::config::Config;
 use crate::dap::DapManager;
 use crate::editorconfig::EditorConfig;
 use crate::lang::HighlightCache;
-use crate::lsp::{CodeActionItem, InlayHint, LspManager, SignatureHelp};
+use crate::lsp::{CodeActionItem, CodeLensItem, InlayHint, LspManager, SignatureHelp};
 use crate::mode::Mode;
 use crate::parser::PendingCmd;
 use crate::picker::PickerState;
@@ -172,6 +177,11 @@ pub struct App {
     pub history: History,
     pub registers: HashMap<char, Register>,
     pub cmdline: String,
+    /// Active Tab-completion cycle inside `Mode::Command`. `Some` while
+    /// the user is rotating candidates with successive Tab / Shift-Tab
+    /// presses; cleared on any other key so the next Tab recomputes
+    /// against the freshly-edited cmdline. See `app/cmdline_complete.rs`.
+    pub cmdline_completion: Option<cmdline_complete::CmdlineCompletion>,
     /// Ex-command history (`:`), oldest first. Persisted to the session
     /// file alongside the buffer list; `<Up>` / `<Down>` inside Command
     /// mode walks it via `history_walk_back` / `history_walk_forward`.
@@ -211,6 +221,19 @@ pub struct App {
     pub recording_macro: Option<char>,
     pub macro_buffer: Vec<KeyEvent>,
     pub last_replayed_macro: Option<char>,
+    /// Reentry counter for `replay_macro` — incremented on entry, decremented
+    /// on exit. Guards against `qa@aq` followed by `@a` spinning until the
+    /// editor wedges. Aborts past `MACRO_REPLAY_DEPTH_LIMIT`.
+    pub(crate) macro_replay_depth: usize,
+    /// `Some(idx)` when the visual cursor is parked on the lens phantom
+    /// row above its content line, with `idx` selecting which lens segment
+    /// (`▶ Run | Debug` → 0 / 1). `cursor.line` is unchanged so ENTER fires
+    /// the chosen lens and edits still target the content line. `None` when
+    /// the cursor sits on the actual buffer row. `h`/`l` walk the segments;
+    /// `j` / any non-vertical motion / any action that isn't single-step
+    /// Up/Down/Left/Right drops back to content. Self-heals at render time
+    /// (and at action dispatch) if `cursor.line` no longer has a lens.
+    pub phantom_lens_idx: Option<usize>,
     /// All buffers; `buffers[active]` is a placeholder while its real state lives on App fields.
     pub buffers: Vec<BufferStash>,
     /// Index into `buffers` of the buffer whose content is currently
@@ -269,6 +292,15 @@ pub struct App {
     /// Whether `:Gblame` virtual text is currently rendered for the
     /// active buffer.
     pub blame_visible: bool,
+    /// Paths of buffers with `:spell` toggled on. Membership = enabled;
+    /// drives the spell-check refresh in `refresh_spell_cache` and the
+    /// `]s` / `[s` / `z=` action handlers.
+    pub spell_enabled: std::collections::HashSet<PathBuf>,
+    /// Per-buffer misspelling cache, keyed by path. Tuple is
+    /// `(buffer.version, ranges)` — the version field invalidates the
+    /// cache automatically when the buffer is edited so the next
+    /// navigation request triggers a recheck.
+    pub spell_cache: HashMap<PathBuf, (u64, Vec<crate::spell::SpellRange>)>,
     /// Per-line blame metadata for the active buffer. Populated on first
     /// toggle of `blame_visible` and refreshed on save.
     pub blame: Vec<crate::git::BlameLine>,
@@ -337,6 +369,10 @@ pub struct App {
     /// Pending code actions waiting for the user to pick from the picker.
     /// Indexed by `PickerPayload::CodeActionIdx`.
     pub pending_code_actions: Vec<CodeActionItem>,
+    /// Staging area for the multi-lens picker — the lens commands
+    /// anchored on the current line, indexed by the `CodeLensIdx`
+    /// picker payload. Cleared when the picker accepts or cancels.
+    pub pending_code_lens_commands: Vec<crate::lsp::LspCommand>,
     /// Debug-launch state captured between the project picker and the
     /// profile picker. When `launchSettings.json` for the chosen project
     /// has more than one runnable profile, we stash the project + the
@@ -369,6 +405,11 @@ pub struct App {
     /// click at the same `(line, col)` within `DOUBLE_CLICK_WINDOW` is
     /// treated as a double-click and selects the word under the cursor.
     pub last_click: Option<(Instant, usize, usize)>,
+    /// `(timestamp, entry_idx)` of the most recent click inside the
+    /// file-tree pane. A second click on the same entry inside
+    /// `DOUBLE_CLICK_WINDOW` triggers open-or-expand; the first
+    /// click just moves the tree cursor.
+    pub last_tree_click: Option<(Instant, usize)>,
     /// Char-idx range `(start, end_exclusive)` of the word a double-click
     /// originated on. While `Some`, left-drag extends the visual selection
     /// in word increments anchored to this range, snapping to word
@@ -450,6 +491,38 @@ pub struct App {
     /// Paths with an in-flight `textDocument/semanticTokens/full`
     /// request. Same cap-to-one semantics as the others.
     pub semantic_tokens_in_flight: std::collections::HashSet<PathBuf>,
+    /// Merged code-lens cache — the union of `lsp_only_code_lens` and
+    /// `synth_only_code_lens` for the same buffer version. The
+    /// renderer / `<leader>l` / click path / picker all read from
+    /// here so they don't have to know whether a lens came from the
+    /// LSP or from the in-tree tree-sitter synthesiser.
+    /// `refresh_code_lens` is the only writer.
+    pub code_lens: HashMap<PathBuf, CodeLensCache>,
+    /// `textDocument/codeLens` answers from the LSP, kept around
+    /// even when the merged cache is empty so the synth-side merge
+    /// has something to layer on top of. `(version, lenses)`. Empty
+    /// vec is a valid value (means "server responded with []").
+    pub lsp_only_code_lens: HashMap<PathBuf, (u64, Vec<CodeLensItem>)>,
+    /// Synthetic code lenses produced by the in-tree tree-sitter
+    /// walk in `code_lens_synth.rs`. Same `(version, lenses)` shape.
+    pub synth_only_code_lens: HashMap<PathBuf, (u64, Vec<CodeLensItem>)>,
+    /// Buffer version we last ran the synth pass for, per path.
+    /// Version-dedupe so a stable buffer doesn't re-walk the tree on
+    /// every render tick.
+    pub last_synth_lens_version: HashMap<PathBuf, u64>,
+    /// Buffer version we last asked code-lens for, per path. Same
+    /// version-dedup strategy as inlay hints / semantic tokens.
+    pub last_code_lens_request_version: HashMap<PathBuf, u64>,
+    /// Paths with an in-flight `textDocument/codeLens` request. Same
+    /// cap-to-one semantics as the other per-buffer LSP request caches.
+    pub code_lens_in_flight: std::collections::HashSet<PathBuf>,
+    /// Wall-clock of the last `textDocument/codeLens` request, per
+    /// path. Drives a slow retry when the LSP cache is empty: rust-
+    /// analyzer commonly returns `[]` while it's still indexing, and
+    /// without a retry the version-dedupe would otherwise pin us at
+    /// "we already asked for this version" forever — the lens row
+    /// would never appear unless the user edited the buffer.
+    pub last_code_lens_request_at: HashMap<PathBuf, Instant>,
     /// `:terminal` pane terminals. Each entry is one PTY-backed
     /// shell + grid; the pane renders at the bottom of the editor
     /// when `terminal_pane_open` is true. Empty when no terminal
@@ -468,6 +541,30 @@ pub struct App {
     /// inside the pane header.
     pub terminal_tab_hitboxes: std::cell::Cell<Vec<(usize, u16, u16)>>,
     pub terminal_pane_open: bool,
+    /// Right-side terminal pane — dedicated to long-running AI
+    /// assistants (`:claude`, `:codex`, `:opencode`). Each entry is
+    /// one PTY-backed shell + grid plus a stable `label` we dedupe
+    /// against so re-running `:claude` re-focuses the existing tab
+    /// instead of spawning a duplicate. Sits on the right edge of
+    /// the editor band (width ≈ 25 % of the host terminal), parallel
+    /// to but independent of the bottom `terminals` pane: both panes
+    /// can be open at the same time, and `terminal_focus` selects
+    /// which one consumes keystrokes while `Mode::Terminal` is
+    /// active.
+    pub side_terminals: Vec<SideTerminal>,
+    pub active_side_terminal_idx: usize,
+    pub side_terminal_pane_open: bool,
+    /// Hit-test rectangles for the side-pane tab strip. One entry
+    /// per drawn tab — `(tab_index, x_start, x_end_exclusive)` in
+    /// screen columns. Populated by `draw_side_terminal_pane` each
+    /// frame the strip is visible, consumed by mouse-down in the
+    /// header row to switch tabs.
+    pub side_terminal_tab_hitboxes: std::cell::Cell<Vec<(usize, u16, u16)>>,
+    /// Which terminal pane consumes keystrokes when `Mode::Terminal`
+    /// is active. Set whenever focus moves between the bottom and
+    /// side panes; resets to `Bottom` after `close_side_terminal`
+    /// drops the last side tab.
+    pub terminal_focus: TerminalFocus,
     /// Ring buffer of server-emitted `window/showMessage` /
     /// `window/logMessage` notifications. Newest at the tail. Bounded
     /// so a chatty server (jdtls warming up, OmniSharp resolving
@@ -484,6 +581,12 @@ pub struct App {
     /// render — used to clamp `messages_scroll`. `Cell` because
     /// `render::draw` borrows `App` immutably.
     pub messages_content_height: std::cell::Cell<usize>,
+    /// `:reg` / `:registers` overlay toggle. Lists yank registers
+    /// alongside recorded macro registers with a short preview.
+    /// Dismissed the same way as `:messages`.
+    pub show_registers_page: bool,
+    pub registers_scroll: usize,
+    pub registers_content_height: std::cell::Cell<usize>,
     /// Integrated test runner — owns the active run + the streaming
     /// output buffer. Drained per main-loop tick alongside `lsp` /
     /// `dap`; the resulting events go through `handle_test_events`.
@@ -500,6 +603,11 @@ pub struct App {
     /// back down to the bottom (or pressing `G`) re-engages it.
     /// Reset to true on every new run start.
     pub test_results_at_tail: bool,
+    /// Active sidebar file-tree state. `Some` whenever the pane is
+    /// open; `None` closes the pane. Gated on
+    /// `config.file_explorer.tree` — `<leader>e` falls back to the
+    /// yazi shell-out when the tree explorer is disabled.
+    pub file_tree: Option<file_tree::FileTreeState>,
 }
 
 /// Decoded `textDocument/semanticTokens/full` tokens for one buffer,
@@ -527,6 +635,20 @@ pub struct DocumentHighlightCache {
     pub anchor_col: usize,
     pub anchor_version: u64,
     pub ranges: Vec<crate::lsp::DocumentHighlightRange>,
+}
+
+/// Cached `textDocument/codeLens` lenses for one buffer. `buffer_version`
+/// is the version the request was anchored on — the renderer checks it
+/// against the live buffer before painting and discards stale lenses
+/// whose line indices no longer match. `anchor_lines` is a flat set of
+/// the lines lenses are anchored to, so the per-row paint walk can
+/// answer "does this line have a lens above it?" in O(1) instead of
+/// scanning the full lens list per row.
+#[derive(Debug, Clone)]
+pub struct CodeLensCache {
+    pub buffer_version: u64,
+    pub lenses: Vec<CodeLensItem>,
+    pub anchor_lines: std::collections::HashSet<usize>,
 }
 
 /// One captured `window/showMessage` or `window/logMessage` entry.
@@ -609,6 +731,7 @@ impl App {
             history: History::new(),
             registers: HashMap::new(),
             cmdline: String::new(),
+            cmdline_completion: None,
             cmd_history: Vec::new(),
             search_history: Vec::new(),
             history_cursor: None,
@@ -629,6 +752,8 @@ impl App {
             recording_macro: None,
             macro_buffer: Vec::new(),
             last_replayed_macro: None,
+            macro_replay_depth: 0,
+            phantom_lens_idx: None,
             buffers: vec![BufferStash::default()],
             active: 0,
             active_tab: 0,
@@ -656,6 +781,8 @@ impl App {
             ),
             git_hunks: Vec::new(),
             blame_visible: false,
+            spell_enabled: std::collections::HashSet::new(),
+            spell_cache: HashMap::new(),
             blame: Vec::new(),
             show_start_page,
             show_health_page: false,
@@ -671,6 +798,7 @@ impl App {
             dap_console_selection: None,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
+            pending_code_lens_commands: Vec::new(),
             pending_debug_project: None,
             pending_debug_profiles: Vec::new(),
             rename_anchor: None,
@@ -682,6 +810,7 @@ impl App {
             last_inlay_request_version: HashMap::new(),
             last_disk_check: Instant::now(),
             last_click: None,
+            last_tree_click: None,
             word_drag_origin: None,
             additional_cursors: Vec::new(),
             snippet_session: None,
@@ -701,19 +830,35 @@ impl App {
             active_terminal_idx: 0,
             terminal_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             terminal_pane_open: false,
+            side_terminals: Vec::new(),
+            active_side_terminal_idx: 0,
+            side_terminal_pane_open: false,
+            side_terminal_tab_hitboxes: std::cell::Cell::new(Vec::new()),
+            terminal_focus: TerminalFocus::Bottom,
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
             inlay_hints_in_flight: std::collections::HashSet::new(),
             semantic_tokens_in_flight: std::collections::HashSet::new(),
+            code_lens: HashMap::new(),
+            lsp_only_code_lens: HashMap::new(),
+            synth_only_code_lens: HashMap::new(),
+            last_synth_lens_version: HashMap::new(),
+            last_code_lens_request_version: HashMap::new(),
+            code_lens_in_flight: std::collections::HashSet::new(),
+            last_code_lens_request_at: HashMap::new(),
             lsp_messages: Vec::new(),
             show_messages_page: false,
             messages_scroll: 0,
             messages_content_height: std::cell::Cell::new(0),
+            show_registers_page: false,
+            registers_scroll: 0,
+            registers_content_height: std::cell::Cell::new(0),
             test: crate::test::TestManager::new(),
             show_test_results_page: false,
             test_results_scroll: 0,
             test_results_content_height: std::cell::Cell::new(0),
             test_results_at_tail: true,
+            file_tree: None,
         };
         // Mirror the user's Copilot opt-in onto the LSP manager so
         // copilot-language-server is included in every spec lookup
@@ -728,6 +873,11 @@ impl App {
         if let Some(s) = saved_session {
             this.cmd_history = s.cmd_history.clone();
             this.search_history = s.search_history.clone();
+            this.macros = s
+                .macros
+                .iter()
+                .map(|(name, keys)| (*name, keys.iter().map(|k| k.to_event()).collect()))
+                .collect();
             if restore_buffers {
                 this.hydrate_from_session(s);
             }
@@ -738,6 +888,13 @@ impl App {
     pub fn run(&mut self) -> Result<()> {
         let _guard = TerminalGuard::enable()?;
         let mut stdout = io::stdout();
+        // CLI-launched buffer (binvim huge.json) bypasses the
+        // open_buffer path that ordinarily surfaces this hint, so fire
+        // it here before lsp_attach_active short-circuits silently.
+        if self.buffer.is_large() {
+            self.status_msg =
+                "large file — tree-sitter + LSP disabled".into();
+        }
         self.lsp_attach_active();
         self.refresh_editorconfig();
         self.refresh_git_hunks();
@@ -754,6 +911,8 @@ impl App {
                 self.lsp_request_inlay_hints_if_due();
                 self.lsp_request_semantic_tokens_if_due();
                 self.lsp_request_document_highlight_if_due();
+                self.lsp_request_code_lens_if_due();
+                self.synth_code_lens_if_due();
                 self.copilot_maybe_request_inline();
                 self.copilot_maybe_poll_status();
                 render::draw(&mut stdout, self)?;
@@ -774,6 +933,21 @@ impl App {
                 }
                 None => Duration::from_millis(100),
             };
+            // Side-pane loading splash animates a spinner — cap the
+            // poll to one spinner step so the next frame fires when
+            // the glyph actually changes (and not before). Matching
+            // the renderer's 150ms-per-frame cadence keeps us from
+            // burning a full clear+redraw cycle just to repaint the
+            // same glyph, which is what the user perceived as
+            // flicker.
+            if self
+                .side_terminals
+                .iter()
+                .any(side_terminal_glue::side_terminal_loading)
+            {
+                poll_dur = poll_dur.min(Duration::from_millis(150));
+                needs_render = true;
+            }
             // Active debug session — DAP stepping / breakpoint hits
             // cascade 4-5 request/response round-trips per user action
             // (stopped → threads → stackTrace → scopes → variables), and
@@ -834,8 +1008,21 @@ impl App {
                     .unwrap_or(Duration::from_millis(0));
                 poll_dur = poll_dur.min(until);
             }
+            // Code-lens retry deadline — cap the poll so the loop
+            // wakes within a beat of the retry being due, otherwise
+            // an idle user wouldn't see lenses appear until rust-
+            // analyzer fired some unrelated notification.
+            let lens_retry_due = self.code_lens_retry_due();
+            if lens_retry_due {
+                poll_dur = poll_dur.min(Duration::from_millis(250));
+            }
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
+                needs_render = true;
+            }
+            // Poll timed out and a lens retry is due — force a render
+            // tick so the `if_due` hook actually fires the request.
+            if !needs_render && lens_retry_due {
                 needs_render = true;
             }
             // Prefix timeout fired? Open the matching which-key popup.
@@ -870,6 +1057,11 @@ impl App {
                         Some(WhichKeyState {
                             title: "Test".into(),
                             entries: state::test_prefix_entries(),
+                        })
+                    } else if self.pending.awaiting_ai_leader {
+                        Some(WhichKeyState {
+                            title: "AI".into(),
+                            entries: state::ai_prefix_entries(),
                         })
                     } else {
                         None
@@ -907,8 +1099,19 @@ impl App {
                 needs_render = true;
             }
             // Drain PTY output → grid mutations once per loop. Any
-            // bytes processed = something visible has changed.
+            // bytes processed = something visible has changed. Both
+            // the bottom and side panes drain every tick — background
+            // tabs included, so a long-running `pnpm dev` or `claude`
+            // session keeps absorbing output while focus is elsewhere.
             if self.terminal_drain_if_open() {
+                needs_render = true;
+            }
+            // Catch any pane-geometry change (bottom terminal /
+            // debug pane toggle, host resize, etc.) by reconciling
+            // the side terminals' PTY size with what `buffer_rows()`
+            // currently allows. Cheap no-op when nothing changed.
+            self.sync_side_terminal_geometry();
+            if self.side_terminal_drain_if_open() {
                 needs_render = true;
             }
             // Drop the yank flash once its deadline has passed so the next
@@ -964,6 +1167,7 @@ impl App {
         if !session.buffers.is_empty()
             || !session.cmd_history.is_empty()
             || !session.search_history.is_empty()
+            || !session.macros.is_empty()
         {
             let _ = crate::session::save(&session);
         } else {

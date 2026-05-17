@@ -1091,6 +1091,8 @@ impl super::App {
             target_name: name.clone(),
             application_urls: Vec::new(),
             env: Default::default(),
+            test_filter: None,
+            test_file: None,
         };
         let label = match &name {
             Some(n) => format!("{} ({n})", adapter.key),
@@ -1116,6 +1118,135 @@ impl super::App {
             Err(e) => {
                 self.status_msg = format!("debug: {e}");
             }
+        }
+    }
+
+    /// `:debugtest` — find the test enclosing the cursor and launch
+    /// it through the DAP layer instead of the test runner. Routes by
+    /// the test adapter's key; only adapters with a paired DAP
+    /// implementation get a real session, the rest fall back to a
+    /// status message and a regular `:testnearest`-style hint.
+    pub(super) fn cmd_debug_test_nearest(&mut self) {
+        let Some((spec, root)) = self.test_resolve_adapter() else {
+            self.status_msg = "debugtest: no test adapter for this workspace".into();
+            return;
+        };
+        let cursor_line = self.window.cursor.line;
+        let text = self.buffer.rope.to_string();
+        let Some(name) = (spec.filter_for_nearest)(&text, cursor_line) else {
+            self.status_msg = "debugtest: no test under cursor".into();
+            return;
+        };
+        let path = self.buffer.path.clone();
+        match spec.key {
+            "pytest" => self.debug_test_pytest(root, name, path),
+            "go" => self.debug_test_go(root, name, path),
+            "cargo" | "dotnet" | "vitest" => {
+                self.status_msg = format!(
+                    "debugtest: adapter '{}' not yet supported — only pytest and go",
+                    spec.key
+                );
+            }
+            other => {
+                self.status_msg =
+                    format!("debugtest: no DAP route for test adapter '{other}'");
+            }
+        }
+    }
+
+    fn debug_test_pytest(
+        &mut self,
+        root: std::path::PathBuf,
+        name: String,
+        test_file: Option<std::path::PathBuf>,
+    ) {
+        if self.dap.is_active() {
+            let _ =
+                self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
+        }
+        let Some((adapter, _)) =
+            crate::dap::adapter_for_workspace(&root)
+                .filter(|(a, _)| a.key == "python")
+                .or_else(|| {
+                    // Fall back to scanning from the test workspace
+                    // root — the test adapter's root markers (e.g.
+                    // `conftest.py`) won't match the DAP adapter
+                    // walker, so we re-probe with the root we have.
+                    crate::dap::adapter_for_workspace(&root)
+                })
+        else {
+            self.status_msg = "debugtest: install debugpy (`pip install debugpy`)".into();
+            return;
+        };
+        if adapter.key != "python" {
+            self.status_msg = format!(
+                "debugtest: expected python DAP adapter at {}, got '{}'",
+                root.display(),
+                adapter.key
+            );
+            return;
+        }
+        let ctx = crate::dap::LaunchContext {
+            root: root.clone(),
+            project_path: None,
+            target_name: None,
+            application_urls: Vec::new(),
+            env: Default::default(),
+            test_filter: Some(name.clone()),
+            test_file,
+        };
+        self.status_msg = format!("debugtest: pytest {name}");
+        self.debug_pane_open = true;
+        self.adjust_viewport();
+        if let Err(e) = self.dap.start_session(adapter, ctx) {
+            self.status_msg = format!("debugtest: {e}");
+        }
+    }
+
+    fn debug_test_go(
+        &mut self,
+        root: std::path::PathBuf,
+        name: String,
+        test_file: Option<std::path::PathBuf>,
+    ) {
+        if self.dap.is_active() {
+            let _ =
+                self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
+        }
+        // Resolve the package directory the test lives in. Prefer the
+        // active buffer's parent dir; fall back to the workspace root.
+        let package_dir = test_file
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| root.clone());
+        let Some((adapter, _)) = crate::dap::adapter_for_workspace(&package_dir) else {
+            self.status_msg = "debugtest: install delve (`go install \
+                              github.com/go-delve/delve/cmd/dlv@latest`)"
+                .into();
+            return;
+        };
+        if adapter.key != "go" {
+            self.status_msg = format!(
+                "debugtest: expected go DAP adapter at {}, got '{}'",
+                package_dir.display(),
+                adapter.key
+            );
+            return;
+        }
+        let ctx = crate::dap::LaunchContext {
+            root: package_dir.clone(),
+            project_path: Some(package_dir.clone()),
+            target_name: None,
+            application_urls: Vec::new(),
+            env: Default::default(),
+            test_filter: Some(name.clone()),
+            test_file,
+        };
+        self.status_msg = format!("debugtest: go test {name}");
+        self.debug_pane_open = true;
+        self.adjust_viewport();
+        if let Err(e) = self.dap.start_session(adapter, ctx) {
+            self.status_msg = format!("debugtest: {e}");
         }
     }
 
@@ -1233,6 +1364,8 @@ impl super::App {
             target_name: None,
             application_urls,
             env,
+            test_filter: None,
+            test_file: None,
         };
         let project_label = project
             .file_name()

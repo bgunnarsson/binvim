@@ -33,6 +33,7 @@ A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX
 ### Sessions & tabs
 
 - **Sessions** — open buffers + per-buffer cursor + viewport persist to `~/.cache/binvim/sessions/<cwd-hash>.json` on clean shutdown and restore on launch when no file argument is passed. Buffers whose paths no longer exist are silently dropped. Restored sessions drop you on the start page with the tab row above it advertising what's loaded — `H`/`L` (or `:bn`/`:bp`, `:b<n>`, a tab click) brings you into a buffer. Ex (`:`) and search (`/` / `?`) history rides on the same file (capped at 100 entries each, dedup against the immediate previous); `<Up>` / `<Down>` inside either prompt walks it, and the first `<Up>` snapshots whatever you'd already typed so walking off the bottom brings the draft back. Histories load even when you launch with `binvim foo.rs` — only buffer restoration is gated on a bare invocation.
+- **Tab completion inside `:`** — `Tab` / `Shift-Tab` cycle candidates in the cmdline. Three modes picked by the head: command names before the first space (every alias the parser knows, filtered by prefix), filesystem entries after `:e` / `:edit` / `:w` / `:write` (directories get a trailing `/`, dotfiles hidden unless the basename starts with `.`), open-buffer basenames after `:b` / `:buffer`. Any other key drops the cycle so the next `Tab` re-derives candidates against the latest text.
 - **Tab bar** — every open buffer renders as a tab at the top of the screen. Active tab in Surface1 + Lavender + bold, inactive tabs in Subtext0, dirty buffers carry a Peach `+`. Click a tab to switch; click its `×` to close (refuses dirty, same as `:bd`). `‹` / `›` chevrons appear at the bar edges when tabs scroll off either side. The bar matches the editor background.
 
 ### Tree-sitter highlighting
@@ -159,7 +160,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>`   | File picker                           |
 | `<space>?`  | Recent files                          |
 | `<space>g`  | Live grep                             |
-| `<space>e`  | Yazi file manager                     |
+| `<space>e`  | File explorer — yazi by default; opens the built-in sidebar tree instead when `[file_explorer] tree = true` |
 | `<space>a`  | Code actions                          |
 | `<space>r`  | Rename (LSP-aware)                    |
 | `<space>R`  | Replace all (literal-string in buffer)|
@@ -317,7 +318,7 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `debugpy` (Python module)       | Python debug adapter (DAP)               | `pip install debugpy` (or `pipx inject` into a venv). binvim runs it as `python3 -m debugpy.adapter`. |
 | `lldb-dap`                      | Rust / C / C++ debug adapter (DAP)       | Ships with LLVM 18+: `brew install llvm` (then add `$(brew --prefix llvm)/bin` to `$PATH`). Falls back to the legacy `lldb-vscode` if `lldb-dap` isn't present. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
-| `yazi`                          | `<space>e` file manager                  | `brew install yazi`                                                      |
+| `yazi`                          | `<space>e` file manager — optional; built-in sidebar tree via `[file_explorer] tree = true` doesn't need it | `brew install yazi`                                                      |
 
 binvim auto-discovers project-local binaries by walking up to the closest `node_modules/.bin/`, so a `devDependency` in your project takes precedence over a global install.
 
@@ -371,6 +372,9 @@ relative = true   # cursor row shows absolute, others show distance. On by defau
 [copilot]
 enabled = false   # GitHub Copilot via copilot-language-server (npm). Off by default.
 
+[file_explorer]
+tree = false      # `<space>e` opens yazi by default; set true for the built-in sidebar tree.
+
 [lsp]
 semantic_tokens = true     # `textDocument/semanticTokens/full` layered over tree-sitter.
 document_highlight = true  # Surface2 bg on every occurrence of the symbol under the cursor.
@@ -403,6 +407,8 @@ document_highlight = true  # Surface2 bg on every occurrence of the symbol under
 **`[line_numbers]`** — `relative = true` (the default) renders the gutter Vim-style: the cursor's row shows its absolute (1-indexed) line in a brighter Subtext1 tone, every other row shows the count of lines away from the cursor. Pairs naturally with count-prefixed motions like `5j` / `12k` / `3dd`. Set `relative = false` to fall back to plain 1-indexed numbering on every row.
 
 **`[lsp]`** — both toggles default `true`. `semantic_tokens = false` gates the `textDocument/semanticTokens/full` request and the highlight-cache overlay off entirely (no wire traffic, no render delta). `document_highlight = false` gates `textDocument/documentHighlight` similarly. Useful if your LSP's semantic-token output collides badly with the tree-sitter pass, or if the on-every-cursor-settle highlight echo is more distracting than useful for your workflow.
+
+**`[file_explorer]`** — `tree = false` (the default) keeps `<leader>e` as the yazi shell-out. Setting `tree = true` switches it to a built-in left-side sidebar tree pane: `j` / `k` navigate, `Enter` / `l` opens a file (or expands a folder), `h` collapses (or jumps to the parent), `g` / `G` top / bottom, `r` rebuilds after external file changes, `<space>e` from inside the pane closes it. Three-state `<leader>e` toggle from the editor: closed → focused → unfocused-but-visible → closed, so clicking into a buffer drops focus without losing the pane. The file currently open in the focused window renders in the accent colour + bold so it stays identifiable even after the j/k cursor moves elsewhere; double-click in the pane opens a file. No file operations (create / delete / rename) yet.
 
 **`[copilot]`** — `enabled = true` opts into GitHub Copilot. binvim attaches `copilot-language-server` (npm package `@github/copilot-language-server`, install with `npm i -g @github/copilot-language-server`) as an auxiliary LSP for every buffer. Authentication happens through the language server itself: on first launch the server emits a device-flow prompt with a verification URL + user code, which binvim surfaces in the status line. Visit the URL, enter the code, and the token persists at `~/.config/github-copilot/hosts.json` for the next session. The status auto-polls every 3 s while you complete the device flow so the editor flips to "signed in" within seconds of you clicking through. binvim itself doesn't carry an HTTP client or talk to GitHub directly — the language server handles all networking and auth. Once signed in, ghost completions appear inline as muted italic text after the cursor in Insert mode (~250 ms idle pause to trigger). Accept / dismiss split: `<Tab>` accepts the Copilot ghost (it wins over the LSP popup when both are visible — the popup auto-closes on accept), `<Enter>` accepts the LSP completion popup item, any other key dismisses the ghost. Default is `enabled = false`.
 
@@ -448,6 +454,7 @@ src/
     lsp_glue.rs    LSP event handling, request helpers, snippet expansion
     dap_glue.rs    DAP event handling, debug-pane focus mode, project / profile pickers
     picker_glue.rs picker open / handle / refilter, yazi shell-out
+    file_tree.rs   built-in sidebar tree explorer — state + key handler + click flow
     health.rs      `:health` output
   buffer.rs        rope-backed text buffer
   command.rs       ex-command (`:`) parser

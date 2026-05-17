@@ -178,7 +178,7 @@ impl super::App {
     /// Adapter pick scoped to the active buffer's path. Falls back to
     /// cwd when the buffer is unsaved so `:test*` still works in a
     /// brand-new editor session.
-    fn test_resolve_adapter(&self) -> Option<(TestAdapterSpec, PathBuf)> {
+    pub(super) fn test_resolve_adapter(&self) -> Option<(TestAdapterSpec, PathBuf)> {
         let start = self
             .buffer
             .path
@@ -191,7 +191,7 @@ impl super::App {
     /// the previous run's overlay buffer, spawns the adapter, surfaces
     /// the spawn outcome through the status line, and auto-opens the
     /// overlay so the user sees the run streaming live.
-    fn test_kickoff(&mut self, spec: &TestAdapterSpec, req: TestRunRequest) {
+    pub(super) fn test_kickoff(&mut self, spec: &TestAdapterSpec, req: TestRunRequest) {
         let label = req.label.clone();
         match self.test.start_run(spec, req) {
             Ok(_started) => {

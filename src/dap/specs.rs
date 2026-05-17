@@ -71,6 +71,18 @@ pub struct LaunchContext {
     /// Extra env vars to set on the launched process. Sorted for stable
     /// JSON output.
     pub env: BTreeMap<String, String>,
+    /// When set, this launch is a "debug test" run — the adapter's
+    /// `build_launch_args` should emit a test-mode invocation rather
+    /// than the standard application launch. Carries the adapter-
+    /// specific filter (`pytest`'s `<file>::<test>` nodeid, delve's
+    /// `-test.run` pattern, etc.). Wired by `cmd_debug_test_nearest`
+    /// in `app/dap_glue.rs`.
+    pub test_filter: Option<String>,
+    /// File the test lives in. Used by pytest's `<file>::<test>` form
+    /// where the filter alone isn't selective enough; delve uses
+    /// `project_path` for the package dir instead. `None` when not
+    /// in a test-debug run.
+    pub test_file: Option<PathBuf>,
 }
 
 
@@ -246,6 +258,31 @@ fn go_launch_args(ctx: &LaunchContext) -> Result<Value, String> {
             .map(|p| p.to_path_buf())
             .unwrap_or_else(|| ctx.root.clone())
     };
+    // Debug-test mode: delve's `mode: "test"` builds the package's
+    // test binary and runs it under the debugger; `-test.run <pattern>`
+    // restricts which test executes so breakpoints fire on the
+    // function the user asked for.
+    if let Some(filter) = ctx.test_filter.as_deref() {
+        let mut payload = json!({
+            "name": "Go Debug Test",
+            "type": "go",
+            "request": "launch",
+            "mode": "test",
+            "program": program.display().to_string(),
+            "cwd": cwd.display().to_string(),
+            "stopOnEntry": false,
+            "args": ["-test.run", format!("^{}$", filter), "-test.v"],
+        });
+        if !ctx.env.is_empty() {
+            let env_obj: serde_json::Map<String, Value> = ctx
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                .collect();
+            payload["env"] = Value::Object(env_obj);
+        }
+        return Ok(payload);
+    }
     let mut payload = json!({
         "name": "Go Launch",
         "type": "go",
@@ -356,6 +393,42 @@ const PYTHON: DapAdapterSpec = DapAdapterSpec {
 /// defaults to the script's directory unless an explicit workspace root
 /// has been passed in.
 fn python_launch_args(ctx: &LaunchContext) -> Result<Value, String> {
+    // Debug-test mode: launch via `python -m pytest <file>::<test>` so
+    // breakpoints are hit inside the test function. Uses debugpy's
+    // `module` launch form rather than the standard `program`-path
+    // form, which lets pytest do its own discovery.
+    if let Some(filter) = ctx.test_filter.as_deref() {
+        let nodeid = match ctx.test_file.as_ref() {
+            Some(file) => {
+                let rel = file
+                    .strip_prefix(&ctx.root)
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_else(|_| file.clone());
+                format!("{}::{}", rel.display(), filter)
+            }
+            None => filter.to_string(),
+        };
+        let mut payload = json!({
+            "name": "Python Debug Test",
+            "type": "python",
+            "request": "launch",
+            "module": "pytest",
+            "args": [nodeid, "-s"],
+            "cwd": ctx.root.display().to_string(),
+            "console": "internalConsole",
+            "justMyCode": false,
+            "stopOnEntry": false,
+        });
+        if !ctx.env.is_empty() {
+            let env_obj: serde_json::Map<String, Value> = ctx
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
+                .collect();
+            payload["env"] = Value::Object(env_obj);
+        }
+        return Ok(payload);
+    }
     let program = ctx
         .project_path
         .clone()

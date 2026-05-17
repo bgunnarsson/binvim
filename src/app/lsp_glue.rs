@@ -13,7 +13,7 @@ use crate::lsp::{
 use crate::mode::Mode;
 use crate::picker::{PickerKind, PickerPayload, PickerState};
 
-use super::state::{CompletionState, HoverState, LSP_SYNC_DEBOUNCE};
+use super::state::{CompletionState, HoverState, CODE_LENS_EMPTY_RETRY, LSP_SYNC_DEBOUNCE};
 
 impl super::App {
     pub(super) fn handle_lsp_events(&mut self, events: Vec<LspEvent>) {
@@ -135,6 +135,38 @@ impl super::App {
                         );
                     }
                 }
+                LspEvent::CodeLens {
+                    path,
+                    buffer_version,
+                    lenses,
+                } => {
+                    self.code_lens_in_flight.remove(&path);
+                    // Drop stale replies — when the buffer has moved
+                    // past the version the request was anchored on,
+                    // the lens line indices no longer line up. A
+                    // different active buffer still gets cached at
+                    // the version we asked for; the renderer will
+                    // re-check on draw.
+                    let live_version = self
+                        .buffer
+                        .path
+                        .as_ref()
+                        .filter(|p| *p == &path)
+                        .map(|_| self.buffer.version);
+                    let stale = match live_version {
+                        Some(v) => v != buffer_version,
+                        None => false,
+                    };
+                    if !stale {
+                        // Always record the LSP answer — even an
+                        // empty array is meaningful: it says "I have
+                        // no lenses for this buffer version" and
+                        // gates the retry check.
+                        self.lsp_only_code_lens
+                            .insert(path.clone(), (buffer_version, lenses));
+                        self.refresh_merged_code_lens(&path);
+                    }
+                }
                 LspEvent::DocumentHighlights {
                     path,
                     anchor_line,
@@ -213,6 +245,9 @@ impl super::App {
                             }
                             "SemanticTokens" => {
                                 self.semantic_tokens_in_flight.remove(&p);
+                            }
+                            "CodeLens" => {
+                                self.code_lens_in_flight.remove(&p);
                             }
                             _ => {}
                         }
@@ -642,6 +677,13 @@ impl super::App {
     }
 
     pub(super) fn lsp_attach_active(&mut self) {
+        // Large-file gate: skip server attach entirely. didOpen of a
+        // multi-MB buffer typically wedges tsserver / rust-analyzer /
+        // gopls for minutes; the user opened this to read it, not to
+        // get inlay hints on a 200k-line generated bundle.
+        if self.buffer.is_large() {
+            return;
+        }
         let Some(path) = self.buffer.path.clone() else { return; };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         if !self.lsp.ensure_for_path(&path, &cwd) {
@@ -660,6 +702,9 @@ impl super::App {
     /// before a request that needs fresh text (completion / hover / goto)
     /// and from `lsp_sync_active_debounced` once the burst window expires.
     pub(super) fn lsp_sync_active(&mut self) {
+        if self.buffer.is_large() {
+            return;
+        }
         let Some(path) = self.buffer.path.clone() else { return; };
         let last = self.last_sent_version.get(&path).copied().unwrap_or(u64::MAX);
         if last == self.buffer.version {
@@ -685,6 +730,9 @@ impl super::App {
     /// deadline (see `lsp_sync_due_at`) so a short burst still flushes
     /// promptly after the user pauses.
     pub(super) fn lsp_sync_active_debounced(&mut self) {
+        if self.buffer.is_large() {
+            return;
+        }
         let Some(path) = self.buffer.path.as_ref() else { return; };
         let last = self.last_sent_version.get(path).copied().unwrap_or(u64::MAX);
         if last == self.buffer.version {
@@ -746,6 +794,180 @@ impl super::App {
         if self.lsp.request_inlay_hints(&path, end_line) {
             self.last_inlay_request_version.insert(path.clone(), version);
             self.inlay_hints_in_flight.insert(path);
+        }
+    }
+
+    /// True when the active buffer has an empty lens cache for the
+    /// current version AND enough time has passed since the last
+    /// request to retry. Lets the main loop force a render tick at
+    /// the retry deadline so the lens row appears as soon as rust-
+    /// analyzer finishes indexing — the user shouldn't have to type
+    /// or move the cursor for the lenses to materialise.
+    pub(super) fn code_lens_retry_due(&self) -> bool {
+        if !self.config.lsp.code_lens {
+            return false;
+        }
+        let Some(path) = self.buffer.path.as_ref() else { return false; };
+        if self.code_lens_in_flight.contains(path) {
+            return false;
+        }
+        let last_version = match self.last_code_lens_request_version.get(path).copied() {
+            Some(v) => v,
+            None => return false,
+        };
+        if last_version != self.buffer.version {
+            return false;
+        }
+        // Retry only when the LSP itself hasn't given us a non-empty
+        // answer yet for the current version. A non-empty synth-only
+        // cache shouldn't suppress the retry — the LSP might still
+        // come online with its own lenses (references, etc.).
+        let lsp_has_content = self
+            .lsp_only_code_lens
+            .get(path)
+            .map(|(v, l)| *v == self.buffer.version && !l.is_empty())
+            .unwrap_or(false);
+        if lsp_has_content {
+            return false;
+        }
+        self.last_code_lens_request_at
+            .get(path)
+            .map(|t| t.elapsed() >= CODE_LENS_EMPTY_RETRY)
+            .unwrap_or(true)
+    }
+
+    /// Run the tree-sitter synth pass for the active buffer if the
+    /// version has moved since we last walked. Merges results into
+    /// the merged `code_lens` cache. No-op when `lsp.code_lens` is
+    /// disabled or the language doesn't have a synth implementation.
+    pub(super) fn synth_code_lens_if_due(&mut self) {
+        if !self.config.lsp.code_lens {
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let version = self.buffer.version;
+        if self.last_synth_lens_version.get(&path) == Some(&version) {
+            return;
+        }
+        let Some(lang) = crate::lang::Lang::detect(&path) else {
+            self.last_synth_lens_version.insert(path, version);
+            return;
+        };
+        let synth = crate::code_lens_synth::synthesize_lenses(lang, &self.buffer);
+        self.last_synth_lens_version.insert(path.clone(), version);
+        self.synth_only_code_lens.insert(path.clone(), (version, synth));
+        self.refresh_merged_code_lens(&path);
+    }
+
+    /// Rebuild `code_lens[path]` as the union of `lsp_only_code_lens`
+    /// and `synth_only_code_lens` for the current buffer version.
+    /// Either source can be missing or stale — we filter for matching
+    /// versions and skip non-current entries so a stale stash doesn't
+    /// leak into the merged view.
+    pub(super) fn refresh_merged_code_lens(&mut self, path: &std::path::Path) {
+        let version = self.buffer_version_for_path(path);
+        let lsp_part: Vec<crate::lsp::CodeLensItem> = self
+            .lsp_only_code_lens
+            .get(path)
+            .filter(|(v, _)| *v == version)
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default();
+        let synth_part: Vec<crate::lsp::CodeLensItem> = self
+            .synth_only_code_lens
+            .get(path)
+            .filter(|(v, _)| *v == version)
+            .map(|(_, l)| l.clone())
+            .unwrap_or_default();
+        if lsp_part.is_empty() && synth_part.is_empty() {
+            self.code_lens.remove(path);
+            return;
+        }
+        let mut merged = lsp_part;
+        merged.extend(synth_part);
+        let anchor_lines = merged.iter().map(|l| l.line).collect();
+        self.code_lens.insert(
+            path.to_path_buf(),
+            crate::app::CodeLensCache {
+                buffer_version: version,
+                lenses: merged,
+                anchor_lines,
+            },
+        );
+    }
+
+    /// Look up the live buffer version for `path`. For the active
+    /// buffer this matches `self.buffer.version`; for inactive
+    /// stashed buffers we don't refresh the cache anyway, so falling
+    /// back to whatever version the cache thinks it has is fine.
+    fn buffer_version_for_path(&self, path: &std::path::Path) -> u64 {
+        if self.buffer.path.as_deref() == Some(path) {
+            return self.buffer.version;
+        }
+        // Inactive panes don't get a code-lens cache refresh today
+        // (we only request for the active buffer). Returning the
+        // existing cached version means a stale `code_lens` entry
+        // for a switched-away buffer keeps painting correctly.
+        self.code_lens
+            .get(path)
+            .map(|c| c.buffer_version)
+            .unwrap_or(0)
+    }
+
+    /// Fire `textDocument/codeLens` once per buffer version, capped
+    /// to one in-flight per path. Same dual-throttle shape as inlay
+    /// hints / semantic tokens — version dedup for the stable case,
+    /// in-flight dedup for the fast-typing-against-a-busy-server
+    /// case. Gated behind `serverCapabilities.codeLensProvider` so
+    /// servers that don't advertise the capability never see the
+    /// request.
+    ///
+    /// One extra rule on top of the inlay-hints / semantic-tokens
+    /// pattern: when the cache is empty (no entry, i.e. the server
+    /// returned `[]` last time) we allow a retry every
+    /// `CODE_LENS_EMPTY_RETRY` even when the version hasn't moved.
+    /// rust-analyzer routinely returns an empty array while it's
+    /// still indexing the workspace; without this slow retry the
+    /// version-dedupe would pin us at "already asked for v0" and the
+    /// lens row would never show up unless the user edited the
+    /// buffer (which bumps the version and re-fires naturally).
+    pub(super) fn lsp_request_code_lens_if_due(&mut self) {
+        if !self.config.lsp.code_lens {
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let version = self.buffer.version;
+        let last = self
+            .last_code_lens_request_version
+            .get(&path)
+            .copied()
+            .unwrap_or(u64::MAX);
+        if self.code_lens_in_flight.contains(&path) {
+            return;
+        }
+        if last == version {
+            let cache_present = self.code_lens.contains_key(&path);
+            if cache_present {
+                // Already have a non-empty answer for this version —
+                // nothing more to ask for until an edit or a manual
+                // refresh moves us off.
+                return;
+            }
+            // Empty-cache slow retry: throttle to one request per
+            // `CODE_LENS_EMPTY_RETRY` so we don't spam the server
+            // while it's still cold-starting.
+            let due = self
+                .last_code_lens_request_at
+                .get(&path)
+                .map(|t| t.elapsed() >= CODE_LENS_EMPTY_RETRY)
+                .unwrap_or(true);
+            if !due {
+                return;
+            }
+        }
+        if self.lsp.request_code_lens(&path, version) {
+            self.last_code_lens_request_version.insert(path.clone(), version);
+            self.last_code_lens_request_at.insert(path.clone(), Instant::now());
+            self.code_lens_in_flight.insert(path);
         }
     }
 
@@ -1289,6 +1511,282 @@ impl super::App {
         let new_scroll = (self.messages_scroll as isize + delta).max(0) as usize;
         self.messages_scroll = new_scroll.min(max);
     }
+
+    /// `:codelens` — diagnostic dump for "why isn't the lens row
+    /// showing up?" troubleshooting. Reports whether the active
+    /// buffer's primary LSP advertised `codeLensProvider`, whether a
+    /// request has fired for this buffer version, whether a request
+    /// is currently in flight, and the contents of the cache (count,
+    /// anchor lines, resolved-command states).
+    pub(super) fn cmd_code_lens_status(&mut self) {
+        if !self.config.lsp.code_lens {
+            self.status_msg =
+                "codelens: disabled in config ([lsp] code_lens = false)".into();
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "codelens: buffer has no file".into();
+            return;
+        };
+        let cap = self.lsp.code_lens_capability(&path);
+        let last_req = self.last_code_lens_request_version.get(&path).copied();
+        let in_flight = self.code_lens_in_flight.contains(&path);
+        let buf_version = self.buffer.version;
+        let cap_str = match cap {
+            Some(true) => "capability=yes",
+            Some(false) => "capability=NO (server didn't advertise codeLensProvider)",
+            None => "capability=? (no LSP client attached)",
+        };
+        let req_str = match last_req {
+            Some(v) if v == buf_version => format!("request=fired@v{v}"),
+            Some(v) => format!("request=fired@v{v} (live=v{buf_version})"),
+            None => "request=NOT FIRED".to_string(),
+        };
+        let flight_str = if in_flight { " in-flight" } else { "" };
+        let lsp_count = self
+            .lsp_only_code_lens
+            .get(&path)
+            .filter(|(v, _)| *v == buf_version)
+            .map(|(_, l)| l.len())
+            .unwrap_or(0);
+        let synth_count = self
+            .synth_only_code_lens
+            .get(&path)
+            .filter(|(v, _)| *v == buf_version)
+            .map(|(_, l)| l.len())
+            .unwrap_or(0);
+        self.status_msg = format!(
+            "codelens: {cap_str} · {req_str}{flight_str} · lsp={lsp_count} synth={synth_count} merged={}",
+            self.code_lens
+                .get(&path)
+                .filter(|c| c.buffer_version == buf_version)
+                .map(|c| c.lenses.len())
+                .unwrap_or(0),
+        );
+    }
+
+    /// `<leader>l` — invoke the code lens anchored on the cursor line.
+    /// Server-side commands the editor knows how to interpret locally
+    /// (today: rust-analyzer's `rust-analyzer.runSingle`) are routed
+    /// through the integrated test runner so the lens, `:testnearest`,
+    /// and `<leader>sn` all share one engine. Everything else falls
+    /// back to `workspace/executeCommand`. Multiple lenses on the same
+    /// line → opens a picker; one match → invoke directly.
+    pub(super) fn execute_code_lens_under_cursor(&mut self) {
+        if !self.config.lsp.code_lens {
+            self.status_msg = "code lens: disabled in config (lsp.code_lens = false)".into();
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "code lens: buffer has no file".into();
+            return;
+        };
+        let cursor_line = self.window.cursor.line;
+        let commands = self.lens_commands_on_line(&path, cursor_line);
+        // When the cursor is parked on a specific phantom segment, fire
+        // that segment directly — skip the picker. Out-of-range falls
+        // through to the standard branch (server response shrank the list).
+        if let Some(idx) = self.phantom_lens_idx {
+            if idx < commands.len() {
+                let cmd = commands.into_iter().nth(idx).unwrap();
+                self.invoke_lens_command(&path, cmd);
+                return;
+            }
+        }
+        match commands.len() {
+            0 => self.status_msg = "code lens: none on this line".into(),
+            1 => {
+                let cmd = commands.into_iter().next().unwrap();
+                self.invoke_lens_command(&path, cmd);
+            }
+            _ => self.open_code_lens_picker(commands),
+        }
+    }
+
+    /// Left-click on a lens row → invoke the lens whose title contains
+    /// the clicked column. The render layout is `gutter blanks` +
+    /// titles joined by ` │ `; we replay the same widths to figure
+    /// out which segment was hit. A click on the separator (or
+    /// trailing blanks) is treated as a no-op.
+    pub(super) fn click_code_lens_row(&mut self, line: usize, col: usize, gutter: usize) {
+        if !self.config.lsp.code_lens {
+            return;
+        }
+        let Some(path) = self.buffer.path.clone() else { return; };
+        let commands = self.lens_commands_on_line(&path, line);
+        if commands.is_empty() || col < gutter {
+            return;
+        }
+        let text_col = col - gutter;
+        let separator_w = " │ ".chars().count();
+        let mut start = 0usize;
+        for (i, cmd) in commands.iter().enumerate() {
+            let w = cmd.title.chars().count();
+            if text_col >= start && text_col < start + w {
+                let cmd = commands[i].clone();
+                self.invoke_lens_command(&path, cmd);
+                return;
+            }
+            start += w;
+            if i + 1 < commands.len() {
+                start += separator_w;
+            }
+        }
+    }
+
+    /// Resolved lens commands anchored on `line` for `path`, in
+    /// render order. Filters out unresolved lenses (no `command`) and
+    /// stale-version caches. Centralised here because both the
+    /// keyboard (`<leader>l`) and the mouse-click paths need to ask
+    /// the same question and want the same answer shape.
+    pub(crate) fn lens_commands_on_line(
+        &self,
+        path: &std::path::Path,
+        line: usize,
+    ) -> Vec<crate::lsp::LspCommand> {
+        let Some(cache) = self.code_lens.get(path) else { return Vec::new(); };
+        if cache.buffer_version != self.buffer.version {
+            return Vec::new();
+        }
+        cache
+            .lenses
+            .iter()
+            .filter(|l| l.line == line)
+            .filter_map(|l| l.command.clone())
+            .filter(|c| !c.title.is_empty())
+            .collect()
+    }
+
+    /// Number of resolved lens commands anchored on `line` in the active
+    /// buffer. Used by `h`/`l` along the phantom row to clamp index.
+    pub(super) fn lens_count_on_line(&self, line: usize) -> usize {
+        let Some(path) = self.buffer.path.as_ref() else { return 0; };
+        self.lens_commands_on_line(path, line).len()
+    }
+
+    /// Open the multi-lens picker. Each row is a lens title; on
+    /// accept we route through `invoke_lens_command` for the picked
+    /// index. Same staging-via-index pattern as `pending_code_actions`.
+    fn open_code_lens_picker(&mut self, commands: Vec<crate::lsp::LspCommand>) {
+        let items: Vec<(String, crate::picker::PickerPayload)> = commands
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.title.clone(), crate::picker::PickerPayload::CodeLensIdx(i)))
+            .collect();
+        self.pending_code_lens_commands = commands;
+        self.picker = Some(crate::picker::PickerState::new(
+            crate::picker::PickerKind::CodeLens,
+            "Code lens".into(),
+            items,
+        ));
+        self.mode = crate::mode::Mode::Picker;
+    }
+
+    /// Picker accept handler for `PickerPayload::CodeLensIdx`. Looks
+    /// up the stashed lens command, clears the staging buffer, and
+    /// invokes it.
+    pub(super) fn run_picked_code_lens(&mut self, idx: usize) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.pending_code_lens_commands.clear();
+            return;
+        };
+        let cmd = if idx < self.pending_code_lens_commands.len() {
+            Some(self.pending_code_lens_commands.remove(idx))
+        } else {
+            None
+        };
+        self.pending_code_lens_commands.clear();
+        if let Some(cmd) = cmd {
+            self.invoke_lens_command(&path, cmd);
+        }
+    }
+
+    /// Run a resolved lens `Command`. Shared by `<leader>l`, click,
+    /// and the multi-lens picker accept.
+    pub(super) fn invoke_lens_command(
+        &mut self,
+        path: &std::path::Path,
+        cmd: crate::lsp::LspCommand,
+    ) {
+        // Client-side commands the editor knows how to interpret
+        // without round-tripping to the LSP. Synthetic lenses
+        // (`binvim.runTestByName`) and rust-analyzer runnables both
+        // resolve to "run a test by name through the integrated
+        // runner"; the only difference is the argument shape.
+        if cmd.command == crate::code_lens_synth::SYNTHETIC_RUN_COMMAND {
+            if let Some(name) = extract_synthetic_run_filter(&cmd.arguments) {
+                self.run_test_filter_through_kickoff(name);
+                return;
+            }
+        }
+        if cmd.command == "rust-analyzer.runSingle" || cmd.command == "rust-analyzer.debugSingle" {
+            if let Some(name) = extract_rust_analyzer_runnable_filter(&cmd.arguments) {
+                self.run_test_filter_through_kickoff(name);
+                return;
+            }
+        }
+        let command_obj = serde_json::json!({
+            "title": cmd.title,
+            "command": cmd.command,
+            "arguments": cmd.arguments,
+        });
+        if self.lsp.execute_command(path, &command_obj) {
+            self.status_msg = format!("code lens: {}", cmd.title);
+        } else {
+            self.status_msg = "code lens: no LSP client for this buffer".into();
+        }
+    }
+
+    /// Shared "run this test by name" entry point — used by both the
+    /// rust-analyzer runnable interception and the synthetic vitest
+    /// / pytest lenses. Resolves the workspace adapter and routes
+    /// the filter through `test_kickoff` so the picker + overlay
+    /// behaviour matches `:testnearest`.
+    fn run_test_filter_through_kickoff(&mut self, name: String) {
+        let Some((spec, root)) = self.test_resolve_adapter() else {
+            self.status_msg = "code lens: no test adapter for this workspace".into();
+            return;
+        };
+        let label = format!("lens: {name}");
+        let req = crate::test::TestRunRequest {
+            filter: Some(name),
+            workspace_root: root,
+            label,
+        };
+        self.test_kickoff(&spec, req);
+    }
+}
+
+/// Extract the libtest substring filter from a rust-analyzer
+/// `Runnable` argument. The shape varies a little between releases
+/// but the test name has consistently lived at
+/// `args.executableArgs[0]` (e.g. `"motion::tests::word_forward_basic"`)
+/// — the rest of the args are `--exact` / `--nocapture` flags we don't
+/// need to thread through to the in-tree test runner.
+/// Synthetic lens shape — emitted by `code_lens_synth`. The args
+/// list contains a single object `{ "name": "...", "kind":
+/// "it"|"test"|"describe" }`; we feed the name to the test runner as
+/// a substring filter.
+fn extract_synthetic_run_filter(arguments: &[serde_json::Value]) -> Option<String> {
+    let obj = arguments.first()?;
+    let name = obj.get("name")?.as_str()?.to_string();
+    if name.is_empty() {
+        return None;
+    }
+    Some(name)
+}
+
+fn extract_rust_analyzer_runnable_filter(arguments: &[serde_json::Value]) -> Option<String> {
+    let runnable = arguments.first()?;
+    let exec_args = runnable
+        .get("args")
+        .and_then(|v| v.get("executableArgs"))
+        .and_then(|v| v.as_array())?;
+    let first = exec_args.iter().find_map(|v| v.as_str())?.to_string();
+    if first.is_empty() {
+        return None;
+    }
+    Some(first)
 }
 
 /// Resolve a TextMate-style LSP snippet into plain text and the char

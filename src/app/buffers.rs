@@ -226,6 +226,7 @@ impl super::App {
                 crate::undo::History::load_from_path(&p, hash)
             })
             .unwrap_or_default();
+        let large = buf.is_large();
         let stash = BufferStash {
             buffer: buf,
             history,
@@ -240,6 +241,10 @@ impl super::App {
         self.refresh_editorconfig();
         self.show_start_page = false;
         self.touch_recent();
+        if large {
+            self.status_msg =
+                "large file — tree-sitter + LSP disabled".into();
+        }
         // Strip the phantom `[No Name]` seed that App::new() seeds at
         // index 0 — only on the transition from "fresh launch" (one
         // empty no-path buffer) to a first real file. Skip the strip
@@ -695,12 +700,25 @@ impl super::App {
                 jump_idx,
             });
         }
+        let macros = self
+            .macros
+            .iter()
+            .map(|(name, keys)| {
+                let ser: Vec<crate::session::SessionKey> = keys
+                    .iter()
+                    .filter_map(crate::session::SessionKey::from_event)
+                    .collect();
+                (*name, ser)
+            })
+            .filter(|(_, v)| !v.is_empty())
+            .collect();
         crate::session::Session {
             cwd: canon.to_string_lossy().to_string(),
             buffers,
             active: active_in_session,
             cmd_history: self.cmd_history.clone(),
             search_history: self.search_history.clone(),
+            macros,
         }
     }
 

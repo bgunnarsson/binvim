@@ -232,8 +232,24 @@ pub const WHICHKEY_DELAY: Duration = Duration::from_millis(250);
 /// is fast enough that it feels live but coalesces typical bursts.
 pub const LSP_SYNC_DEBOUNCE: Duration = Duration::from_millis(50);
 
+/// How often `lsp_request_code_lens_if_due` retries when the server
+/// has returned an empty array for the current buffer version. rust-
+/// analyzer routinely answers `[]` during its initial indexing pass;
+/// without this slow retry the version-dedupe would pin us at
+/// "already asked for v0" and the lens row would never appear unless
+/// the user edited the buffer. 5s is fast enough that lenses materialise
+/// within a beat of indexing completing, slow enough that a fully
+/// no-lens server (Tailwind, plain JSON) only pays a trivial poll cost.
+pub const CODE_LENS_EMPTY_RETRY: Duration = Duration::from_secs(5);
+
 /// How long the yank flash stays painted before it fades.
 pub const YANK_FLASH_DURATION: Duration = Duration::from_millis(200);
+
+/// Maximum nested `replay_macro` invocations before we abort with a status
+/// message. `qa@aq` then `@a` is the canonical lockup; this stops it without
+/// banning recursion outright (so a macro that calls a *different* macro a few
+/// levels deep still works). Vim's default is 200.
+pub const MACRO_REPLAY_DEPTH_LIMIT: usize = 200;
 
 /// One foldable range in a buffer. `start_line` is the row that becomes
 /// the placeholder when the fold closes; `end_line` is inclusive (so the
@@ -266,6 +282,13 @@ pub struct BufferState<'a> {
     /// Normal mode). Captured at construction time so the per-line
     /// helpers can answer without re-fetching `App.mode`.
     pub markdown_render_active: bool,
+    /// Lines with at least one `textDocument/codeLens` anchored to
+    /// them. The renderer paints one phantom row above each such line
+    /// carrying the lens titles; this set lets the per-row walk answer
+    /// "does this line have a lens above it?" without scanning the
+    /// lens list per row. `None` for inactive panes — we only request
+    /// code lenses for the active buffer.
+    pub code_lens_anchor_lines: Option<&'a std::collections::HashSet<usize>>,
 }
 
 impl<'a> BufferState<'a> {
@@ -316,8 +339,18 @@ impl<'a> BufferState<'a> {
             .unwrap_or(false)
     }
 
+    /// True when at least one `textDocument/codeLens` is anchored to
+    /// `line`. The renderer paints a phantom row above the line
+    /// carrying the lens titles, which means this line counts as two
+    /// screen rows for cursor-placement math.
+    pub fn line_has_code_lens(&self, line: usize) -> bool {
+        self.code_lens_anchor_lines
+            .map(|s| s.contains(&line))
+            .unwrap_or(false)
+    }
+
     pub fn visible_rows_between(&self, from: usize, to: usize) -> usize {
-        if to <= from {
+        if to < from {
             return 0;
         }
         let mut count = 0;
@@ -325,8 +358,26 @@ impl<'a> BufferState<'a> {
         while i < to {
             if !self.line_is_folded(i) && !self.line_is_md_hidden(i) {
                 count += 1;
+                // A line with a code lens carries a phantom row above
+                // it — count both so the cursor's on-screen row stays
+                // aligned with what the user sees.
+                if self.line_has_code_lens(i) {
+                    count += 1;
+                }
             }
             i += 1;
+        }
+        // The lens phantom for the destination line `to` paints BEFORE
+        // its content row, so it pushes the cursor's content row down by
+        // one. Without this, `place_cursor` lands on the phantom and
+        // editing happens on the line whose phantom you appear to be
+        // standing on — the user reports it as "cursor on the Run|Debug
+        // row, edits on `#[test]` below."
+        if self.line_has_code_lens(to)
+            && !self.line_is_folded(to)
+            && !self.line_is_md_hidden(to)
+        {
+            count += 1;
         }
         count
     }
@@ -362,14 +413,24 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("b".into(), "+Buffer".into()),
         ("d".into(), "+Debug".into()),
         ("h".into(), "+Hunk".into()),
+        ("j".into(), "+AI".into()),
         ("s".into(), "+Test".into()),
         ("t".into(), "+Terminal".into()),
         ("g".into(), "Grep".into()),
-        ("e".into(), "Yazi".into()),
+        ("e".into(), "File explorer".into()),
         ("a".into(), "Code actions".into()),
         ("r".into(), "Rename".into()),
         ("f".into(), "Format".into()),
         ("/".into(), "Toggle comment".into()),
+    ]
+}
+
+pub fn ai_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("c".into(), "Claude".into()),
+        ("x".into(), "Codex".into()),
+        ("o".into(), "opencode".into()),
+        ("q".into(), "Close tab".into()),
     ]
 }
 

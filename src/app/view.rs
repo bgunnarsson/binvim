@@ -96,7 +96,8 @@ impl super::App {
     pub(super) fn adjust_viewport_to(&mut self, kind: ViewportAdjust) {
         let rows = self.buffer_rows();
         let cur = self.window.cursor.line;
-        let buffer_cols = (self.width as usize).saturating_sub(self.gutter_width());
+        let pane_w = self.active_pane_rect().w as usize;
+        let buffer_cols = pane_w.saturating_sub(self.gutter_width());
         match kind {
             ViewportAdjust::Top if rows > 0 => self.window.view_top = cur,
             ViewportAdjust::Center if rows > 0 => self.window.view_top = cur.saturating_sub(rows / 2),
@@ -189,18 +190,32 @@ impl super::App {
         if buffer_rows > 0 {
             let scrolloff = 3.min(buffer_rows / 2);
             let cur = self.window.cursor.line;
-            if cur < self.window.view_top + scrolloff {
-                self.window.view_top = cur.saturating_sub(scrolloff);
-            }
-            if cur >= self.window.view_top + buffer_rows.saturating_sub(scrolloff) {
-                let want = cur + scrolloff + 1;
-                self.window.view_top = want.saturating_sub(buffer_rows);
+            // Use on-screen rows, not raw line-index delta. Folded
+            // bodies, markdown-hidden lines, and code-lens phantom
+            // rows all consume screen rows between `view_top` and the
+            // cursor; without this the cursor can slip below the
+            // visible pane when there are several lenses near the
+            // top of the viewport.
+            let on_screen = self.visible_rows_between(self.window.view_top, cur);
+            let above_viewport = cur < self.window.view_top;
+            if above_viewport || on_screen < scrolloff {
+                self.window.view_top = self.view_top_above_cursor(cur, scrolloff);
+            } else {
+                let max_on_screen = buffer_rows.saturating_sub(scrolloff + 1);
+                if on_screen > max_on_screen {
+                    self.window.view_top = self.view_top_above_cursor(cur, max_on_screen);
+                }
             }
         }
 
         // Horizontal — track the cursor's visual column instead of the char
         // index so tabs (TAB_WIDTH columns) don't make the viewport jump.
-        let buffer_cols = (self.width as usize).saturating_sub(self.gutter_width());
+        // Width budget is the *active pane's* content width, not the full
+        // terminal — when the left tree pane or the right AI pane is open,
+        // the editor area is narrower and the cursor would otherwise slip
+        // off the pane's right edge.
+        let pane_w = self.active_pane_rect().w as usize;
+        let buffer_cols = pane_w.saturating_sub(self.gutter_width());
         if buffer_cols == 0 {
             return;
         }
@@ -352,13 +367,86 @@ impl super::App {
     /// Full editor rect — the band between the tab bar (if any) and the
     /// status line / cmdline / debug pane. With splits, this is the
     /// rectangle partitioned by `App.layout` into per-window rects.
+    /// Width is trimmed by `side_pane_cols()` so the right-side AI
+    /// terminal pane (`:claude` etc.) sits flush against it without
+    /// overlapping any editor window, and by `file_tree_cols()` on
+    /// the left when the built-in sidebar tree explorer is open.
     pub fn editor_rect(&self) -> crate::layout::Rect {
+        let tree_w = self.file_tree_cols();
+        let total_w = self.width as usize;
+        let inner_w = total_w
+            .saturating_sub(self.side_pane_cols())
+            .saturating_sub(tree_w);
         crate::layout::Rect {
-            x: 0,
+            x: tree_w as u16,
             y: self.buffer_top() as u16,
-            w: self.width,
+            w: inner_w as u16,
             h: self.buffer_rows() as u16,
         }
+    }
+
+    /// Width in cells of the left-side file-tree pane. Zero when
+    /// the pane is closed or when the host terminal is too narrow
+    /// to give it a usable budget without crushing the editor to
+    /// a sliver. Target ≈ 30 cells; enforces a 40-cell floor on the
+    /// editor area that remains to the right. The pane's darker
+    /// chrome background is the visual separator from the buffer
+    /// area, so there's no border column to reserve.
+    pub fn file_tree_cols(&self) -> usize {
+        if self.file_tree.is_none() {
+            return 0;
+        }
+        let total = self.width as usize;
+        if total < 60 {
+            return 0;
+        }
+        let target = 30usize;
+        let editor_floor = 40usize.saturating_add(self.side_pane_cols());
+        let max = total.saturating_sub(editor_floor);
+        target.min(max).max(0)
+    }
+
+    /// Width in cells of the right-side terminal pane (`:claude`,
+    /// `:codex`, `:opencode`). Zero when the pane is closed or when
+    /// the host terminal is too narrow to give it a usable column
+    /// budget without crushing the editor windows to a sliver.
+    /// Target ≈ 40 % of the host width, floor 30 cols, and only
+    /// returns non-zero when the editor would still keep at least
+    /// 40 cells to its left.
+    pub fn side_pane_cols(&self) -> usize {
+        if !self.side_terminal_pane_open {
+            return 0;
+        }
+        let total = self.width as usize;
+        if total < 70 {
+            return 0;
+        }
+        let target = ((total * 2) / 5).max(30);
+        let max = total.saturating_sub(40);
+        target.min(max)
+    }
+
+    /// First column of the right-side terminal pane, in screen
+    /// coordinates. Callers must guard on `side_pane_cols() > 0`
+    /// before using this — when the pane is closed the value still
+    /// computes but lands one past the rightmost editor column.
+    pub fn side_pane_left(&self) -> usize {
+        (self.width as usize).saturating_sub(self.side_pane_cols())
+    }
+
+    /// Cell columns the embedded program actually owns. The pane's
+    /// leftmost column is reserved for a vertical border so the
+    /// editor and the pane have a clean visual separator, so the
+    /// PTY grid is sized to `side_pane_cols() - 1`.
+    pub fn side_pane_content_cols(&self) -> usize {
+        self.side_pane_cols().saturating_sub(1)
+    }
+
+    /// Screen column where the embedded program's first content
+    /// cell sits — one past the border on the left edge of the
+    /// pane. Mirrors `side_pane_left` but skips the border column.
+    pub fn side_pane_content_left(&self) -> usize {
+        self.side_pane_left() + 1
     }
 
     /// True when buffer `idx` is "promoted" — has its own slot in
@@ -423,6 +511,16 @@ impl super::App {
                 blame_visible: self.blame_visible,
                 markdown_meta: self.markdown_meta.as_ref(),
                 markdown_render_active: md_active,
+                code_lens_anchor_lines: if self.config.lsp.code_lens {
+                    self.buffer
+                        .path
+                        .as_ref()
+                        .and_then(|p| self.code_lens.get(p))
+                        .filter(|c| c.buffer_version == self.buffer.version)
+                        .map(|c| &c.anchor_lines)
+                } else {
+                    None
+                },
             }
         } else {
             let stash = &self.buffers[buffer_idx];
@@ -445,6 +543,11 @@ impl super::App {
                 blame_visible: stash.blame_visible,
                 markdown_meta: stash.markdown_meta.as_ref(),
                 markdown_render_active: md_active,
+                // Lenses are only fetched for the active buffer
+                // (`lsp_request_code_lens_if_due` keys on
+                // `self.buffer.path`), so inactive panes don't get a
+                // phantom-row pass.
+                code_lens_anchor_lines: None,
             }
         }
     }
@@ -657,6 +760,63 @@ impl super::App {
         self.buffer_state(self.active).visible_rows_between(from, to)
     }
 
+    /// True when the active buffer's line at `line` has at least one
+    /// fresh code lens anchored on it. Used by mouse + cursor-row
+    /// math to account for the phantom row painted above the line.
+    pub fn line_has_code_lens(&self, line: usize) -> bool {
+        if !self.config.lsp.code_lens {
+            return false;
+        }
+        let Some(path) = self.buffer.path.as_ref() else { return false; };
+        let Some(cache) = self.code_lens.get(path) else { return false; };
+        if cache.buffer_version != self.buffer.version {
+            return false;
+        }
+        cache.anchor_lines.contains(&line)
+    }
+
+    /// Walk backwards from `cur` until `target` visible rows have
+    /// accumulated (counting phantom rows above lens-anchored lines
+    /// and skipping folded / md-hidden bodies). Returns the line that
+    /// should become the new `view_top` so the cursor sits `target`
+    /// rows from the top of the pane. O(target) — bounded by the
+    /// pane height, so cheap even on huge buffers.
+    fn view_top_above_cursor(&self, cur: usize, target: usize) -> usize {
+        if target == 0 {
+            return cur;
+        }
+        let bs = self.buffer_state(self.active);
+        let mut top = cur;
+        // `visible_rows_between` now adds 1 for the cursor's own lens
+        // phantom (since it paints between view_top and the cursor's
+        // content row). Seed `count` with that contribution so the
+        // walk-back stops one line earlier when `cur` has a lens —
+        // otherwise the viewport scrolls one line too far and the
+        // cursor's content row sits below where the scrolloff says.
+        let mut count = if bs.line_has_code_lens(cur)
+            && !bs.line_is_folded(cur)
+            && !bs.line_is_md_hidden(cur)
+        {
+            1
+        } else {
+            0
+        };
+        while top > 0 && count < target {
+            top -= 1;
+            if bs.line_is_folded(top) || bs.line_is_md_hidden(top) {
+                continue;
+            }
+            count += 1;
+            if count >= target {
+                break;
+            }
+            if bs.line_has_code_lens(top) {
+                count += 1;
+            }
+        }
+        top
+    }
+
     /// Refresh the cache when the active buffer's path or version has
     /// changed. Cheap when the buffer isn't markdown — single lang
     /// detect + early return. Called once per render tick from `run`.
@@ -697,6 +857,14 @@ impl super::App {
     }
 
     pub(super) fn ensure_highlights(&mut self) {
+        // Large-file gate: tree-sitter passes on multi-MB buffers
+        // block the event loop for seconds at a time. Drop any stale
+        // cache (e.g. the file just grew past the threshold via a
+        // paste) and bail. The renderer falls back to plain text.
+        if self.buffer.is_large() {
+            self.highlight_cache = None;
+            return;
+        }
         let lang = self
             .buffer
             .path

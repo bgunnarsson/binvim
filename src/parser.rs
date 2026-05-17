@@ -163,6 +163,13 @@ pub enum Action {
     LspGotoDefinition,
     LspFindReferences,
     LspRename,
+    /// `<leader>l` — execute the `textDocument/codeLens` command(s)
+    /// anchored on the current cursor line. Server-side commands like
+    /// rust-analyzer's `rust-analyzer.runSingle` are intercepted
+    /// client-side and routed into the integrated test runner so the
+    /// lens and `:testnearest` share one engine. Other commands fall
+    /// back to `workspace/executeCommand`.
+    LspExecuteCodeLens,
     /// `<leader>f` — run the buffer's formatter and replace its contents
     /// with the result. Same code path as `:fmt` / `:format`.
     Format,
@@ -195,7 +202,7 @@ pub enum Action {
     VisualSwap,
     VisualSwitch(VisualKind),
     StartMacro { name: char },
-    ReplayMacro { name: char },
+    ReplayMacro { name: char, count: usize },
     BufferDelete { force: bool },
     BufferDeleteAll { force: bool },
     BufferOnly,
@@ -209,6 +216,14 @@ pub enum Action {
     HunkNext,
     /// `[h` — jump to the previous git hunk in the active buffer.
     HunkPrev,
+    /// `]s` — jump to the next misspelled word. No-op when `:spell`
+    /// isn't enabled for the active buffer.
+    SpellNext,
+    /// `[s` — jump to the previous misspelled word.
+    SpellPrev,
+    /// `z=` — open a suggestion picker for the misspelled word under
+    /// the cursor.
+    SpellSuggest,
     /// `<leader>hp` — preview the hunk under the cursor in a hover popup.
     HunkPreview,
     /// `<leader>hs` — stage the hunk under the cursor (`git apply --cached`).
@@ -233,6 +248,19 @@ pub enum Action {
     /// `<leader>dp` for the debug pane: open + focus if not alive,
     /// close if it is.
     TerminalToggle,
+    /// `<leader>jc` — open (or focus) Claude in the right-side
+    /// terminal pane. Equivalent to `:claude`.
+    AiClaude,
+    /// `<leader>jx` — open (or focus) Codex in the right-side
+    /// terminal pane. Equivalent to `:codex`.
+    AiCodex,
+    /// `<leader>jo` — open (or focus) opencode in the right-side
+    /// terminal pane. Equivalent to `:opencode`.
+    AiOpencode,
+    /// `<leader>jq` — close the active right-side AI terminal tab.
+    /// If it was the last side tab, hides the pane and snaps focus
+    /// back to the bottom pane.
+    AiClose,
     /// `<leader>ss` — open the integrated test runner's picker.
     /// Same effect as `:test`.
     TestPicker,
@@ -344,6 +372,10 @@ pub struct PendingCmd {
     /// (`s` picker, `n` nearest, `f` file, `l` last, `q` cancel,
     /// `r` results overlay).
     pub awaiting_test_leader: bool,
+    /// Set after `<leader>j` — next char picks an AI-assistant tool
+    /// to launch in the right-side terminal pane (`c` Claude, `x`
+    /// Codex, `o` opencode).
+    pub awaiting_ai_leader: bool,
     /// Set after `<C-w>` — next char picks a window action
     /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
     /// Wired in Normal mode only; cancels on any unrecognised follow-up.
@@ -353,6 +385,40 @@ pub struct PendingCmd {
 impl PendingCmd {
     fn reset(&mut self) {
         *self = PendingCmd::default();
+    }
+
+    /// True when no operator / count / leader prefix is in flight. Used
+    /// by `handle_keyboard` to decide whether bare `<CR>` can shortcut
+    /// straight to a code-lens invocation (only safe when the parser
+    /// isn't mid-command).
+    pub fn is_clean(&self) -> bool {
+        self.count1.is_none()
+            && self.operator.is_none()
+            && self.count2.is_none()
+            && !self.awaiting_g
+            && !self.awaiting_z
+            && !self.awaiting_leader
+            && self.awaiting_textobj.is_none()
+            && self.awaiting_find.is_none()
+            && !self.awaiting_replace
+            && self.awaiting_mark.is_none()
+            && !self.awaiting_register
+            && self.register.is_none()
+            && !self.awaiting_macro_record
+            && !self.awaiting_macro_play
+            && !self.awaiting_buffer_leader
+            && !self.awaiting_debug_leader
+            && !self.awaiting_ds
+            && !self.awaiting_cs_old
+            && self.cs_old.is_none()
+            && !self.awaiting_visual_surround
+            && !self.awaiting_bracket_close
+            && !self.awaiting_bracket_open
+            && !self.awaiting_hunk_leader
+            && !self.awaiting_terminal_leader
+            && !self.awaiting_test_leader
+            && !self.awaiting_ai_leader
+            && !self.awaiting_window_leader
     }
 
     fn take_register(&mut self) -> Option<char> {
@@ -550,8 +616,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             return ParseResult::Cancelled;
         }
         let name = ch;
+        let count = state.total_count();
         state.reset();
-        return ParseResult::Action(Action::ReplayMacro { name });
+        return ParseResult::Action(Action::ReplayMacro { name, count });
     }
 
     // Resolve a pending `r` — the next key is the replacement.
@@ -591,6 +658,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixNext),
             'h' => ParseResult::Action(Action::HunkNext),
+            's' => ParseResult::Action(Action::SpellNext),
             _ => ParseResult::Cancelled,
         };
     }
@@ -600,6 +668,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixPrev),
             'h' => ParseResult::Action(Action::HunkPrev),
+            's' => ParseResult::Action(Action::SpellPrev),
             _ => ParseResult::Cancelled,
         };
     }
@@ -620,6 +689,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if let Some(k) = kind {
             state.reset();
             return ParseResult::Action(Action::AdjustViewport(k));
+        }
+        // `z=` — spell suggestion picker.
+        if ch == '=' {
+            state.reset();
+            return ParseResult::Action(Action::SpellSuggest);
         }
         // Fold commands — z + a/o/c/M/R.
         let fold = match ch {
@@ -710,6 +784,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_test_leader = true;
             return ParseResult::Pending;
         }
+        // `j` opens the AI-assistant sub-menu (`<leader>jc` Claude,
+        // `<leader>jx` Codex, `<leader>jo` opencode).
+        if ch == 'j' {
+            state.awaiting_ai_leader = true;
+            return ParseResult::Pending;
+        }
         let action = match ch {
             ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
             '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
@@ -724,6 +804,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'r' => Some(Action::LspRename),
             'R' => Some(Action::ReplaceAllInBuffer),
             'f' => Some(Action::Format),
+            'l' => Some(Action::LspExecuteCodeLens),
             '/' => Some(Action::ToggleComment),
             _ => None,
         };
@@ -859,6 +940,27 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'l' => Some(Action::TestLast),
             'q' => Some(Action::TestCancel),
             'r' => Some(Action::TestResults),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // AI-assistant prefix dispatch (after `<leader>j`). Mnemonic:
+    // `c` for Claude, `x` for Codex (it's a "code-X" thing), `o`
+    // for opencode. Each sub-key launches the matching tool in the
+    // right-side terminal pane, mirroring the `:claude` / `:codex`
+    // / `:opencode` ex commands.
+    if state.awaiting_ai_leader {
+        state.awaiting_ai_leader = false;
+        let action = match ch {
+            'c' => Some(Action::AiClaude),
+            'x' => Some(Action::AiCodex),
+            'o' => Some(Action::AiOpencode),
+            'q' => Some(Action::AiClose),
             _ => None,
         };
         state.reset();
@@ -1237,6 +1339,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             '*' => Some(Action::SearchWord { backward: false }),
             '#' => Some(Action::SearchWord { backward: true }),
             'K' => Some(Action::LspHover),
+            // `Q` re-runs the most recently replayed macro — same effect as
+            // `@@`, but one keystroke. Vim's legacy Ex-mode `Q` isn't
+            // implemented (binvim has no Ex mode), so the key is free.
+            'Q' => Some(Action::ReplayMacro { name: '@', count: state.total_count() }),
             _ => None,
         };
         if let Some(a) = act {

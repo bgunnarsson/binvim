@@ -42,6 +42,11 @@ pub struct LspClient {
     /// the manager reads it lazily before firing
     /// `textDocument/semanticTokens/full`.
     pub semantic_tokens_legend: Arc<Mutex<Option<SemanticTokensLegend>>>,
+    /// `serverCapabilities.codeLensProvider` flag, captured from the
+    /// `initialize` response. The manager gates
+    /// `textDocument/codeLens` on this so we don't burn a request
+    /// against a server that doesn't advertise the capability.
+    pub code_lens_provider: Arc<Mutex<bool>>,
 }
 
 /// Decoded `semanticTokensProvider.legend` from the server's
@@ -80,6 +85,8 @@ impl LspClient {
         let semantic_tokens_legend: Arc<Mutex<Option<SemanticTokensLegend>>> =
             Arc::new(Mutex::new(None));
         let legend_for_reader = semantic_tokens_legend.clone();
+        let code_lens_provider: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let code_lens_for_reader = code_lens_provider.clone();
         let in_tx_for_reader = in_tx.clone();
         thread::spawn(move || {
             reader_loop(
@@ -87,6 +94,7 @@ impl LspClient {
                 stdin_for_reader,
                 init_state_for_reader,
                 legend_for_reader,
+                code_lens_for_reader,
                 in_tx_for_reader,
             );
         });
@@ -123,6 +131,7 @@ impl LspClient {
             root_uri: root_uri.clone(),
             language_id: spec.language_id.clone(),
             semantic_tokens_legend,
+            code_lens_provider,
         };
 
         // Send initialize directly (bypassing the queue gate, which only holds
@@ -205,6 +214,7 @@ impl LspClient {
                             }
                         },
                         "formatting": { "dynamicRegistration": false },
+                        "codeLens": { "dynamicRegistration": false },
                         "semanticTokens": {
                             "dynamicRegistration": false,
                             "requests": {
@@ -234,6 +244,31 @@ impl LspClient {
                         "configuration": true,
                         "didChangeConfiguration": { "dynamicRegistration": false },
                         "workspaceFolders": true
+                    },
+                    // rust-analyzer (and a handful of other servers)
+                    // only emit their client-side-command lenses when
+                    // the client tells them which commands it can
+                    // execute. Without this advertisement the
+                    // `textDocument/codeLens` response comes back
+                    // empty even though `codeLensProvider` is
+                    // advertised — the server has nothing the editor
+                    // is willing to invoke. The names here mirror
+                    // what rust-analyzer's `client_commands_options`
+                    // looks for; we intercept `runSingle` /
+                    // `debugSingle` client-side in
+                    // `app/lsp_glue.rs::invoke_lens_command`, the
+                    // others fall back to `workspace/executeCommand`.
+                    "experimental": {
+                        "commands": {
+                            "commands": [
+                                "rust-analyzer.runSingle",
+                                "rust-analyzer.debugSingle",
+                                "rust-analyzer.showReferences",
+                                "rust-analyzer.gotoLocation",
+                                "rust-analyzer.triggerParameterHints",
+                                "rust-analyzer.rename"
+                            ]
+                        }
                     }
                 }
             }),
