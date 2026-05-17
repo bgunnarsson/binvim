@@ -148,9 +148,10 @@ impl super::App {
         if row < pane_top || row >= pane_bottom {
             return false;
         }
+        // Single-row chrome: header carries both the DEBUG chip
+        // and the tab labels. Body starts directly below.
         let header_row = pane_top;
-        let tab_row = pane_top + 1;
-        let body_top = pane_top + 2;
+        let body_top = pane_top + 1;
 
         match ev.kind {
             MouseEventKind::ScrollUp => {
@@ -195,9 +196,7 @@ impl super::App {
             self.mode = Mode::DebugPane;
         }
         if row == header_row {
-            return true;
-        }
-        if row == tab_row {
+            // Header is now also the tab strip — hit-test tabs.
             let hits = self.dap_tab_hitboxes.take();
             let mut clicked: Option<crate::app::DapPaneTab> = None;
             for (tab, x_start, x_end) in &hits {
@@ -614,10 +613,11 @@ impl super::App {
         self.dap_tab_scrolls.insert(tab, next);
     }
 
-    /// Rows available for tab body — pane minus the header chip
-    /// (debug status) and the tab bar.
+    /// Rows available for tab body — pane minus the header row
+    /// (which now carries both the `[DEBUG | adapter]` chip and
+    /// the tab labels on a single line).
     pub(super) fn dap_body_rows(&self) -> usize {
-        self.debug_pane_rows().saturating_sub(2)
+        self.debug_pane_rows().saturating_sub(1)
     }
 
     /// Adjust scroll so the cursor row in the active tab stays

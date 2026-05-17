@@ -4293,79 +4293,55 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let top = app.debug_pane_top();
     let width = app.width as usize;
 
-    // Mantle — same shade the tab bar uses, so the pane reads as
-    // chrome rather than another buffer split.
-    let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 };
-    let header_bg = pane_bg;
+    // Single-row chrome: `[DEBUG | <adapter>] <tab> <tab> …`
+    // sitting on the pane's Mantle background. No separate tab
+    // strip. Per-stop status info ("breakpoint bound at line 13",
+    // "stopped — breakpoint") has moved to the editor status line
+    // so the header stays minimal.
+    let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let header_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
     let body_bg = pane_bg;
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };     // Overlay0
-    let accent = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };    // Peach — debug accent
+    let active_bg = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
     let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
 
-    // Header row: " DEBUG  <adapter> · <status> "
-    let label = " DEBUG ";
-    let hint = match app.dap.session.as_ref() {
-        Some(s) => format!(" {} · {} ", s.adapter_key, s.status_line),
-        None => " no session — :debug to start ".to_string(),
-    };
-    queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
+    // ---------------------------------------------------------------------
+    // Header row. `[DEBUG | <adapter>]` chip on the left followed
+    // by the tab labels. Active tab paints green bg + white text.
+    // Inactive tabs are muted on the pane bg.
+    // ---------------------------------------------------------------------
+    let adapter_label = app
+        .dap
+        .session
+        .as_ref()
+        .map(|s| s.adapter_key.clone())
+        .unwrap_or_else(|| "idle".into());
+    let chip_text = format!(" DEBUG | {} ", adapter_label);
+    let chip_w = chip_text.chars().count() as u16;
+    queue!(out, MoveTo(0, top as u16), SetBackgroundColor(pane_bg))?;
     queue!(
         out,
-        SetBackgroundColor(accent),
-        SetForegroundColor(base),
-        SetAttribute(Attribute::Bold),
-        Print(label),
-        SetAttribute(Attribute::Reset),
-        SetBackgroundColor(header_bg),
         SetForegroundColor(muted),
-        Print(&hint),
+        Print(&chip_text),
     )?;
-    let used = label.chars().count() + hint.chars().count();
-    if width > used {
-        queue!(out, SetBackgroundColor(header_bg), Print(" ".repeat(width - used)))?;
-    }
-    queue!(out, ResetColor)?;
-
-    // ---------------------------------------------------------------------
-    // Tab bar — second row of the pane. The bar paints on a slightly
-    // lighter Surface0 band so it visually separates from both the
-    // header chip above (Mantle bg) and the body below (Mantle bg).
-    // Active tab gets bold + accent fg; inactive tabs are muted.
-    // Hitboxes for each label go into `dap_tab_hitboxes` so the
-    // mouse dispatcher can hit-test clicks on the bar.
-    // ---------------------------------------------------------------------
-    let tab_bar_bg = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }; // Surface0
-    let tab_row_y = (top + 1) as u16;
-    queue!(
-        out,
-        MoveTo(0, tab_row_y),
-        SetBackgroundColor(tab_bar_bg),
-        Print(" ".repeat(width)),
-        MoveTo(0, tab_row_y),
-    )?;
-    let mut tab_x: u16 = 0;
+    let mut tab_x: u16 = chip_w + 1;
     let mut hitboxes: Vec<(crate::app::DapPaneTab, u16, u16)> = Vec::new();
+    queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
     for tab in crate::app::DapPaneTab::all().iter() {
         let label = tab.label();
-        let chip = format!("  {}  ", label);
-        let chip_w = chip.chars().count() as u16;
+        let chip = format!(" {} ", label);
+        let chip_chars = chip.chars().count() as u16;
         let is_active = *tab == app.dap_pane_tab;
-        // Browser-tab styling: the active tab "drops" into the body
-        // by painting on body_bg (Mantle) while inactive tabs sit
-        // on the tab strip's Surface0 bg. The active tab gets bold
-        // bright text; inactive tabs are regular-weight muted. No
-        // underline, no peach (peach stays uniquely the DEBUG chip).
-        let (chip_bg, chip_fg) = if is_active {
-            (body_bg, header_fg)
+        let (bg, fg) = if is_active {
+            (active_bg, base)
         } else {
-            (tab_bar_bg, muted)
+            (pane_bg, muted)
         };
         queue!(
             out,
-            MoveTo(tab_x, tab_row_y),
-            SetBackgroundColor(chip_bg),
-            SetForegroundColor(chip_fg),
+            MoveTo(tab_x, top as u16),
+            SetBackgroundColor(bg),
+            SetForegroundColor(fg),
         )?;
         if is_active {
             queue!(out, SetAttribute(Attribute::Bold))?;
@@ -4374,10 +4350,12 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         }
         queue!(out, Print(&chip))?;
         queue!(out, SetAttribute(Attribute::NormalIntensity))?;
-        hitboxes.push((*tab, tab_x, tab_x + chip_w));
-        tab_x += chip_w;
+        hitboxes.push((*tab, tab_x, tab_x + chip_chars));
+        // 1-cell gap between tabs so the active green chip doesn't
+        // butt against the next label.
+        tab_x += chip_chars + 1;
     }
-    queue!(out, SetBackgroundColor(tab_bar_bg))?;
+    queue!(out, SetBackgroundColor(pane_bg))?;
     if (tab_x as usize) < width {
         queue!(out, Print(" ".repeat(width - tab_x as usize)))?;
     }
@@ -4385,13 +4363,11 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     app.dap_tab_hitboxes.set(hitboxes);
 
     // ---------------------------------------------------------------------
-    // Body — one tab at a time. Each tab builds a Vec of pre-formatted
-    // rows, then a single paint loop applies the active tab's scroll
-    // offset and writes the visible window. Selection highlights and
-    // syntax-coloured runs come from per-tab helpers.
+    // Body — one tab at a time. Body starts on the row directly
+    // below the header (no tab strip anymore).
     // ---------------------------------------------------------------------
-    let body_top = top + 2;
-    let body_rows = rows.saturating_sub(2);
+    let body_top = top + 1;
+    let body_rows = rows.saturating_sub(1);
     let pane_focused = app.mode == Mode::DebugPane;
 
     let rows_buf: Vec<DapTabRow> = match app.dap_pane_tab {
