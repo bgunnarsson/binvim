@@ -2761,7 +2761,54 @@ fn home_relative_with(path: &str, home: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_lsp_root, home_relative_with, truncate};
+    use super::{
+        display_lsp_root, home_relative_with, tokenize_console_line, truncate, truncate_right,
+        DebugPalette,
+    };
+
+    #[test]
+    fn truncate_right_keeps_left_and_appends_ellipsis() {
+        assert_eq!(truncate_right("hello world", 11), "hello world");
+        assert_eq!(truncate_right("hello world", 5), "hell…");
+        assert_eq!(truncate_right("x", 0), "");
+        assert_eq!(truncate_right("hello", 1), "…");
+    }
+
+    #[test]
+    fn tokenizer_splits_log_prefix_and_url() {
+        let p = DebugPalette::default();
+        let parts = tokenize_console_line(
+            "[11:35:23 INF] Now listening on: http://localhost:15336",
+            &p,
+        );
+        // Reconstructing the line from parts should round-trip
+        // exactly (no chars dropped, no extras inserted).
+        let joined: String = parts.iter().map(|q| q.text.as_str()).collect();
+        assert_eq!(
+            joined,
+            "[11:35:23 INF] Now listening on: http://localhost:15336"
+        );
+        // At least one part must carry the URL run as a single
+        // chunk (so the colour applies to the whole URL).
+        assert!(parts.iter().any(|q| q.text == "http://localhost:15336"));
+        // And at least one part should be the INF level chunk.
+        assert!(parts.iter().any(|q| q.text == "INF"));
+    }
+
+    #[test]
+    fn tokenizer_recognises_pascal_case() {
+        let p = DebugPalette::default();
+        let parts = tokenize_console_line(
+            "Starting a background hosted service for TempFileCleanupJob with delay",
+            &p,
+        );
+        let joined: String = parts.iter().map(|q| q.text.as_str()).collect();
+        assert_eq!(
+            joined,
+            "Starting a background hosted service for TempFileCleanupJob with delay"
+        );
+        assert!(parts.iter().any(|q| q.text == "TempFileCleanupJob"));
+    }
 
     #[test]
     fn home_relative_strips_home_prefix() {
@@ -4206,6 +4253,23 @@ fn lang_label(path: Option<&std::path::Path>, lang: Lang) -> (char, &'static str
     (lang_icon(lang), lang_name(lang))
 }
 
+/// Truncate `s` to `max` display chars, dropping characters off the
+/// END and appending `…`. Counterpart of `truncate_left` for cases
+/// where the leading content is what carries meaning (log lines,
+/// variable names, frame labels).
+fn truncate_right(s: &str, max: usize) -> String {
+    let count = s.chars().count();
+    if count <= max || max == 0 {
+        return s.chars().take(max).collect();
+    }
+    if max == 1 {
+        return "…".to_string();
+    }
+    let mut out: String = s.chars().take(max - 1).collect();
+    out.push('…');
+    out
+}
+
 fn truncate_left(s: &str, max: usize) -> String {
     let count = s.chars().count();
     if count <= max || max == 0 {
@@ -4435,7 +4499,12 @@ fn paint_dap_row(
             break;
         }
         let max = width.saturating_sub(used);
-        let text = truncate_left(&part.text, max);
+        // Right-truncate (drop the tail) — the leading content
+        // carries the meaning in every dap row shape: log lines
+        // start with the timestamp + level, locals start with the
+        // variable name, frames with file:line, etc. Truncating
+        // the START would lose the most-important characters.
+        let text = truncate_right(&part.text, max);
         let count = text.chars().count();
         // Order matters: set bg every iteration because the previous
         // part's `Attribute::Reset` (below) wipes it along with
@@ -4666,18 +4735,258 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
     }
     for line in app.dap.output_buffer.iter() {
         for one in line.output.lines() {
-            let fg = match line.category.as_str() {
-                "stderr" => palette.red,
-                "console" => palette.muted,
-                _ => palette.text,
+            // stderr rows paint everything red so they're loud-
+            // by-default (panics / native errors). adapter
+            // "console" category is dim metadata. Everything else
+            // gets full tokeniser treatment.
+            let parts = match line.category.as_str() {
+                "stderr" => vec![DapTabPart::plain(one.to_string(), palette.red)],
+                "console" => vec![DapTabPart::plain(one.to_string(), palette.subtle)],
+                _ => tokenize_console_line(one, &palette),
             };
-            rows.push(DapTabRow {
-                parts: vec![DapTabPart::plain(one.to_string(), fg)],
-                selected: false,
-            });
+            rows.push(DapTabRow { parts, selected: false });
         }
     }
     rows
+}
+
+/// Split a single console line into syntax-coloured parts. Pattern
+/// recognition is intentionally tiny — just enough to make the
+/// dominant log shapes (`.NET ILogger` / `microsoft.extensions.logging`
+/// / structured-logging frameworks generally) read clearly. Falls
+/// through to plain text for anything that doesn't match.
+fn tokenize_console_line(line: &str, p: &DebugPalette) -> Vec<DapTabPart> {
+    let mut parts: Vec<DapTabPart> = Vec::new();
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    // Try to peel a leading `[HH:MM:SS LVL]` prefix. The `[…]` chunk
+    // goes through with the timestamp dim and the level severity-
+    // coloured; the rest of the line continues into the
+    // pattern-matching tokeniser below.
+    if let Some(prefix_end) = match_log_prefix(&chars) {
+        // chars: `[HH:MM:SS LVL]` → split into `[`, `HH:MM:SS`, ` `, `LVL`, `]`.
+        let raw: String = chars[..prefix_end].iter().collect();
+        let inner: &str = raw.trim_matches(|c| c == '[' || c == ']');
+        let (time_part, level_part) = match inner.rfind(' ') {
+            Some(sp) => (inner[..sp].to_string(), inner[sp + 1..].to_string()),
+            None => (inner.to_string(), String::new()),
+        };
+        parts.push(DapTabPart::plain("[".to_string(), p.muted));
+        parts.push(DapTabPart::plain(time_part, p.subtle));
+        if !level_part.is_empty() {
+            parts.push(DapTabPart::plain(" ".to_string(), p.muted));
+            parts.push(DapTabPart::bold(level_part.clone(), severity_colour(&level_part, p)));
+        }
+        parts.push(DapTabPart::plain("] ".to_string(), p.muted));
+        i = prefix_end;
+        // Skip a single trailing space the bracket usually carries.
+        if chars.get(i).copied() == Some(' ') {
+            i += 1;
+        }
+    }
+    // Tokenise the body: URLs, paths, numbers, identifiers, quoted
+    // strings. Everything between matches is plain text.
+    let mut plain_start = i;
+    while i < chars.len() {
+        let c = chars[i];
+        // URL — `https://...` / `http://...`
+        if (c == 'h' || c == 'H')
+            && starts_with_ci(&chars, i, "http")
+            && next_is_scheme_tail(&chars, i)
+        {
+            flush_plain(&mut parts, &chars, plain_start, i, p);
+            let end = scan_url(&chars, i);
+            let token: String = chars[i..end].iter().collect();
+            parts.push(DapTabPart::plain(token, p.blue));
+            i = end;
+            plain_start = i;
+            continue;
+        }
+        // Quoted string — `"..."` or `'...'`. Greedy to the next
+        // matching quote on the same line (no embedded escape
+        // handling — log lines rarely need it).
+        if c == '"' || c == '\'' {
+            flush_plain(&mut parts, &chars, plain_start, i, p);
+            let end = scan_quoted(&chars, i, c);
+            let token: String = chars[i..end].iter().collect();
+            parts.push(DapTabPart::plain(token, p.green));
+            i = end;
+            plain_start = i;
+            continue;
+        }
+        // Number — runs of digits + a few embedded chars (`:`/`.` for
+        // timestamps + decimals). Anchored to a non-word boundary so
+        // `Box64` doesn't get a colour split mid-word.
+        if c.is_ascii_digit() && is_word_boundary(&chars, i.wrapping_sub(1)) {
+            flush_plain(&mut parts, &chars, plain_start, i, p);
+            let end = scan_number_run(&chars, i);
+            let token: String = chars[i..end].iter().collect();
+            parts.push(DapTabPart::plain(token, p.peach));
+            i = end;
+            plain_start = i;
+            continue;
+        }
+        // PascalCase identifier — `TempFileCleanupJob`, `MyController`.
+        // Anchored to a word-boundary start so embedded caps in
+        // camelCase don't split.
+        if c.is_ascii_uppercase() && is_word_boundary(&chars, i.wrapping_sub(1)) {
+            let end = scan_identifier(&chars, i);
+            if end - i >= 2 && pascal_has_lower(&chars[i..end]) {
+                flush_plain(&mut parts, &chars, plain_start, i, p);
+                let token: String = chars[i..end].iter().collect();
+                parts.push(DapTabPart::plain(token, p.yellow));
+                i = end;
+                plain_start = i;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    flush_plain(&mut parts, &chars, plain_start, chars.len(), p);
+    if parts.is_empty() {
+        parts.push(DapTabPart::plain(line.to_string(), p.text));
+    }
+    parts
+}
+
+fn match_log_prefix(chars: &[char]) -> Option<usize> {
+    // `[…]` with non-empty contents, found within the first ~24 chars.
+    if chars.first().copied() != Some('[') {
+        return None;
+    }
+    let cap = chars.len().min(64);
+    let mut i = 1;
+    while i < cap {
+        if chars[i] == ']' {
+            return Some(i + 1);
+        }
+        i += 1;
+    }
+    None
+}
+
+fn severity_colour(level: &str, p: &DebugPalette) -> Color {
+    match level {
+        "ERR" | "ERROR" | "FATAL" | "FTL" | "CRT" | "CRIT" | "CRITICAL" => p.red,
+        "WRN" | "WARN" | "WARNING" => p.yellow,
+        "INF" | "INFO" => p.blue,
+        "DBG" | "DEBUG" => p.lavender,
+        "TRC" | "TRACE" | "VRB" | "VERBOSE" => p.muted,
+        _ => p.subtle,
+    }
+}
+
+fn flush_plain(
+    parts: &mut Vec<DapTabPart>,
+    chars: &[char],
+    start: usize,
+    end: usize,
+    p: &DebugPalette,
+) {
+    if end > start {
+        let text: String = chars[start..end].iter().collect();
+        parts.push(DapTabPart::plain(text, p.text));
+    }
+}
+
+fn starts_with_ci(chars: &[char], i: usize, prefix: &str) -> bool {
+    let pchars: Vec<char> = prefix.chars().collect();
+    if i + pchars.len() > chars.len() {
+        return false;
+    }
+    for (k, p) in pchars.iter().enumerate() {
+        if chars[i + k].to_ascii_lowercase() != p.to_ascii_lowercase() {
+            return false;
+        }
+    }
+    true
+}
+
+fn next_is_scheme_tail(chars: &[char], i: usize) -> bool {
+    // After `http` / `HTTP`, expect `s?://`.
+    let mut j = i + 4;
+    if chars.get(j).copied() == Some('s') || chars.get(j).copied() == Some('S') {
+        j += 1;
+    }
+    chars.get(j).copied() == Some(':')
+        && chars.get(j + 1).copied() == Some('/')
+        && chars.get(j + 2).copied() == Some('/')
+}
+
+fn scan_url(chars: &[char], i: usize) -> usize {
+    let mut j = i;
+    while j < chars.len() {
+        let c = chars[j];
+        if c.is_whitespace() || c == ')' || c == ']' || c == '"' || c == '\'' || c == ',' || c == ';' {
+            break;
+        }
+        j += 1;
+    }
+    j
+}
+
+fn scan_quoted(chars: &[char], i: usize, q: char) -> usize {
+    let mut j = i + 1;
+    while j < chars.len() {
+        if chars[j] == q {
+            return j + 1;
+        }
+        j += 1;
+    }
+    chars.len()
+}
+
+fn scan_number_run(chars: &[char], i: usize) -> usize {
+    let mut j = i;
+    let mut saw_digit_after_punct = true;
+    while j < chars.len() {
+        let c = chars[j];
+        if c.is_ascii_digit() {
+            saw_digit_after_punct = true;
+            j += 1;
+            continue;
+        }
+        if (c == ':' || c == '.' || c == '_') && saw_digit_after_punct {
+            // Only extend through a separator if the next char is
+            // another digit — otherwise stop here so `12.` at end
+            // of a sentence doesn't swallow the period.
+            if chars.get(j + 1).is_some_and(|n| n.is_ascii_digit()) {
+                saw_digit_after_punct = false;
+                j += 1;
+                continue;
+            }
+        }
+        break;
+    }
+    j
+}
+
+fn scan_identifier(chars: &[char], i: usize) -> usize {
+    let mut j = i;
+    while j < chars.len() {
+        let c = chars[j];
+        if c.is_ascii_alphanumeric() || c == '_' {
+            j += 1;
+        } else {
+            break;
+        }
+    }
+    j
+}
+
+fn pascal_has_lower(slice: &[char]) -> bool {
+    // True for PascalCase / mixed identifiers ("FooBar", "MyClass")
+    // but false for SCREAMING_SNAKE_CASE acronyms ("URLS", "JSON")
+    // which shouldn't get type-name colouring.
+    slice.iter().skip(1).any(|c| c.is_ascii_lowercase())
+}
+
+fn is_word_boundary(chars: &[char], i: usize) -> bool {
+    if i >= chars.len() {
+        return true;
+    }
+    let c = chars[i];
+    !c.is_ascii_alphanumeric() && c != '_'
 }
 
 /// Pick a colour for a DAP variable value based on a cheap shape
