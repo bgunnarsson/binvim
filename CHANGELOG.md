@@ -7,21 +7,27 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **Theme `background` colour, threaded everywhere.** `[colors]
-  background = "#…"` in `~/.config/binvim/config.toml` (or in
-  any bundled theme under `./themes/`) now paints the entire
-  editor surface — buffer body, gutter, empty (`~`) rows, pane
-  dividers, tab bar, popups (whichkey / signature / hover /
-  notification / cmdline / picker), terminal pane header, debug
-  pane header + body, DAP rows, start page, `:health`, and
-  `:messages`. Bundled themes ship their canonical background
-  pre-set, so switching between e.g. Dracula (`#282a36`) and
-  Light Owl (`#fbfbfb`) flips every chrome surface in one go.
-  Leave the key unset to keep the previous behaviour: buffer
-  inherits the terminal's own background; chrome falls back to
-  Catppuccin Mantle. Status-line chips (mode / branch / path /
-  language) keep their layered Surface tones — those are
-  decoration over the chrome bg, not the bg itself.
+- **Full chrome palette in `[colors]`.** Twelve new keys in
+  `~/.config/binvim/config.toml` (or any `themes/<name>/theme.toml`)
+  drive every chrome colour the editor paints. They fall back to
+  Catppuccin Mocha defaults when unset, so existing setups don't
+  change.
+  - `background` — buffer body + every chrome surface
+  - `foreground` — main text on chrome
+  - `dim` — muted text (line numbers, hints, comments)
+  - `emphasis` — active tab fg, multi-cursor block, picker title
+  - `surface` — layered chrome (active tab bg, picker selection)
+  - `border` — popup borders, dividers, doc-highlight bg
+  - `accent` — debug-pane chip, breakpoint, dirty-tab marker
+  - `accent_secondary` — terminal chip, active debug sub-tab, git added
+  - `chip_fg` — fg on coloured chips
+  - `error` / `warning` / `info` / `hint` — diagnostics + git stripe
+  See `themes/catppuccin-mocha/theme.toml` for an annotated example.
+  Tab bar, terminal pane, debug pane (header + DAP rows), status
+  line, gutter signs, severity glyphs, search/yank/multi-cursor
+  flashes, notifications, popups, dashboard, and the `:health`
+  banner all read from these keys now — switch themes and the
+  whole UI follows.
 - **Multiple terminals (tabs).** The `:terminal` pane now hosts
   more than one PTY at a time. `<leader>tt` (or `:terminal`)
   always spawns a new tab — first invocation opens the pane; each

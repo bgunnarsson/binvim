@@ -194,6 +194,88 @@ impl Config {
             .unwrap_or(Color::Rgb { r: 0x18, g: 0x18, b: 0x25 })
     }
 
+    /// Generic per-key palette lookup with a default fallback. The chrome
+    /// helpers below all funnel through this so every theme.toml entry that
+    /// uses a recognised key wins over its baked-in Catppuccin default; an
+    /// unrecognised key just falls through unchanged.
+    fn theme_color(&self, key: &str, default: Color) -> Color {
+        self.colors
+            .get(key)
+            .and_then(|s| parse_color(s))
+            .unwrap_or(default)
+    }
+
+    /// Main fg colour for chrome text — status segments, popup body, dashboard
+    /// text. Capture-name lookups in `[colors]` still drive syntax colouring;
+    /// `foreground` controls chrome only.
+    pub fn theme_fg(&self) -> Color {
+        self.theme_color("foreground", Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 })
+    }
+
+    /// Muted secondary text — line numbers (relative), inlay hints, comments
+    /// in markdown sections, footer hints, copilot ghost.
+    pub fn theme_dim(&self) -> Color {
+        self.theme_color("dim", Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 })
+    }
+
+    /// Emphasised chrome text — active tab fg, multi-cursor marker, picker
+    /// title, hover heading, whichkey title.
+    pub fn theme_emphasis(&self) -> Color {
+        self.theme_color("emphasis", Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })
+    }
+
+    /// Layered chrome surface — sits above the chrome bg and is used for
+    /// active tab bg, status branch chip, picker row selection, debug-pane
+    /// row selection.
+    pub fn theme_surface(&self) -> Color {
+        self.theme_color("surface", Color::Rgb { r: 0x45, g: 0x47, b: 0x5a })
+    }
+
+    /// Borders, dividers, popup outlines, and subtle highlight backgrounds
+    /// (document-highlight, match-pair). Slightly lighter than `surface`.
+    pub fn theme_border(&self) -> Color {
+        self.theme_color("border", Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 })
+    }
+
+    /// Primary chrome accent — debug-pane chip bg, breakpoint marker,
+    /// active-terminal-tab bg, dirty-buffer dot in the tab bar.
+    pub fn theme_accent(&self) -> Color {
+        self.theme_color("accent", Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 })
+    }
+
+    /// Secondary chrome accent — terminal-pane chip bg, active sub-tab in
+    /// the debug pane.
+    pub fn theme_accent_secondary(&self) -> Color {
+        self.theme_color("accent_secondary", Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 })
+    }
+
+    /// Text colour on top of brightly-coloured chips (terminal / debug
+    /// chips, active tab in terminal pane). Should contrast with all the
+    /// accent colours.
+    pub fn theme_chip_fg(&self) -> Color {
+        self.theme_color("chip_fg", Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })
+    }
+
+    /// Error severity — diagnostics, deleted hunks, breakpoint dots.
+    pub fn theme_error(&self) -> Color {
+        self.theme_color("error", Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 })
+    }
+
+    /// Warning severity — diagnostics, modified hunks, search highlight bg.
+    pub fn theme_warning(&self) -> Color {
+        self.theme_color("warning", Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf })
+    }
+
+    /// Info severity — diagnostics, statusline mode chip default tint.
+    pub fn theme_info(&self) -> Color {
+        self.theme_color("info", Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa })
+    }
+
+    /// Hint severity — diagnostics.
+    pub fn theme_hint(&self) -> Color {
+        self.theme_color("hint", Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb })
+    }
+
     /// Resolve a colour for a tree-sitter capture name. User values from `[colors]`
     /// override the baked-in defaults.
     ///

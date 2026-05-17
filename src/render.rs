@@ -125,12 +125,12 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     let top = total_h.saturating_sub(popup_h) / 2;
 
     let bg = app.config.chrome_bg();
-    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
-    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
-    let key_fg = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }; // Mauve
-    let label_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let arrow_fg = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
-    let hint_fg = Color::Rgb { r: 0x9e, g: 0xa3, b: 0xb6 };
+    let border = app.config.theme_border();
+    let title_fg = app.config.theme_emphasis();
+    let key_fg = app.config.color_for_capture("keyword").unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+    let label_fg = app.config.theme_fg();
+    let arrow_fg = app.config.theme_dim();
+    let hint_fg = app.config.theme_dim();
 
     // ── Top border ───────────────────────────────────────────────────────
     let title_text = format!(" {} ", wk.title);
@@ -249,10 +249,10 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     }
 
     let bg = app.config.chrome_bg();
-    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
-    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let active_fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
-    let active_bg = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }; // Yellow
+    let border = app.config.theme_border();
+    let text_fg = app.config.theme_fg();
+    let active_fg = app.config.theme_chip_fg();
+    let active_bg = app.config.theme_warning();
 
     queue!(
         out,
@@ -339,10 +339,10 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     }
 
     let bg = app.config.chrome_bg();
-    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
-    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
-    let arrow_fg = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
+    let border = app.config.theme_border();
+    let text_fg = app.config.theme_fg();
+    let title_fg = app.config.theme_emphasis();
+    let arrow_fg = app.config.theme_dim();
     let heading_fg = title_fg;
 
     // Top border with title (and a "start-end/total" scroll indicator on the right).
@@ -513,7 +513,7 @@ fn paint_code_line(
 /// Classify a status message by content into a Catppuccin severity colour. We
 /// avoid threading a level enum through every callsite by reading the prefix
 /// patterns at render time.
-fn notification_color(msg: &str) -> Color {
+fn notification_color(app: &App, msg: &str) -> Color {
     let lower = msg.to_lowercase();
     // Error: "error: <foo>" or vim-style E37 / E89 / E492…
     let vim_error = msg
@@ -524,7 +524,7 @@ fn notification_color(msg: &str) -> Color {
         })
         .unwrap_or(false);
     if lower.starts_with("error:") || vim_error {
-        return Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }; // Red
+        return app.config.theme_error();
     }
     // Success: file write, substitution count, range yank / delete summaries.
     if lower.contains("written")
@@ -534,7 +534,7 @@ fn notification_color(msg: &str) -> Color {
         || lower.starts_with("recorded ")
         || lower.starts_with("kept buffer")
     {
-        return Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
+        return app.config.theme_accent_secondary();
     }
     // Warning: not-found, no-such, edge-of-history.
     if lower.contains("not found")
@@ -548,9 +548,9 @@ fn notification_color(msg: &str) -> Color {
         || lower.contains("no files")
         || lower.contains("buffer closed")
     {
-        return Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }; // Yellow
+        return app.config.theme_warning();
     }
-    Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa } // Blue — info default
+    app.config.theme_info()
 }
 
 /// Maximum content rows in a notification box before extra wrapped lines
@@ -566,7 +566,7 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     if app.status_msg.is_empty() {
         return Ok(());
     }
-    let level = notification_color(&app.status_msg);
+    let level = notification_color(app, &app.status_msg);
 
     // Cap the notification at half the terminal width so long messages
     // (file paths, stack traces) don't span the whole screen. The box adds
@@ -603,7 +603,7 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     let top = app.buffer_top();
 
     let bg = app.config.chrome_bg();
-    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Catppuccin Text
+    let text_fg = app.config.theme_fg();
 
     // Top border
     queue!(
@@ -700,11 +700,11 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
     let (title, prompt) = cmdline_chrome(app.mode);
     let inner_w = box_w.saturating_sub(2);
 
-    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
+    let border = app.config.theme_border();
     let bg = app.config.chrome_bg();
-    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
-    let prompt_fg = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }; // Blue
-    let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let title_fg = app.config.theme_emphasis();
+    let prompt_fg = app.config.theme_info();
+    let text_fg = app.config.theme_fg();
 
     // Top border with centred title.
     let title_text = format!(" {} ", title);
@@ -835,11 +835,11 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
         left_col = (app.width as usize).saturating_sub(popup_w);
     }
 
-    let bg_unsel = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }; // Surface0
-    let bg_sel = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a };   // Surface1
-    let label_unsel = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let label_sel = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };   // Lavender
-    let detail_fg = Color::Rgb { r: 0x9a, g: 0xa0, b: 0xb0 };   // Overlay2
+    let bg_unsel = app.config.chrome_bg();
+    let bg_sel = app.config.theme_surface();
+    let label_unsel = app.config.theme_fg();
+    let label_sel = app.config.theme_emphasis();
+    let detail_fg = app.config.theme_dim();
 
     for row in 0..popup_h {
         let pos = start + row;
@@ -852,7 +852,7 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
         let row_bg = if selected { bg_sel } else { bg_unsel };
         let label_fg = if selected { label_sel } else { label_unsel };
 
-        let (chip_text, chip_color) = completion_kind_chip(item.kind.as_deref());
+        let (chip_text, chip_color) = completion_kind_chip(app, item.kind.as_deref());
         let chip_pad = CHIP_W.saturating_sub(chip_text.chars().count());
 
         let label: String = item
@@ -896,15 +896,21 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
 /// Pick a short kind chip + Catppuccin colour for an LSP completion item.
 /// The chip text is always 3 chars (padded if shorter) so the body column
 /// stays aligned across rows.
-fn completion_kind_chip(kind: Option<&str>) -> (&'static str, Color) {
-    let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
-    let blue = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
-    let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
-    let teal = Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 };
-    let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
-    let green = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
-    let sky = Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb };
-    let subtext1 = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde };
+fn completion_kind_chip(app: &App, kind: Option<&str>) -> (&'static str, Color) {
+    let yellow = app.config.theme_warning();
+    let blue = app.config.theme_info();
+    let mauve = app
+        .config
+        .color_for_capture("keyword")
+        .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+    let teal = app
+        .config
+        .color_for_capture("character")
+        .unwrap_or(Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 });
+    let peach = app.config.theme_accent();
+    let green = app.config.theme_accent_secondary();
+    let sky = app.config.theme_hint();
+    let subtext1 = app.config.theme_fg();
     match kind.unwrap_or("") {
         "function" | "method" => ("fn", blue),
         "constructor" => ("new", blue),
@@ -1001,18 +1007,18 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
     let layout = picker_layout(app);
 
     let bg = app.config.chrome_bg();
-    let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
-    let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
-    let count_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
-    let prompt_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
-    let input_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let path_fg = Color::Rgb { r: 0x9a, g: 0xa0, b: 0xb0 }; // Overlay2
-    let name_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let dim_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
-    let sel_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
-    let sel_accent = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
-    let hint_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
-    let hint_key_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
+    let border = app.config.theme_border();
+    let title_fg = app.config.theme_emphasis();
+    let count_fg = app.config.theme_dim();
+    let prompt_fg = app.config.theme_accent();
+    let input_fg = app.config.theme_fg();
+    let path_fg = app.config.theme_dim();
+    let name_fg = app.config.theme_fg();
+    let dim_fg = app.config.theme_dim();
+    let sel_bg = app.config.theme_surface();
+    let sel_accent = app.config.theme_emphasis();
+    let hint_fg = app.config.theme_dim();
+    let hint_key_fg = app.config.theme_fg();
 
     // ── Top border with embedded title and counter ─────────────────────
     let title_seg = format!(" {} ", picker.title);
@@ -1131,7 +1137,16 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
             // the indices into items — empty when the picker has no query.
             let positions = picker.match_positions.get(pos).map(|v| v.as_slice()).unwrap_or(&[]);
             written = paint_picker_row(
-                out, display, body_w, selected, path_fg, name_fg, dim_fg, show_icon, positions,
+                out,
+                display,
+                body_w,
+                selected,
+                path_fg,
+                name_fg,
+                dim_fg,
+                app.config.theme_warning(),
+                show_icon,
+                positions,
             )?;
         }
         if written < body_w {
@@ -1249,6 +1264,7 @@ fn paint_picker_row(
     path_fg: Color,
     name_fg: Color,
     dim_fg: Color,
+    highlight_fg: Color,
     show_icon: bool,
     matched: &[usize],
 ) -> Result<usize> {
@@ -1307,7 +1323,7 @@ fn paint_picker_row(
     let _ = dim_fg;
     let dir_color = if selected { name_fg } else { path_fg };
     let name_color = name_fg;
-    let highlight = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }; // Yellow
+    let highlight = highlight_fg;
     if let Some(ch) = icon {
         queue!(
             out,
@@ -1472,7 +1488,7 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
         return Ok(());
     }
     let top = (rows.saturating_sub(block_h)) / 2;
-    let blue = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
+    let blue = app.config.theme_info();
     for (i, line) in lines.iter().enumerate() {
         let line_w = line.chars().count();
         let left = (total_w.saturating_sub(line_w)) / 2;
@@ -1520,7 +1536,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     }
 
     let snap = app.build_health_snapshot();
-    let p = DashboardPalette::default();
+    let p = DashboardPalette::from_config(&app.config);
 
     let left = 2usize;
     // Reserve the bottom row of the buffer area for the always-on
@@ -1608,10 +1624,10 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // carries a clickable tab strip (active tab = blue bg + white
     // text). The [TERMINAL] chip itself stays constant.
     let pane_bg = app.config.chrome_bg();
-    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };    // Overlay0
-    let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
-    let accent_terminal = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
-    let active_tab_bg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };  // Peach
+    let muted = app.config.theme_dim();
+    let base = app.config.theme_chip_fg();
+    let accent_terminal = app.config.theme_accent_secondary();
+    let active_tab_bg = app.config.theme_accent();
     let label = " TERMINAL ";
     let label_w = label.chars().count() as u16;
     let chip_bg = match app.mode {
@@ -1784,7 +1800,7 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
             queue!(out, Clear(ClearType::CurrentLine))?;
         }
     }
-    let p = DashboardPalette::default();
+    let p = DashboardPalette::from_config(&app.config);
     let left = 2usize;
     let viewport_rows = rows.saturating_sub(1);
     let body_w = total_w.saturating_sub(left + 2).max(40);
@@ -2774,22 +2790,28 @@ struct DashboardPalette {
     red: Color,
 }
 
-impl Default for DashboardPalette {
-    fn default() -> Self {
+impl DashboardPalette {
+    fn from_config(config: &crate::config::Config) -> Self {
+        let mauve = config
+            .color_for_capture("keyword")
+            .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+        let teal = config
+            .color_for_capture("character")
+            .unwrap_or(Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 });
         Self {
-            text: Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
-            subtext1: Color::Rgb { r: 0xba, g: 0xc2, b: 0xde },
-            overlay0: Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },
-            overlay1: Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c },
-            border: Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }, // Surface2
-            lavender: Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe },
-            mauve: Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 },
-            blue: Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },
-            teal: Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 },
-            green: Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 },
-            yellow: Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf },
-            peach: Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 },
-            red: Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 },
+            text: config.theme_fg(),
+            subtext1: config.theme_fg(),
+            overlay0: config.theme_dim(),
+            overlay1: config.theme_dim(),
+            border: config.theme_border(),
+            lavender: config.theme_emphasis(),
+            mauve,
+            blue: config.theme_info(),
+            teal,
+            green: config.theme_accent_secondary(),
+            yellow: config.theme_warning(),
+            peach: config.theme_accent(),
+            red: config.theme_error(),
         }
     }
 }
@@ -3083,12 +3105,12 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
 
     let bar_bg = app.config.chrome_bg();
-    let active_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
-    let active_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
-    let inactive_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
-    let dirty_fg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
-    let close_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
-    let chevron_fg = Color::Rgb { r: 0xba, g: 0xc2, b: 0xde }; // Subtext1
+    let active_bg = app.config.theme_surface();
+    let active_fg = app.config.theme_emphasis();
+    let inactive_fg = app.config.theme_dim();
+    let dirty_fg = app.config.theme_accent();
+    let close_fg = app.config.theme_dim();
+    let chevron_fg = app.config.theme_fg();
 
     // Bar-wide bg fill so gaps between tabs render in the bar colour.
     queue!(
@@ -3177,7 +3199,7 @@ fn draw_pane_dividers(
     editor_rect: crate::layout::Rect,
 ) -> Result<()> {
     let panes = app.layout.partition(editor_rect);
-    let surface1 = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a };
+    let surface1 = app.config.theme_surface();
     let buf_bg = app.config.background_color();
     queue!(out, SetForegroundColor(surface1))?;
     apply_buf_bg(out, buf_bg)?;
@@ -3290,18 +3312,9 @@ fn draw_buffer(
             let git_kind = bs.git_hunk_kind_at(line_idx);
             if let Some(kind) = git_kind {
                 let (glyph, color) = match kind {
-                    crate::git::GitHunkKind::Added => (
-                        '▎',
-                        Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
-                    ),
-                    crate::git::GitHunkKind::Modified => (
-                        '▎',
-                        Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
-                    ),
-                    crate::git::GitHunkKind::Deleted => (
-                        '▁',
-                        Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
-                    ),
+                    crate::git::GitHunkKind::Added => ('▎', app.config.theme_accent_secondary()),
+                    crate::git::GitHunkKind::Modified => ('▎', app.config.theme_warning()),
+                    crate::git::GitHunkKind::Deleted => ('▁', app.config.theme_error()),
                 };
                 queue!(out, SetForegroundColor(color), Print(glyph.to_string()))?;
                 reset_to_buf_bg(out, buf_bg)?;
@@ -3318,15 +3331,15 @@ fn draw_buffer(
                 .map(|p| app.dap.has_breakpoint(p, line_one_based))
                 .unwrap_or(false);
             let sign = if pc_here {
-                Some(('▶', Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 })) // Peach
+                Some(('▶', app.config.theme_accent()))
             } else if bp_here {
-                Some(('●', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 })) // Red
+                Some(('●', app.config.theme_error()))
             } else if let Some(diag_path) = bs.buffer.path.as_deref() {
                 app.worst_diagnostic_for(diag_path, line_idx).map(|s| match s {
-                    Severity::Error => ('!', Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }),
-                    Severity::Warning => ('?', Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }),
-                    Severity::Info => ('i', Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }),
-                    Severity::Hint => ('h', Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }),
+                    Severity::Error => ('!', app.config.theme_error()),
+                    Severity::Warning => ('?', app.config.theme_warning()),
+                    Severity::Info => ('i', app.config.theme_info()),
+                    Severity::Hint => ('h', app.config.theme_hint()),
                 })
             } else {
                 None
@@ -3353,7 +3366,7 @@ fn draw_buffer(
                 };
                 (
                     format!("{:>width$} ", dist, width = gutter - 3),
-                    Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }, // Overlay0
+                    app.config.theme_dim(),
                 )
             } else {
                 // Cursor row in relative mode, or every row in absolute
@@ -3361,11 +3374,7 @@ fn draw_buffer(
                 let bright = app.config.line_numbers.relative;
                 (
                     format!("{:>width$} ", line_idx + 1, width = gutter - 3),
-                    if bright {
-                        Color::Rgb { r: 0xba, g: 0xc2, b: 0xde } // Subtext1
-                    } else {
-                        Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 } // Overlay0
-                    },
+                    if bright { app.config.theme_fg() } else { app.config.theme_dim() },
                 )
             };
             queue!(out, SetForegroundColor(label_color), Print(label))?;
@@ -3376,11 +3385,7 @@ fn draw_buffer(
             if bs.line_is_fold_start(line_idx) {
                 let span = bs.folded_line_span(line_idx);
                 let folded = format!("  ⏷ {} lines", span);
-                queue!(
-                    out,
-                    SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
-                    Print(folded),
-                )?;
+                queue!(out, SetForegroundColor(app.config.theme_dim()), Print(folded))?;
                 reset_to_buf_bg(out, buf_bg)?;
             }
             // Advance to the next visible line — past the fold's hidden
@@ -3395,11 +3400,7 @@ fn draw_buffer(
                 line_idx += 1;
             }
         } else {
-            queue!(
-                out,
-                SetForegroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
-                Print("~"),
-            )?;
+            queue!(out, SetForegroundColor(app.config.theme_surface()), Print("~"))?;
             reset_to_buf_bg(out, buf_bg)?;
         }
     }
@@ -3464,7 +3465,7 @@ fn draw_line_with_selection(
     let mut visual_used = 0usize;
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
-    let hint_fg = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c }; // Overlay1
+    let hint_fg = app.config.theme_dim();
     // Multi-cursor positions on this line — the renderer paints a
     // Lavender block at each so the user can see where mirrored edits
     // will land.
@@ -3491,7 +3492,7 @@ fn draw_line_with_selection(
             }
         }
     }
-    let dim_color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }; // Overlay0
+    let dim_color = app.config.theme_dim();
     // `:set list` equivalent — render every space as `·`, every tab as
     // `→` + filler, every non-breaking space as `⎵`, and the end-of-line
     // as `¬`. All in the muted overlay colour. Configurable via
@@ -3584,38 +3585,31 @@ fn draw_line_with_selection(
                 return Ok(());
             }
             crate::markdown_render::MarkdownLineKind::HorizontalRule => {
-                // Paint `─` × `avail` in muted Overlay0 so the rule
+                // Paint `─` × `avail` in muted dim so the rule
                 // visually separates sections without competing with
                 // surrounding prose.
                 let rule: String = "─".repeat(avail);
-                queue!(
-                    out,
-                    SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }),
-                    Print(rule),
-                )?;
+                queue!(out, SetForegroundColor(app.config.theme_dim()), Print(rule))?;
                 reset_to_buf_bg(out, buf_bg)?;
                 return Ok(());
             }
             crate::markdown_render::MarkdownLineKind::Table(row_kind) => {
                 // Tables paint a pre-rendered box-drawn replacement
                 // string (column-padded, pipes/junctions) instead of
-                // the source row. Style by row kind: header bold +
-                // Lavender, separator dim Overlay0, body normal text
-                // (so cell content reads as foreground prose).
+                // the source row. Style by row kind: header emphasis +
+                // bold, separator dim, body normal text (so cell content
+                // reads as foreground prose).
                 if let Some(rendered) = meta.replacement.as_deref() {
                     let (color, bold) = match row_kind {
-                        crate::markdown_render::TableRowKind::Header => (
-                            Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }, // Lavender
-                            true,
-                        ),
-                        crate::markdown_render::TableRowKind::Separator => (
-                            Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }, // Overlay0
-                            false,
-                        ),
-                        crate::markdown_render::TableRowKind::Body => (
-                            Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }, // Text
-                            false,
-                        ),
+                        crate::markdown_render::TableRowKind::Header => {
+                            (app.config.theme_emphasis(), true)
+                        }
+                        crate::markdown_render::TableRowKind::Separator => {
+                            (app.config.theme_dim(), false)
+                        }
+                        crate::markdown_render::TableRowKind::Body => {
+                            (app.config.theme_fg(), false)
+                        }
                     };
                     let printable: String = rendered.chars().take(avail).collect();
                     queue!(out, SetForegroundColor(color))?;
@@ -3637,7 +3631,7 @@ fn draw_line_with_selection(
                     let printable: String = rendered.chars().take(avail).collect();
                     queue!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
+                        SetForegroundColor(app.config.theme_accent()),
                         SetAttribute(Attribute::Bold),
                         Print(&printable),
                         SetAttribute(Attribute::Reset),
@@ -3741,11 +3735,7 @@ fn draw_line_with_selection(
                 // parameter name" rather than blending into the type
                 // hints elsewhere on the line. Type hints (kind == 1
                 // or unknown) keep the muted Overlay1 tone.
-                let fg = if h.kind == 2 {
-                    Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 } // Overlay2 — warmer than Overlay1
-                } else {
-                    hint_fg
-                };
+                let fg = hint_fg;
                 queue!(
                     out,
                     SetForegroundColor(fg),
@@ -3830,43 +3820,40 @@ fn draw_line_with_selection(
         } else if in_search {
             queue!(
                 out,
-                SetBackgroundColor(Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }), // Yellow
-                SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
+                SetBackgroundColor(app.config.theme_warning()),
+                SetForegroundColor(app.config.theme_chip_fg())
             )?;
         } else if in_yank_flash {
-            // Distinct Peach flash — different from search Yellow so the two
+            // Distinct accent flash — different from search warning so the two
             // never visually collide on shared text.
             queue!(
                 out,
-                SetBackgroundColor(Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }), // Peach
-                SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
+                SetBackgroundColor(app.config.theme_accent()),
+                SetForegroundColor(app.config.theme_chip_fg())
             )?;
         } else if is_multi_cursor {
-            // Lavender bg + Base fg — high contrast so the cursor pops,
+            // Emphasis bg + chip fg — high contrast so the cursor pops,
             // matches the colour we'd use for the primary's cursor block.
             queue!(
                 out,
-                SetBackgroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }), // Lavender
-                SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })  // Base
+                SetBackgroundColor(app.config.theme_emphasis()),
+                SetForegroundColor(app.config.theme_chip_fg())
             )?;
         } else if in_match_pair {
-            // Subtle Surface2 background so the syntax-coloured foreground
+            // Subtle border background so the syntax-coloured foreground
             // still shows through, plus Bold so the bracket/tag pops.
             queue!(
                 out,
-                SetBackgroundColor(Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }), // Surface2
+                SetBackgroundColor(app.config.theme_border()),
                 SetAttribute(Attribute::Bold)
             )?;
         } else if in_doc_highlight {
-            // Surface2 — same shade match-pair uses for brackets.
-            // They never collide on the same character because match-pair
-            // targets bracket / tag punctuation while documentHighlight
-            // targets identifier runs. Foreground stays on the syntax
-            // cache so the underlying token colour still reads through.
-            queue!(
-                out,
-                SetBackgroundColor(Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }), // Surface2
-            )?;
+            // Same shade match-pair uses for brackets. They never collide
+            // on the same character because match-pair targets bracket /
+            // tag punctuation while documentHighlight targets identifier
+            // runs. Foreground stays on the syntax cache so the underlying
+            // token colour still reads through.
+            queue!(out, SetBackgroundColor(app.config.theme_border()))?;
             if let Some(fg) = syntax_color {
                 queue!(out, SetForegroundColor(fg))?;
             }
@@ -3936,7 +3923,7 @@ fn draw_line_with_selection(
             false
         };
         if let Some(sev) = diag_severity {
-            let underline = severity_color(sev);
+            let underline = severity_color(app, sev);
             queue!(
                 out,
                 SetUnderlineColor(underline),
@@ -4010,8 +3997,8 @@ fn draw_line_with_selection(
     if !clipped_right && multi_cursors.contains(&chars.len()) && visual_used + 1 <= avail {
         queue!(
             out,
-            SetBackgroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }), // Lavender
-            SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }), // Base
+            SetBackgroundColor(app.config.theme_emphasis()),
+            SetForegroundColor(app.config.theme_chip_fg()),
             Print(' '),
         )?;
         reset_to_buf_bg(out, buf_bg)?;
@@ -4030,13 +4017,7 @@ fn draw_line_with_selection(
             }
             let printable: String = h.label.chars().take(remaining).collect();
             let written = printable.chars().count();
-            // Same kind-aware tone the inline pass uses — parameter
-            // hints lean a shade warmer than type hints.
-            let fg = if h.kind == 2 {
-                Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 }
-            } else {
-                hint_fg
-            };
+            let fg = hint_fg;
             queue!(
                 out,
                 SetForegroundColor(fg),
@@ -4091,7 +4072,7 @@ fn draw_line_with_selection(
                     let truncated: String = first_line.chars().take(remaining).collect();
                     queue!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
+                        SetForegroundColor(app.config.theme_dim()),
                         SetAttribute(Attribute::Italic),
                         Print(&truncated),
                         SetAttribute(Attribute::NoItalic),
@@ -4121,7 +4102,7 @@ fn draw_line_with_selection(
                 Severity::Warning => '▲',
                 _ => '●',
             };
-            let color = severity_color(diag.severity);
+            let color = severity_color(app, diag.severity);
             // "  <icon> " — leading 2 spaces, icon (1 or 2 cols), trailing space.
             let icon_w = UnicodeWidthChar::width(icon).unwrap_or(1);
             let prefix_w = 2 + icon_w + 1;
@@ -4176,7 +4157,7 @@ fn draw_line_with_selection(
                 if !msg.is_empty() {
                     queue!(
                         out,
-                        SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
+                        SetForegroundColor(app.config.theme_dim()),
                         SetAttribute(Attribute::Italic),
                         Print(&msg),
                         SetAttribute(Attribute::NoItalic),
@@ -4203,12 +4184,12 @@ fn draw_line_with_selection(
 /// Catppuccin Mocha colour assignment per LSP severity. Used for both the
 /// undercurl on the offending range and the inline Error Lens icon so the
 /// two visuals match on the same line.
-fn severity_color(sev: Severity) -> Color {
+fn severity_color(app: &App, sev: Severity) -> Color {
     match sev {
-        Severity::Error => Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 },   // Red
-        Severity::Warning => Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
-        Severity::Info => Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },    // Blue
-        Severity::Hint => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb },    // Sky
+        Severity::Error => app.config.theme_error(),
+        Severity::Warning => app.config.theme_warning(),
+        Severity::Info => app.config.theme_info(),
+        Severity::Hint => app.config.theme_hint(),
     }
 }
 
@@ -4234,19 +4215,23 @@ const PL_LEFT: char = '\u{e0b2}'; // left-pointing arrow (filled)
 const NF_BRANCH: char = '\u{e0a0}';
 
 // Catppuccin Mocha mode block colours (matches the syntax-highlighting palette).
-fn mode_color(mode: Mode) -> Color {
+fn mode_color(app: &App, mode: Mode) -> Color {
+    let mauve = app
+        .config
+        .color_for_capture("keyword")
+        .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
     match mode {
-        Mode::Normal => Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }, // Lavender
-        Mode::Insert => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
-        Mode::Visual(VisualKind::Char) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
-        Mode::Visual(VisualKind::Line) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
-        Mode::Visual(VisualKind::Block) => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
-        Mode::Command => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
-        Mode::Search { .. } => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
-        Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
-        Mode::Prompt(_) => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
-        Mode::DebugPane => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach — matches debug pane accent
-        Mode::Terminal => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green — typing flows like Insert
+        Mode::Normal => app.config.theme_emphasis(),
+        Mode::Insert => app.config.theme_accent_secondary(),
+        Mode::Visual(VisualKind::Char) => mauve,
+        Mode::Visual(VisualKind::Line) => mauve,
+        Mode::Visual(VisualKind::Block) => mauve,
+        Mode::Command => app.config.theme_accent(),
+        Mode::Search { .. } => app.config.theme_accent(),
+        Mode::Picker => app.config.theme_hint(),
+        Mode::Prompt(_) => app.config.theme_accent(),
+        Mode::DebugPane => app.config.theme_accent(),
+        Mode::Terminal => app.config.theme_accent_secondary(),
     }
 }
 
@@ -4378,11 +4363,11 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // "stopped — breakpoint") has moved to the editor status line
     // so the header stays minimal.
     let pane_bg = app.config.chrome_bg();
-    let header_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
+    let header_fg = app.config.theme_fg();
     let body_bg = pane_bg;
-    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };     // Overlay0
-    let active_bg = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
-    let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
+    let muted = app.config.theme_dim();
+    let active_bg = app.config.theme_accent_secondary();
+    let base = app.config.theme_chip_fg();
 
     // ---------------------------------------------------------------------
     // Header row. `[DEBUG | <adapter>]` chip on the left followed
@@ -4400,7 +4385,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // Chip styling stays as the original peach badge — clear "you
     // are in the debugger" identifier, distinct from the active
     // tab's green badge so the two never compete visually.
-    let chip_bg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
+    let chip_bg = app.config.theme_accent();
     queue!(out, MoveTo(0, top as u16))?;
     queue!(
         out,
@@ -4489,7 +4474,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, MoveTo(0, screen_y), SetBackgroundColor(body_bg))?;
         let idx = visible_start + r;
         if let Some(row) = rows_buf.get(idx) {
-            paint_dap_row(out, row, width, h_skip, body_bg)?;
+            paint_dap_row(out, row, width, h_skip, body_bg, app.config.theme_border(), muted)?;
         } else {
             queue!(out, Print(" ".repeat(width)))?;
         }
@@ -4555,14 +4540,15 @@ fn paint_dap_row(
     width: usize,
     h_skip: usize,
     pane_bg: Color,
+    selection_bg: Color,
+    muted: Color,
 ) -> Result<()> {
     let row_bg = if row.selected {
-        Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 } // Surface2 — whole-row select
+        selection_bg
     } else {
         pane_bg
     };
-    let sel_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2 — partial select
-    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };  // Overlay0
+    let sel_bg = selection_bg;
     let sel_range = row.selection_range;
     if width == 0 {
         return Ok(());
@@ -4706,7 +4692,7 @@ fn paint_dap_row(
 
 fn build_frames_rows(app: &App) -> Vec<DapTabRow> {
     let mut rows: Vec<DapTabRow> = Vec::new();
-    let palette = DebugPalette::default();
+    let palette = DebugPalette::from_config(&app.config);
     let Some(session) = app.dap.session.as_ref() else {
         rows.push(note_row(no_session_note(), &palette));
         return rows;
@@ -4747,7 +4733,7 @@ fn build_frames_rows(app: &App) -> Vec<DapTabRow> {
 
 fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
     let mut rows: Vec<DapTabRow> = Vec::new();
-    let palette = DebugPalette::default();
+    let palette = DebugPalette::from_config(&app.config);
     let Some(session) = app.dap.session.as_ref() else {
         rows.push(note_row(no_session_note(), &palette));
         return rows;
@@ -4790,7 +4776,7 @@ fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
 
 fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
     let mut rows: Vec<DapTabRow> = Vec::new();
-    let palette = DebugPalette::default();
+    let palette = DebugPalette::from_config(&app.config);
     if app.dap.watches.is_empty() {
         rows.push(note_row(
             "(no watches — add via `:dapwatch <expr>`)",
@@ -4836,7 +4822,7 @@ fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
 
 fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
     let mut rows: Vec<DapTabRow> = Vec::new();
-    let palette = DebugPalette::default();
+    let palette = DebugPalette::from_config(&app.config);
     if app.dap.breakpoints.is_empty() {
         rows.push(note_row("(no breakpoints — F9 to toggle on the cursor's line)", &palette));
         return rows;
@@ -4884,7 +4870,7 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
 }
 
 fn build_console_rows(app: &App) -> Vec<DapTabRow> {
-    let palette = DebugPalette::default();
+    let palette = DebugPalette::from_config(&app.config);
     let mut rows: Vec<DapTabRow> = Vec::new();
     if app.dap.output_buffer.is_empty() {
         rows.push(note_row("(no console output yet)", &palette));
@@ -5238,21 +5224,27 @@ struct DebugPalette {
     red: Color,
 }
 
+impl DebugPalette {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            base: config.theme_chip_fg(),
+            text: config.theme_fg(),
+            subtle: config.theme_fg(),
+            muted: config.theme_dim(),
+            accent: config.theme_accent(),
+            blue: config.theme_info(),
+            lavender: config.theme_emphasis(),
+            green: config.theme_accent_secondary(),
+            peach: config.theme_accent(),
+            yellow: config.theme_warning(),
+            red: config.theme_error(),
+        }
+    }
+}
+
 impl Default for DebugPalette {
     fn default() -> Self {
-        Self {
-            base: Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e },
-            text: Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
-            subtle: Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }, // Subtext0
-            muted: Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },  // Overlay0
-            accent: Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 },
-            blue: Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },
-            lavender: Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe },
-            green: Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 },
-            peach: Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 },
-            yellow: Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf },
-            red: Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 },
-        }
+        Self::from_config(&crate::config::Config::default())
     }
 }
 
@@ -5269,12 +5261,12 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let row = (app.height as usize).saturating_sub(1) as u16;
     let total = app.width as usize;
 
-    let mode_bg = mode_color(app.mode);
-    let mode_fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
-    let branch_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
-    let branch_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
-    let path_bg = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }; // Surface0
-    let path_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
+    let mode_bg = mode_color(app, app.mode);
+    let mode_fg = app.config.theme_chip_fg();
+    let branch_bg = app.config.theme_surface();
+    let branch_fg = app.config.theme_fg();
+    let path_bg = app.config.chrome_bg();
+    let path_fg = app.config.theme_dim();
     let right_bg = branch_bg;
     let right_fg = branch_fg;
 

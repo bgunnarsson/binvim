@@ -4,7 +4,36 @@
 schema_version = 1
 
 [colors]
+# ── Editor surface ─────────────────────────────────────────────────
+# `background` paints the buffer body + every chrome surface
+# (status line, tabs, popups, terminal pane, debug pane, start
+# page, :health, :messages). Omit it for a transparent buffer that
+# inherits the terminal's own background; chrome surfaces fall back
+# to Catppuccin Mantle so they still have visible contrast.
 background        = "#1e1e2e"
+
+# ── Chrome palette ──────────────────────────────────────────────────
+# These twelve keys drive every chrome colour: tab bar, status line
+# chips, popup borders, terminal / debug headers, dashboard text,
+# gutter signs, diagnostics, search / yank flashes, multi-cursor
+# blocks, doc-highlight backgrounds. Unset keys fall back to the
+# Catppuccin Mocha defaults baked into Config — these explicit
+# entries match those defaults so copying this theme as a starting
+# point makes every key discoverable.
+foreground        = "#cdd6f4"  # main text on chrome
+dim               = "#6c7086"  # muted text (line numbers, hints, comments)
+emphasis          = "#b4befe"  # active tab fg, multi-cursor block, picker title
+surface           = "#45475a"  # layered chrome (active tab bg, picker selection, ~rows)
+border            = "#585b70"  # popup borders, dividers, doc-highlight / match-pair bg
+accent            = "#fab387"  # debug chip bg, breakpoint, active terminal tab, dirty tab dot
+accent_secondary  = "#a6e3a1"  # terminal chip bg, active debug sub-tab, git added stripe
+chip_fg           = "#1e1e2e"  # fg on bright colour chips (terminal / debug / search / yank)
+error             = "#f38ba8"  # diagnostic + git deleted + breakpoint dot
+warning           = "#f9e2af"  # diagnostic + git modified + search highlight bg
+info              = "#89b4fa"  # diagnostic + cmdline prompt
+hint              = "#89dceb"  # diagnostic + picker mode chip
+
+# ── Syntax captures (tree-sitter / LSP semantic tokens) ────────────
 comment           = "#7f849c"
 string            = "#a6e3a1"
 "string.escape"   = "#f5c2e7"
