@@ -1216,6 +1216,40 @@ mod tests {
     }
 
     #[test]
+    fn rust_derive_attribute_paints_distinct_from_pub_struct() {
+        // Regression: tree-sitter-rust's `(attribute_item) @attribute`
+        // is one of the last patterns in the bundled query, so under
+        // "later pattern wins" priority the whole `#[derive(Debug,
+        // Clone, Copy)]` range should paint as @attribute — which now
+        // resolves to peach, distinct from @keyword (mauve) on the
+        // `pub struct` line below. The earlier bug surfaced as the
+        // attribute being the same hue as the keyword line, making
+        // the visual unit indistinguishable.
+        let config = Config::load();
+        let source = "#[derive(Debug, Clone, Copy)]\npub struct Foo;\n";
+        let colors = compute_byte_colors(Lang::Rust, source, &config)
+            .expect("highlight pass should succeed");
+
+        let derive_at = find_word(source, "derive").expect("derive token present");
+        let pub_at = find_word(source, "pub").expect("pub token present");
+        let attribute_color = colors[derive_at];
+        let keyword_color = colors[pub_at];
+        assert!(
+            attribute_color.is_some(),
+            "@attribute should resolve to a colour, got None"
+        );
+        assert!(
+            keyword_color.is_some(),
+            "@keyword should resolve to a colour, got None"
+        );
+        assert_ne!(
+            attribute_color, keyword_color,
+            "#[derive(...)] should not share a colour with `pub` — current attribute={:?}, keyword={:?}",
+            attribute_color, keyword_color,
+        );
+    }
+
+    #[test]
     fn razor_detects_cshtml() {
         assert_eq!(
             Lang::detect(std::path::Path::new("foo.cshtml")),
@@ -1294,7 +1328,12 @@ mod tests {
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
         let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        // HTML attribute names share the `@attribute` capture with
+        // Rust attribute items (`#[derive(...)]`). Both render peach
+        // so the attribute family is uniformly distinct from
+        // @keyword / @type / @tag — see config.rs's
+        // `default_capture_color`.
+        let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
         let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
 
         // The first broken `<div class="…px-[12px]…">` opener.
@@ -1307,8 +1346,8 @@ mod tests {
         let class_idx = div_idx + 4; // skip `div `
         assert_eq!(
             cache.byte_colors.get(class_idx).copied().flatten(),
-            Some(yellow),
-            "broken `class` attribute name should be Yellow",
+            Some(peach),
+            "broken `class` attribute name should be Peach (attribute family)",
         );
 
         // `else` inside @if/else body — bare token, no parent node.
@@ -1346,7 +1385,12 @@ mod tests {
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
         let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        // HTML attribute names share the `@attribute` capture with
+        // Rust attribute items (`#[derive(...)]`). Both render peach
+        // so the attribute family is uniformly distinct from
+        // @keyword / @type / @tag — see config.rs's
+        // `default_capture_color`.
+        let peach = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
         let section_idx = source.find("<section").unwrap() + 1;
         assert_eq!(
             cache.byte_colors.get(section_idx).copied().flatten(),
@@ -1356,8 +1400,8 @@ mod tests {
         let class_idx = source.find(" class=").unwrap() + 1;
         assert_eq!(
             cache.byte_colors.get(class_idx).copied().flatten(),
-            Some(yellow),
-            "attribute `class=` should be Yellow",
+            Some(peach),
+            "attribute `class=` should be Peach (attribute family)",
         );
     }
 

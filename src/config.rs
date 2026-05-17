@@ -626,7 +626,23 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "namespace" | "module" => Some(CATP_YELLOW),
         "constant" | "boolean" | "number" | "float" => Some(CATP_PEACH),
         "operator" => Some(CATP_SKY),
-        "attribute" => Some(CATP_YELLOW),
+        // Attribute family — peach, deliberately distinct from
+        // @keyword (mauve) and @type (yellow) so `#[derive(Debug,
+        // Clone, Copy)]` reads as its own visual unit instead of
+        // bleeding into the `pub struct Foo` line below it. All the
+        // rust-analyzer-specific semantic-token types that fall inside
+        // an attribute (`decorator` is the LSP-standard one;
+        // `attributeBracket` / `derive` / `builtinAttribute` /
+        // `deriveHelper` / `toolModule` are rust-analyzer extensions)
+        // are routed to the same colour so the line paints uniformly
+        // whether tree-sitter or the LSP wins the priority race.
+        "attribute"
+        | "decorator"
+        | "attributeBracket"
+        | "derive"
+        | "builtinAttribute"
+        | "deriveHelper"
+        | "toolModule" => Some(CATP_PEACH),
         "tag" => Some(CATP_PINK),
         "label" => Some(CATP_SAPPHIRE),
         "property" | "key" => Some(CATP_LAVENDER),
