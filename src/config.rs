@@ -321,6 +321,149 @@ impl Config {
         self.theme_color("hint", Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb })
     }
 
+    /// Helper that returns the user's override for a specific dotted-namespace
+    /// key (e.g. `notification.error`, `tab.active_bg`) or falls through to a
+    /// caller-provided default. The defaults below all funnel through this so
+    /// every namespaced setting respects the broader theme key it falls back
+    /// to: setting `error = "..."` alone re-tints every diagnostic + notification
+    /// glyph; setting `notification.error = "..."` overrides only that one
+    /// surface.
+    fn theme_override(&self, key: &str) -> Option<Color> {
+        self.colors.get(key).and_then(|s| parse_color(s))
+    }
+
+    // ── Notifications ────────────────────────────────────────────────────
+    pub fn notification_info(&self) -> Color {
+        self.theme_override("notification.info").unwrap_or_else(|| self.theme_info())
+    }
+    pub fn notification_warning(&self) -> Color {
+        self.theme_override("notification.warning").unwrap_or_else(|| self.theme_warning())
+    }
+    pub fn notification_success(&self) -> Color {
+        self.theme_override("notification.success").unwrap_or_else(|| self.theme_accent_secondary())
+    }
+    pub fn notification_error(&self) -> Color {
+        self.theme_override("notification.error").unwrap_or_else(|| self.theme_error())
+    }
+
+    // ── Git stripe ───────────────────────────────────────────────────────
+    pub fn git_added(&self) -> Color {
+        self.theme_override("git.added").unwrap_or_else(|| self.theme_accent_secondary())
+    }
+    pub fn git_modified(&self) -> Color {
+        self.theme_override("git.modified").unwrap_or_else(|| self.theme_warning())
+    }
+    pub fn git_deleted(&self) -> Color {
+        self.theme_override("git.deleted").unwrap_or_else(|| self.theme_error())
+    }
+
+    // ── Diagnostics (LSP) ────────────────────────────────────────────────
+    pub fn diagnostic_error(&self) -> Color {
+        self.theme_override("diagnostic.error").unwrap_or_else(|| self.theme_error())
+    }
+    pub fn diagnostic_warning(&self) -> Color {
+        self.theme_override("diagnostic.warning").unwrap_or_else(|| self.theme_warning())
+    }
+    pub fn diagnostic_info(&self) -> Color {
+        self.theme_override("diagnostic.info").unwrap_or_else(|| self.theme_info())
+    }
+    pub fn diagnostic_hint(&self) -> Color {
+        self.theme_override("diagnostic.hint").unwrap_or_else(|| self.theme_hint())
+    }
+
+    // ── Tab bar ──────────────────────────────────────────────────────────
+    pub fn tab_active_bg(&self) -> Color {
+        self.theme_override("tab.active_bg").unwrap_or_else(|| self.theme_surface())
+    }
+    pub fn tab_active_fg(&self) -> Color {
+        self.theme_override("tab.active_fg").unwrap_or_else(|| self.theme_emphasis())
+    }
+    pub fn tab_inactive_fg(&self) -> Color {
+        self.theme_override("tab.inactive_fg").unwrap_or_else(|| self.theme_dim())
+    }
+    pub fn tab_dirty(&self) -> Color {
+        self.theme_override("tab.dirty").unwrap_or_else(|| self.theme_accent())
+    }
+    pub fn tab_close(&self) -> Color {
+        self.theme_override("tab.close").unwrap_or_else(|| self.theme_dim())
+    }
+
+    // ── Terminal pane ────────────────────────────────────────────────────
+    pub fn terminal_chip_bg(&self) -> Color {
+        self.theme_override("terminal.chip_bg").unwrap_or_else(|| self.theme_accent_secondary())
+    }
+    pub fn terminal_chip_fg(&self) -> Color {
+        self.theme_override("terminal.chip_fg").unwrap_or_else(|| self.theme_chip_fg())
+    }
+    pub fn terminal_active_tab_bg(&self) -> Color {
+        self.theme_override("terminal.active_tab_bg").unwrap_or_else(|| self.theme_accent())
+    }
+
+    // ── Debug pane ───────────────────────────────────────────────────────
+    pub fn debug_chip_bg(&self) -> Color {
+        self.theme_override("debug.chip_bg").unwrap_or_else(|| self.theme_accent())
+    }
+    pub fn debug_active_tab_bg(&self) -> Color {
+        self.theme_override("debug.active_tab_bg").unwrap_or_else(|| self.theme_accent_secondary())
+    }
+
+    // ── Gutter signs ─────────────────────────────────────────────────────
+    pub fn gutter_breakpoint(&self) -> Color {
+        self.theme_override("gutter.breakpoint").unwrap_or_else(|| self.theme_error())
+    }
+    pub fn gutter_pc_marker(&self) -> Color {
+        self.theme_override("gutter.pc_marker").unwrap_or_else(|| self.theme_accent())
+    }
+
+    // ── Buffer overlays ──────────────────────────────────────────────────
+    pub fn search_highlight_bg(&self) -> Color {
+        self.theme_override("search.highlight_bg").unwrap_or_else(|| self.theme_warning())
+    }
+    pub fn yank_flash_bg(&self) -> Color {
+        self.theme_override("yank.flash_bg").unwrap_or_else(|| self.theme_accent())
+    }
+    pub fn multi_cursor_bg(&self) -> Color {
+        self.theme_override("multi_cursor.bg").unwrap_or_else(|| self.theme_emphasis())
+    }
+    pub fn match_pair_bg(&self) -> Color {
+        self.theme_override("match_pair.bg").unwrap_or_else(|| self.theme_border())
+    }
+    pub fn doc_highlight_bg(&self) -> Color {
+        self.theme_override("doc_highlight.bg").unwrap_or_else(|| self.theme_border())
+    }
+
+    // ── Status-line mode chips ───────────────────────────────────────────
+    pub fn mode_normal(&self) -> Color {
+        self.theme_override("mode.normal").unwrap_or_else(|| self.theme_emphasis())
+    }
+    pub fn mode_insert(&self) -> Color {
+        self.theme_override("mode.insert").unwrap_or_else(|| self.theme_accent_secondary())
+    }
+    pub fn mode_visual(&self) -> Color {
+        let mauve = self
+            .color_for_capture("keyword")
+            .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+        self.theme_override("mode.visual").unwrap_or(mauve)
+    }
+    pub fn mode_command(&self) -> Color {
+        self.theme_override("mode.command").unwrap_or_else(|| self.theme_accent())
+    }
+    pub fn mode_search(&self) -> Color {
+        self.theme_override("mode.search").unwrap_or_else(|| self.theme_accent())
+    }
+    pub fn mode_picker(&self) -> Color {
+        self.theme_override("mode.picker").unwrap_or_else(|| self.theme_hint())
+    }
+    pub fn mode_prompt(&self) -> Color {
+        self.theme_override("mode.prompt").unwrap_or_else(|| self.theme_accent())
+    }
+    pub fn mode_terminal(&self) -> Color {
+        self.theme_override("mode.terminal").unwrap_or_else(|| self.theme_accent_secondary())
+    }
+    pub fn mode_debug(&self) -> Color {
+        self.theme_override("mode.debug").unwrap_or_else(|| self.theme_accent())
+    }
+
     /// Resolve a colour for a tree-sitter capture name. User values from `[colors]`
     /// override the baked-in defaults.
     ///

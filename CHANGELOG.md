@@ -6,6 +6,36 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Namespaced `[colors]` keys for fine-grained control.** Every
+  themable role has both a broad key and an optional namespaced
+  override. Set the broad one to retint a whole class; set the
+  namespaced one to single out one surface.
+  - `notification.{info,warning,success,error}` → fall back to
+    `info` / `warning` / `accent_secondary` / `error`
+  - `git.{added,modified,deleted}` → fall back to
+    `accent_secondary` / `warning` / `error`
+  - `diagnostic.{error,warning,info,hint}` → fall back to the
+    matching severity key
+  - `gutter.{breakpoint,pc_marker}` → fall back to `error` / `accent`
+  - `tab.{active_bg,active_fg,inactive_fg,dirty,close}` → fall
+    back to `surface` / `emphasis` / `dim` / `accent` / `dim`
+  - `terminal.{chip_bg,chip_fg,active_tab_bg}` → fall back to
+    `accent_secondary` / `chip_fg` / `accent`
+  - `debug.{chip_bg,active_tab_bg}` → fall back to `accent` /
+    `accent_secondary`
+  - `mode.{normal,insert,visual,command,search,picker,prompt,terminal,debug}`
+    → drive the status-line mode chip per mode
+  - `search.highlight_bg`, `yank.flash_bg`, `multi_cursor.bg`,
+    `match_pair.bg`, `doc_highlight.bg` → buffer overlays
+- **All 14 bundled themes populated with the chrome palette.**
+  Each `themes/<name>/theme.toml` now ships explicit values for
+  `foreground`, `dim`, `emphasis`, `surface`, `border`, `accent`,
+  `accent_secondary`, `chip_fg`, `error`, `warning`, `info`, `hint`
+  drawn from that theme's canonical palette. Switching theme now
+  flips every chrome surface to the theme's own tones — no more
+  Catppuccin tint leaking through Dracula / Tokyo Night / Light Owl.
+
 ### Changed
 - **One-line themes now produce coherent chrome.** When only
   `background` is set in `[colors]`, `surface`, `border`,

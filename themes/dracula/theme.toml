@@ -3,6 +3,26 @@ schema_version = 1
 
 [colors]
 background        = "#282a36"
+
+# Chrome neutrals
+foreground        = "#f8f8f2"
+dim               = "#6272a4"
+emphasis          = "#bd93f9"
+surface           = "#44475a"
+border            = "#6272a4"
+
+# Chrome accents
+accent            = "#ffb86c"
+accent_secondary  = "#50fa7b"
+chip_fg           = "#282a36"
+
+# Diagnostic / severity
+error             = "#ff5555"
+warning           = "#f1fa8c"
+info              = "#8be9fd"
+hint              = "#8be9fd"
+
+# Syntax captures
 comment           = "#6272a4"
 string            = "#f1fa8c"
 "string.escape"   = "#ff79c6"

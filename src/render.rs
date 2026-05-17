@@ -524,7 +524,7 @@ fn notification_color(app: &App, msg: &str) -> Color {
         })
         .unwrap_or(false);
     if lower.starts_with("error:") || vim_error {
-        return app.config.theme_error();
+        return app.config.notification_error();
     }
     // Success: file write, substitution count, range yank / delete summaries.
     if lower.contains("written")
@@ -534,7 +534,7 @@ fn notification_color(app: &App, msg: &str) -> Color {
         || lower.starts_with("recorded ")
         || lower.starts_with("kept buffer")
     {
-        return app.config.theme_accent_secondary();
+        return app.config.notification_success();
     }
     // Warning: not-found, no-such, edge-of-history.
     if lower.contains("not found")
@@ -548,9 +548,9 @@ fn notification_color(app: &App, msg: &str) -> Color {
         || lower.contains("no files")
         || lower.contains("buffer closed")
     {
-        return app.config.theme_warning();
+        return app.config.notification_warning();
     }
-    app.config.theme_info()
+    app.config.notification_info()
 }
 
 /// Maximum content rows in a notification box before extra wrapped lines
@@ -1625,9 +1625,9 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // text). The [TERMINAL] chip itself stays constant.
     let pane_bg = app.config.chrome_bg();
     let muted = app.config.theme_dim();
-    let base = app.config.theme_chip_fg();
-    let accent_terminal = app.config.theme_accent_secondary();
-    let active_tab_bg = app.config.theme_accent();
+    let base = app.config.terminal_chip_fg();
+    let accent_terminal = app.config.terminal_chip_bg();
+    let active_tab_bg = app.config.terminal_active_tab_bg();
     let label = " TERMINAL ";
     let label_w = label.chars().count() as u16;
     let chip_bg = match app.mode {
@@ -3105,11 +3105,11 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
 
     let bar_bg = app.config.chrome_bg();
-    let active_bg = app.config.theme_surface();
-    let active_fg = app.config.theme_emphasis();
-    let inactive_fg = app.config.theme_dim();
-    let dirty_fg = app.config.theme_accent();
-    let close_fg = app.config.theme_dim();
+    let active_bg = app.config.tab_active_bg();
+    let active_fg = app.config.tab_active_fg();
+    let inactive_fg = app.config.tab_inactive_fg();
+    let dirty_fg = app.config.tab_dirty();
+    let close_fg = app.config.tab_close();
     let chevron_fg = app.config.theme_fg();
 
     // Bar-wide bg fill so gaps between tabs render in the bar colour.
@@ -3312,9 +3312,9 @@ fn draw_buffer(
             let git_kind = bs.git_hunk_kind_at(line_idx);
             if let Some(kind) = git_kind {
                 let (glyph, color) = match kind {
-                    crate::git::GitHunkKind::Added => ('▎', app.config.theme_accent_secondary()),
-                    crate::git::GitHunkKind::Modified => ('▎', app.config.theme_warning()),
-                    crate::git::GitHunkKind::Deleted => ('▁', app.config.theme_error()),
+                    crate::git::GitHunkKind::Added => ('▎', app.config.git_added()),
+                    crate::git::GitHunkKind::Modified => ('▎', app.config.git_modified()),
+                    crate::git::GitHunkKind::Deleted => ('▁', app.config.git_deleted()),
                 };
                 queue!(out, SetForegroundColor(color), Print(glyph.to_string()))?;
                 reset_to_buf_bg(out, buf_bg)?;
@@ -3331,15 +3331,15 @@ fn draw_buffer(
                 .map(|p| app.dap.has_breakpoint(p, line_one_based))
                 .unwrap_or(false);
             let sign = if pc_here {
-                Some(('▶', app.config.theme_accent()))
+                Some(('▶', app.config.gutter_pc_marker()))
             } else if bp_here {
-                Some(('●', app.config.theme_error()))
+                Some(('●', app.config.gutter_breakpoint()))
             } else if let Some(diag_path) = bs.buffer.path.as_deref() {
                 app.worst_diagnostic_for(diag_path, line_idx).map(|s| match s {
-                    Severity::Error => ('!', app.config.theme_error()),
-                    Severity::Warning => ('?', app.config.theme_warning()),
-                    Severity::Info => ('i', app.config.theme_info()),
-                    Severity::Hint => ('h', app.config.theme_hint()),
+                    Severity::Error => ('!', app.config.diagnostic_error()),
+                    Severity::Warning => ('?', app.config.diagnostic_warning()),
+                    Severity::Info => ('i', app.config.diagnostic_info()),
+                    Severity::Hint => ('h', app.config.diagnostic_hint()),
                 })
             } else {
                 None
@@ -3820,40 +3820,39 @@ fn draw_line_with_selection(
         } else if in_search {
             queue!(
                 out,
-                SetBackgroundColor(app.config.theme_warning()),
+                SetBackgroundColor(app.config.search_highlight_bg()),
                 SetForegroundColor(app.config.theme_chip_fg())
             )?;
         } else if in_yank_flash {
-            // Distinct accent flash — different from search warning so the two
-            // never visually collide on shared text.
+            // Distinct flash — different from search so the two never
+            // visually collide on shared text.
             queue!(
                 out,
-                SetBackgroundColor(app.config.theme_accent()),
+                SetBackgroundColor(app.config.yank_flash_bg()),
                 SetForegroundColor(app.config.theme_chip_fg())
             )?;
         } else if is_multi_cursor {
-            // Emphasis bg + chip fg — high contrast so the cursor pops,
-            // matches the colour we'd use for the primary's cursor block.
+            // High-contrast multi-cursor block — matches the primary
+            // cursor's own colour for visual continuity across mirrored
+            // edit sites.
             queue!(
                 out,
-                SetBackgroundColor(app.config.theme_emphasis()),
+                SetBackgroundColor(app.config.multi_cursor_bg()),
                 SetForegroundColor(app.config.theme_chip_fg())
             )?;
         } else if in_match_pair {
-            // Subtle border background so the syntax-coloured foreground
+            // Subtle match-pair background so the syntax-coloured fg
             // still shows through, plus Bold so the bracket/tag pops.
             queue!(
                 out,
-                SetBackgroundColor(app.config.theme_border()),
+                SetBackgroundColor(app.config.match_pair_bg()),
                 SetAttribute(Attribute::Bold)
             )?;
         } else if in_doc_highlight {
-            // Same shade match-pair uses for brackets. They never collide
-            // on the same character because match-pair targets bracket /
-            // tag punctuation while documentHighlight targets identifier
-            // runs. Foreground stays on the syntax cache so the underlying
+            // Subtle bg under the symbol-under-cursor occurrences.
+            // Foreground stays on the syntax cache so the underlying
             // token colour still reads through.
-            queue!(out, SetBackgroundColor(app.config.theme_border()))?;
+            queue!(out, SetBackgroundColor(app.config.doc_highlight_bg()))?;
             if let Some(fg) = syntax_color {
                 queue!(out, SetForegroundColor(fg))?;
             }
@@ -3997,7 +3996,7 @@ fn draw_line_with_selection(
     if !clipped_right && multi_cursors.contains(&chars.len()) && visual_used + 1 <= avail {
         queue!(
             out,
-            SetBackgroundColor(app.config.theme_emphasis()),
+            SetBackgroundColor(app.config.multi_cursor_bg()),
             SetForegroundColor(app.config.theme_chip_fg()),
             Print(' '),
         )?;
@@ -4186,10 +4185,10 @@ fn draw_line_with_selection(
 /// two visuals match on the same line.
 fn severity_color(app: &App, sev: Severity) -> Color {
     match sev {
-        Severity::Error => app.config.theme_error(),
-        Severity::Warning => app.config.theme_warning(),
-        Severity::Info => app.config.theme_info(),
-        Severity::Hint => app.config.theme_hint(),
+        Severity::Error => app.config.diagnostic_error(),
+        Severity::Warning => app.config.diagnostic_warning(),
+        Severity::Info => app.config.diagnostic_info(),
+        Severity::Hint => app.config.diagnostic_hint(),
     }
 }
 
@@ -4216,22 +4215,16 @@ const NF_BRANCH: char = '\u{e0a0}';
 
 // Catppuccin Mocha mode block colours (matches the syntax-highlighting palette).
 fn mode_color(app: &App, mode: Mode) -> Color {
-    let mauve = app
-        .config
-        .color_for_capture("keyword")
-        .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
     match mode {
-        Mode::Normal => app.config.theme_emphasis(),
-        Mode::Insert => app.config.theme_accent_secondary(),
-        Mode::Visual(VisualKind::Char) => mauve,
-        Mode::Visual(VisualKind::Line) => mauve,
-        Mode::Visual(VisualKind::Block) => mauve,
-        Mode::Command => app.config.theme_accent(),
-        Mode::Search { .. } => app.config.theme_accent(),
-        Mode::Picker => app.config.theme_hint(),
-        Mode::Prompt(_) => app.config.theme_accent(),
-        Mode::DebugPane => app.config.theme_accent(),
-        Mode::Terminal => app.config.theme_accent_secondary(),
+        Mode::Normal => app.config.mode_normal(),
+        Mode::Insert => app.config.mode_insert(),
+        Mode::Visual(_) => app.config.mode_visual(),
+        Mode::Command => app.config.mode_command(),
+        Mode::Search { .. } => app.config.mode_search(),
+        Mode::Picker => app.config.mode_picker(),
+        Mode::Prompt(_) => app.config.mode_prompt(),
+        Mode::DebugPane => app.config.mode_debug(),
+        Mode::Terminal => app.config.mode_terminal(),
     }
 }
 
@@ -4366,7 +4359,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let header_fg = app.config.theme_fg();
     let body_bg = pane_bg;
     let muted = app.config.theme_dim();
-    let active_bg = app.config.theme_accent_secondary();
+    let active_bg = app.config.debug_active_tab_bg();
     let base = app.config.theme_chip_fg();
 
     // ---------------------------------------------------------------------
@@ -4385,7 +4378,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // Chip styling stays as the original peach badge — clear "you
     // are in the debugger" identifier, distinct from the active
     // tab's green badge so the two never compete visually.
-    let chip_bg = app.config.theme_accent();
+    let chip_bg = app.config.debug_chip_bg();
     queue!(out, MoveTo(0, top as u16))?;
     queue!(
         out,
