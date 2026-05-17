@@ -218,7 +218,7 @@ pub enum Action {
     /// `<leader>hr` — discard the working-tree change for the hunk under
     /// the cursor (reset to the staged version).
     HunkReset,
-    /// `<leader>to` — open the embedded terminal pane (or focus it
+    /// `<leader>tt` — open the embedded terminal pane (or focus it
     /// if already alive). Same effect as `:terminal`.
     TerminalOpen,
     /// `<leader>tq` — close the embedded terminal pane. Same effect
@@ -804,7 +804,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if state.awaiting_terminal_leader {
         state.awaiting_terminal_leader = false;
         let action = match ch {
-            'o' => Some(Action::TerminalOpen),
+            't' => Some(Action::TerminalOpen),
             'q' => Some(Action::TerminalClose),
             'f' => Some(Action::TerminalFocus),
             _ => None,

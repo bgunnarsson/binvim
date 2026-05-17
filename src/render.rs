@@ -1580,7 +1580,7 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let (chip_bg, hint) = match app.mode {
         Mode::Terminal => (
             accent_terminal,
-            "  typing → shell · <C-w> to leave · Shift+drag selects natively".to_string(),
+            "  Esc to leave · Ctrl-[ to send Esc to shell · Shift+drag selects".to_string(),
         ),
         _ => (muted, "  <leader>tf focus · <leader>tq close".to_string()),
     };

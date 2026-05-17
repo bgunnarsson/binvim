@@ -75,15 +75,23 @@ impl super::App {
         }
     }
 
-    /// `Mode::Terminal` key dispatch. Every keystroke gets
-    /// translated to bytes and forwarded to the PTY — including
-    /// `Esc`, so vi-mode shells / TUIs that use it work normally.
-    /// `<C-w>` is the lone escape: switches focus back to the
-    /// editor (`Mode::Normal`) and primes the window-leader parser
-    /// so a follow-up `k` / `q` / etc. does the right window
-    /// action. To re-enter the terminal: `<leader>tf` or click
-    /// the pane.
+    /// `Mode::Terminal` key dispatch. Two escape hatches:
+    ///
+    ///   - `Esc` — drops focus to `Mode::Normal`. Simple + matches
+    ///     the user's expectation that Esc always means "leave."
+    ///   - `<C-w>` — same drop, plus primes the window-leader
+    ///     parser so `<C-w>k` / `<C-w>q` / `<C-w>>` continue to
+    ///     work for the editor windows above.
+    ///
+    /// Every other keystroke forwards to the PTY. To send a literal
+    /// Esc to the shell (e.g. for a vi-mode escape inside the
+    /// embedded program), use `Ctrl-[` — most shells / TUIs accept
+    /// it as the canonical Esc control code.
     pub(super) fn handle_terminal_key(&mut self, key: KeyEvent) {
+        if key.modifiers.is_empty() && key.code == KeyCode::Esc {
+            self.mode = Mode::Normal;
+            return;
+        }
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('w') {
             self.mode = Mode::Normal;
             self.pending.awaiting_window_leader = true;
@@ -215,13 +223,31 @@ fn keyevent_to_bytes(key: KeyEvent) -> Option<Vec<u8>> {
     match key.code {
         KeyCode::Char(c) => {
             if ctrl {
+                // Standard C0 control-code mapping for Ctrl-letter
+                // and the symbol punctuation that ASCII assigned a
+                // control code to:
+                //   Ctrl-@ → 0x00, Ctrl-A..Z → 0x01..0x1A,
+                //   Ctrl-[ → 0x1B (Esc), Ctrl-\ → 0x1C,
+                //   Ctrl-] → 0x1D, Ctrl-^ → 0x1E, Ctrl-_ → 0x1F.
+                // Anything else with Ctrl falls back to the raw char.
                 let upper = c.to_ascii_uppercase();
-                if ('A'..='Z').contains(&upper) {
-                    out.push((upper as u8) - b'A' + 1);
-                } else {
-                    let mut buf = [0u8; 4];
-                    let s = c.encode_utf8(&mut buf);
-                    out.extend_from_slice(s.as_bytes());
+                let byte = match upper {
+                    'A'..='Z' => Some((upper as u8) - b'A' + 1),
+                    '@' => Some(0x00),
+                    '[' => Some(0x1b),
+                    '\\' => Some(0x1c),
+                    ']' => Some(0x1d),
+                    '^' => Some(0x1e),
+                    '_' => Some(0x1f),
+                    _ => None,
+                };
+                match byte {
+                    Some(b) => out.push(b),
+                    None => {
+                        let mut buf = [0u8; 4];
+                        let s = c.encode_utf8(&mut buf);
+                        out.extend_from_slice(s.as_bytes());
+                    }
                 }
             } else {
                 let mut buf = [0u8; 4];
@@ -287,6 +313,17 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_left_bracket_emits_esc_byte() {
+        // Ctrl-[ is the canonical control code for Esc (0x1b). The
+        // handler reserves bare Esc for "leave terminal mode," so
+        // users who need to send Esc into the embedded program
+        // (vi-mode shells, vim, less, etc.) press Ctrl-[ — this
+        // ensures the byte arrives unchanged at the PTY.
+        let b = keyevent_to_bytes(k(KeyCode::Char('['), KeyModifiers::CONTROL)).unwrap();
+        assert_eq!(b, vec![0x1b]);
+    }
+
+    #[test]
     fn arrow_keys_emit_csi_sequences() {
         let b = keyevent_to_bytes(k(KeyCode::Up, KeyModifiers::NONE)).unwrap();
         assert_eq!(b, b"\x1b[A");
@@ -313,8 +350,13 @@ mod tests {
     }
 
     #[test]
-    fn esc_emits_esc_byte() {
-        // Esc forwards to the PTY now — no Vim sub-mode capturing it.
+    fn esc_encoder_still_emits_esc_byte() {
+        // `keyevent_to_bytes` doesn't know about modes — it just
+        // encodes a keypress. `handle_terminal_key` is what
+        // intercepts Esc and switches mode to Normal instead of
+        // forwarding. Users who genuinely want to send Esc to the
+        // shell use Ctrl-[, which Ctrl-letter encoding routes
+        // through this path as 0x1b.
         let b = keyevent_to_bytes(k(KeyCode::Esc, KeyModifiers::NONE)).unwrap();
         assert_eq!(b, vec![0x1b]);
     }
