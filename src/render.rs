@@ -4318,11 +4318,18 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         .unwrap_or_else(|| "idle".into());
     let chip_text = format!(" DEBUG | {} ", adapter_label);
     let chip_w = chip_text.chars().count() as u16;
-    queue!(out, MoveTo(0, top as u16), SetBackgroundColor(pane_bg))?;
+    // Chip styling stays as the original peach badge — clear "you
+    // are in the debugger" identifier, distinct from the active
+    // tab's green badge so the two never compete visually.
+    let chip_bg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }; // Peach
+    queue!(out, MoveTo(0, top as u16))?;
     queue!(
         out,
-        SetForegroundColor(muted),
+        SetBackgroundColor(chip_bg),
+        SetForegroundColor(base),
+        SetAttribute(Attribute::Bold),
         Print(&chip_text),
+        SetAttribute(Attribute::NormalIntensity),
     )?;
     let mut tab_x: u16 = chip_w + 1;
     let mut hitboxes: Vec<(crate::app::DapPaneTab, u16, u16)> = Vec::new();
