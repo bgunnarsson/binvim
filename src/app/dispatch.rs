@@ -126,7 +126,6 @@ impl super::App {
             Action::TerminalFocus => {
                 if self.terminal.is_some() {
                     self.terminal_pane_open = true;
-                    self.terminal_visual_anchor = None;
                     self.mode = crate::mode::Mode::Terminal;
                     self.adjust_viewport();
                 } else {

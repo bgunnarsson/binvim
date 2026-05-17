@@ -14,18 +14,15 @@ pub enum Mode {
     /// move the selection; `Enter` / `Tab` toggles a variable's expansion;
     /// `Esc` returns to Normal mode in the editor.
     DebugPane,
-    /// Focus is on the `:terminal` overlay. Every keystroke is
-    /// translated to bytes and forwarded to the PTY (so the embedded
-    /// shell sees them, not the editor). `Esc` leaves Terminal mode
-    /// for `TerminalNormal` — the grid stays painted but the editor
-    /// regains its bindings.
+    /// Focus is on the `:terminal` pane. Every keystroke (including
+    /// `Esc`) is translated to bytes and forwarded to the PTY — the
+    /// embedded shell behaves like a normal terminal, no Vim sub-
+    /// mode layered on. `<C-w>` is the lone escape hatch: it pops
+    /// the user back to `Normal` (and primes the window-leader
+    /// parser so `<C-w>k` etc. continue to work). Selection /
+    /// copy works through the host terminal app's native Shift+drag
+    /// → Cmd-C path.
     Terminal,
-    /// Terminal overlay still showing, but the editor's bindings are
-    /// active again. Used for "look at the output / scroll without
-    /// sending input to the shell." `i` / `a` re-enters Terminal
-    /// mode; `:q` (or `<C-w>q`) closes the terminal and drops the
-    /// overlay.
-    TerminalNormal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +59,6 @@ impl Mode {
             Mode::Prompt(_) => "PROMPT",
             Mode::DebugPane => "DEBUG",
             Mode::Terminal => "TERMINAL",
-            Mode::TerminalNormal => "T-NORMAL",
         }
     }
 }

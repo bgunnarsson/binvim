@@ -364,25 +364,10 @@ pub struct App {
     /// Active `:terminal` pane, if any. The PTY child + grid live
     /// inside this `Terminal`; the pane renders at the bottom of
     /// the editor area when `terminal_pane_open` is true. None
-    /// when the terminal has been closed (`:q` in
-    /// `Mode::TerminalNormal`) — opening again via `:terminal`
-    /// re-spawns a fresh shell.
+    /// when the terminal has been closed — opening again via
+    /// `:terminal` re-spawns a fresh shell.
     pub terminal: Option<crate::terminal::Terminal>,
     pub terminal_pane_open: bool,
-    /// View offset into the terminal grid's scrollback when the
-    /// user is reading back history. 0 = bottom of scrollback (the
-    /// live grid is fully visible); larger values shift the view
-    /// up into older rows. Driven by `Ctrl-Y` / `Ctrl-E` in
-    /// `Mode::TerminalNormal`.
-    pub terminal_scroll: usize,
-    /// Vim-style selection inside the terminal grid. When Some,
-    /// the user has entered `v` in `Mode::TerminalNormal` and the
-    /// anchor + `terminal_cursor` define a region to be yanked
-    /// with `y`. Coordinates are (row, col) in the visible grid.
-    pub terminal_visual_anchor: Option<(usize, usize)>,
-    /// Reading-cursor position in `Mode::TerminalNormal`. Driven
-    /// by `h/j/k/l`/word motions; rendered as an inverted block.
-    pub terminal_cursor: (usize, usize),
     /// Ring buffer of server-emitted `window/showMessage` /
     /// `window/logMessage` notifications. Newest at the tail. Bounded
     /// so a chatty server (jdtls warming up, OmniSharp resolving
@@ -595,9 +580,6 @@ impl App {
             last_semantic_tokens_request_version: HashMap::new(),
             terminal: None,
             terminal_pane_open: false,
-            terminal_scroll: 0,
-            terminal_visual_anchor: None,
-            terminal_cursor: (0, 0),
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
             inlay_hints_in_flight: std::collections::HashSet::new(),

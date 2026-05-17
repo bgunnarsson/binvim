@@ -121,10 +121,10 @@ impl super::App {
                 // Macros don't navigate the debug pane — replay aborts if
                 // the user happened to start recording while focused there.
                 Mode::DebugPane => break,
-                // Same for the terminal overlay — macro replay doesn't
+                // Same for the terminal pane — macro replay doesn't
                 // forward keys into a PTY, so abort cleanly if focus
                 // happens to land there mid-replay.
-                Mode::Terminal | Mode::TerminalNormal => break,
+                Mode::Terminal => break,
             }
         }
         self.replaying_macro = false;

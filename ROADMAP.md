@@ -17,23 +17,22 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       adjust height. Parser accumulates digits inside the window-leader prefix; the layout walks to the
       deepest matching-axis ancestor of the focused leaf and converts cells to a ratio against that subtree's
       own rect (clamped to `[0.1, 0.9]`).
-- [x] **Built-in `:terminal` split.** `:terminal` (or `:term`) opens a
-      PTY-backed shell as a bottom split pane that stacks above the
-      debug pane and below the editor. `Mode::Terminal` for typing
-      (xterm escape sequences for arrows / F-keys / Page / Home /
-      End / Delete / Insert / Tab; Ctrl-letter → C0; Alt-prefix for
-      Meta); `Mode::TerminalNormal` for Vim-style navigation +
-      selection over the grid (`h/j/k/l` / `0` / `$` / `g` / `G`
-      move a reading-cursor, `v` enters Visual, `y` yanks the
-      selection to the unnamed register + system clipboard, `Y`
-      yanks the current row, `<C-w>q` closes). vte-parsed grid
-      with full SGR colour + attrs, CUP / CUF / CUB / CUU / CUD /
-      CHA cursor moves, ED / EL clears, IND / RI / DECSC / DECRC /
-      RIS, line wrap into a 10k-row scrollback. Mouse forwarding
-      to the PTY when the inner program enables DECSET 1000 / 1002
-      / 1003 / 1006 (htop, vim mouse=a, less mouse mode); otherwise
-      clicks focus the pane. SGR + legacy X10 encodings both
-      supported.
+- [x] **Built-in `:terminal` split.** `:terminal` (or `:term`,
+      `<leader>to`) opens a PTY-backed shell as a bottom split pane
+      that stacks above the debug pane and below the editor. Single
+      mode — `Mode::Terminal` forwards every keystroke (including
+      `Esc`) to the PTY, so it behaves like any other terminal.
+      `<C-w>` is the escape hatch: drops to Normal + primes the
+      window-leader parser so `<C-w>k`, `<C-w>q`, `<C-w>>`, etc.
+      continue to work. `<leader>tf` re-focuses the pane.
+      Selection / copy uses the host terminal app's native
+      Shift+drag → Cmd-C (no Vim-style yank reinvented). Mouse
+      forwarding to the PTY when DECSET 1000/1002/1003/1006 is set
+      (htop, vim mouse=a, less mouse mode); otherwise clicks pull
+      focus. SGR + legacy X10 encodings both supported. vte-parsed
+      grid with full SGR colour + attrs, CUP / CUF / CUB / CUU /
+      CUD / CHA cursor moves, ED / EL clears, IND / RI / DECSC /
+      DECRC / RIS, line wrap into a 10k-row scrollback.
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm

@@ -334,15 +334,6 @@ impl super::App {
                         self.handle_debug_pane_key(k);
                     }
                     Mode::Terminal => self.handle_terminal_key(k),
-                    Mode::TerminalNormal => {
-                        // i / a transitions back to Terminal mode;
-                        // everything else falls through to the Normal
-                        // handler so the user can `:`, `gg`/G to
-                        // scroll, etc.
-                        if !self.handle_terminal_normal_key(k) {
-                            self.handle_keyboard(k, ParseCtx::Normal);
-                        }
-                    }
                 }
             }
             crossterm::event::Event::Mouse(me) => {

@@ -225,9 +225,9 @@ pub enum Action {
     /// as `:q` while focused on it.
     TerminalClose,
     /// `<leader>tf` — focus the terminal pane. If the pane is alive
-    /// but the user has Esc'd into TerminalNormal / Normal, this
-    /// drops them back into `Mode::Terminal` so typing flows to the
-    /// shell again. No-op (with a hint) when no terminal exists.
+    /// but the user has Ctrl-W'd back to Normal, this drops them
+    /// into `Mode::Terminal` so typing flows to the shell again.
+    /// No-op (with a hint) when no terminal exists.
     TerminalFocus,
     /// `<C-w>V` — split the active window vertically with the *same*
     /// buffer in the new pane (Vim default — two viewports of one file).

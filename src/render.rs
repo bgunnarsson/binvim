@@ -1576,15 +1576,13 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };    // Overlay0
     let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
     let accent_terminal = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
-    let accent_normal = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };   // Lavender
     let label = " TERMINAL ";
     let (chip_bg, hint) = match app.mode {
-        Mode::Terminal => (accent_terminal, "  typing → shell · Esc to read".to_string()),
-        Mode::TerminalNormal => (
-            accent_normal,
-            "  reading · i/a type · v select · y yank · <C-w>q close".to_string(),
+        Mode::Terminal => (
+            accent_terminal,
+            "  typing → shell · <C-w> to leave · Shift+drag selects natively".to_string(),
         ),
-        _ => (muted, "  :term focus · <leader>tq close".to_string()),
+        _ => (muted, "  <leader>tf focus · <leader>tq close".to_string()),
     };
     queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
     queue!(
@@ -1624,26 +1622,13 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let grid_rows = grid.rows.min(body_rows);
     let grid_cols = grid.cols.min(total_w);
 
-    let selection = app.terminal_visual_anchor.map(|anchor| {
-        let cur = app.terminal_cursor;
-        if anchor <= cur { (anchor, cur) } else { (cur, anchor) }
-    });
-
     for row in 0..body_rows {
         let screen_y = (body_top + row) as u16;
         queue!(out, MoveTo(0, screen_y), Clear(ClearType::CurrentLine))?;
         if row < grid_rows {
             for col in 0..grid_cols {
                 let cell = grid.cells[row][col];
-                let in_sel = selection
-                    .map(|(s, e)| {
-                        let p = (row, col);
-                        p >= s && p <= e
-                    })
-                    .unwrap_or(false);
-                let in_t_normal_cursor = app.mode == Mode::TerminalNormal
-                    && app.terminal_cursor == (row, col);
-                paint_terminal_cell(out, cell, in_sel, in_t_normal_cursor)?;
+                paint_terminal_cell(out, cell)?;
             }
         }
     }
@@ -1656,31 +1641,15 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 }
 
 /// Translate one `crate::terminal::Cell` to crossterm style + glyph
-/// and emit. Reverse attribute swaps fg/bg before applying. The
-/// `selected` flag pulls in the Surface2 background (matching
-/// match-pair / documentHighlight) so a Vim-style visual selection
-/// in `TerminalNormal` reads clearly without obliterating the
-/// underlying glyph. `t_normal_cursor` paints the
-/// `TerminalNormal` reading-cursor as an inverted cell.
+/// and emit. Reverse attribute swaps fg/bg before applying.
 fn paint_terminal_cell(
     out: &mut impl Write,
     cell: crate::terminal::Cell,
-    selected: bool,
-    t_normal_cursor: bool,
 ) -> std::io::Result<()> {
     let mut fg = cell.fg.unwrap_or(Color::Reset);
     let mut bg = cell.bg.unwrap_or(Color::Reset);
     if cell.reverse {
         std::mem::swap(&mut fg, &mut bg);
-    }
-    if t_normal_cursor {
-        // Lavender block + Base fg — matches the multi-cursor / DAP
-        // selection style elsewhere so the eye recognises "this is
-        // where the cursor is" without learning a new colour.
-        bg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
-        fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
-    } else if selected {
-        bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     }
     queue!(
         out,
@@ -4127,7 +4096,6 @@ fn mode_color(mode: Mode) -> Color {
         Mode::Prompt(_) => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::DebugPane => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach — matches debug pane accent
         Mode::Terminal => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green — typing flows like Insert
-        Mode::TerminalNormal => Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }, // Lavender — paired with Normal
     }
 }
 
@@ -4750,12 +4718,6 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
                 return Ok(());
             }
         }
-        queue!(out, Hide)?;
-        return Ok(());
-    }
-    // TerminalNormal — reading-cursor is painted inline as an
-    // inverted cell by the pane loop. Hide the system cursor.
-    if matches!(app.mode, Mode::TerminalNormal) {
         queue!(out, Hide)?;
         return Ok(());
     }
