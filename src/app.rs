@@ -449,12 +449,23 @@ pub struct App {
     /// Paths with an in-flight `textDocument/semanticTokens/full`
     /// request. Same cap-to-one semantics as the others.
     pub semantic_tokens_in_flight: std::collections::HashSet<PathBuf>,
-    /// Active `:terminal` pane, if any. The PTY child + grid live
-    /// inside this `Terminal`; the pane renders at the bottom of
-    /// the editor area when `terminal_pane_open` is true. None
-    /// when the terminal has been closed — opening again via
-    /// `:terminal` re-spawns a fresh shell.
-    pub terminal: Option<crate::terminal::Terminal>,
+    /// `:terminal` pane terminals. Each entry is one PTY-backed
+    /// shell + grid; the pane renders at the bottom of the editor
+    /// when `terminal_pane_open` is true. Empty when no terminal
+    /// has been spawned (or all have been closed). `<leader>tt`
+    /// always appends a new entry — long-running processes like
+    /// `pnpm dev` get their own tab so they can run in parallel.
+    /// Tabs only render in the header when there are 2 or more —
+    /// a single terminal hides the strip and uses that space for
+    /// the hint text instead.
+    pub terminals: Vec<crate::terminal::Terminal>,
+    pub active_terminal_idx: usize,
+    /// Hit-test rectangles for the terminal tab strip — same
+    /// pattern as `dap_tab_hitboxes`. Each `(idx, x_start, x_end)`
+    /// covers one tab label on the header row. Populated by
+    /// `draw_terminal_pane` every frame, consumed by mouse-down
+    /// inside the pane header.
+    pub terminal_tab_hitboxes: std::cell::Cell<Vec<(usize, u16, u16)>>,
     pub terminal_pane_open: bool,
     /// Ring buffer of server-emitted `window/showMessage` /
     /// `window/logMessage` notifications. Newest at the tail. Bounded
@@ -669,7 +680,9 @@ impl App {
             last_copilot_status_poll: Instant::now(),
             semantic_tokens: HashMap::new(),
             last_semantic_tokens_request_version: HashMap::new(),
-            terminal: None,
+            terminals: Vec::new(),
+            active_terminal_idx: 0,
+            terminal_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             terminal_pane_open: false,
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
@@ -753,7 +766,7 @@ impl App {
             // poll budget delays the next render by that much, so
             // typing in the embedded shell feels laggy. 16ms is
             // ~60fps and well under the threshold of perception.
-            if self.terminal.is_some() {
+            if !self.terminals.is_empty() {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
             // A live yank flash needs us to wake up at its deadline so the

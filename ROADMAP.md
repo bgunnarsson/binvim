@@ -33,16 +33,22 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       grid with full SGR colour + attrs, CUP / CUF / CUB / CUU /
       CUD / CHA cursor moves, ED / EL clears, IND / RI / DECSC /
       DECRC / RIS, line wrap into a 10k-row scrollback.
-- [ ] **Multiple terminals (in tabs).** Extend the `:terminal` pane
-      to host more than one PTY at once, surfaced as a tab bar
-      across the top of the bottom split (same visual family as the
-      debug pane's tab strip). `:terminal` opens a new tab,
-      `<leader>tn` / `<leader>tp` cycle, `<leader>tc` closes the
-      active one, numeric `<leader>t1..9` jumps directly. Each tab
-      owns its own PTY + 10k scrollback + cursor state; the pane
-      only ever renders the active one. Inactive PTYs keep reading
-      so `make watch` / `cargo watch` / a long build don't stall
-      while focus is elsewhere. **considering**
+- [x] **Multiple terminals (in tabs).** The `:terminal` pane hosts
+      a `Vec<Terminal>` instead of a single `Option<Terminal>`.
+      `<leader>tt` (or `:terminal`) always spawns a new tab and
+      focuses it; the previous "open or focus existing" semantics
+      moved to `<leader>tf`. With one terminal the header keeps its
+      hint line; with two or more it sprouts a clickable tab strip
+      (active tab = blue bg + white text; inactive = muted on the
+      pane bg). `<leader>tq` closes the active tab — if it was the
+      last, the pane hides. Each tab owns its own PTY + 10k
+      scrollback + cursor state; the pane only ever renders the
+      active one, but every tab keeps draining on every frame so
+      `pnpm dev` / `cargo watch` / a long build don't stall while
+      focus is on a sibling tab. Host-terminal resizes are
+      broadcast to every PTY so background tabs don't reflow on
+      switch. Keyboard nav between tabs is left for a follow-up
+      (click is the path today).
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm

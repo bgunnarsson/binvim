@@ -342,14 +342,13 @@ impl super::App {
             crossterm::event::Event::Resize(w, h) => {
                 self.width = w;
                 self.height = h;
-                // Propagate to the embedded PTY so the child gets
-                // a SIGWINCH and re-renders at the new size. Body
-                // height is the pane height minus the header row.
-                if let Some(t) = self.terminal.as_ref() {
-                    let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
-                    let cols = (w as usize).max(8) as u16;
-                    let _ = t.resize(rows, cols);
-                }
+                // Propagate to every embedded PTY so each child
+                // gets a SIGWINCH at the new size. Background tabs
+                // need this too — when the user switches to a tab
+                // that's been hidden behind another for a while,
+                // its shell should already have the current
+                // winsize so we don't see a reflow flash on switch.
+                self.resize_all_terminals();
             }
             _ => {}
         }

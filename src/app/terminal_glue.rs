@@ -21,48 +21,94 @@ use crate::mode::Mode;
 use crate::terminal::Terminal;
 
 impl super::App {
-    /// `:terminal [cmd]` — open the embedded terminal pane. The
-    /// argument, if any, is the command to run instead of `$SHELL`.
-    /// Re-opening while a terminal is already alive just re-focuses
-    /// the existing pane (cheaper than killing + respawning).
+    /// Active terminal handle, if any. Centralised because every
+    /// call site that used to read `app.terminal.as_ref()` now has
+    /// to index into the `Vec<Terminal>` + active-idx pair.
+    pub fn active_terminal(&self) -> Option<&crate::terminal::Terminal> {
+        self.terminals.get(self.active_terminal_idx)
+    }
+
+    /// `:terminal [cmd]` / `<leader>tt` — spawn a new terminal tab.
+    /// Always appends, never reuses. With multiple tabs the
+    /// rendered pane sprouts a tab strip in the header (active =
+    /// blue bg + white text); with one tab the strip stays hidden
+    /// and the header keeps showing the hint line. The new tab
+    /// becomes active and focus drops into `Mode::Terminal` so the
+    /// user can immediately type into the fresh shell.
     pub(super) fn cmd_open_terminal(&mut self, cmd: Option<String>) {
-        if self.terminal.is_some() {
-            self.terminal_pane_open = true;
-            self.mode = Mode::Terminal;
-            self.adjust_viewport();
-            return;
-        }
         // Flip the open flag first so terminal_pane_rows() returns
         // the right value when we ask for dimensions. Toggle back
-        // off if the spawn fails.
+        // off if the spawn fails AND the pane was previously empty.
+        let was_empty = self.terminals.is_empty();
         self.terminal_pane_open = true;
-        // PTY grid covers the body of the pane — the first row of
-        // the pane is the header chip rendered by the renderer.
         let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
         let cols = (self.width as usize).max(8) as u16;
         match Terminal::spawn(rows, cols, cmd.as_deref()) {
             Ok(t) => {
-                self.terminal = Some(t);
+                self.terminals.push(t);
+                self.active_terminal_idx = self.terminals.len() - 1;
                 self.mode = Mode::Terminal;
                 self.adjust_viewport();
                 self.status_msg.clear();
+                // Resize every terminal to the body height the pane
+                // currently has — adding a tab doesn't change the
+                // pane size, but it ensures the new tab gets a
+                // consistent winsize.
+                self.resize_all_terminals();
             }
             Err(e) => {
-                self.terminal_pane_open = false;
+                if was_empty {
+                    self.terminal_pane_open = false;
+                }
                 self.status_msg = format!("terminal: spawn failed: {e}");
             }
         }
     }
 
-    /// Close the embedded terminal — drops the `Terminal` so its
-    /// PTY child + reader thread + writer fd all clean up.
+    /// `<leader>tq` / `:q` while focused on the pane — drop the
+    /// active terminal. If it was the last one, hide the pane.
     pub(super) fn close_terminal(&mut self) {
-        self.terminal = None;
-        self.terminal_pane_open = false;
-        if matches!(self.mode, Mode::Terminal) {
-            self.mode = Mode::Normal;
+        if self.terminals.is_empty() {
+            return;
+        }
+        let idx = self.active_terminal_idx.min(self.terminals.len() - 1);
+        self.terminals.remove(idx);
+        if self.terminals.is_empty() {
+            self.active_terminal_idx = 0;
+            self.terminal_pane_open = false;
+            if matches!(self.mode, Mode::Terminal) {
+                self.mode = Mode::Normal;
+            }
+        } else if self.active_terminal_idx >= self.terminals.len() {
+            self.active_terminal_idx = self.terminals.len() - 1;
         }
         self.adjust_viewport();
+    }
+
+    /// Switch the active tab — bounds-checked. Called from the
+    /// mouse handler when the user clicks a tab label.
+    pub(super) fn set_active_terminal(&mut self, idx: usize) {
+        if idx < self.terminals.len() && idx != self.active_terminal_idx {
+            self.active_terminal_idx = idx;
+        }
+    }
+
+    /// Push the current pane body geometry to every terminal's
+    /// PTY (SIGWINCH). Called when the pane gains rows (un-hide,
+    /// debug pane closes, host resize) or loses rows. Background
+    /// tabs need the resize too — when the user switches to a tab
+    /// that's been hidden behind another for a while, its shell
+    /// should already have the current winsize so we don't see a
+    /// reflow flash on tab switch.
+    pub(super) fn resize_all_terminals(&self) {
+        if self.terminals.is_empty() {
+            return;
+        }
+        let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
+        let cols = (self.width as usize).max(8) as u16;
+        for t in &self.terminals {
+            let _ = t.resize(rows, cols);
+        }
     }
 
     /// `<leader>tp` — show/hide the terminal pane WITHOUT killing
@@ -92,28 +138,30 @@ impl super::App {
             self.adjust_viewport();
             return;
         }
-        if self.terminal.is_some() {
+        if !self.terminals.is_empty() {
             self.terminal_pane_open = true;
             self.adjust_viewport();
-            let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
-            let cols = (self.width as usize).max(8) as u16;
-            if let Some(t) = self.terminal.as_ref() {
-                let _ = t.resize(rows, cols);
-            }
+            self.resize_all_terminals();
             self.mode = Mode::Terminal;
             return;
         }
         self.cmd_open_terminal(None);
     }
 
-    /// Drain pending PTY output into the grid. Called once per
-    /// render loop. Returns `true` if any bytes were processed so
-    /// the caller can mark the frame dirty.
+    /// Drain pending PTY output into every terminal's grid. Called
+    /// once per render loop. Returns `true` if any bytes were
+    /// processed so the caller can mark the frame dirty. Background
+    /// tabs drain too — that's the whole point of multi-tab
+    /// terminals (`pnpm dev`'s output keeps accumulating while
+    /// focus is on a sibling tab).
     pub(super) fn terminal_drain_if_open(&self) -> bool {
-        match self.terminal.as_ref() {
-            Some(t) => t.drain() > 0,
-            None => false,
+        let mut any = false;
+        for t in &self.terminals {
+            if t.drain() > 0 {
+                any = true;
+            }
         }
+        any
     }
 
     /// `Mode::Terminal` key dispatch. Two escape hatches:
@@ -142,7 +190,7 @@ impl super::App {
             Some(b) => b,
             None => return,
         };
-        if let Some(t) = self.terminal.as_ref() {
+        if let Some(t) = self.active_terminal() {
             let _ = t.write_bytes(&bytes);
         }
     }
@@ -172,15 +220,30 @@ impl super::App {
         if row < pane_top || row >= pane_bottom {
             return false;
         }
-        // The first pane row is the header chip — not part of the
-        // PTY grid. A click on the header just focuses the pane
-        // (no forwarding).
+        // The first pane row is the header. When there are 2+ tabs
+        // it's a clickable tab strip; otherwise it's just the
+        // [TERMINAL] chip + hint and a click anywhere on it just
+        // focuses the pane.
         let body_top = pane_top + 1;
         if row < body_top {
             if matches!(
                 ev.kind,
                 MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
             ) {
+                if self.terminals.len() > 1 {
+                    let hits = self.terminal_tab_hitboxes.take();
+                    let mut clicked: Option<usize> = None;
+                    for (idx, x_start, x_end) in &hits {
+                        if (col as u16) >= *x_start && (col as u16) < *x_end {
+                            clicked = Some(*idx);
+                            break;
+                        }
+                    }
+                    self.terminal_tab_hitboxes.set(hits);
+                    if let Some(idx) = clicked {
+                        self.set_active_terminal(idx);
+                    }
+                }
                 self.mode = Mode::Terminal;
             }
             return true;
@@ -190,7 +253,7 @@ impl super::App {
         let pane_row = row - body_top + 1;
         let pane_col = col + 1;
 
-        let term = match self.terminal.as_ref() {
+        let term = match self.active_terminal() {
             Some(t) => t,
             None => return true,
         };

@@ -184,10 +184,10 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>df` | Focus debug pane                      |
 | `<space>do` | Document symbols (LSP)                |
 | `<space>dS` | Workspace symbols (LSP)               |
-| `<space>tt` | Open / focus the embedded terminal pane |
-| `<space>tp` | Toggle the embedded terminal pane (open if dead, close if alive — mirrors `<space>dp`) |
+| `<space>tt` | Spawn a new terminal tab (`<space>tt` again to add another) |
+| `<space>tp` | Toggle terminal pane visibility — PTYs stay alive in the background while hidden |
 | `<space>tf` | Focus the terminal pane (drop into `Mode::Terminal` — typing flows to the shell again) |
-| `<space>tq` | Close the embedded terminal pane      |
+| `<space>tq` | Close the active terminal tab (pane hides when the last one goes) |
 
 Hold `<space>` (or `<space>b` / `<space>d` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 

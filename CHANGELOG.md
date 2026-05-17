@@ -6,6 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Multiple terminals (tabs).** The `:terminal` pane now hosts
+  more than one PTY at a time. `<leader>tt` (or `:terminal`)
+  always spawns a new tab — first invocation opens the pane; each
+  subsequent one appends another shell. With one terminal the
+  header keeps its hint line; with two or more it sprouts a
+  clickable tab strip (active tab = blue bg + white text;
+  inactive = muted on the pane bg). Each tab owns its own PTY +
+  10k scrollback + cursor state. Every tab keeps draining on
+  every frame, so `pnpm dev` / `cargo watch` / a long build don't
+  stall while focus is on a sibling tab. Host-terminal resize
+  broadcasts to every PTY so background tabs don't reflow on
+  switch. `<leader>tq` closes the active tab; the pane auto-
+  hides when the last tab is dropped. Click a tab label in the
+  header to switch.
+
 ### Fixed
 - **`<leader>tp` no longer kills the running process.** Toggle now
   hides/shows the pane while keeping the PTY alive — `pnpm dev`,

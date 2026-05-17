@@ -1570,19 +1570,22 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     }
 
     // The first row of the pane is a header chip that doubles as a
-    // visual separator from the buffer area above. Same model as the
-    // debug pane's header.
+    // visual separator from the buffer area above. Same model as
+    // the debug pane's header. With one terminal the right side of
+    // the header carries the hint line; with two or more it
+    // carries a clickable tab strip (active tab = blue bg + white
+    // text). The [TERMINAL] chip itself stays constant.
     let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };    // Overlay0
+    let text = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 };     // Text
     let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
     let accent_terminal = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
+    let active_tab_bg = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }; // Blue
     let label = " TERMINAL ";
-    let (chip_bg, hint) = match app.mode {
-        Mode::Terminal => (
-            accent_terminal,
-            "  Esc to leave · Ctrl-[ to send Esc to shell · Shift+drag selects".to_string(),
-        ),
-        _ => (muted, "  <leader>tf focus · <leader>tq close".to_string()),
+    let label_w = label.chars().count() as u16;
+    let chip_bg = match app.mode {
+        Mode::Terminal => accent_terminal,
+        _ => muted,
     };
     queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
     queue!(
@@ -1592,22 +1595,72 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         SetAttribute(Attribute::Bold),
         Print(label),
         SetAttribute(Attribute::Reset),
-        SetBackgroundColor(pane_bg),
-        SetForegroundColor(muted),
-        Print(&hint),
     )?;
-    let used = label.chars().count() + hint.chars().count();
+
+    let mut used = label_w as usize;
+    let term_count = app.terminals.len();
+    let mut hitboxes: Vec<(usize, u16, u16)> = Vec::new();
+    if term_count > 1 {
+        // Tab strip. Single-cell gap between tabs so the active
+        // blue chip doesn't butt into the next label.
+        queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
+        used += 1;
+        let mut tab_x: u16 = label_w + 1;
+        for idx in 0..term_count {
+            let tab_label = format!(" {} ", idx + 1);
+            let chip_chars = tab_label.chars().count() as u16;
+            let is_active = idx == app.active_terminal_idx;
+            let (bg, fg) = if is_active {
+                (active_tab_bg, text)
+            } else {
+                (pane_bg, muted)
+            };
+            queue!(
+                out,
+                MoveTo(tab_x, top as u16),
+                SetBackgroundColor(bg),
+                SetForegroundColor(fg),
+            )?;
+            if is_active {
+                queue!(out, SetAttribute(Attribute::Bold))?;
+            } else {
+                queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            }
+            queue!(out, Print(&tab_label))?;
+            queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            hitboxes.push((idx, tab_x, tab_x + chip_chars));
+            tab_x += chip_chars + 1;
+            // Trailing gap between tabs (painted with pane bg).
+            queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
+            used = tab_x as usize;
+        }
+    } else {
+        let hint = match app.mode {
+            Mode::Terminal => {
+                "  Esc to leave · Ctrl-[ to send Esc to shell · Shift+drag selects".to_string()
+            }
+            _ => "  <leader>tf focus · <leader>tq close".to_string(),
+        };
+        queue!(
+            out,
+            SetBackgroundColor(pane_bg),
+            SetForegroundColor(muted),
+            Print(&hint),
+        )?;
+        used += hint.chars().count();
+    }
     if total_w > used {
         queue!(out, SetBackgroundColor(pane_bg), Print(" ".repeat(total_w - used)))?;
     }
     queue!(out, ResetColor)?;
+    app.terminal_tab_hitboxes.set(hitboxes);
 
     // Body = pane minus the header row. The PTY grid is sized to
     // these body rows by `cmd_open_terminal` + the resize handler,
     // so we paint cell-for-cell starting at `top + 1`.
     let body_top = top + 1;
     let body_rows = pane_rows.saturating_sub(1);
-    let Some(term) = app.terminal.as_ref() else {
+    let Some(term) = app.active_terminal() else {
         for r in 0..body_rows {
             queue!(
                 out,
@@ -5329,7 +5382,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // move of the frame so the subsequent flush leaves it where
     // we want it, instead of wherever the last Print landed.
     if matches!(app.mode, Mode::Terminal) {
-        if let Some(t) = app.terminal.as_ref() {
+        if let Some(t) = app.active_terminal() {
             let (cur_row, cur_col) = t.cursor();
             // Body of the pane starts one row below `terminal_pane_top()`
             // (the first pane row is the header chip).

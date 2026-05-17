@@ -117,14 +117,14 @@ impl super::App {
             Action::HunkReset => self.hunk_reset(),
             Action::TerminalOpen => self.cmd_open_terminal(None),
             Action::TerminalClose => {
-                if self.terminal.is_some() {
+                if !self.terminals.is_empty() {
                     self.close_terminal();
                 } else {
                     self.status_msg = "terminal: no pane to close".into();
                 }
             }
             Action::TerminalFocus => {
-                if self.terminal.is_some() {
+                if !self.terminals.is_empty() {
                     self.terminal_pane_open = true;
                     self.mode = crate::mode::Mode::Terminal;
                     self.adjust_viewport();
