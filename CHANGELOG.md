@@ -12,7 +12,7 @@ follows [Semantic Versioning](https://semver.org/).
   always spawns a new tab — first invocation opens the pane; each
   subsequent one appends another shell. With one terminal the
   header keeps its hint line; with two or more it sprouts a
-  clickable tab strip (active tab = blue bg + white text;
+  clickable tab strip (active tab = peach bg + base text;
   inactive = muted on the pane bg). Each tab owns its own PTY +
   10k scrollback + cursor state. Every tab keeps draining on
   every frame, so `pnpm dev` / `cargo watch` / a long build don't
@@ -22,14 +22,34 @@ follows [Semantic Versioning](https://semver.org/).
   hides when the last tab is dropped. Click a tab label in the
   header to switch.
 
+### Changed
+- **`:q` from the editor quits — even with terminals open.** The
+  old branch order treated an open terminal pane as "close it
+  before quitting," so `:q` from the editor with N terminal tabs
+  took N+1 invocations to actually quit. Now `:q` drops every
+  terminal in one go and exits; each Terminal-drop releases the
+  master PTY fd, which signals SIGHUP to the child group so
+  background `pnpm dev` / `cargo watch` / SSH sessions don't
+  orphan on the OS. `:q!` and `:wq` do the same.
+
 ### Fixed
+- **No more blank-line gap between prompts in the second tab.**
+  `cmd_open_terminal` was firing a redundant `resize_all_terminals`
+  after `Terminal::spawn`. The new PTY was already opened at the
+  pane body's size and existing tabs hadn't lost any rows, so the
+  resize was a no-op AT BEST — but it hit zsh + starship before
+  they finished their startup sequence, and they reacted by
+  emitting extra clearing escapes that landed as a blank row
+  between prompts in the freshly-spawned tab's grid. Dropped the
+  call; resize still fires from toggle-show and the host-resize
+  event handler where it's actually needed.
 - **`<leader>tp` no longer kills the running process.** Toggle now
   hides/shows the pane while keeping the PTY alive — `pnpm dev`,
   `cargo watch`, a long-running REPL session, etc. survive being
-  tucked away and brought back. Only `<leader>tq` (or `:q` while
-  focused on the pane) drops the PTY. The PTY is resized to the
-  current pane dimensions on re-show so a host-terminal resize
-  while hidden doesn't leave the shell with the old `winsize`.
+  tucked away and brought back. Only `<leader>tq` drops the
+  active tab; the PTY is resized to the current pane dimensions
+  on re-show so a host-terminal resize while hidden doesn't leave
+  the shell with the old `winsize`.
 
 ## [0.3.1] - 2026-05-17
 
