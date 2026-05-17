@@ -4263,273 +4263,471 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     }
     queue!(out, ResetColor)?;
 
-    // Body — split horizontally when the terminal is wide enough. The
-    // left column stacks call stack on top of locals (with a labelled
-    // separator); the right column is the console-output tail.
-    let body_rows = rows.saturating_sub(1);
-    let split_at = if width >= 80 { width / 2 } else { width };
-    let left_w = if split_at < width { split_at.saturating_sub(1) } else { width };
-
-    enum LeftRow<'a> {
-        Empty,
-        Note(&'a str),
-        Frame(String),
-        Separator(&'a str),
-        Local {
-            depth: usize,
-            marker: char,
-            name: &'a str,
-            value: &'a str,
-            selected: bool,
-        },
-        /// Watch row — `name` is the user expression, `value` is the
-        /// latest evaluated result (or "evaluating…" / error text).
-        /// `error` toggles a red value colour so failed evaluations
-        /// stand out.
-        Watch {
-            name: &'a str,
-            value: &'a str,
-            error: bool,
-        },
+    // ---------------------------------------------------------------------
+    // Tab bar — second row of the pane. Active tab gets the accent
+    // bg, inactive tabs are muted. Hitboxes for each label go into
+    // `dap_tab_hitboxes` so `handle_terminal_mouse_event`'s sibling
+    // for the debug pane can hit-test clicks on the bar.
+    // ---------------------------------------------------------------------
+    let tab_row_y = (top + 1) as u16;
+    queue!(out, MoveTo(0, tab_row_y), Clear(ClearType::CurrentLine))?;
+    queue!(out, SetBackgroundColor(body_bg))?;
+    let mut tab_x: u16 = 1;
+    let mut hitboxes: Vec<(crate::app::DapPaneTab, u16, u16)> = Vec::new();
+    for (i, tab) in crate::app::DapPaneTab::all().iter().enumerate() {
+        let label = tab.label();
+        let chip = format!("  {} ", label);
+        let chip_w = chip.chars().count() as u16;
+        let is_active = *tab == app.dap_pane_tab;
+        let (fg, bg) = if is_active {
+            (base, accent)
+        } else {
+            (header_fg, body_bg)
+        };
+        let underline = is_active;
+        queue!(
+            out,
+            MoveTo(tab_x, tab_row_y),
+            SetBackgroundColor(bg),
+            SetForegroundColor(fg),
+        )?;
+        if underline {
+            queue!(out, SetAttribute(Attribute::Bold))?;
+        }
+        queue!(out, Print(&chip))?;
+        queue!(out, SetAttribute(Attribute::Reset))?;
+        hitboxes.push((*tab, tab_x, tab_x + chip_w));
+        // 1-digit index hint between tabs (matches the number-row
+        // key bindings: `1` → Frames, `2` → Locals, …).
+        let _ = i;
+        tab_x += chip_w + 1;
     }
+    // Fill the rest of the tab row with the pane bg.
+    queue!(out, SetBackgroundColor(body_bg))?;
+    if (tab_x as usize) < width {
+        queue!(out, Print(" ".repeat(width - tab_x as usize)))?;
+    }
+    queue!(out, ResetColor)?;
+    app.dap_tab_hitboxes.set(hitboxes);
 
-    // Flat locals tree — computed once so the key handler and renderer
-    // agree on row order (the renderer's selection highlight has to point
-    // at the same row the cursor's index does).
-    let flat = app
-        .dap
-        .session
-        .as_ref()
-        .map(crate::dap::flat_locals_view)
-        .unwrap_or_default();
+    // ---------------------------------------------------------------------
+    // Body — one tab at a time. Each tab builds a Vec of pre-formatted
+    // rows, then a single paint loop applies the active tab's scroll
+    // offset and writes the visible window. Selection highlights and
+    // syntax-coloured runs come from per-tab helpers.
+    // ---------------------------------------------------------------------
+    let body_top = top + 2;
+    let body_rows = rows.saturating_sub(2);
     let pane_focused = app.mode == Mode::DebugPane;
-    let selected_local_idx = if pane_focused && !flat.is_empty() {
-        Some(app.dap_pane_cursor.min(flat.len() - 1))
+
+    let rows_buf: Vec<DapTabRow> = match app.dap_pane_tab {
+        crate::app::DapPaneTab::Frames => build_frames_rows(app),
+        crate::app::DapPaneTab::Locals => build_locals_rows(app, pane_focused),
+        crate::app::DapPaneTab::Watches => build_watches_rows(app),
+        crate::app::DapPaneTab::Breakpoints => build_breakpoints_rows(app),
+        crate::app::DapPaneTab::Console => build_console_rows(app),
+    };
+
+    // Console glues the latest line to the bottom by default; every
+    // other tab scrolls top-down. So Console's scroll offset = lines
+    // hidden BELOW the bottom; others = lines hidden ABOVE the top.
+    let total = rows_buf.len();
+    let scroll = app.dap_tab_scroll(app.dap_pane_tab);
+    let visible_start = if matches!(app.dap_pane_tab, crate::app::DapPaneTab::Console) {
+        let end = total.saturating_sub(scroll);
+        end.saturating_sub(body_rows)
     } else {
-        None
+        scroll.min(total.saturating_sub(body_rows))
     };
-
-    let mut left_rows: Vec<LeftRow> = Vec::new();
-    // Watches first — they tend to be a short list, and showing
-    // them above the frames keeps them visible without scrolling
-    // when the stack is deep. Only render when there's at least
-    // one watch; an empty list would just waste a separator row.
-    let watch_values: Vec<(String, String, bool)> = app
-        .dap
-        .watches
-        .iter()
-        .map(|w| {
-            let (val, err) = match &w.result {
-                Some(r) => (r.value.clone(), r.error),
-                None => ("…".to_string(), false),
-            };
-            (w.expr.clone(), val, err)
-        })
-        .collect();
-    if !watch_values.is_empty() {
-        left_rows.push(LeftRow::Separator(" Watches "));
-        for (name, value, error) in &watch_values {
-            left_rows.push(LeftRow::Watch {
-                name,
-                value,
-                error: *error,
-            });
-        }
-    }
-    if let Some(session) = app.dap.session.as_ref() {
-        if session.frames.is_empty() {
-            // Tag the empty-frames note with the actual state so a
-            // stopped-but-no-frames situation reads as a problem to
-            // diagnose instead of looking identical to "still running".
-            let note = match session.state {
-                crate::dap::SessionState::Stopped { .. } => "(stopped — waiting for stackTrace)",
-                crate::dap::SessionState::Running => "(running — no frames)",
-                crate::dap::SessionState::Initializing => "(initialising)",
-                crate::dap::SessionState::Configuring => "(configuring)",
-                crate::dap::SessionState::Terminated => "(terminated)",
-            };
-            left_rows.push(LeftRow::Note(note));
-        }
-        // Show every frame — overflow is handled by the left column's
-        // scroll position (`dap_left_scroll`), driven by the key handler
-        // and clamped below.
-        for f in &session.frames {
-            let loc = f
-                .source
-                .as_ref()
-                .and_then(|p| p.file_name())
-                .and_then(|n| n.to_str())
-                .map(|n| format!("{}:{}", n, f.line))
-                .unwrap_or_else(|| format!("?:{}", f.line));
-            left_rows.push(LeftRow::Frame(format!("{} — {}", loc, f.name)));
-        }
-        if !flat.is_empty() {
-            left_rows.push(LeftRow::Separator(" Locals "));
-            for (i, row) in flat.iter().enumerate() {
-                let marker = if row.expandable {
-                    if row.expanded { '▼' } else { '▶' }
-                } else {
-                    ' '
-                };
-                left_rows.push(LeftRow::Local {
-                    depth: row.depth,
-                    marker,
-                    name: &row.var.name,
-                    value: &row.var.value,
-                    selected: selected_local_idx == Some(i),
-                });
-            }
-        }
-    }
-
-    // Clamp the user-driven scroll positions to their valid range. The
-    // key handler keeps them in range too, but resizing the terminal or
-    // a fresh log line landing right before the draw can put them
-    // slightly out of bounds — easier to clamp here than to chase every
-    // upstream mutation.
-    let left_scroll = {
-        let max = left_rows.len().saturating_sub(body_rows);
-        app.dap_left_scroll.min(max)
-    };
-
-    // Full flat-mapped output buffer — we need every line because the
-    // user can scroll back through history with `K`. The buffer is
-    // bounded by `OUTPUT_LOG_CAP` so this stays cheap.
-    let output_all: Vec<&str> = app
-        .dap
-        .output_buffer
-        .iter()
-        .flat_map(|line| line.output.lines())
-        .collect();
-    let right_scroll = {
-        let max = output_all.len().saturating_sub(body_rows);
-        app.dap_right_scroll.min(max)
-    };
-    // Visible right-column window: last `body_rows` lines, then walked
-    // back `right_scroll` lines into the past.
-    let total_lines = output_all.len();
-    let end = total_lines.saturating_sub(right_scroll);
-    let start = end.saturating_sub(body_rows);
-    let output_tail: &[&str] = &output_all[start..end];
 
     for r in 0..body_rows {
-        let y = (top + 1 + r) as u16;
-        queue!(out, MoveTo(0, y), Clear(ClearType::CurrentLine))?;
-        queue!(out, SetBackgroundColor(body_bg))?;
-        // Left column. Apply scroll offset so the user can pan through
-        // a stack deeper than the visible viewport.
-        let row = left_rows.get(r + left_scroll).unwrap_or(&LeftRow::Empty);
-        let inner_w = left_w.saturating_sub(2);
-        match row {
-            LeftRow::Empty => {
-                queue!(out, Print(" ".repeat(left_w)))?;
-            }
-            LeftRow::Note(s) => {
-                queue!(
-                    out,
-                    SetForegroundColor(muted),
-                    Print(format!(" {} ", truncate_left(s, inner_w))),
-                )?;
-                pad_right(out, 2 + s.chars().count(), left_w)?;
-            }
-            LeftRow::Frame(s) => {
-                queue!(
-                    out,
-                    SetForegroundColor(header_fg),
-                    Print(format!(" {} ", truncate_left(s, inner_w))),
-                )?;
-                pad_right(out, 2 + s.chars().count().min(inner_w), left_w)?;
-            }
-            LeftRow::Separator(label) => {
-                let bar_room = inner_w.saturating_sub(label.chars().count());
-                let left_bar = bar_room / 2;
-                let right_bar = bar_room - left_bar;
-                queue!(
-                    out,
-                    SetForegroundColor(muted),
-                    Print(" "),
-                    Print("─".repeat(left_bar)),
-                    SetForegroundColor(header_fg),
-                    Print(*label),
-                    SetForegroundColor(muted),
-                    Print("─".repeat(right_bar)),
-                    Print(" "),
-                )?;
-                pad_right(out, 2 + bar_room + label.chars().count(), left_w)?;
-            }
-            LeftRow::Watch { name, value, error } => {
-                let value_fg = if *error {
-                    // Catppuccin Red — failed evaluations need to
-                    // stand out from valid results.
-                    Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }
-                } else {
-                    header_fg
-                };
-                let entry = format!("{} = {}", name, value);
-                let max_inner = inner_w.saturating_sub(1);
-                let visible = truncate_left(&entry, max_inner);
-                queue!(
-                    out,
-                    SetForegroundColor(value_fg),
-                    Print(format!(" {} ", visible)),
-                )?;
-                pad_right(out, 2 + visible.chars().count(), left_w)?;
-            }
-            LeftRow::Local {
-                depth,
-                marker,
-                name,
-                value,
-                selected,
-            } => {
-                // Catppuccin Surface2 — visible against body_bg without
-                // shouting.
-                let selection_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 };
-                let row_bg = if *selected { selection_bg } else { body_bg };
-                let indent: String = "  ".repeat(*depth);
-                let entry = format!("{}{} {} = {}", indent, marker, name, value);
-                let max_inner = inner_w.saturating_sub(1);
-                let visible = truncate_left(&entry, max_inner);
-                queue!(
-                    out,
-                    SetBackgroundColor(row_bg),
-                    SetForegroundColor(header_fg),
-                    Print(format!(" {} ", visible)),
-                )?;
-                let used = 2 + visible.chars().count();
-                if left_w > used {
-                    queue!(
-                        out,
-                        SetBackgroundColor(row_bg),
-                        Print(" ".repeat(left_w - used))
-                    )?;
-                }
-                queue!(out, SetBackgroundColor(body_bg))?;
-            }
-        }
-        // Right column (and column divider) — only when the pane is wide
-        // enough to split.
-        if split_at < width {
-            queue!(
-                out,
-                SetForegroundColor(muted),
-                Print("│"),
-                SetForegroundColor(header_fg),
-            )?;
-            let right_w = width.saturating_sub(left_w + 1);
-            let right_text = output_tail
-                .get(r)
-                .map(|s| format!(" {} ", s.trim_end()))
-                .unwrap_or_default();
-            let right_visible: String = right_text.chars().take(right_w).collect();
-            queue!(out, Print(&right_visible))?;
-            if right_visible.chars().count() < right_w {
-                queue!(out, Print(" ".repeat(right_w - right_visible.chars().count())))?;
-            }
+        let screen_y = (body_top + r) as u16;
+        queue!(
+            out,
+            MoveTo(0, screen_y),
+            Clear(ClearType::CurrentLine),
+            SetBackgroundColor(body_bg),
+        )?;
+        let idx = visible_start + r;
+        if let Some(row) = rows_buf.get(idx) {
+            paint_dap_row(out, row, width)?;
         }
         queue!(out, ResetColor)?;
     }
     Ok(())
+}
+
+/// One row of debug-pane body content. `parts` is a list of
+/// `(text, fg, bg, attr)` chunks emitted left-to-right. Truncated
+/// against the pane width at paint time. Highlighting (selection,
+/// breakpoint markers, syntax colour) lives in the part list rather
+/// than the painter so the tab-specific builders own their look.
+pub struct DapTabRow {
+    pub parts: Vec<DapTabPart>,
+    /// True if the row is the currently-selected one in the active
+    /// tab (highlighted with Surface2 background).
+    pub selected: bool,
+}
+
+pub struct DapTabPart {
+    pub text: String,
+    pub fg: Option<Color>,
+    pub bold: bool,
+    pub italic: bool,
+}
+
+impl DapTabPart {
+    pub fn plain(text: impl Into<String>, fg: Color) -> Self {
+        Self {
+            text: text.into(),
+            fg: Some(fg),
+            bold: false,
+            italic: false,
+        }
+    }
+    pub fn bold(text: impl Into<String>, fg: Color) -> Self {
+        Self {
+            text: text.into(),
+            fg: Some(fg),
+            bold: true,
+            italic: false,
+        }
+    }
+    pub fn italic(text: impl Into<String>, fg: Color) -> Self {
+        Self {
+            text: text.into(),
+            fg: Some(fg),
+            bold: false,
+            italic: true,
+        }
+    }
+}
+
+fn paint_dap_row(
+    out: &mut impl Write,
+    row: &DapTabRow,
+    width: usize,
+) -> Result<()> {
+    let bg = if row.selected {
+        Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 } // Surface2
+    } else {
+        Color::Rgb { r: 0x18, g: 0x18, b: 0x25 } // Mantle
+    };
+    queue!(out, SetBackgroundColor(bg))?;
+    queue!(out, Print(" "))?;
+    let mut used = 1usize;
+    for part in &row.parts {
+        if used >= width {
+            break;
+        }
+        let max = width.saturating_sub(used);
+        let text = truncate_left(&part.text, max);
+        let count = text.chars().count();
+        if let Some(fg) = part.fg {
+            queue!(out, SetForegroundColor(fg))?;
+        } else {
+            queue!(out, SetForegroundColor(Color::Reset))?;
+        }
+        if part.bold {
+            queue!(out, SetAttribute(Attribute::Bold))?;
+        }
+        if part.italic {
+            queue!(out, SetAttribute(Attribute::Italic))?;
+        }
+        queue!(out, Print(&text))?;
+        queue!(out, SetAttribute(Attribute::Reset))?;
+        used += count;
+    }
+    if used < width {
+        queue!(out, SetBackgroundColor(bg))?;
+        queue!(out, Print(" ".repeat(width - used)))?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Per-tab row builders. Each returns a Vec<DapTabRow> that the
+// renderer then scroll-windows and paints.
+// ---------------------------------------------------------------------
+
+fn build_frames_rows(app: &App) -> Vec<DapTabRow> {
+    let mut rows: Vec<DapTabRow> = Vec::new();
+    let palette = DebugPalette::default();
+    let Some(session) = app.dap.session.as_ref() else {
+        rows.push(note_row(no_session_note(), &palette));
+        return rows;
+    };
+    if session.frames.is_empty() {
+        rows.push(note_row(empty_frames_note(session), &palette));
+        return rows;
+    }
+    let selected = if app.mode == Mode::DebugPane
+        && app.dap_pane_tab == crate::app::DapPaneTab::Frames
+    {
+        Some(app.dap_pane_cursor.min(session.frames.len() - 1))
+    } else {
+        None
+    };
+    for (i, f) in session.frames.iter().enumerate() {
+        let loc = f
+            .source
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map(|n| format!("{}:{}", n, f.line))
+            .unwrap_or_else(|| format!("?:{}", f.line));
+        let parts = vec![
+            DapTabPart::plain(format!("{:>3}  ", i), palette.muted),
+            DapTabPart::plain(loc, palette.peach),
+            DapTabPart::plain("  ", palette.muted),
+            DapTabPart::plain(f.name.clone(), palette.blue),
+        ];
+        rows.push(DapTabRow {
+            parts,
+            selected: selected == Some(i),
+        });
+    }
+    rows
+}
+
+fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
+    let mut rows: Vec<DapTabRow> = Vec::new();
+    let palette = DebugPalette::default();
+    let Some(session) = app.dap.session.as_ref() else {
+        rows.push(note_row(no_session_note(), &palette));
+        return rows;
+    };
+    let flat = crate::dap::flat_locals_view(session);
+    if flat.is_empty() {
+        rows.push(note_row("(no locals — frame may not have any in scope)", &palette));
+        return rows;
+    }
+    let selected = if pane_focused && app.dap_pane_tab == crate::app::DapPaneTab::Locals {
+        Some(app.dap_pane_cursor.min(flat.len() - 1))
+    } else {
+        None
+    };
+    for (i, row) in flat.iter().enumerate() {
+        let marker = if row.expandable {
+            if row.expanded { '▼' } else { '▶' }
+        } else {
+            ' '
+        };
+        let indent: String = "  ".repeat(row.depth);
+        let mut parts = vec![
+            DapTabPart::plain(indent, palette.muted),
+            DapTabPart::plain(format!("{} ", marker), palette.muted),
+            DapTabPart::plain(row.var.name.clone(), palette.lavender),
+        ];
+        if let Some(t) = &row.var.type_name {
+            parts.push(DapTabPart::italic(format!(": {} ", t), palette.muted));
+        }
+        parts.push(DapTabPart::plain("= ", palette.muted));
+        parts.push(value_part(&row.var.value, &palette));
+        rows.push(DapTabRow {
+            parts,
+            selected: selected == Some(i),
+        });
+    }
+    rows
+}
+
+fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
+    let mut rows: Vec<DapTabRow> = Vec::new();
+    let palette = DebugPalette::default();
+    if app.dap.watches.is_empty() {
+        rows.push(note_row(
+            "(no watches — add via `:dapwatch <expr>`)",
+            &palette,
+        ));
+        return rows;
+    }
+    let selected = if app.mode == Mode::DebugPane
+        && app.dap_pane_tab == crate::app::DapPaneTab::Watches
+    {
+        Some(app.dap_pane_cursor.min(app.dap.watches.len() - 1))
+    } else {
+        None
+    };
+    for (i, w) in app.dap.watches.iter().enumerate() {
+        let mut parts = vec![
+            DapTabPart::plain(format!("{:>3}  ", i + 1), palette.muted),
+            DapTabPart::plain(w.expr.clone(), palette.lavender),
+            DapTabPart::plain(" = ", palette.muted),
+        ];
+        match &w.result {
+            Some(r) if r.error => {
+                parts.push(DapTabPart::plain(r.value.clone(), palette.red));
+            }
+            Some(r) => {
+                parts.push(value_part(&r.value, &palette));
+                if let Some(t) = &r.type_name {
+                    parts.push(DapTabPart::italic(format!("  : {}", t), palette.muted));
+                }
+            }
+            None => {
+                parts.push(DapTabPart::italic("…", palette.muted));
+            }
+        }
+        rows.push(DapTabRow {
+            parts,
+            selected: selected == Some(i),
+        });
+    }
+    rows
+}
+
+fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
+    let mut rows: Vec<DapTabRow> = Vec::new();
+    let palette = DebugPalette::default();
+    if app.dap.breakpoints.is_empty() {
+        rows.push(note_row("(no breakpoints — F9 to toggle on the cursor's line)", &palette));
+        return rows;
+    }
+    let mut entries: Vec<(String, usize, &Vec<crate::dap::SourceBreakpoint>)> = app
+        .dap
+        .breakpoints
+        .iter()
+        .map(|(p, b)| {
+            let display = p
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("<unknown>")
+                .to_string();
+            (display, b.len(), b)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let pane_focused_on_bp = app.mode == Mode::DebugPane
+        && app.dap_pane_tab == crate::app::DapPaneTab::Breakpoints;
+    let mut idx = 0usize;
+    let total_bp: usize = entries.iter().map(|(_, n, _)| *n).sum();
+    let selected = if pane_focused_on_bp && total_bp > 0 {
+        Some(app.dap_pane_cursor.min(total_bp - 1))
+    } else {
+        None
+    };
+    for (display, _, bps) in &entries {
+        for bp in *bps {
+            let parts = vec![
+                DapTabPart::plain("●  ", palette.red),
+                DapTabPart::plain(display.clone(), palette.peach),
+                DapTabPart::plain(":", palette.muted),
+                DapTabPart::plain(format!("{}", bp.line), palette.yellow),
+            ];
+            rows.push(DapTabRow {
+                parts,
+                selected: selected == Some(idx),
+            });
+            idx += 1;
+        }
+    }
+    rows
+}
+
+fn build_console_rows(app: &App) -> Vec<DapTabRow> {
+    let palette = DebugPalette::default();
+    let mut rows: Vec<DapTabRow> = Vec::new();
+    if app.dap.output_buffer.is_empty() {
+        rows.push(note_row("(no console output yet)", &palette));
+        return rows;
+    }
+    for line in app.dap.output_buffer.iter() {
+        for one in line.output.lines() {
+            let fg = match line.category.as_str() {
+                "stderr" => palette.red,
+                "console" => palette.muted,
+                _ => palette.text,
+            };
+            rows.push(DapTabRow {
+                parts: vec![DapTabPart::plain(one.to_string(), fg)],
+                selected: false,
+            });
+        }
+    }
+    rows
+}
+
+/// Pick a colour for a DAP variable value based on a cheap shape
+/// heuristic — quotes / digits / true/false / null. Matches the
+/// existing tree-sitter palette so the pane reads consistent with
+/// source-code highlighting.
+fn value_part(value: &str, p: &DebugPalette) -> DapTabPart {
+    let trim = value.trim();
+    if trim.starts_with('"') || trim.starts_with('\'') {
+        return DapTabPart::plain(value.to_string(), p.green);
+    }
+    if matches!(trim, "true" | "false" | "True" | "False") {
+        return DapTabPart::plain(value.to_string(), p.peach);
+    }
+    if matches!(
+        trim,
+        "null" | "Null" | "None" | "nil" | "undefined" | "(null)"
+    ) {
+        return DapTabPart::italic(value.to_string(), p.muted);
+    }
+    if trim
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '-' || c == '.' || c == 'x' || c == 'X' || c.is_ascii_hexdigit())
+        && !trim.is_empty()
+    {
+        return DapTabPart::plain(value.to_string(), p.peach);
+    }
+    DapTabPart::plain(value.to_string(), p.text)
+}
+
+fn note_row(text: &str, p: &DebugPalette) -> DapTabRow {
+    DapTabRow {
+        parts: vec![DapTabPart::italic(text.to_string(), p.muted)],
+        selected: false,
+    }
+}
+
+fn empty_frames_note(session: &crate::dap::DapSession) -> &'static str {
+    match session.state {
+        crate::dap::SessionState::Stopped { .. } => "(stopped — waiting for stackTrace)",
+        crate::dap::SessionState::Running => "(running — no frames)",
+        crate::dap::SessionState::Initializing => "(initialising)",
+        crate::dap::SessionState::Configuring => "(configuring)",
+        crate::dap::SessionState::Terminated => "(terminated)",
+    }
+}
+
+fn no_session_note() -> &'static str {
+    "(no debug session — :debug to start)"
+}
+
+/// Catppuccin-Mocha-derived colours used across the debug pane.
+/// Mirrors the editor's syntax palette so variable names / values
+/// / types read consistently between source and pane.
+struct DebugPalette {
+    base: Color,
+    text: Color,
+    muted: Color,
+    accent: Color,
+    blue: Color,
+    lavender: Color,
+    green: Color,
+    peach: Color,
+    yellow: Color,
+    red: Color,
+}
+
+impl Default for DebugPalette {
+    fn default() -> Self {
+        Self {
+            base: Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e },
+            text: Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
+            muted: Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },
+            accent: Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 },
+            blue: Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },
+            lavender: Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe },
+            green: Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 },
+            peach: Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 },
+            yellow: Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf },
+            red: Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 },
+        }
+    }
 }
 
 /// Pad the current row out to `target` columns by writing spaces. `written`

@@ -117,20 +117,110 @@ impl super::App {
             self.adjust_viewport();
         }
         self.dap_pane_cursor = 0;
-        self.dap_right_scroll = 0;
-        // Park the left column on the last couple of frames so the
-        // separator and first locals are visible by default — without
-        // hiding the user-relevant frame context above.
-        let frames_len = self
-            .dap
-            .session
-            .as_ref()
-            .map(|s| s.frames.len())
-            .unwrap_or(0);
-        self.dap_left_scroll = frames_len.saturating_sub(2);
         self.mode = Mode::DebugPane;
         self.status_msg =
-            "pane: j/k navigate · ^Y/^E scroll · J/K log · Enter expand · Esc exits".into();
+            "pane: gt/gT switch tab · j/k move · Enter expand · Esc exits".into();
+    }
+
+    /// Mouse dispatch for the debug pane. Returns `true` if the
+    /// click landed in pane rows (so the caller skips the editor
+    /// mouse handling). Three regions:
+    ///   1. Header chip row — focus the pane (no further action).
+    ///   2. Tab bar row — click hit-tests against the per-tab
+    ///      rectangles recorded in `dap_tab_hitboxes`. Switch
+    ///      tabs + focus on a hit.
+    ///   3. Body — focus the pane and (for clickable tabs) move
+    ///      `dap_pane_cursor` to the clicked row.
+    /// Scroll wheel inside the pane pages the active tab.
+    pub(super) fn handle_debug_pane_mouse_event(
+        &mut self,
+        ev: &crossterm::event::MouseEvent,
+        row: usize,
+        col: usize,
+    ) -> bool {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        let pane_rows = self.debug_pane_rows();
+        if pane_rows == 0 {
+            return false;
+        }
+        let pane_top = self.debug_pane_top();
+        let pane_bottom = pane_top + pane_rows;
+        if row < pane_top || row >= pane_bottom {
+            return false;
+        }
+        let header_row = pane_top;
+        let tab_row = pane_top + 1;
+        let body_top = pane_top + 2;
+
+        match ev.kind {
+            MouseEventKind::ScrollUp => {
+                self.dap_tab_scroll_by(-3);
+                if !matches!(self.mode, Mode::DebugPane) {
+                    self.mode = Mode::DebugPane;
+                }
+                return true;
+            }
+            MouseEventKind::ScrollDown => {
+                self.dap_tab_scroll_by(3);
+                if !matches!(self.mode, Mode::DebugPane) {
+                    self.mode = Mode::DebugPane;
+                }
+                return true;
+            }
+            _ => {}
+        }
+
+        // Pull focus on any click anywhere in the pane. Subsequent
+        // hit-testing further refines what the click did.
+        let is_down = matches!(
+            ev.kind,
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Middle | MouseButton::Right)
+        );
+        if !is_down {
+            return true; // consumed but no action
+        }
+        if !matches!(self.mode, Mode::DebugPane) {
+            self.mode = Mode::DebugPane;
+        }
+        if row == header_row {
+            return true;
+        }
+        if row == tab_row {
+            let hits = self.dap_tab_hitboxes.take();
+            let mut clicked: Option<crate::app::DapPaneTab> = None;
+            for (tab, x_start, x_end) in &hits {
+                if (col as u16) >= *x_start && (col as u16) < *x_end {
+                    clicked = Some(*tab);
+                    break;
+                }
+            }
+            self.dap_tab_hitboxes.set(hits);
+            if let Some(tab) = clicked {
+                self.dap_set_tab(tab);
+            }
+            return true;
+        }
+        // Body click — move the per-tab cursor to the clicked row.
+        let body_row = row - body_top;
+        let total = self.dap_active_tab_row_count_pub();
+        let scroll = self.dap_tab_scroll(self.dap_pane_tab);
+        let idx = scroll + body_row;
+        if idx < total {
+            self.dap_pane_cursor = idx;
+            // Locals: clicking a expandable row also toggles it.
+            // Frames: clicking jumps to the frame's source (future
+            // polish — for now just selection).
+            if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Locals) {
+                self.dap_pane_toggle_at_cursor();
+            }
+        }
+        true
+    }
+
+    /// Public alias so the mouse dispatcher can read the row count
+    /// without going through the private helper.
+    pub(super) fn dap_active_tab_row_count_pub(&self) -> usize {
+        self.dap_active_tab_row_count()
     }
 
     pub(super) fn dap_exit_pane_focus(&mut self) {
@@ -140,78 +230,104 @@ impl super::App {
         }
     }
 
+    /// Switch to the previous / next tab in the bar. Wraps around so
+    /// `gT` from Frames lands on Console.
+    pub(super) fn dap_cycle_tab(&mut self, forward: bool) {
+        let tabs = crate::app::DapPaneTab::all();
+        let cur_idx = tabs.iter().position(|t| *t == self.dap_pane_tab).unwrap_or(0);
+        let next = if forward {
+            (cur_idx + 1) % tabs.len()
+        } else {
+            (cur_idx + tabs.len() - 1) % tabs.len()
+        };
+        self.dap_pane_tab = tabs[next];
+        self.dap_pane_cursor = 0;
+    }
+
+    pub(super) fn dap_set_tab(&mut self, tab: crate::app::DapPaneTab) {
+        if self.dap_pane_tab != tab {
+            self.dap_pane_tab = tab;
+            self.dap_pane_cursor = 0;
+        }
+    }
+
     /// Key dispatch for `Mode::DebugPane`. Returns `true` if the key was
     /// consumed (the caller skips the normal-mode dispatch in that case).
     pub(super) fn handle_debug_pane_key(&mut self, key: KeyEvent) -> bool {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let locals_len = self
-            .dap
-            .session
-            .as_ref()
-            .map(|s| flat_locals_view(s).len())
-            .unwrap_or(0);
+        let body_len = self.dap_active_tab_row_count();
         match key.code {
             KeyCode::Esc => {
                 self.dap_exit_pane_focus();
                 true
             }
-            // Ctrl-Y / Ctrl-E: scroll the left column without moving the
-            // selection — Vim-convention free scroll for peeking at
-            // frames above the locals.
+            // `gt` / `gT` (matching Vim's tab cycling) — but we only see
+            // one keypress at a time here, so use Tab / BackTab as
+            // the in-pane cycle keys + Right/Left as aliases.
+            KeyCode::Tab => {
+                self.dap_cycle_tab(true);
+                true
+            }
+            KeyCode::BackTab => {
+                self.dap_cycle_tab(false);
+                true
+            }
+            KeyCode::Right => {
+                self.dap_cycle_tab(true);
+                true
+            }
+            KeyCode::Left => {
+                self.dap_cycle_tab(false);
+                true
+            }
+            // Number row → jump to tab by index (1-based, matches the
+            // labels' visible order).
+            KeyCode::Char(d) if d.is_ascii_digit() => {
+                let idx = (d as u8 - b'1') as usize;
+                let tabs = crate::app::DapPaneTab::all();
+                if idx < tabs.len() {
+                    self.dap_set_tab(tabs[idx]);
+                }
+                true
+            }
             KeyCode::Char('y') if ctrl => {
-                self.dap_left_scroll = self.dap_left_scroll.saturating_sub(1);
+                self.dap_tab_scroll_by(-1);
                 true
             }
             KeyCode::Char('e') if ctrl => {
-                self.dap_left_scroll = self
-                    .dap_left_scroll
-                    .saturating_add(1)
-                    .min(self.dap_left_scroll_max());
+                self.dap_tab_scroll_by(1);
                 true
             }
             KeyCode::Char('j') | KeyCode::Down => {
-                if locals_len > 0 {
-                    self.dap_pane_cursor = (self.dap_pane_cursor + 1).min(locals_len - 1);
-                    self.dap_follow_selection_in_left_column();
+                if body_len > 0 {
+                    self.dap_pane_cursor = (self.dap_pane_cursor + 1).min(body_len - 1);
+                    self.dap_follow_selection();
                 }
                 true
             }
             KeyCode::Char('k') | KeyCode::Up => {
                 self.dap_pane_cursor = self.dap_pane_cursor.saturating_sub(1);
-                self.dap_follow_selection_in_left_column();
+                self.dap_follow_selection();
                 true
             }
             KeyCode::Char('g') => {
                 self.dap_pane_cursor = 0;
-                self.dap_follow_selection_in_left_column();
+                self.dap_follow_selection();
                 true
             }
             KeyCode::Char('G') => {
-                self.dap_pane_cursor = locals_len.saturating_sub(1);
-                self.dap_follow_selection_in_left_column();
+                self.dap_pane_cursor = body_len.saturating_sub(1);
+                self.dap_follow_selection();
                 true
             }
-            // Right column scrolling — capital J/K so lowercase stays
-            // bound to locals navigation. J pages toward the latest log
-            // line; K pages back into older history.
-            KeyCode::Char('J') => {
-                self.dap_right_scroll = self.dap_right_scroll.saturating_sub(1);
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Locals) {
+                    self.dap_pane_toggle_at_cursor();
+                    self.dap_follow_selection();
+                }
                 true
             }
-            KeyCode::Char('K') => {
-                self.dap_right_scroll = self
-                    .dap_right_scroll
-                    .saturating_add(1)
-                    .min(self.dap_right_scroll_max());
-                true
-            }
-            KeyCode::Enter | KeyCode::Tab | KeyCode::Char(' ') => {
-                self.dap_pane_toggle_at_cursor();
-                self.dap_follow_selection_in_left_column();
-                true
-            }
-            // Stepping bindings while focus is in the pane — saves an
-            // Esc + <leader>d{c,n,i,O} round-trip during inspection.
+            // Stepping bindings while focus is in the pane.
             KeyCode::Char('c') => {
                 self.dap.step(StepKind::Continue);
                 true
@@ -240,67 +356,81 @@ impl super::App {
         }
     }
 
-    /// Maximum valid value for `dap_left_scroll`. The total left-column
-    /// row count (frames + optional separator + locals tree) minus the
-    /// number of body rows the pane currently has.
-    pub(super) fn dap_left_scroll_max(&self) -> usize {
-        let Some(session) = self.dap.session.as_ref() else {
-            return 0;
-        };
-        let flat = flat_locals_view(session);
-        let total = if flat.is_empty() {
-            session.frames.len()
-        } else {
-            session.frames.len() + 1 + flat.len()
-        };
-        let body_rows = self.debug_pane_rows().saturating_sub(1);
-        total.saturating_sub(body_rows)
-    }
-
-    /// Maximum valid value for `dap_right_scroll`. Counts every output
-    /// line currently in the buffer; the buffer is bounded by
-    /// `OUTPUT_LOG_CAP` so this is cheap.
-    pub(super) fn dap_right_scroll_max(&self) -> usize {
-        let total_lines: usize = self
-            .dap
-            .output_buffer
-            .iter()
-            .map(|o| o.output.lines().count().max(1))
-            .sum();
-        let body_rows = self.debug_pane_rows().saturating_sub(1);
-        total_lines.saturating_sub(body_rows)
-    }
-
-    /// Adjust `dap_left_scroll` so the currently-selected local is in
-    /// the visible viewport. Called after every selection-moving key.
-    fn dap_follow_selection_in_left_column(&mut self) {
-        let Some(session) = self.dap.session.as_ref() else {
-            return;
-        };
-        let frames_len = session.frames.len();
-        let flat_len = flat_locals_view(session).len();
-        if flat_len == 0 {
-            return;
+    /// Number of selectable rows in the currently-active tab. Used
+    /// by the key handler to clamp `dap_pane_cursor`.
+    fn dap_active_tab_row_count(&self) -> usize {
+        match self.dap_pane_tab {
+            crate::app::DapPaneTab::Frames => self
+                .dap
+                .session
+                .as_ref()
+                .map(|s| s.frames.len())
+                .unwrap_or(0),
+            crate::app::DapPaneTab::Locals => self
+                .dap
+                .session
+                .as_ref()
+                .map(flat_locals_view)
+                .map(|v| v.len())
+                .unwrap_or(0),
+            crate::app::DapPaneTab::Watches => self.dap.watches.len(),
+            crate::app::DapPaneTab::Breakpoints => self.dap.breakpoints.values().map(|v| v.len()).sum(),
+            crate::app::DapPaneTab::Console => self
+                .dap
+                .output_buffer
+                .iter()
+                .map(|o| o.output.lines().count().max(1))
+                .sum(),
         }
-        let cursor = self.dap_pane_cursor.min(flat_len - 1);
-        // Locals occupy rows `[frames_len + 1, frames_len + 1 + flat_len)`
-        // — the `+1` accounts for the "── Locals ──" separator row.
-        let selected_abs = frames_len + 1 + cursor;
-        let body_rows = self.debug_pane_rows().saturating_sub(1);
+    }
+
+    pub fn dap_tab_scroll(&self, tab: crate::app::DapPaneTab) -> usize {
+        self.dap_tab_scrolls.get(&tab).copied().unwrap_or(0)
+    }
+
+    /// Adjust the active tab's scroll offset. For `Console` the
+    /// offset counts lines hidden BELOW the bottom (so 0 sticks to
+    /// the latest line, matching the old right-column behaviour);
+    /// every other tab uses lines hidden ABOVE the top.
+    pub(super) fn dap_tab_scroll_by(&mut self, delta: i32) {
+        let tab = self.dap_pane_tab;
+        let body_rows = self.dap_body_rows();
+        let total = self.dap_active_tab_row_count();
+        let max = total.saturating_sub(body_rows);
+        let cur = self.dap_tab_scroll(tab) as i32;
+        let next = (cur + delta).clamp(0, max as i32) as usize;
+        self.dap_tab_scrolls.insert(tab, next);
+    }
+
+    /// Rows available for tab body — pane minus the header chip
+    /// (debug status) and the tab bar.
+    pub(super) fn dap_body_rows(&self) -> usize {
+        self.debug_pane_rows().saturating_sub(2)
+    }
+
+    /// Adjust scroll so the cursor row in the active tab stays
+    /// visible. Called from the key handler after a j/k/g/G.
+    fn dap_follow_selection(&mut self) {
+        let body_rows = self.dap_body_rows();
         if body_rows == 0 {
             return;
         }
-        if selected_abs < self.dap_left_scroll {
-            self.dap_left_scroll = selected_abs;
+        let cursor = self.dap_pane_cursor;
+        let tab = self.dap_pane_tab;
+        let mut scroll = self.dap_tab_scroll(tab);
+        if cursor < scroll {
+            scroll = cursor;
         }
-        let last_visible = self.dap_left_scroll + body_rows;
-        if selected_abs >= last_visible {
-            self.dap_left_scroll = selected_abs + 1 - body_rows;
+        let last_visible = scroll + body_rows;
+        if cursor >= last_visible {
+            scroll = cursor + 1 - body_rows;
         }
-        let max = self.dap_left_scroll_max();
-        if self.dap_left_scroll > max {
-            self.dap_left_scroll = max;
+        let total = self.dap_active_tab_row_count();
+        let max = total.saturating_sub(body_rows);
+        if scroll > max {
+            scroll = max;
         }
+        self.dap_tab_scrolls.insert(tab, scroll);
     }
 
     /// Visual Studio / Rider-style debug shortcut keys, dispatched
@@ -921,8 +1051,7 @@ impl super::App {
                     // starting position rather than wherever the previous
                     // stop's viewport happened to land.
                     self.dap_pane_cursor = 0;
-                    self.dap_right_scroll = 0;
-                    self.dap_left_scroll = 0;
+                    self.dap_tab_scrolls.clear();
                     self.dap_jump_to_top_frame();
                 }
                 DapEvent::Continued { .. } => {

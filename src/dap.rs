@@ -21,7 +21,7 @@ mod manager;
 mod specs;
 mod types;
 
-pub use manager::{flat_locals_view, DapManager, StepKind};
+pub use manager::{flat_locals_view, DapManager, DapSession, StepKind};
 #[allow(unused_imports)]
 pub use specs::{
     adapter_for_workspace, find_dotnet_projects, find_dotnet_workspace_root,

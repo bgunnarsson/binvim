@@ -372,13 +372,19 @@ impl super::App {
         if self.terminal_pane_open && self.handle_terminal_mouse_event(&ev, row, col) {
             return;
         }
-        // Click landed outside the terminal pane while focus was in
-        // the terminal — pull focus back into the editor before the
-        // click is interpreted as a buffer-area mouse event. Without
-        // this, the click would fall through to the editor mouse
-        // handler but the mode would still be Terminal, and the
-        // next keystroke would route into the PTY.
-        if matches!(self.mode, Mode::Terminal)
+        // Same gating for the debug pane — clicks land focus on the
+        // pane (Mode::DebugPane), clicks on the tab bar switch tabs,
+        // scroll wheel pages the active tab's body.
+        if self.debug_pane_open && self.handle_debug_pane_mouse_event(&ev, row, col) {
+            return;
+        }
+        // Click outside the terminal / debug panes while one of
+        // those modes had focus — pull focus back into the editor
+        // before the click is interpreted as a buffer-area mouse
+        // event. Otherwise the click would fall through but the
+        // mode would still be Terminal / DebugPane and the next
+        // keystroke would route to the wrong place.
+        if matches!(self.mode, Mode::Terminal | Mode::DebugPane)
             && matches!(
                 ev.kind,
                 MouseEventKind::Down(MouseButton::Left | MouseButton::Middle | MouseButton::Right)

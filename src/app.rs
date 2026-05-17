@@ -85,6 +85,48 @@ use crate::undo::History;
 
 use state::RecordingState;
 
+/// Which content the debug pane is showing. Each variant is a tab
+/// in the bar across the top of the pane; clicking switches active
+/// tab, and per-tab scroll positions live on `App.dap_tab_scrolls`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DapPaneTab {
+    /// Call stack — one row per frame in the stopped thread.
+    Frames,
+    /// Locals tree of the top frame — structured values expand
+    /// lazily, navigated with `j`/`k`/`Enter`/`Tab`.
+    Locals,
+    /// User-managed watch expressions, re-evaluated per stop.
+    Watches,
+    /// Every active breakpoint, grouped by file. Click a row to
+    /// jump to the source line (future polish).
+    Breakpoints,
+    /// Streaming debuggee + adapter console output.
+    Console,
+}
+
+impl DapPaneTab {
+    /// Tabs in the order they're rendered in the bar.
+    pub fn all() -> [DapPaneTab; 5] {
+        [
+            DapPaneTab::Frames,
+            DapPaneTab::Locals,
+            DapPaneTab::Watches,
+            DapPaneTab::Breakpoints,
+            DapPaneTab::Console,
+        ]
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DapPaneTab::Frames => "Frames",
+            DapPaneTab::Locals => "Locals",
+            DapPaneTab::Watches => "Watches",
+            DapPaneTab::Breakpoints => "Breakpoints",
+            DapPaneTab::Console => "Console",
+        }
+    }
+}
+
 pub struct App {
     pub buffer: Buffer,
     /// The active window — its cursor, viewport, Visual anchor, and the
@@ -229,19 +271,26 @@ pub struct App {
     /// editor area; height is computed from terminal size in `view.rs`.
     /// Starts closed; toggled by `:dappane` and forced open by `:debug`.
     pub debug_pane_open: bool,
-    /// Index into the flat locals tree of the currently-selected row when
-    /// `Mode::DebugPane` has focus. Bounded against the live tree at
-    /// access time — vrefs can shift across stops, so the renderer and
-    /// key handler clamp before use.
+    /// Which tab the debug pane is currently showing. Mouse clicks on
+    /// the tab bar at the top of the pane switch this; the pane body
+    /// is per-tab content.
+    pub dap_pane_tab: DapPaneTab,
+    /// Per-tab viewport scroll offsets. `Console`'s offset counts
+    /// lines hidden below the bottom (0 keeps the latest line glued
+    /// to the bottom); every other tab uses "lines hidden above"
+    /// like a normal scroll viewport. Stored per-tab so switching
+    /// doesn't lose the user's reading position.
+    pub dap_tab_scrolls: HashMap<DapPaneTab, usize>,
+    /// Index into the flat locals tree of the currently-selected row
+    /// when the Locals tab has focus. Bounded against the live tree
+    /// at access time — vrefs can shift across stops, so the
+    /// renderer and key handler clamp before use.
     pub dap_pane_cursor: usize,
-    /// Top of the left column's viewport (frames + separator + locals).
-    /// Driven by `j`/`k` (auto-follow the selection) and `Ctrl-Y`/`Ctrl-E`
-    /// (free scroll without moving selection).
-    pub dap_left_scroll: usize,
-    /// Number of "latest" console-output rows hidden below the right
-    /// column's viewport. `0` keeps the latest line glued to the bottom;
-    /// `J`/`K` scrolls into the older history.
-    pub dap_right_scroll: usize,
+    /// Horizontal rects of the rendered tab headers — `(tab, x_start,
+    /// x_end_exclusive)`. Populated by `draw_debug_pane` each frame
+    /// so the mouse handler can hit-test clicks on the tab bar.
+    /// `Cell` because `render::draw` only has `&App`.
+    pub dap_tab_hitboxes: std::cell::Cell<Vec<(DapPaneTab, u16, u16)>>,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -548,8 +597,9 @@ impl App {
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
             dap_pane_cursor: 0,
-            dap_left_scroll: 0,
-            dap_right_scroll: 0,
+            dap_pane_tab: DapPaneTab::Locals,
+            dap_tab_scrolls: HashMap::new(),
+            dap_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             pending_debug_project: None,
