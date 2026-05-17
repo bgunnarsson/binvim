@@ -33,6 +33,16 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       grid with full SGR colour + attrs, CUP / CUF / CUB / CUU /
       CUD / CHA cursor moves, ED / EL clears, IND / RI / DECSC /
       DECRC / RIS, line wrap into a 10k-row scrollback.
+- [ ] **Multiple terminals (in tabs).** Extend the `:terminal` pane
+      to host more than one PTY at once, surfaced as a tab bar
+      across the top of the bottom split (same visual family as the
+      debug pane's tab strip). `:terminal` opens a new tab,
+      `<leader>tn` / `<leader>tp` cycle, `<leader>tc` closes the
+      active one, numeric `<leader>t1..9` jumps directly. Each tab
+      owns its own PTY + 10k scrollback + cursor state; the pane
+      only ever renders the active one. Inactive PTYs keep reading
+      so `make watch` / `cargo watch` / a long build don't stall
+      while focus is elsewhere. **considering**
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm
