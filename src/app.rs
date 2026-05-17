@@ -132,6 +132,28 @@ impl DapPaneTab {
     }
 }
 
+/// One mouse-drag selection inside the Debug Console. `(line, col)`
+/// pairs index into the flattened console-line view (every newline
+/// counts as a line break) so the renderer + clipboard copier
+/// operate on the same coordinate space.
+#[derive(Debug, Clone, Copy)]
+pub struct DapConsoleSelection {
+    pub anchor: (usize, usize),
+    pub head: (usize, usize),
+}
+
+impl DapConsoleSelection {
+    /// Normalised `(start, end)` so `start <= end` regardless of
+    /// which direction the user dragged.
+    pub fn ordered(&self) -> ((usize, usize), (usize, usize)) {
+        if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
+    }
+}
+
 pub struct App {
     pub buffer: Buffer,
     /// The active window — its cursor, viewport, Visual anchor, and the
@@ -296,6 +318,13 @@ pub struct App {
     /// so the mouse handler can hit-test clicks on the tab bar.
     /// `Cell` because `render::draw` only has `&App`.
     pub dap_tab_hitboxes: std::cell::Cell<Vec<(DapPaneTab, u16, u16)>>,
+    /// Active mouse-drag selection inside the Console tab. `None`
+    /// when nothing's selected. Anchor + head are
+    /// `(line_idx_in_flattened_buffer, char_col)`; the renderer
+    /// normalises ordering when painting. Cleared on next plain
+    /// click; persists across drag-release so the user sees what
+    /// they just copied.
+    pub dap_console_selection: Option<DapConsoleSelection>,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -605,6 +634,7 @@ impl App {
             dap_pane_tab: DapPaneTab::Console,
             dap_tab_scrolls: HashMap::new(),
             dap_tab_hitboxes: std::cell::Cell::new(Vec::new()),
+            dap_console_selection: None,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             pending_debug_project: None,

@@ -170,6 +170,18 @@ impl super::App {
             _ => {}
         }
 
+        // Console tab: drag selects, release auto-copies, Cmd-click
+        // opens URLs. Handled before the generic body dispatch so
+        // the drag flow doesn't get clobbered by the cursor move.
+        if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console)
+            && row >= body_top
+            && row < pane_bottom
+        {
+            if self.handle_console_mouse(ev, row, col, body_top) {
+                return true;
+            }
+        }
+
         // Pull focus on any click anywhere in the pane. Subsequent
         // hit-testing further refines what the click did.
         let is_down = matches!(
@@ -217,11 +229,211 @@ impl super::App {
         true
     }
 
+    /// Console-tab mouse handler. Returns `true` when the event was
+    /// consumed. Handles three flows:
+    ///   - Cmd+Click on a URL token → open in the OS browser via
+    ///     `open` (macOS) / `xdg-open` (linux) / `start` (windows).
+    ///   - Down(Left) → start a text selection (anchor + head).
+    ///   - Drag(Left) → extend the head.
+    ///   - Up(Left) → finalise: copy selection to OS clipboard.
+    fn handle_console_mouse(
+        &mut self,
+        ev: &crossterm::event::MouseEvent,
+        row: usize,
+        col: usize,
+        body_top: usize,
+    ) -> bool {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+        let lines = self.dap_console_flat_lines();
+        if lines.is_empty() {
+            return false;
+        }
+        let body_row = row - body_top;
+        let body_rows = self.dap_body_rows();
+        let scroll = self.dap_tab_scroll(crate::app::DapPaneTab::Console);
+        // Console scrolls bottom-up (latest line glued to the
+        // bottom). Same arithmetic as the renderer's visible_start
+        // calculation for the Console tab.
+        let end = lines.len().saturating_sub(scroll);
+        let visible_start = end.saturating_sub(body_rows);
+        let line_idx = visible_start + body_row;
+        if line_idx >= lines.len() {
+            return false;
+        }
+        // `1` is the leading-space pad paint_dap_row emits before
+        // any content. Map screen col back to char-col in the line.
+        let line_col = col.saturating_sub(1);
+
+        let cmd_modifier = ev.modifiers.contains(KeyModifiers::SUPER)
+            || ev.modifiers.contains(KeyModifiers::CONTROL);
+
+        match ev.kind {
+            MouseEventKind::Down(MouseButton::Left) if cmd_modifier => {
+                if !matches!(self.mode, Mode::DebugPane) {
+                    self.mode = Mode::DebugPane;
+                }
+                if let Some(url) =
+                    find_url_at(&lines[line_idx].1, line_col)
+                {
+                    self.open_url_in_browser(&url);
+                }
+                true
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !matches!(self.mode, Mode::DebugPane) {
+                    self.mode = Mode::DebugPane;
+                }
+                self.dap_console_selection = Some(crate::app::DapConsoleSelection {
+                    anchor: (line_idx, line_col),
+                    head: (line_idx, line_col),
+                });
+                true
+            }
+            MouseEventKind::Drag(MouseButton::Left) => {
+                if let Some(sel) = self.dap_console_selection.as_mut() {
+                    sel.head = (line_idx, line_col);
+                }
+                true
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                let text = self.dap_console_selection_text(&lines);
+                if !text.is_empty() {
+                    let chars = text.chars().count();
+                    if let Ok(mut cb) = arboard::Clipboard::new() {
+                        let _ = cb.set_text(text.clone());
+                    }
+                    self.write_register(None, text, false);
+                    self.status_msg = format!("copied {} chars from console", chars);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Flatten the DAP output buffer into one row per logical line
+    /// (newline-split), preserving the per-row category so the
+    /// renderer + mouse handler operate on the same coordinate
+    /// space. Returns a `Vec<(category, line)>`; callers usually
+    /// only need `.1`.
+    pub(super) fn dap_console_flat_lines(&self) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for entry in self.dap.output_buffer.iter() {
+            for one in entry.output.lines() {
+                out.push((entry.category.clone(), one.to_string()));
+            }
+        }
+        out
+    }
+
+    /// Pull the currently-selected console text into a single
+    /// String, joining multi-line selections with `\n`.
+    fn dap_console_selection_text(&self, lines: &[(String, String)]) -> String {
+        let Some(sel) = self.dap_console_selection else {
+            return String::new();
+        };
+        let (start, end) = sel.ordered();
+        if start == end {
+            return String::new();
+        }
+        let mut out = String::new();
+        for line_idx in start.0..=end.0 {
+            let Some((_, body)) = lines.get(line_idx) else {
+                continue;
+            };
+            let chars: Vec<char> = body.chars().collect();
+            let from = if line_idx == start.0 { start.1.min(chars.len()) } else { 0 };
+            let to = if line_idx == end.0 {
+                end.1.min(chars.len())
+            } else {
+                chars.len()
+            };
+            if to > from {
+                out.extend(chars[from..to].iter());
+            }
+            if line_idx < end.0 {
+                out.push('\n');
+            }
+        }
+        out
+    }
+
+    /// Open `url` in the OS browser. macOS → `open`, Linux →
+    /// `xdg-open`, Windows → `start`. Best-effort: failures
+    /// surface as a status-line message so the user knows the
+    /// click registered but couldn't fire.
+    fn open_url_in_browser(&mut self, url: &str) {
+        let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
+            ("open", vec![url])
+        } else if cfg!(target_os = "windows") {
+            ("cmd", vec!["/C", "start", "", url])
+        } else {
+            ("xdg-open", vec![url])
+        };
+        match std::process::Command::new(program).args(&args).spawn() {
+            Ok(_) => {
+                self.status_msg = format!("opening {}", url);
+            }
+            Err(e) => {
+                self.status_msg = format!("could not open {}: {}", url, e);
+            }
+        }
+    }
+
     /// Public alias so the mouse dispatcher can read the row count
     /// without going through the private helper.
     pub(super) fn dap_active_tab_row_count_pub(&self) -> usize {
         self.dap_active_tab_row_count()
     }
+}
+
+/// True when `c` is plausibly a URL-body character — anything
+/// that's not whitespace and not a common trailing-punctuation
+/// glyph. Matches what `scan_url` in render.rs accepts so click
+/// hit-testing and paint colouring agree.
+fn url_body_char(c: char) -> bool {
+    !c.is_whitespace()
+        && c != ')'
+        && c != ']'
+        && c != '"'
+        && c != '\''
+        && c != ','
+        && c != ';'
+}
+
+/// Find a URL token straddling `col` on `line`. Returns the
+/// substring if one is present. Recognises `http://` / `https://`
+/// prefixes (case-insensitive).
+fn find_url_at(line: &str, col: usize) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() {
+        return None;
+    }
+    // Walk left from col until we hit a non-URL char or the start.
+    let mut start = col;
+    while start > 0 && url_body_char(chars[start - 1]) {
+        start -= 1;
+    }
+    // Walk right from col until we hit a non-URL char or the end.
+    let mut end = col;
+    while end < chars.len() && url_body_char(chars[end]) {
+        end += 1;
+    }
+    if end <= start {
+        return None;
+    }
+    let token: String = chars[start..end].iter().collect();
+    let lower = token.to_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Some(token)
+    } else {
+        None
+    }
+}
+
+impl super::App {
+    // ↑ continues the same impl block for the rest of the file's
+    // methods below.
 
     pub(super) fn dap_exit_pane_focus(&mut self) {
         if self.mode == Mode::DebugPane {

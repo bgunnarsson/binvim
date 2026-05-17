@@ -4440,11 +4440,16 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
 /// against the pane width at paint time. Highlighting (selection,
 /// breakpoint markers, syntax colour) lives in the part list rather
 /// than the painter so the tab-specific builders own their look.
+#[derive(Default)]
 pub struct DapTabRow {
     pub parts: Vec<DapTabPart>,
     /// True if the row is the currently-selected one in the active
     /// tab (highlighted with Surface2 background).
     pub selected: bool,
+    /// Optional char-column range `[start, end)` to highlight as a
+    /// mouse-drag selection. Used by the Console tab. Painted in
+    /// Surface2 on top of whatever the per-part colours were.
+    pub selection_range: Option<(usize, usize)>,
 }
 
 pub struct DapTabPart {
@@ -4486,64 +4491,142 @@ fn paint_dap_row(
     row: &DapTabRow,
     width: usize,
 ) -> Result<()> {
-    let bg = if row.selected {
-        Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 } // Surface2
+    let row_bg = if row.selected {
+        Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 } // Surface2 — whole-row select
     } else {
         Color::Rgb { r: 0x18, g: 0x18, b: 0x25 } // Mantle
     };
-    queue!(out, SetBackgroundColor(bg))?;
+    let sel_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2 — partial select
+    let sel_range = row.selection_range;
+    // Cell-col tracks position WITHIN the row's content (i.e.
+    // 0 = first content char after the leading pad). The
+    // selection_range from `build_console_rows` is in that space.
+    queue!(out, SetBackgroundColor(row_bg))?;
     queue!(out, Print(" "))?;
-    let mut used = 1usize;
+    let mut used = 1usize; // screen cols consumed (incl. leading pad)
+    let mut cell_col = 0usize; // chars emitted into row content
     for part in &row.parts {
         if used >= width {
             break;
         }
         let max = width.saturating_sub(used);
-        // Right-truncate (drop the tail) — the leading content
-        // carries the meaning in every dap row shape: log lines
-        // start with the timestamp + level, locals start with the
-        // variable name, frames with file:line, etc. Truncating
-        // the START would lose the most-important characters.
+        // Right-truncate — leading content carries meaning across
+        // every dap row shape (log lines start with timestamp +
+        // level, locals start with the variable name, etc.).
         let text = truncate_right(&part.text, max);
         let count = text.chars().count();
-        // Order matters: set bg every iteration because the previous
-        // part's `Attribute::Reset` (below) wipes it along with
-        // bold / italic. Without re-applying, a selection highlight
-        // would only colour the first part of the row before
-        // collapsing back to default bg.
-        queue!(out, SetBackgroundColor(bg))?;
-        if let Some(fg) = part.fg {
-            queue!(out, SetForegroundColor(fg))?;
-        } else {
-            queue!(out, SetForegroundColor(Color::Reset))?;
+
+        // If this part overlaps a selection range, split it at
+        // the boundaries and paint each slice with the right bg.
+        // The renderer makes three calls (pre / in-sel / post),
+        // each of which sets bg + fg + attrs + prints its slice.
+        let mut slice_start = 0usize;
+        for (slice_text, in_sel) in
+            split_part_by_selection(&text, cell_col, sel_range, &mut slice_start)
+        {
+            if slice_text.is_empty() {
+                continue;
+            }
+            let bg = if in_sel { sel_bg } else { row_bg };
+            queue!(out, SetBackgroundColor(bg))?;
+            if let Some(fg) = part.fg {
+                queue!(out, SetForegroundColor(fg))?;
+            } else {
+                queue!(out, SetForegroundColor(Color::Reset))?;
+            }
+            if part.bold {
+                queue!(out, SetAttribute(Attribute::Bold))?;
+            } else {
+                queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+            }
+            if part.italic {
+                queue!(out, SetAttribute(Attribute::Italic))?;
+            } else {
+                queue!(out, SetAttribute(Attribute::NoItalic))?;
+            }
+            queue!(out, Print(&slice_text))?;
         }
-        // Explicit off-variants instead of `Reset` between parts so
-        // bold/italic toggle cleanly without clobbering bg + fg.
-        if part.bold {
-            queue!(out, SetAttribute(Attribute::Bold))?;
-        } else {
-            queue!(out, SetAttribute(Attribute::NormalIntensity))?;
-        }
-        if part.italic {
-            queue!(out, SetAttribute(Attribute::Italic))?;
-        } else {
-            queue!(out, SetAttribute(Attribute::NoItalic))?;
-        }
-        queue!(out, Print(&text))?;
+        cell_col += count;
         used += count;
     }
-    // End-of-row pad. Re-emit bg here too so a row whose parts
-    // didn't fill `width` still paints the full highlight stripe.
+    // End-of-row pad. Selection ranges that extend past the last
+    // content char paint trailing pad cells too — gives the user
+    // visual feedback that they selected "to end of line."
     queue!(
         out,
         SetAttribute(Attribute::NormalIntensity),
         SetAttribute(Attribute::NoItalic),
-        SetBackgroundColor(bg),
     )?;
     if used < width {
-        queue!(out, Print(" ".repeat(width - used)))?;
+        let pad = width - used;
+        if let Some((sel_from, sel_to)) = sel_range {
+            // Paint the trailing pad in two segments if the
+            // selection straddles the content-end boundary.
+            let pad_start = cell_col;
+            let pad_end = cell_col + pad;
+            let sel_seg = pad_start.max(sel_from)..pad_end.min(sel_to);
+            let mut emitted = 0usize;
+            if sel_seg.start > pad_start {
+                let n = sel_seg.start - pad_start;
+                queue!(out, SetBackgroundColor(row_bg), Print(" ".repeat(n)))?;
+                emitted += n;
+            }
+            if sel_seg.end > sel_seg.start {
+                let n = sel_seg.end - sel_seg.start;
+                queue!(out, SetBackgroundColor(sel_bg), Print(" ".repeat(n)))?;
+                emitted += n;
+            }
+            if emitted < pad {
+                queue!(
+                    out,
+                    SetBackgroundColor(row_bg),
+                    Print(" ".repeat(pad - emitted))
+                )?;
+            }
+        } else {
+            queue!(out, SetBackgroundColor(row_bg), Print(" ".repeat(pad)))?;
+        }
     }
     Ok(())
+}
+
+/// Walk a single part's text and yield `(slice, in_selection)`
+/// pairs covering it left-to-right. `start_col` is the part's
+/// starting char-col within the row content; `sel` is the row's
+/// selection range. The yielded slices concatenate back to the
+/// original text. `_consumed` is a scratch counter the caller
+/// doesn't use; kept for legacy lifetime convenience.
+fn split_part_by_selection(
+    text: &str,
+    start_col: usize,
+    sel: Option<(usize, usize)>,
+    _consumed: &mut usize,
+) -> Vec<(String, bool)> {
+    let Some((from, to)) = sel else {
+        return vec![(text.to_string(), false)];
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let len = chars.len();
+    if len == 0 {
+        return Vec::new();
+    }
+    let end_col = start_col + len;
+    if to <= start_col || from >= end_col {
+        return vec![(text.to_string(), false)];
+    }
+    let sel_lo = from.saturating_sub(start_col).min(len);
+    let sel_hi = to.saturating_sub(start_col).min(len);
+    let mut out = Vec::with_capacity(3);
+    if sel_lo > 0 {
+        out.push((chars[..sel_lo].iter().collect(), false));
+    }
+    if sel_hi > sel_lo {
+        out.push((chars[sel_lo..sel_hi].iter().collect(), true));
+    }
+    if sel_hi < len {
+        out.push((chars[sel_hi..].iter().collect(), false));
+    }
+    out
 }
 
 // ---------------------------------------------------------------------
@@ -4584,6 +4667,7 @@ fn build_frames_rows(app: &App) -> Vec<DapTabRow> {
             DapTabPart::plain(f.name.clone(), palette.blue),
         ];
         rows.push(DapTabRow {
+            selection_range: None,
             parts,
             selected: selected == Some(i),
         });
@@ -4626,6 +4710,7 @@ fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
         parts.push(DapTabPart::plain("= ", palette.subtle));
         parts.push(value_part(&row.var.value, &palette));
         rows.push(DapTabRow {
+            selection_range: None,
             parts,
             selected: selected == Some(i),
         });
@@ -4671,6 +4756,7 @@ fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
             }
         }
         rows.push(DapTabRow {
+            selection_range: None,
             parts,
             selected: selected == Some(i),
         });
@@ -4717,6 +4803,7 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
                 DapTabPart::plain(format!("{}", bp.line), palette.yellow),
             ];
             rows.push(DapTabRow {
+            selection_range: None,
                 parts,
                 selected: selected == Some(idx),
             });
@@ -4733,18 +4820,37 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
         rows.push(note_row("(no console output yet)", &palette));
         return rows;
     }
+    // Pre-compute the normalised selection range so we can drop
+    // a per-row `selection_range` on each affected line. The
+    // mouse handler stores anchor + head as
+    // `(flat_line_idx, char_col)`, so we walk the same flat order
+    // here to assign per-row ranges.
+    let selection = app
+        .dap_console_selection
+        .map(|s| s.ordered());
+    let mut flat_idx = 0usize;
     for line in app.dap.output_buffer.iter() {
         for one in line.output.lines() {
-            // stderr rows paint everything red so they're loud-
-            // by-default (panics / native errors). adapter
-            // "console" category is dim metadata. Everything else
-            // gets full tokeniser treatment.
             let parts = match line.category.as_str() {
                 "stderr" => vec![DapTabPart::plain(one.to_string(), palette.red)],
                 "console" => vec![DapTabPart::plain(one.to_string(), palette.subtle)],
                 _ => tokenize_console_line(one, &palette),
             };
-            rows.push(DapTabRow { parts, selected: false });
+            let line_len = one.chars().count();
+            let selection_range = selection.and_then(|(start, end)| {
+                if flat_idx < start.0 || flat_idx > end.0 {
+                    return None;
+                }
+                let from = if flat_idx == start.0 { start.1 } else { 0 };
+                let to = if flat_idx == end.0 { end.1 } else { line_len };
+                if to > from {
+                    Some((from, to))
+                } else {
+                    None
+                }
+            });
+            rows.push(DapTabRow { parts, selected: false, selection_range });
+            flat_idx += 1;
         }
     }
     rows
@@ -5019,6 +5125,7 @@ fn value_part(value: &str, p: &DebugPalette) -> DapTabPart {
 
 fn note_row(text: &str, p: &DebugPalette) -> DapTabRow {
     DapTabRow {
+        selection_range: None,
         parts: vec![DapTabPart::italic(text.to_string(), p.muted)],
         selected: false,
     }
