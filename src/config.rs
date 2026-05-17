@@ -184,6 +184,16 @@ impl Config {
         self.colors.get("background").and_then(|s| parse_color(s))
     }
 
+    /// Background for editor *chrome* — popups, status line, tab bar, side
+    /// panes. The buffer body wants `None` to fall through to the terminal
+    /// default; chrome surfaces always need a concrete colour, so this
+    /// returns Catppuccin Mantle as the fallback. When a theme sets a
+    /// background, every chrome surface follows it for a consistent look.
+    pub fn chrome_bg(&self) -> Color {
+        self.background_color()
+            .unwrap_or(Color::Rgb { r: 0x18, g: 0x18, b: 0x25 })
+    }
+
     /// Resolve a colour for a tree-sitter capture name. User values from `[colors]`
     /// override the baked-in defaults.
     ///

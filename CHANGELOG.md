@@ -7,15 +7,21 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **Theme `background` colour.** `[colors] background = "#…"` in
-  `~/.config/binvim/config.toml` (or in any of the bundled themes
-  under `./themes/`) now paints the buffer body, gutter, and
-  empty (`~`) rows in that colour. Every bundled theme ships its
-  canonical background pre-set so switching between e.g. Dracula
-  (`#282a36`) and Light Owl (`#fbfbfb`) actually flips the editor
-  surface; leave the key unset to keep the previous behaviour
-  (buffer inherits the terminal's own background). Status line,
-  tabs, and popups still use their fixed Catppuccin chrome.
+- **Theme `background` colour, threaded everywhere.** `[colors]
+  background = "#…"` in `~/.config/binvim/config.toml` (or in
+  any bundled theme under `./themes/`) now paints the entire
+  editor surface — buffer body, gutter, empty (`~`) rows, pane
+  dividers, tab bar, popups (whichkey / signature / hover /
+  notification / cmdline / picker), terminal pane header, debug
+  pane header + body, DAP rows, start page, `:health`, and
+  `:messages`. Bundled themes ship their canonical background
+  pre-set, so switching between e.g. Dracula (`#282a36`) and
+  Light Owl (`#fbfbfb`) flips every chrome surface in one go.
+  Leave the key unset to keep the previous behaviour: buffer
+  inherits the terminal's own background; chrome falls back to
+  Catppuccin Mantle. Status-line chips (mode / branch / path /
+  language) keep their layered Surface tones — those are
+  decoration over the chrome bg, not the bg itself.
 - **Multiple terminals (tabs).** The `:terminal` pane now hosts
   more than one PTY at a time. `<leader>tt` (or `:terminal`)
   always spawns a new tab — first invocation opens the pane; each

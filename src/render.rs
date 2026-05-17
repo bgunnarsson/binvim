@@ -124,7 +124,7 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     let left = total_w.saturating_sub(popup_w) / 2;
     let top = total_h.saturating_sub(popup_h) / 2;
 
-    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bg = app.config.chrome_bg();
     let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let key_fg = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }; // Mauve
@@ -248,7 +248,7 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
         left_col = total_w.saturating_sub(popup_w);
     }
 
-    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bg = app.config.chrome_bg();
     let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
     let active_fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }; // Base
@@ -338,7 +338,7 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
         left_col = (app.width as usize).saturating_sub(popup_w);
     }
 
-    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bg = app.config.chrome_bg();
     let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
     let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
@@ -602,7 +602,7 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     // body uses.
     let top = app.buffer_top();
 
-    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bg = app.config.chrome_bg();
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Catppuccin Text
 
     // Top border
@@ -701,7 +701,7 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
     let inner_w = box_w.saturating_sub(2);
 
     let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
-    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bg = app.config.chrome_bg();
     let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let prompt_fg = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }; // Blue
     let text_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
@@ -1000,7 +1000,7 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
     let Some(picker) = app.picker.as_ref() else { return Ok(()); };
     let layout = picker_layout(app);
 
-    let bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bg = app.config.chrome_bg();
     let border = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     let title_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let count_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
@@ -1440,8 +1440,15 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     let total_w = app.width as usize;
     // Blank every row so leftover content from a prior frame can't bleed
     // through. Don't touch the tab-bar row when it's painted above us.
+    let page_bg = app.config.background_color();
+    let blank: String = " ".repeat(total_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
+        queue!(out, MoveTo(0, (row + top) as u16))?;
+        if let Some(c) = page_bg {
+            queue!(out, SetBackgroundColor(c), Print(&blank))?;
+        } else {
+            queue!(out, Clear(ClearType::CurrentLine))?;
+        }
     }
     // User config wins; fall back to the baked-in logo when no override is set.
     let configured: Vec<&str> = app
@@ -1469,13 +1476,10 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     for (i, line) in lines.iter().enumerate() {
         let line_w = line.chars().count();
         let left = (total_w.saturating_sub(line_w)) / 2;
-        queue!(
-            out,
-            MoveTo(left as u16, (top + i + app.buffer_top()) as u16),
-            SetForegroundColor(blue),
-            Print(line),
-            ResetColor,
-        )?;
+        queue!(out, MoveTo(left as u16, (top + i + app.buffer_top()) as u16))?;
+        apply_buf_bg(out, page_bg)?;
+        queue!(out, SetForegroundColor(blue), Print(line))?;
+        reset_to_buf_bg(out, page_bg)?;
     }
     Ok(())
 }
@@ -1504,8 +1508,15 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
 
     // Clear the buffer area first so leftover frame content can't bleed
     // through.
+    let page_bg = app.config.background_color();
+    let blank: String = " ".repeat(total_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
+        queue!(out, MoveTo(0, (row + top) as u16))?;
+        if let Some(c) = page_bg {
+            queue!(out, SetBackgroundColor(c), Print(&blank))?;
+        } else {
+            queue!(out, Clear(ClearType::CurrentLine))?;
+        }
     }
 
     let snap = app.build_health_snapshot();
@@ -1540,7 +1551,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         .take(viewport_rows)
     {
         let screen_y = (top + (i - scroll)) as u16;
-        row.paint(out, screen_y, &p)?;
+        row.paint(out, screen_y, &p, page_bg)?;
     }
 
     // --- Footer (anchored to bottom of buffer area) -------------------
@@ -1552,13 +1563,14 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
         (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
     };
+    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
+    apply_buf_bg(out, page_bg)?;
     queue!(
         out,
-        MoveTo(left as u16, (top + rows - 1) as u16),
         SetForegroundColor(p.overlay0),
         Print(truncate(footer, total_w.saturating_sub(left))),
-        ResetColor,
     )?;
+    reset_to_buf_bg(out, page_bg)?;
     Ok(())
 }
 
@@ -1595,7 +1607,7 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // the header carries the hint line; with two or more it
     // carries a clickable tab strip (active tab = blue bg + white
     // text). The [TERMINAL] chip itself stays constant.
-    let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let pane_bg = app.config.chrome_bg();
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };    // Overlay0
     let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
     let accent_terminal = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
@@ -1762,8 +1774,15 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
     if rows == 0 || total_w < 30 {
         return Ok(());
     }
+    let page_bg = app.config.background_color();
+    let blank_row: String = " ".repeat(total_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16), Clear(ClearType::CurrentLine))?;
+        queue!(out, MoveTo(0, (row + top) as u16))?;
+        if let Some(c) = page_bg {
+            queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
+        } else {
+            queue!(out, Clear(ClearType::CurrentLine))?;
+        }
     }
     let p = DashboardPalette::default();
     let left = 2usize;
@@ -1833,36 +1852,39 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
         match row {
             MessageRow::Header => {
                 let title = format!(" {} captured server messages", app.lsp_messages.len());
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
                 queue!(
                     out,
-                    MoveTo(left as u16, screen_y),
                     SetForegroundColor(p.lavender),
                     Print(truncate(&title, body_w)),
-                    ResetColor,
                 )?;
+                reset_to_buf_bg(out, page_bg)?;
             }
             MessageRow::Blank => {}
             MessageRow::Entry { prefix, prefix_colour, body } => {
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
                 queue!(
                     out,
-                    MoveTo(left as u16, screen_y),
                     SetForegroundColor(*prefix_colour),
                     Print(prefix),
                     SetForegroundColor(p.text),
                     Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
-                    ResetColor,
                 )?;
+                reset_to_buf_bg(out, page_bg)?;
             }
             MessageRow::Continuation { indent, body } => {
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
                 queue!(
                     out,
-                    MoveTo(left as u16, screen_y),
                     SetForegroundColor(p.overlay1),
                     Print(indent),
                     SetForegroundColor(p.subtext1),
                     Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
-                    ResetColor,
                 )?;
+                reset_to_buf_bg(out, page_bg)?;
             }
         }
     }
@@ -1875,13 +1897,14 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
         (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
         (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
     };
+    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
+    apply_buf_bg(out, page_bg)?;
     queue!(
         out,
-        MoveTo(left as u16, (top + rows - 1) as u16),
         SetForegroundColor(p.overlay0),
         Print(truncate(footer, total_w.saturating_sub(left))),
-        ResetColor,
     )?;
+    reset_to_buf_bg(out, page_bg)?;
     Ok(())
 }
 
@@ -2491,43 +2514,48 @@ enum DashRow {
 }
 
 impl DashRow {
-    fn paint<W: Write>(&self, out: &mut W, y: u16, palette: &DashboardPalette) -> Result<()> {
+    fn paint<W: Write>(
+        &self,
+        out: &mut W,
+        y: u16,
+        palette: &DashboardPalette,
+        page_bg: Option<Color>,
+    ) -> Result<()> {
         match self {
             DashRow::Blank => Ok(()),
             DashRow::Banner { x, text, colour } => {
-                queue!(
-                    out,
-                    MoveTo(*x as u16, y),
-                    SetForegroundColor(*colour),
-                    Print(text),
-                    ResetColor,
-                )?;
+                queue!(out, MoveTo(*x as u16, y))?;
+                apply_buf_bg(out, page_bg)?;
+                queue!(out, SetForegroundColor(*colour), Print(text))?;
+                reset_to_buf_bg(out, page_bg)?;
                 Ok(())
             }
             DashRow::BoxTop { x, width, title, title_colour } => {
-                paint_box_top(out, *x, y, *width, title, *title_colour, palette)
+                paint_box_top(out, *x, y, *width, title, *title_colour, palette, page_bg)
             }
             DashRow::BoxContent { x, width, line } => {
-                paint_box_content(out, *x, y, *width, line, palette)
+                paint_box_content(out, *x, y, *width, line, palette, page_bg)
             }
-            DashRow::BoxBottom { x, width } => paint_box_bottom(out, *x, y, *width, palette),
+            DashRow::BoxBottom { x, width } => {
+                paint_box_bottom(out, *x, y, *width, palette, page_bg)
+            }
             DashRow::BoxTopPair { a, b } => {
-                paint_box_top(out, a.0, y, a.1, &a.2, a.3, palette)?;
-                paint_box_top(out, b.0, y, b.1, &b.2, b.3, palette)?;
+                paint_box_top(out, a.0, y, a.1, &a.2, a.3, palette, page_bg)?;
+                paint_box_top(out, b.0, y, b.1, &b.2, b.3, palette, page_bg)?;
                 Ok(())
             }
             DashRow::BoxContentPair { a, b } => {
                 if let Some((x, w, line)) = a {
-                    paint_box_content(out, *x, y, *w, line, palette)?;
+                    paint_box_content(out, *x, y, *w, line, palette, page_bg)?;
                 }
                 if let Some((x, w, line)) = b {
-                    paint_box_content(out, *x, y, *w, line, palette)?;
+                    paint_box_content(out, *x, y, *w, line, palette, page_bg)?;
                 }
                 Ok(())
             }
             DashRow::BoxBottomPair { a, b } => {
-                paint_box_bottom(out, a.0, y, a.1, palette)?;
-                paint_box_bottom(out, b.0, y, b.1, palette)?;
+                paint_box_bottom(out, a.0, y, a.1, palette, page_bg)?;
+                paint_box_bottom(out, b.0, y, b.1, palette, page_bg)?;
                 Ok(())
             }
         }
@@ -2542,25 +2570,31 @@ fn paint_box_top<W: Write>(
     title: &str,
     title_colour: Color,
     palette: &DashboardPalette,
+    page_bg: Option<Color>,
 ) -> Result<()> {
     let inner_w = width.saturating_sub(2);
     let title_marked = format!(" {} ", title);
     let title_visible = title_marked.chars().count();
     let dashes = inner_w.saturating_sub(title_visible + 1);
+    queue!(out, MoveTo(x as u16, y))?;
+    apply_buf_bg(out, page_bg)?;
     queue!(
         out,
-        MoveTo(x as u16, y),
         SetForegroundColor(palette.border),
         Print("┌─"),
         SetForegroundColor(title_colour),
         SetAttribute(crossterm::style::Attribute::Bold),
         Print(&title_marked),
         SetAttribute(crossterm::style::Attribute::Reset),
+    )?;
+    apply_buf_bg(out, page_bg)?;
+    queue!(
+        out,
         SetForegroundColor(palette.border),
         Print("─".repeat(dashes)),
         Print('┐'),
-        ResetColor,
     )?;
+    reset_to_buf_bg(out, page_bg)?;
     Ok(())
 }
 
@@ -2571,12 +2605,14 @@ fn paint_box_content<W: Write>(
     width: usize,
     line: &SectionLine,
     palette: &DashboardPalette,
+    page_bg: Option<Color>,
 ) -> Result<()> {
     let inner_w = width.saturating_sub(2);
     let body_w = inner_w.saturating_sub(2); // 1-col padding each side
+    queue!(out, MoveTo(x as u16, y))?;
+    apply_buf_bg(out, page_bg)?;
     queue!(
         out,
-        MoveTo(x as u16, y),
         SetForegroundColor(palette.border),
         Print('│'),
         SetForegroundColor(palette.text),
@@ -2611,8 +2647,8 @@ fn paint_box_content<W: Write>(
         Print(" ".repeat(pad + 1)),
         SetForegroundColor(palette.border),
         Print('│'),
-        ResetColor,
     )?;
+    reset_to_buf_bg(out, page_bg)?;
     Ok(())
 }
 
@@ -2622,17 +2658,19 @@ fn paint_box_bottom<W: Write>(
     y: u16,
     width: usize,
     palette: &DashboardPalette,
+    page_bg: Option<Color>,
 ) -> Result<()> {
     let inner_w = width.saturating_sub(2);
+    queue!(out, MoveTo(x as u16, y))?;
+    apply_buf_bg(out, page_bg)?;
     queue!(
         out,
-        MoveTo(x as u16, y),
         SetForegroundColor(palette.border),
         Print('└'),
         Print("─".repeat(inner_w)),
         Print('┘'),
-        ResetColor,
     )?;
+    reset_to_buf_bg(out, page_bg)?;
     Ok(())
 }
 
@@ -3044,7 +3082,7 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
     let total_w = app.width as usize;
     queue!(out, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
 
-    let bar_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let bar_bg = app.config.chrome_bg();
     let active_bg = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }; // Surface1
     let active_fg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }; // Lavender
     let inactive_fg = Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }; // Subtext0
@@ -3140,7 +3178,9 @@ fn draw_pane_dividers(
 ) -> Result<()> {
     let panes = app.layout.partition(editor_rect);
     let surface1 = Color::Rgb { r: 0x45, g: 0x47, b: 0x5a };
+    let buf_bg = app.config.background_color();
     queue!(out, SetForegroundColor(surface1))?;
+    apply_buf_bg(out, buf_bg)?;
     // Vertical bars: any column directly between two horizontally
     // adjacent panes that share at least one row.
     for (i, (_, a)) in panes.iter().enumerate() {
@@ -4337,7 +4377,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // strip. Per-stop status info ("breakpoint bound at line 13",
     // "stopped — breakpoint") has moved to the editor status line
     // so the header stays minimal.
-    let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let pane_bg = app.config.chrome_bg();
     let header_fg = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 }; // Text
     let body_bg = pane_bg;
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };     // Overlay0
@@ -4449,7 +4489,7 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, MoveTo(0, screen_y), SetBackgroundColor(body_bg))?;
         let idx = visible_start + r;
         if let Some(row) = rows_buf.get(idx) {
-            paint_dap_row(out, row, width, h_skip)?;
+            paint_dap_row(out, row, width, h_skip, body_bg)?;
         } else {
             queue!(out, Print(" ".repeat(width)))?;
         }
@@ -4514,11 +4554,12 @@ fn paint_dap_row(
     row: &DapTabRow,
     width: usize,
     h_skip: usize,
+    pane_bg: Color,
 ) -> Result<()> {
     let row_bg = if row.selected {
         Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 } // Surface2 — whole-row select
     } else {
-        Color::Rgb { r: 0x18, g: 0x18, b: 0x25 } // Mantle
+        pane_bg
     };
     let sel_bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2 — partial select
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };  // Overlay0
