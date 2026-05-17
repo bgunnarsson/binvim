@@ -4429,23 +4429,41 @@ fn paint_dap_row(
         let max = width.saturating_sub(used);
         let text = truncate_left(&part.text, max);
         let count = text.chars().count();
+        // Order matters: set bg every iteration because the previous
+        // part's `Attribute::Reset` (below) wipes it along with
+        // bold / italic. Without re-applying, a selection highlight
+        // would only colour the first part of the row before
+        // collapsing back to default bg.
+        queue!(out, SetBackgroundColor(bg))?;
         if let Some(fg) = part.fg {
             queue!(out, SetForegroundColor(fg))?;
         } else {
             queue!(out, SetForegroundColor(Color::Reset))?;
         }
+        // Explicit off-variants instead of `Reset` between parts so
+        // bold/italic toggle cleanly without clobbering bg + fg.
         if part.bold {
             queue!(out, SetAttribute(Attribute::Bold))?;
+        } else {
+            queue!(out, SetAttribute(Attribute::NormalIntensity))?;
         }
         if part.italic {
             queue!(out, SetAttribute(Attribute::Italic))?;
+        } else {
+            queue!(out, SetAttribute(Attribute::NoItalic))?;
         }
         queue!(out, Print(&text))?;
-        queue!(out, SetAttribute(Attribute::Reset))?;
         used += count;
     }
+    // End-of-row pad. Re-emit bg here too so a row whose parts
+    // didn't fill `width` still paints the full highlight stripe.
+    queue!(
+        out,
+        SetAttribute(Attribute::NormalIntensity),
+        SetAttribute(Attribute::NoItalic),
+        SetBackgroundColor(bg),
+    )?;
     if used < width {
-        queue!(out, SetBackgroundColor(bg))?;
         queue!(out, Print(" ".repeat(width - used)))?;
     }
     Ok(())
@@ -4526,9 +4544,9 @@ fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
             DapTabPart::plain(row.var.name.clone(), palette.lavender),
         ];
         if let Some(t) = &row.var.type_name {
-            parts.push(DapTabPart::italic(format!(": {} ", t), palette.muted));
+            parts.push(DapTabPart::italic(format!(": {} ", t), palette.subtle));
         }
-        parts.push(DapTabPart::plain("= ", palette.muted));
+        parts.push(DapTabPart::plain("= ", palette.subtle));
         parts.push(value_part(&row.var.value, &palette));
         rows.push(DapTabRow {
             parts,
@@ -4559,7 +4577,7 @@ fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
         let mut parts = vec![
             DapTabPart::plain(format!("{:>3}  ", i + 1), palette.muted),
             DapTabPart::plain(w.expr.clone(), palette.lavender),
-            DapTabPart::plain(" = ", palette.muted),
+            DapTabPart::plain(" = ", palette.subtle),
         ];
         match &w.result {
             Some(r) if r.error => {
@@ -4568,7 +4586,7 @@ fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
             Some(r) => {
                 parts.push(value_part(&r.value, &palette));
                 if let Some(t) = &r.type_name {
-                    parts.push(DapTabPart::italic(format!("  : {}", t), palette.muted));
+                    parts.push(DapTabPart::italic(format!("  : {}", t), palette.subtle));
                 }
             }
             None => {
@@ -4709,6 +4727,13 @@ fn no_session_note() -> &'static str {
 struct DebugPalette {
     base: Color,
     text: Color,
+    /// Subtext0 — readable but distinctly less prominent than text.
+    /// Used for type chips and `=` separators where "this is
+    /// metadata, not the primary identifier" needs to read
+    /// quietly without becoming invisible. Pure Overlay0 (0x6c…)
+    /// turned out too dim — types like `Articles.PagedRequest`
+    /// disappeared into the bg.
+    subtle: Color,
     muted: Color,
     accent: Color,
     blue: Color,
@@ -4724,7 +4749,8 @@ impl Default for DebugPalette {
         Self {
             base: Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e },
             text: Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
-            muted: Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },
+            subtle: Color::Rgb { r: 0xa6, g: 0xad, b: 0xc8 }, // Subtext0
+            muted: Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },  // Overlay0
             accent: Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 },
             blue: Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa },
             lavender: Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe },
