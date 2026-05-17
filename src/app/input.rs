@@ -372,6 +372,20 @@ impl super::App {
         if self.terminal_pane_open && self.handle_terminal_mouse_event(&ev, row, col) {
             return;
         }
+        // Click landed outside the terminal pane while focus was in
+        // the terminal — pull focus back into the editor before the
+        // click is interpreted as a buffer-area mouse event. Without
+        // this, the click would fall through to the editor mouse
+        // handler but the mode would still be Terminal, and the
+        // next keystroke would route into the PTY.
+        if matches!(self.mode, Mode::Terminal)
+            && matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle | MouseButton::Right)
+            )
+        {
+            self.mode = Mode::Normal;
+        }
 
         // Left-click on the top-right notification → copy its content to the
         // system clipboard and the unnamed register. Lets the user grab paths
