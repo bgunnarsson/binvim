@@ -205,36 +205,81 @@ impl Config {
             .unwrap_or(default)
     }
 
+    /// Explicit `[colors]` override for `key`, ignoring the baked-in defaults.
+    /// Returns None when the user hasn't set it — used by the chrome neutrals
+    /// (surface, border, foreground, dim) so we can auto-derive from the
+    /// configured background instead of falling back to Catppuccin tones that
+    /// only look right against a dark theme.
+    fn user_color(&self, key: &str) -> Option<Color> {
+        self.colors.get(key).and_then(|s| parse_color(s))
+    }
+
     /// Main fg colour for chrome text — status segments, popup body, dashboard
     /// text. Capture-name lookups in `[colors]` still drive syntax colouring;
-    /// `foreground` controls chrome only.
+    /// `foreground` controls chrome only. When the user only sets `background`
+    /// we auto-derive a near-white (dark bg) or near-black (light bg) so a
+    /// one-line theme still gives readable chrome text.
     pub fn theme_fg(&self) -> Color {
-        self.theme_color("foreground", Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 })
+        if let Some(c) = self.user_color("foreground") {
+            return c;
+        }
+        match self.background_color() {
+            Some(bg) if is_dark(bg) => Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
+            Some(_) => Color::Rgb { r: 0x4c, g: 0x4f, b: 0x69 },
+            None => Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
+        }
     }
 
     /// Muted secondary text — line numbers (relative), inlay hints, comments
-    /// in markdown sections, footer hints, copilot ghost.
+    /// in markdown sections, footer hints, copilot ghost. Auto-derives toward
+    /// a mid-grey that contrasts with the configured background.
     pub fn theme_dim(&self) -> Color {
-        self.theme_color("dim", Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 })
+        if let Some(c) = self.user_color("dim") {
+            return c;
+        }
+        match self.background_color() {
+            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0xff, g: 0xff, b: 0xff }, 0.45),
+            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.45),
+            None => Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },
+        }
     }
 
     /// Emphasised chrome text — active tab fg, multi-cursor marker, picker
-    /// title, hover heading, whichkey title.
+    /// title, hover heading, whichkey title. Stays a vivid accent regardless
+    /// of background so it always reads as "this is highlighted."
     pub fn theme_emphasis(&self) -> Color {
         self.theme_color("emphasis", Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })
     }
 
     /// Layered chrome surface — sits above the chrome bg and is used for
     /// active tab bg, status branch chip, picker row selection, debug-pane
-    /// row selection.
+    /// row selection. Derived as a small step from the background toward
+    /// white (dark theme) or black (light theme) so it always reads as
+    /// "one layer above the bg."
     pub fn theme_surface(&self) -> Color {
-        self.theme_color("surface", Color::Rgb { r: 0x45, g: 0x47, b: 0x5a })
+        if let Some(c) = self.user_color("surface") {
+            return c;
+        }
+        match self.background_color() {
+            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0xff, g: 0xff, b: 0xff }, 0.12),
+            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.10),
+            None => Color::Rgb { r: 0x45, g: 0x47, b: 0x5a },
+        }
     }
 
     /// Borders, dividers, popup outlines, and subtle highlight backgrounds
-    /// (document-highlight, match-pair). Slightly lighter than `surface`.
+    /// (document-highlight, match-pair). One step further from the bg than
+    /// `surface` so popup outlines visually separate from the surface they
+    /// sit on.
     pub fn theme_border(&self) -> Color {
-        self.theme_color("border", Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 })
+        if let Some(c) = self.user_color("border") {
+            return c;
+        }
+        match self.background_color() {
+            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0xff, g: 0xff, b: 0xff }, 0.22),
+            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.18),
+            None => Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 },
+        }
     }
 
     /// Primary chrome accent — debug-pane chip bg, breakpoint marker,
@@ -333,6 +378,35 @@ fn parse_color(name: &str) -> Option<Color> {
         "Grey" | "Gray" => Some(Color::Grey),
         "Reset" | "default" => Some(Color::Reset),
         _ => None,
+    }
+}
+
+/// True for colours whose perceived lightness is below the midpoint — used
+/// to pick "lighten toward white" vs "darken toward black" for the chrome
+/// neutrals. Rec. 601 luma is fine here; we only need a coarse dark/light
+/// flip, not WCAG-grade contrast scoring.
+fn is_dark(c: Color) -> bool {
+    if let Color::Rgb { r, g, b } = c {
+        let lum = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+        lum < 128.0
+    } else {
+        true
+    }
+}
+
+/// Linear interpolate between two RGB colours. `t = 0` returns `a`, `t = 1`
+/// returns `b`. Non-Rgb variants pass through `a` unchanged — palette
+/// derivation is only ever invoked on hex-parsed Rgb colours.
+fn mix(a: Color, b: Color, t: f32) -> Color {
+    let (Color::Rgb { r: ar, g: ag, b: ab }, Color::Rgb { r: br, g: bg, b: bb }) = (a, b) else {
+        return a;
+    };
+    let t = t.clamp(0.0, 1.0);
+    let blend = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round().clamp(0.0, 255.0) as u8;
+    Color::Rgb {
+        r: blend(ar, br),
+        g: blend(ag, bg),
+        b: blend(ab, bb),
     }
 }
 

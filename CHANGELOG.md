@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **One-line themes now produce coherent chrome.** When only
+  `background` is set in `[colors]`, `surface`, `border`,
+  `foreground`, and `dim` auto-derive from it via luminance-
+  aware mixing toward white (dark bg) or black (light bg). So
+  `[colors] background = "#1e1e2e"` alone now yields a fully
+  consistent dark UI; `background = "#fbfbfb"` yields a fully
+  consistent light UI — no more Catppuccin Surface1 active-tab
+  bg leaking through a light theme. Setting any of the four
+  neutrals explicitly still wins.
+
 ### Added
 - **Full chrome palette in `[colors]`.** Twelve new keys in
   `~/.config/binvim/config.toml` (or any `themes/<name>/theme.toml`)
