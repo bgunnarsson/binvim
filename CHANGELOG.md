@@ -7,6 +7,15 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Theme `background` colour.** `[colors] background = "#…"` in
+  `~/.config/binvim/config.toml` (or in any of the bundled themes
+  under `./themes/`) now paints the buffer body, gutter, and
+  empty (`~`) rows in that colour. Every bundled theme ships its
+  canonical background pre-set so switching between e.g. Dracula
+  (`#282a36`) and Light Owl (`#fbfbfb`) actually flips the editor
+  surface; leave the key unset to keep the previous behaviour
+  (buffer inherits the terminal's own background). Status line,
+  tabs, and popups still use their fixed Catppuccin chrome.
 - **Multiple terminals (tabs).** The `:terminal` pane now hosts
   more than one PTY at a time. `<leader>tt` (or `:terminal`)
   always spawns a new tab — first invocation opens the pane; each

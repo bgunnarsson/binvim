@@ -4,6 +4,7 @@
 schema_version = 1
 
 [colors]
+background        = "#1e1e2e"
 comment           = "#7f849c"
 string            = "#a6e3a1"
 "string.escape"   = "#f5c2e7"

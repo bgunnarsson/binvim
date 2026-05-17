@@ -13,6 +13,26 @@ use std::io::Write;
 
 pub const TAB_WIDTH: usize = 4;
 
+/// Reset SGR state and immediately re-apply the optional theme background so
+/// subsequent unstyled `Print` calls land on the theme bg instead of the
+/// terminal's default. When `buf_bg` is `None` (no `background` set in
+/// `[colors]`) this is a plain `ResetColor` and matches the pre-theme
+/// behaviour exactly.
+fn reset_to_buf_bg(out: &mut impl Write, buf_bg: Option<Color>) -> Result<()> {
+    queue!(out, ResetColor)?;
+    if let Some(c) = buf_bg {
+        queue!(out, SetBackgroundColor(c))?;
+    }
+    Ok(())
+}
+
+fn apply_buf_bg(out: &mut impl Write, buf_bg: Option<Color>) -> Result<()> {
+    if let Some(c) = buf_bg {
+        queue!(out, SetBackgroundColor(c))?;
+    }
+    Ok(())
+}
+
 pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, BeginSynchronizedUpdate, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
     if app.show_tabs() {
@@ -3208,13 +3228,16 @@ fn draw_buffer(
     // `Clear(ClearType::CurrentLine)` so we don't nuke any pane sitting
     // to the left or right of us on the same terminal row.
     let pane_blank: String = " ".repeat(pane_w);
+    let buf_bg = app.config.background_color();
     for row in 0..rows {
         // Wipe this pane's row (leaves adjacent panes untouched), then
         // return the cursor to the pane's left edge so the per-line draw
-        // below starts in the right column.
+        // below starts in the right column. The pane_blank fills the row
+        // with the theme background (or terminal default if unset).
+        queue!(out, MoveTo(left as u16, (row + top) as u16))?;
+        apply_buf_bg(out, buf_bg)?;
         queue!(
             out,
-            MoveTo(left as u16, (row + top) as u16),
             Print(&pane_blank),
             MoveTo(left as u16, (row + top) as u16),
         )?;
@@ -3240,12 +3263,8 @@ fn draw_buffer(
                         Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
                     ),
                 };
-                queue!(
-                    out,
-                    SetForegroundColor(color),
-                    Print(glyph.to_string()),
-                    ResetColor
-                )?;
+                queue!(out, SetForegroundColor(color), Print(glyph.to_string()))?;
+                reset_to_buf_bg(out, buf_bg)?;
             } else {
                 queue!(out, Print(" "))?;
             }
@@ -3273,12 +3292,8 @@ fn draw_buffer(
                 None
             };
             if let Some((ch, color)) = sign {
-                queue!(
-                    out,
-                    SetForegroundColor(color),
-                    Print(ch.to_string()),
-                    ResetColor
-                )?;
+                queue!(out, SetForegroundColor(color), Print(ch.to_string()))?;
+                reset_to_buf_bg(out, buf_bg)?;
             } else {
                 queue!(out, Print(" "))?;
             }
@@ -3313,8 +3328,9 @@ fn draw_buffer(
                     },
                 )
             };
-            queue!(out, SetForegroundColor(label_color), Print(label), ResetColor)?;
-            draw_line_with_selection(out, app, bs, win, line_idx, avail, is_active)?;
+            queue!(out, SetForegroundColor(label_color), Print(label))?;
+            reset_to_buf_bg(out, buf_bg)?;
+            draw_line_with_selection(out, app, bs, win, line_idx, avail, is_active, buf_bg)?;
             // Fold-start placeholder: append `… N lines` after the line's
             // own content so the user sees what's collapsed.
             if bs.line_is_fold_start(line_idx) {
@@ -3324,8 +3340,8 @@ fn draw_buffer(
                     out,
                     SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }), // Overlay0
                     Print(folded),
-                    ResetColor
                 )?;
+                reset_to_buf_bg(out, buf_bg)?;
             }
             // Advance to the next visible line — past the fold's hidden
             // body if this row was a fold start, otherwise just by one.
@@ -3343,8 +3359,8 @@ fn draw_buffer(
                 out,
                 SetForegroundColor(Color::Rgb { r: 0x45, g: 0x47, b: 0x5a }), // Surface1
                 Print("~"),
-                ResetColor
             )?;
+            reset_to_buf_bg(out, buf_bg)?;
         }
     }
     Ok(())
@@ -3358,6 +3374,7 @@ fn draw_line_with_selection(
     line_idx: usize,
     avail: usize,
     is_active: bool,
+    buf_bg: Option<Color>,
 ) -> Result<()> {
     let slice = bs.buffer.rope.line(line_idx);
     let mut text: String = slice.chars().collect();
@@ -3535,8 +3552,8 @@ fn draw_line_with_selection(
                     out,
                     SetForegroundColor(Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 }),
                     Print(rule),
-                    ResetColor
                 )?;
+                reset_to_buf_bg(out, buf_bg)?;
                 return Ok(());
             }
             crate::markdown_render::MarkdownLineKind::Table(row_kind) => {
@@ -3566,7 +3583,8 @@ fn draw_line_with_selection(
                         queue!(out, SetAttribute(Attribute::Bold))?;
                     }
                     queue!(out, Print(&printable))?;
-                    queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+                    queue!(out, SetAttribute(Attribute::Reset))?;
+                    reset_to_buf_bg(out, buf_bg)?;
                 }
                 return Ok(());
             }
@@ -3583,8 +3601,8 @@ fn draw_line_with_selection(
                         SetAttribute(Attribute::Bold),
                         Print(&printable),
                         SetAttribute(Attribute::Reset),
-                        ResetColor
                     )?;
+                    reset_to_buf_bg(out, buf_bg)?;
                 }
                 return Ok(());
             }
@@ -3647,8 +3665,8 @@ fn draw_line_with_selection(
                                         out,
                                         SetForegroundColor(*color),
                                         Print(printable),
-                                        ResetColor
                                     )?;
+                                    reset_to_buf_bg(out, buf_bg)?;
                                     visual_used += visible;
                                 }
                             }
@@ -3694,8 +3712,8 @@ fn draw_line_with_selection(
                     SetAttribute(Attribute::Italic),
                     Print(&printable),
                     SetAttribute(Attribute::Reset),
-                    ResetColor,
                 )?;
+                reset_to_buf_bg(out, buf_bg)?;
                 visual_used += written;
                 if written < label_w {
                     clipped_right = true;
@@ -3907,16 +3925,19 @@ fn draw_line_with_selection(
         }
         if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
+            apply_buf_bg(out, buf_bg)?;
         } else if in_match_pair {
             // Tear down the bold + bg in one shot.
-            queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+            queue!(out, SetAttribute(Attribute::Reset))?;
+            reset_to_buf_bg(out, buf_bg)?;
         } else if is_multi_cursor {
-            queue!(out, ResetColor)?;
+            reset_to_buf_bg(out, buf_bg)?;
         } else if md_attrs_set {
             // Bold / italic / underline don't unset themselves on the
             // next char — clear all SGR so the styling stops at the
             // span boundary.
-            queue!(out, SetAttribute(Attribute::Reset), ResetColor)?;
+            queue!(out, SetAttribute(Attribute::Reset))?;
+            reset_to_buf_bg(out, buf_bg)?;
         } else if in_search
             || in_yank_flash
             || syntax_color.is_some()
@@ -3924,7 +3945,7 @@ fn draw_line_with_selection(
             || render_hidden
             || md_style.and_then(|s| s.color).is_some()
         {
-            queue!(out, ResetColor)?;
+            reset_to_buf_bg(out, buf_bg)?;
         }
         visual_used += visible_w;
         line_visual_pos = char_visual_end;
@@ -3952,8 +3973,8 @@ fn draw_line_with_selection(
             SetBackgroundColor(Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }), // Lavender
             SetForegroundColor(Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e }), // Base
             Print(' '),
-            ResetColor,
         )?;
+        reset_to_buf_bg(out, buf_bg)?;
         visual_used += 1;
     }
 
@@ -3982,8 +4003,8 @@ fn draw_line_with_selection(
                 SetAttribute(Attribute::Italic),
                 Print(&printable),
                 SetAttribute(Attribute::Reset),
-                ResetColor,
             )?;
+            reset_to_buf_bg(out, buf_bg)?;
             visual_used += written;
             if written < label_w {
                 clipped_right = true;
@@ -4003,12 +4024,8 @@ fn draw_line_with_selection(
         && visual_used + 1 <= avail
         && code_block_bg.is_none()
     {
-        queue!(
-            out,
-            SetForegroundColor(dim_color),
-            Print('¬'),
-            ResetColor
-        )?;
+        queue!(out, SetForegroundColor(dim_color), Print('¬'))?;
+        reset_to_buf_bg(out, buf_bg)?;
     }
 
     // Copilot ghost suggestion — when the cursor is on this line in
@@ -4038,8 +4055,8 @@ fn draw_line_with_selection(
                         SetAttribute(Attribute::Italic),
                         Print(&truncated),
                         SetAttribute(Attribute::NoItalic),
-                        ResetColor,
                     )?;
+                    reset_to_buf_bg(out, buf_bg)?;
                 }
             }
         }
@@ -4088,8 +4105,8 @@ fn draw_line_with_selection(
                     SetAttribute(Attribute::Italic),
                     Print(format!("  {} {}", icon, msg)),
                     SetAttribute(Attribute::NoItalic),
-                    ResetColor
                 )?;
+                reset_to_buf_bg(out, buf_bg)?;
             }
         }
     }
@@ -4123,8 +4140,8 @@ fn draw_line_with_selection(
                         SetAttribute(Attribute::Italic),
                         Print(&msg),
                         SetAttribute(Attribute::NoItalic),
-                        ResetColor
                     )?;
+                    reset_to_buf_bg(out, buf_bg)?;
                 }
             }
         }
@@ -4136,12 +4153,8 @@ fn draw_line_with_selection(
     if let Some(bg) = code_block_bg {
         let trailing = avail.saturating_sub(visual_used);
         if trailing > 0 {
-            queue!(
-                out,
-                SetBackgroundColor(bg),
-                Print(" ".repeat(trailing)),
-                ResetColor
-            )?;
+            queue!(out, SetBackgroundColor(bg), Print(" ".repeat(trailing)))?;
+            reset_to_buf_bg(out, buf_bg)?;
         }
     }
     Ok(())

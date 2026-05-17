@@ -174,6 +174,16 @@ impl Config {
         }
     }
 
+    /// Optional editor background. When set via `[colors] background = "#…"`
+    /// (or a named colour), the buffer body, gutter, and empty rows paint
+    /// against this colour instead of the terminal's default background.
+    /// Themes in `./themes/` ship this so switching theme also switches the
+    /// background; leave it unset for a transparent buffer that inherits the
+    /// terminal's own background.
+    pub fn background_color(&self) -> Option<Color> {
+        self.colors.get("background").and_then(|s| parse_color(s))
+    }
+
     /// Resolve a colour for a tree-sitter capture name. User values from `[colors]`
     /// override the baked-in defaults.
     ///
