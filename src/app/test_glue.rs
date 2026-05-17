@@ -164,6 +164,10 @@ impl super::App {
         self.show_health_page = false;
         self.show_messages_page = false;
         self.show_start_page = false;
+        // Land at the bottom — opening manually after a run finished
+        // is almost always "show me the latest", and tail mode also
+        // keeps streaming events visible if the run is still going.
+        self.test_results_at_tail = true;
         self.test_results_scroll = 0;
         self.completion = None;
         self.hover = None;
@@ -195,6 +199,10 @@ impl super::App {
                 self.show_health_page = false;
                 self.show_messages_page = false;
                 self.show_start_page = false;
+                // Fresh run — always start in tail-follow mode so the
+                // user sees pass/fail lines stream in at the bottom
+                // without having to G.
+                self.test_results_at_tail = true;
                 self.test_results_scroll = 0;
                 self.completion = None;
                 self.hover = None;
@@ -350,11 +358,38 @@ impl super::App {
             .saturating_sub(viewport)
     }
 
+    /// User-initiated scroll. Tail-follow mode is interactive: any
+    /// upward scroll drops us out of it (so newly-arriving events
+    /// don't yank the viewport away while the user's reading
+    /// scrollback); any downward scroll that reaches the bottom
+    /// re-engages it (so the user gets back to live-tail without
+    /// having to press `G`).
     pub(super) fn test_results_scroll_by(&mut self, delta: isize) {
         let max = self.test_results_max_scroll();
-        let cur = self.test_results_scroll as isize;
-        let next = (cur + delta).max(0) as usize;
-        self.test_results_scroll = next.min(max);
+        if delta < 0 {
+            // Up. If we were tailing, seed scroll from the live
+            // bottom so the user keeps reading from where they were.
+            if self.test_results_at_tail {
+                self.test_results_at_tail = false;
+                self.test_results_scroll = max;
+            }
+            let cur = self.test_results_scroll as isize;
+            let next = (cur + delta).max(0) as usize;
+            self.test_results_scroll = next.min(max);
+        } else if delta > 0 {
+            if self.test_results_at_tail {
+                // Already pinned at the bottom — nothing to do.
+                return;
+            }
+            let cur = self.test_results_scroll as isize;
+            let next = ((cur + delta).max(0) as usize).min(max);
+            self.test_results_scroll = next;
+            // Reached the bottom — re-engage tail follow so future
+            // streamed events keep the viewport live.
+            if next >= max {
+                self.test_results_at_tail = true;
+            }
+        }
     }
 
     /// Convenience predicate matching `TestStatus::Failed` — used by

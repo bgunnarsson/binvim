@@ -493,6 +493,13 @@ pub struct App {
     pub show_test_results_page: bool,
     pub test_results_scroll: usize,
     pub test_results_content_height: std::cell::Cell<usize>,
+    /// Tail-follow mode for the results overlay — when true, the
+    /// renderer pins the scroll position to the bottom each frame so
+    /// new streaming events stay visible without the user having to
+    /// `G`. User scrolling upward drops out of tail mode; scrolling
+    /// back down to the bottom (or pressing `G`) re-engages it.
+    /// Reset to true on every new run start.
+    pub test_results_at_tail: bool,
 }
 
 /// Decoded `textDocument/semanticTokens/full` tokens for one buffer,
@@ -706,6 +713,7 @@ impl App {
             show_test_results_page: false,
             test_results_scroll: 0,
             test_results_content_height: std::cell::Cell::new(0),
+            test_results_at_tail: true,
         };
         // Mirror the user's Copilot opt-in onto the LSP manager so
         // copilot-language-server is included in every spec lookup

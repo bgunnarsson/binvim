@@ -2068,9 +2068,16 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
     }
 
     app.test_results_content_height.set(lines.len());
-    let scroll = app
-        .test_results_scroll
-        .min(lines.len().saturating_sub(viewport_rows));
+    // Tail-follow mode wins over `test_results_scroll` — pins the
+    // viewport to the bottom every frame so streaming events stay
+    // visible without the user having to press G between each tick.
+    // Scrolling upward in `test_results_scroll_by` clears the flag.
+    let max_scroll = lines.len().saturating_sub(viewport_rows);
+    let scroll = if app.test_results_at_tail {
+        max_scroll
+    } else {
+        app.test_results_scroll.min(max_scroll)
+    };
 
     for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
         let screen_y = (top + (i - scroll)) as u16;

@@ -306,6 +306,9 @@ impl super::App {
                         }
                         KeyCode::Char('g') | KeyCode::Home if normal && no_ctrl => {
                             if test_results {
+                                // Jump to the top — explicit "look at
+                                // scrollback", so leave tail mode too.
+                                self.test_results_at_tail = false;
                                 self.test_results_scroll = 0;
                             } else if messages {
                                 self.messages_scroll = 0;
@@ -316,7 +319,10 @@ impl super::App {
                         }
                         KeyCode::Char('G') | KeyCode::End if normal => {
                             if test_results {
-                                self.test_results_scroll = self.test_results_max_scroll();
+                                // Re-engage tail follow rather than
+                                // freezing at the current bottom —
+                                // matches `tail -f` semantics.
+                                self.test_results_at_tail = true;
                             } else if messages {
                                 self.messages_scroll = self.messages_max_scroll();
                             } else {
