@@ -1628,6 +1628,14 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         if row < grid_rows {
             for col in 0..grid_cols {
                 let cell = grid.cells[row][col];
+                // Wide-char continuation cells are tagged with `\0`
+                // by the vte handler. The host terminal already
+                // painted the right half of the wide glyph when we
+                // printed the lead cell, so we must NOT emit
+                // anything here — even a space would clobber it.
+                if cell.ch == '\0' {
+                    continue;
+                }
                 paint_terminal_cell(out, cell)?;
             }
         }
