@@ -210,5 +210,10 @@ These are explicit decisions worth recording so they don't get relitigated every
   redistribution and forks are governed by the licence.
 - **Single binary, no runtime config beyond `~/.config/binvim/config.toml`.** No init script, no Lua /
   Vimscript layer, no `:source`-able files.
-- **Catppuccin Mocha is the only built-in theme.** Colour overrides go through `config.toml`. No theme-pack
-  ecosystem.
+- **Themes ship as `themes/<name>/theme.toml` copy-paste presets, not a theme registry.** The default is
+  Catppuccin Mocha (baked into the chrome-palette defaults so a config-less install renders correctly).
+  `themes/` carries 15 presets covering both dark and light schemes (`catppuccin-mocha`, `catppuccin-latte`,
+  `dracula`, `tokyo-night`, `night-owl`, `light-owl`, `one-dark`, `gruvbox`, `nord`, `github-dark`,
+  `github-light`, `solarized-light`, `ayu-light`, `monokai`, `visual-studio`). There is no theme loader —
+  copy a preset's `[colors]` block into `config.toml`. No theme-pack ecosystem, no installer, no plugin
+  registry.

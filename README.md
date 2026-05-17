@@ -322,6 +322,29 @@ Optional config file at `~/.config/binvim/config.toml`:
 schema_version = 1
 
 [colors]
+# Editor surface
+background        = "#1e1e2e"   # buffer body bg; unset = inherit terminal default
+chrome_bg         = "#181825"   # tabs, popups, status segments, side panes
+
+# Chrome neutrals
+foreground        = "#cdd6f4"   # main chrome text
+dim               = "#6c7086"   # muted (line numbers, hints, comments)
+emphasis          = "#b4befe"   # active tab fg, multi-cursor block, picker title
+surface           = "#45475a"   # active tab bg, picker selection
+border            = "#585b70"   # popup borders, dividers
+
+# Chrome accents
+accent            = "#fab387"   # debug chip, breakpoint, dirty-tab dot
+accent_secondary  = "#a6e3a1"   # terminal chip, active debug sub-tab, git added
+chip_fg           = "#1e1e2e"   # fg on coloured chips
+
+# Diagnostic / severity
+error             = "#f38ba8"
+warning           = "#f9e2af"
+info              = "#89b4fa"
+hint              = "#89dceb"
+
+# Syntax captures (tree-sitter / LSP semantic tokens)
 keyword = "#cba6f7"
 "keyword.return" = "Magenta"
 string = "#a6e3a1"
@@ -346,7 +369,25 @@ semantic_tokens = true     # `textDocument/semanticTokens/full` layered over tre
 document_highlight = true  # Surface2 bg on every occurrence of the symbol under the cursor.
 ```
 
-**`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head (`keyword.return` overrides `keyword`).
+**`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. The section drives both **chrome** and **syntax** colouring.
+
+*Chrome palette.* The neutrals + accents above (`background`, `chrome_bg`, `foreground`, `dim`, `emphasis`, `surface`, `border`, `accent`, `accent_secondary`, `chip_fg`, `error`, `warning`, `info`, `hint`) paint every chrome surface in the editor: tab bar, status line, popups (whichkey / hover / signature / notification / floating cmdline / picker / completion), terminal pane, debug pane, gutter signs, severity glyphs, buffer overlays (search / yank / multi-cursor / match-pair / doc-highlight), `:health`, `:messages`, and the start page. Set only `background` and binvim auto-derives the four neutrals (`chrome_bg`, `surface`, `border`, `foreground`, `dim`) by luminance-aware mixing — a one-line theme yields a coherent chrome. Each accent has a baked-in Catppuccin Mocha default that you can override.
+
+*Namespaced overrides.* Every chrome role also has a dotted-namespace key that overrides only one surface, falling back to its broad theme key (and through to the Catppuccin default). Use these when you want one specific tint without re-tinting everything else:
+
+| Family | Keys |
+| --- | --- |
+| Notifications | `notification.{info,warning,success,error}` |
+| Git stripe | `git.{added,modified,deleted}` |
+| Diagnostics | `diagnostic.{error,warning,info,hint}` |
+| Gutter | `gutter.{breakpoint,pc_marker}` |
+| Tab bar | `tab.{active_bg,active_fg,inactive_fg,dirty,close}` |
+| Terminal pane | `terminal.{chip_bg,chip_fg,active_tab_bg}` |
+| Debug pane | `debug.{chip_bg,active_tab_bg}` |
+| Mode chip | `mode.{normal,insert,visual,command,search,picker,prompt,terminal,debug}` |
+| Buffer overlays | `search.highlight_bg`, `yank.flash_bg`, `multi_cursor.bg`, `match_pair.bg`, `doc_highlight.bg` |
+
+*Syntax captures.* Capture names follow tree-sitter conventions (`keyword`, `string`, `function`, `type`, …); a dotted suffix matches more specifically before falling back to the head (`keyword.return` overrides `keyword`).
 
 **`[start_page]`** — `lines` overrides the baked-in ASCII logo shown when binvim is launched with no path. Each entry renders on its own row, horizontally centered; the block as a whole is vertically centered. Omit it (or leave it empty) to keep the default logo.
 
@@ -362,11 +403,11 @@ A missing or malformed config is ignored — the baked-in Catppuccin Mocha palet
 
 ### Theme presets
 
-Ready-made `[colors]` blocks live in [`themes/`](themes/) — one folder per theme, each containing a `theme.toml`:
+Ready-made `[colors]` blocks live in [`themes/`](themes/) — one folder per theme, each containing a `theme.toml`. Every preset ships the full chrome palette (the 12 neutrals + accents), so switching theme flips every chrome surface — tab bar, popups, status line, panes — to that theme's own tones rather than leaking Catppuccin defaults.
 
 | Dark themes | Light themes |
 | --- | --- |
-| `dracula`, `tokyo-night`, `one-dark`, `github-dark`, `catppuccin-mocha`, `night-owl`, `gruvbox`, `nord`, `visual-studio` | `github-light`, `solarized-light`, `catppuccin-latte`, `ayu-light`, `light-owl` |
+| `catppuccin-mocha`, `dracula`, `tokyo-night`, `night-owl`, `one-dark`, `gruvbox`, `nord`, `github-dark`, `monokai`, `visual-studio` | `catppuccin-latte`, `light-owl`, `solarized-light`, `ayu-light`, `github-light` |
 
 There is no built-in theme loader — copy the file contents into your `~/.config/binvim/config.toml`, e.g.:
 
@@ -374,7 +415,7 @@ There is no built-in theme loader — copy the file contents into your `~/.confi
 cat themes/tokyo-night/theme.toml >> ~/.config/binvim/config.toml
 ```
 
-The baked-in default is Catppuccin Mocha; `themes/catppuccin-mocha/theme.toml` mirrors it explicitly as a copy-paste starting point.
+The baked-in default is Catppuccin Mocha; `themes/catppuccin-mocha/theme.toml` mirrors it explicitly with annotated comments as a copy-paste starting point.
 
 ## Licence
 
