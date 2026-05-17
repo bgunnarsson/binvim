@@ -224,6 +224,11 @@ pub enum Action {
     /// `<leader>tq` — close the embedded terminal pane. Same effect
     /// as `:q` while focused on it.
     TerminalClose,
+    /// `<leader>tf` — focus the terminal pane. If the pane is alive
+    /// but the user has Esc'd into TerminalNormal / Normal, this
+    /// drops them back into `Mode::Terminal` so typing flows to the
+    /// shell again. No-op (with a hint) when no terminal exists.
+    TerminalFocus,
     /// `<C-w>V` — split the active window vertically with the *same*
     /// buffer in the new pane (Vim default — two viewports of one file).
     WindowSplitVertical,
@@ -801,6 +806,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let action = match ch {
             'o' => Some(Action::TerminalOpen),
             'q' => Some(Action::TerminalClose),
+            'f' => Some(Action::TerminalFocus),
             _ => None,
         };
         state.reset();
