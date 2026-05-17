@@ -4287,25 +4287,29 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         let chip = format!("  {}  ", label);
         let chip_w = chip.chars().count() as u16;
         let is_active = *tab == app.dap_pane_tab;
-        // Active tab: bright text + bold + underline so it reads as
-        // "selected" without competing with the DEBUG chip's peach.
-        // Inactive tabs use the muted overlay tone.
-        let fg = if is_active { header_fg } else { muted };
+        // Browser-tab styling: the active tab "drops" into the body
+        // by painting on body_bg (Mantle) while inactive tabs sit
+        // on the tab strip's Surface0 bg. The active tab gets bold
+        // bright text; inactive tabs are regular-weight muted. No
+        // underline, no peach (peach stays uniquely the DEBUG chip).
+        let (chip_bg, chip_fg) = if is_active {
+            (body_bg, header_fg)
+        } else {
+            (tab_bar_bg, muted)
+        };
         queue!(
             out,
             MoveTo(tab_x, tab_row_y),
-            SetBackgroundColor(tab_bar_bg),
-            SetForegroundColor(fg),
+            SetBackgroundColor(chip_bg),
+            SetForegroundColor(chip_fg),
         )?;
         if is_active {
-            queue!(
-                out,
-                SetAttribute(Attribute::Bold),
-                SetAttribute(Attribute::Underlined),
-            )?;
+            queue!(out, SetAttribute(Attribute::Bold))?;
+        } else {
+            queue!(out, SetAttribute(Attribute::NormalIntensity))?;
         }
         queue!(out, Print(&chip))?;
-        queue!(out, SetAttribute(Attribute::Reset))?;
+        queue!(out, SetAttribute(Attribute::NormalIntensity))?;
         hitboxes.push((*tab, tab_x, tab_x + chip_w));
         tab_x += chip_w;
     }
@@ -4348,15 +4352,19 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
 
     for r in 0..body_rows {
         let screen_y = (body_top + r) as u16;
-        queue!(
-            out,
-            MoveTo(0, screen_y),
-            Clear(ClearType::CurrentLine),
-            SetBackgroundColor(body_bg),
-        )?;
+        // `Clear(CurrentLine)` resets the row to the terminal's
+        // default background — which on a dark-theme host is
+        // visibly lighter than Mantle, producing a flash when an
+        // empty pane gradually fills with rows. Skip the Clear
+        // and paint Mantle across the full width explicitly so
+        // every pane row is the same shade regardless of whether
+        // it carries content.
+        queue!(out, MoveTo(0, screen_y), SetBackgroundColor(body_bg))?;
         let idx = visible_start + r;
         if let Some(row) = rows_buf.get(idx) {
             paint_dap_row(out, row, width)?;
+        } else {
+            queue!(out, Print(" ".repeat(width)))?;
         }
         queue!(out, ResetColor)?;
     }
