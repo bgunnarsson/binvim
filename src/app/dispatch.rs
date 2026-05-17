@@ -133,13 +133,7 @@ impl super::App {
                         "terminal: no pane (open with `<leader>tt`)".into();
                 }
             }
-            Action::TerminalToggle => {
-                if self.terminal.is_some() {
-                    self.close_terminal();
-                } else {
-                    self.cmd_open_terminal(None);
-                }
-            }
+            Action::TerminalToggle => self.toggle_terminal_pane(),
             Action::WindowSplitVertical => self.window_split(crate::layout::SplitDir::Vertical),
             Action::WindowSplitHorizontal => self.window_split(crate::layout::SplitDir::Horizontal),
             Action::WindowSplitVerticalPick => {

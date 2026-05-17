@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`<leader>tp` no longer kills the running process.** Toggle now
+  hides/shows the pane while keeping the PTY alive — `pnpm dev`,
+  `cargo watch`, a long-running REPL session, etc. survive being
+  tucked away and brought back. Only `<leader>tq` (or `:q` while
+  focused on the pane) drops the PTY. The PTY is resized to the
+  current pane dimensions on re-show so a host-terminal resize
+  while hidden doesn't leave the shell with the old `winsize`.
+
 ## [0.3.1] - 2026-05-17
 
 ### Added

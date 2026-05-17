@@ -65,6 +65,47 @@ impl super::App {
         self.adjust_viewport();
     }
 
+    /// `<leader>tp` — show/hide the terminal pane WITHOUT killing
+    /// the PTY. The point is to be able to start a long-running
+    /// process (`pnpm dev`, `cargo watch`, …), tuck it out of the
+    /// way while editing, and bring it back later to check on it.
+    ///
+    ///   - Pane visible       → hide (clear `terminal_pane_open`,
+    ///                          drop focus back to Normal if we were
+    ///                          typing into it). PTY stays alive
+    ///                          and keeps draining bytes into the
+    ///                          grid on every frame.
+    ///   - Pane hidden + PTY  → show (re-flip the open flag,
+    ///                          re-focus into `Mode::Terminal`,
+    ///                          resize the PTY to the current pane
+    ///                          dimensions in case the host
+    ///                          terminal was resized while hidden).
+    ///   - No PTY             → spawn a new one (delegate to
+    ///                          `cmd_open_terminal`, same as
+    ///                          `<leader>tt`).
+    pub(super) fn toggle_terminal_pane(&mut self) {
+        if self.terminal_pane_open {
+            self.terminal_pane_open = false;
+            if matches!(self.mode, Mode::Terminal) {
+                self.mode = Mode::Normal;
+            }
+            self.adjust_viewport();
+            return;
+        }
+        if self.terminal.is_some() {
+            self.terminal_pane_open = true;
+            self.adjust_viewport();
+            let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
+            let cols = (self.width as usize).max(8) as u16;
+            if let Some(t) = self.terminal.as_ref() {
+                let _ = t.resize(rows, cols);
+            }
+            self.mode = Mode::Terminal;
+            return;
+        }
+        self.cmd_open_terminal(None);
+    }
+
     /// Drain pending PTY output into the grid. Called once per
     /// render loop. Returns `true` if any bytes were processed so
     /// the caller can mark the frame dirty.
