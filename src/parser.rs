@@ -229,6 +229,10 @@ pub enum Action {
     /// into `Mode::Terminal` so typing flows to the shell again.
     /// No-op (with a hint) when no terminal exists.
     TerminalFocus,
+    /// `<leader>tp` — toggle the embedded terminal pane. Mirrors
+    /// `<leader>dp` for the debug pane: open + focus if not alive,
+    /// close if it is.
+    TerminalToggle,
     /// `<C-w>V` — split the active window vertically with the *same*
     /// buffer in the new pane (Vim default — two viewports of one file).
     WindowSplitVertical,
@@ -807,6 +811,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             't' => Some(Action::TerminalOpen),
             'q' => Some(Action::TerminalClose),
             'f' => Some(Action::TerminalFocus),
+            'p' => Some(Action::TerminalToggle),
             _ => None,
         };
         state.reset();

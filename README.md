@@ -185,6 +185,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>do` | Document symbols (LSP)                |
 | `<space>dS` | Workspace symbols (LSP)               |
 | `<space>tt` | Open / focus the embedded terminal pane |
+| `<space>tp` | Toggle the embedded terminal pane (open if dead, close if alive — mirrors `<space>dp`) |
 | `<space>tf` | Focus the terminal pane (drop into `Mode::Terminal` — typing flows to the shell again) |
 | `<space>tq` | Close the embedded terminal pane      |
 

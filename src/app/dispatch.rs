@@ -130,7 +130,14 @@ impl super::App {
                     self.adjust_viewport();
                 } else {
                     self.status_msg =
-                        "terminal: no pane (open with `<leader>to`)".into();
+                        "terminal: no pane (open with `<leader>tt`)".into();
+                }
+            }
+            Action::TerminalToggle => {
+                if self.terminal.is_some() {
+                    self.close_terminal();
+                } else {
+                    self.cmd_open_terminal(None);
                 }
             }
             Action::WindowSplitVertical => self.window_split(crate::layout::SplitDir::Vertical),

@@ -375,6 +375,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
 pub fn terminal_prefix_entries() -> Vec<(String, String)> {
     vec![
         ("t".into(), "Open / focus terminal".into()),
+        ("p".into(), "Toggle terminal".into()),
         ("f".into(), "Focus terminal".into()),
         ("q".into(), "Close terminal".into()),
     ]
