@@ -1,0 +1,72 @@
+# Monokai — the classic palette (Wimer Hazenberg, 2006). The Sublime
+# Text "Monokai.tmTheme" is the canonical source; these are the same
+# hex values, just routed through binvim's [colors] schema.
+schema_version = 1
+
+[colors]
+background        = "#272822"
+
+# Chrome neutrals
+foreground        = "#f8f8f2"
+dim               = "#75715e"
+emphasis          = "#66d9ef"
+surface           = "#3e3d32"
+border            = "#49483e"
+
+# Chrome accents
+accent            = "#fd971f"
+accent_secondary  = "#a6e22e"
+chip_fg           = "#272822"
+
+# Diagnostic / severity
+error             = "#f92672"
+warning           = "#e6db74"
+info              = "#66d9ef"
+hint              = "#a1efe4"
+
+# Syntax captures
+comment           = "#75715e"
+string            = "#e6db74"
+"string.escape"   = "#ae81ff"
+character         = "#e6db74"
+escape            = "#ae81ff"
+regex             = "#e6db74"
+
+keyword           = "#f92672"
+"keyword.return"  = "#f92672"
+include           = "#f92672"
+conditional       = "#f92672"
+repeat            = "#f92672"
+exception         = "#f92672"
+operator          = "#f92672"
+
+function          = "#a6e22e"
+"function.call"   = "#a6e22e"
+method            = "#a6e22e"
+"method.call"     = "#a6e22e"
+macro             = "#a6e22e"
+preproc           = "#f92672"
+
+type              = "#66d9ef"
+constructor       = "#a6e22e"
+namespace         = "#f8f8f2"
+module            = "#f8f8f2"
+attribute         = "#a6e22e"
+
+constant          = "#ae81ff"
+boolean           = "#ae81ff"
+number            = "#ae81ff"
+float             = "#ae81ff"
+
+tag               = "#f92672"
+"tag.attribute"   = "#a6e22e"
+label             = "#fd971f"
+property          = "#f8f8f2"
+key               = "#a6e22e"
+parameter         = "#fd971f"
+variable          = "#f8f8f2"
+"variable.builtin" = "#ae81ff"
+punctuation       = "#f8f8f2"
+
+title             = "#a6e22e"
+text              = "#f8f8f2"
