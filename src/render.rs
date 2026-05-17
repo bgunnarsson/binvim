@@ -4264,46 +4264,45 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, ResetColor)?;
 
     // ---------------------------------------------------------------------
-    // Tab bar — second row of the pane. Active tab gets the accent
-    // bg, inactive tabs are muted. Hitboxes for each label go into
-    // `dap_tab_hitboxes` so `handle_terminal_mouse_event`'s sibling
-    // for the debug pane can hit-test clicks on the bar.
+    // Tab bar — second row of the pane. The bar paints on a slightly
+    // lighter Surface0 band so it visually separates from both the
+    // header chip above (Mantle bg) and the body below (Mantle bg).
+    // Active tab gets bold + accent fg; inactive tabs are muted.
+    // Hitboxes for each label go into `dap_tab_hitboxes` so the
+    // mouse dispatcher can hit-test clicks on the bar.
     // ---------------------------------------------------------------------
+    let tab_bar_bg = Color::Rgb { r: 0x31, g: 0x32, b: 0x44 }; // Surface0
     let tab_row_y = (top + 1) as u16;
-    queue!(out, MoveTo(0, tab_row_y), Clear(ClearType::CurrentLine))?;
-    queue!(out, SetBackgroundColor(body_bg))?;
-    let mut tab_x: u16 = 1;
+    queue!(
+        out,
+        MoveTo(0, tab_row_y),
+        SetBackgroundColor(tab_bar_bg),
+        Print(" ".repeat(width)),
+        MoveTo(0, tab_row_y),
+    )?;
+    let mut tab_x: u16 = 0;
     let mut hitboxes: Vec<(crate::app::DapPaneTab, u16, u16)> = Vec::new();
-    for (i, tab) in crate::app::DapPaneTab::all().iter().enumerate() {
+    for tab in crate::app::DapPaneTab::all().iter() {
         let label = tab.label();
-        let chip = format!("  {} ", label);
+        let chip = format!("  {}  ", label);
         let chip_w = chip.chars().count() as u16;
         let is_active = *tab == app.dap_pane_tab;
-        let (fg, bg) = if is_active {
-            (base, accent)
-        } else {
-            (header_fg, body_bg)
-        };
-        let underline = is_active;
+        let fg = if is_active { accent } else { muted };
         queue!(
             out,
             MoveTo(tab_x, tab_row_y),
-            SetBackgroundColor(bg),
+            SetBackgroundColor(tab_bar_bg),
             SetForegroundColor(fg),
         )?;
-        if underline {
+        if is_active {
             queue!(out, SetAttribute(Attribute::Bold))?;
         }
         queue!(out, Print(&chip))?;
         queue!(out, SetAttribute(Attribute::Reset))?;
         hitboxes.push((*tab, tab_x, tab_x + chip_w));
-        // 1-digit index hint between tabs (matches the number-row
-        // key bindings: `1` → Frames, `2` → Locals, …).
-        let _ = i;
-        tab_x += chip_w + 1;
+        tab_x += chip_w;
     }
-    // Fill the rest of the tab row with the pane bg.
-    queue!(out, SetBackgroundColor(body_bg))?;
+    queue!(out, SetBackgroundColor(tab_bar_bg))?;
     if (tab_x as usize) < width {
         queue!(out, Print(" ".repeat(width - tab_x as usize)))?;
     }

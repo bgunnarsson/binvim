@@ -105,24 +105,29 @@ pub enum DapPaneTab {
 }
 
 impl DapPaneTab {
-    /// Tabs in the order they're rendered in the bar.
+    /// Tabs in the order they're rendered in the bar. Console first
+    /// — it's where the user's eye lands first when they hit `:debug`,
+    /// because the launch's stdout / setBreakpoints chatter shows up
+    /// there before any frames or locals exist. Locals / Breakpoints
+    /// / Frames / Watches follow in roughly decreasing
+    /// session-frequency order.
     pub fn all() -> [DapPaneTab; 5] {
         [
-            DapPaneTab::Frames,
-            DapPaneTab::Locals,
-            DapPaneTab::Watches,
-            DapPaneTab::Breakpoints,
             DapPaneTab::Console,
+            DapPaneTab::Locals,
+            DapPaneTab::Breakpoints,
+            DapPaneTab::Frames,
+            DapPaneTab::Watches,
         ]
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            DapPaneTab::Frames => "Frames",
-            DapPaneTab::Locals => "Locals",
-            DapPaneTab::Watches => "Watches",
-            DapPaneTab::Breakpoints => "Breakpoints",
             DapPaneTab::Console => "Console",
+            DapPaneTab::Locals => "Locals",
+            DapPaneTab::Breakpoints => "Breakpoints",
+            DapPaneTab::Frames => "Frames",
+            DapPaneTab::Watches => "Watches",
         }
     }
 }
@@ -597,7 +602,7 @@ impl App {
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
             dap_pane_cursor: 0,
-            dap_pane_tab: DapPaneTab::Locals,
+            dap_pane_tab: DapPaneTab::Console,
             dap_tab_scrolls: HashMap::new(),
             dap_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             yank_highlight: None,

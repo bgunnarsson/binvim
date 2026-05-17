@@ -958,6 +958,12 @@ impl super::App {
             )
         };
         self.debug_pane_open = true;
+        // Land on the Console tab so the user sees launch chatter +
+        // adapter-side errors first, before the program has run
+        // long enough to produce frames or locals.
+        self.dap_pane_tab = crate::app::DapPaneTab::Console;
+        self.dap_pane_cursor = 0;
+        self.dap_tab_scrolls.clear();
         self.adjust_viewport();
         // Clear pending state so a subsequent <leader>ds doesn't see
         // stale data from this run.
