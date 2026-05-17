@@ -122,6 +122,20 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [ ] **Conditional + hit-count breakpoints.** Existing breakpoints are unconditional; DAP
       `breakpoint.condition` / `hitCondition` already carry the wire format. **considering**
 
+## Test runner
+
+- [ ] **Integrated test runner.** Per-language adapter pattern parallel to DAP — one `TestAdapterSpec` per
+      toolchain in `test/specs.rs` (cargo test for Rust, `go test`, pytest, vitest/jest for JS/TS, `dotnet
+      test`, etc.) keyed off workspace root markers. Discovery walks the project for test items (cargo
+      `--list`, `pytest --collect-only`, `go test -list`, vitest `--reporter=json --listTests`) and feeds the
+      generic picker. UI surface: `:test` opens the picker; `:testnearest` runs the test under the cursor;
+      `:testfile` runs the current file; `:testlast` re-runs. Results stream into a bottom split (same pane
+      family as `:terminal` / debug) with pass / fail / skipped counts in the status line and a gutter sign
+      column for per-test status. Failures populate the existing quickfix list so `]q` / `[q` walks them.
+      "Debug test" routes through the DAP layer — adapter dispatch picks the matching `DapAdapterSpec` and
+      hands it the test name as launch args. No plugin system; every adapter is hard-wired, same as LSP / DAP.
+      **considering**
+
 ## Quality / Tooling
 
 - [ ] **CI: `cargo test` + `cargo clippy` on PRs.** Today only `release.yml` runs (on tag push). Tests exist
