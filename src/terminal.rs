@@ -148,6 +148,34 @@ pub struct VteHandler {
     saved: Option<(usize, usize)>,
     /// Pen state — applied to every printed cell until SGR resets it.
     pen: Cell,
+    /// DEC private mode 1000 — X10 / VT200 mouse: report button
+    /// press and release only.
+    pub(crate) mouse_button_mode: bool,
+    /// DEC private mode 1002 — button-event tracking: same as 1000
+    /// plus drag motion events while a button is held.
+    pub(crate) mouse_drag_mode: bool,
+    /// DEC private mode 1003 — any-event tracking: motion regardless
+    /// of button state. Almost no real program uses this — kept
+    /// for completeness so the gating logic is correct.
+    pub(crate) mouse_motion_mode: bool,
+    /// DEC private mode 1006 — SGR mouse encoding. Modern xterm,
+    /// works correctly past col 95 (the legacy 1000 encoding
+    /// breaks above that because it stuffs coords into a single
+    /// byte each). When set, mouse events go out as
+    /// `\x1b[<{btn};{x};{y}{M|m}` instead of the legacy form.
+    pub(crate) mouse_sgr: bool,
+}
+
+/// Snapshot of which mouse-tracking modes the terminal currently
+/// has enabled. Used by the App's mouse-event handler to decide
+/// whether to forward events to the PTY or pass them through to
+/// the editor.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MouseModeState {
+    pub any: bool,
+    pub drag: bool,
+    pub motion: bool,
+    pub sgr: bool,
 }
 
 impl VteHandler {
@@ -158,6 +186,10 @@ impl VteHandler {
             cur_col: 0,
             saved: None,
             pen: Cell::blank(),
+            mouse_button_mode: false,
+            mouse_drag_mode: false,
+            mouse_motion_mode: false,
+            mouse_sgr: false,
         }
     }
 
@@ -348,7 +380,7 @@ impl Perform for VteHandler {
         }
     }
 
-    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], _ignore: bool, c: char) {
+    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, c: char) {
         let first = params
             .iter()
             .next()
@@ -407,10 +439,26 @@ impl Perform for VteHandler {
                 }
             }
             'm' => self.apply_sgr(params),
-            // Mode set / reset (`?...h` / `?...l`) — DEC private mode
-            // bits like cursor visibility / alternate screen. We're
-            // not modelling these yet; silently accept so shells
-            // don't think we're broken.
+            // Mode set / reset (`?...h` / `?...l`) — DEC private
+            // mode bits. We honour the mouse-tracking modes (1000,
+            // 1002, 1003, 1006) so click + scroll forwarding can
+            // gate on what the program asked for. Other DEC modes
+            // (cursor visibility, alt screen, bracketed paste, …)
+            // are silently accepted so shells / TUIs don't think
+            // we're broken.
+            'h' | 'l' if intermediates.contains(&b'?') => {
+                let enable = c == 'h';
+                for param in params.iter() {
+                    let n = param.first().copied().unwrap_or(0);
+                    match n {
+                        1000 => self.mouse_button_mode = enable,
+                        1002 => self.mouse_drag_mode = enable,
+                        1003 => self.mouse_motion_mode = enable,
+                        1006 => self.mouse_sgr = enable,
+                        _ => {}
+                    }
+                }
+            }
             'h' | 'l' => {}
             _ => {} // unrecognised — drop silently
         }
@@ -636,6 +684,21 @@ impl Terminal {
         (inner.handler.cur_row, inner.handler.cur_col)
     }
 
+    /// Snapshot of which DEC private mouse modes the inner program
+    /// has enabled. Callers compare against this to decide whether
+    /// to forward mouse events into the PTY.
+    pub fn mouse_state(&self) -> MouseModeState {
+        let inner = self.inner.lock().unwrap();
+        MouseModeState {
+            any: inner.handler.mouse_button_mode
+                || inner.handler.mouse_drag_mode
+                || inner.handler.mouse_motion_mode,
+            drag: inner.handler.mouse_drag_mode,
+            motion: inner.handler.mouse_motion_mode,
+            sgr: inner.handler.mouse_sgr,
+        }
+    }
+
     /// Resize the PTY and the grid. The child gets a SIGWINCH so
     /// it can redraw at the new dimensions.
     pub fn resize(&self, rows: u16, cols: u16) -> Result<()> {
@@ -793,6 +856,30 @@ mod tests {
         // print "hello world" then CR to col 0 then CUF 5 (move to
         // col 5) then EL 0 (clear right of cursor).
         let h = parse_bytes(b"hello world\r\x1b[5C\x1b[0K", 1, 20);
+        assert_eq!(line_text(&h.grid, 0), "hello");
+    }
+
+    #[test]
+    fn decset_mouse_modes_toggle() {
+        // `CSI ? 1006 h` then `CSI ? 1000 h` enable two mouse
+        // modes. `CSI ? 1000 l` disables one. Bare `CSI ? 25 h`
+        // (cursor visibility) is unrelated and shouldn't perturb
+        // mouse state.
+        let h = parse_bytes(
+            b"\x1b[?1006h\x1b[?1000h\x1b[?25h\x1b[?1000l",
+            4, 10,
+        );
+        assert!(h.mouse_sgr, "SGR mode should still be on");
+        assert!(!h.mouse_button_mode, "1000 should have been disabled");
+        assert!(!h.mouse_drag_mode);
+        assert!(!h.mouse_motion_mode);
+    }
+
+    #[test]
+    fn decset_alt_screen_is_accepted_silently() {
+        // The alt-screen toggle (1049) isn't modelled but must not
+        // panic / leak state into other handlers.
+        let h = parse_bytes(b"\x1b[?1049hhello\x1b[?1049l", 4, 10);
         assert_eq!(line_text(&h.grid, 0), "hello");
     }
 

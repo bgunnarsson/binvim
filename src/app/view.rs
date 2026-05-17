@@ -240,12 +240,46 @@ impl super::App {
 
     pub fn buffer_rows(&self) -> usize {
         // Reserve the status line at the bottom, (when applicable) one row at
-        // the top for the tab bar, and the debug pane rows at the bottom when
-        // a debug session is up or the pane is pinned open.
+        // the top for the tab bar, and the debug + terminal pane rows at the
+        // bottom when either pane is open. The two panes stack: terminal
+        // first (sits just above the debug pane), debug pinned to the row
+        // directly above the status line.
         (self.height as usize)
             .saturating_sub(1)
             .saturating_sub(self.buffer_top())
             .saturating_sub(self.debug_pane_rows())
+            .saturating_sub(self.terminal_pane_rows())
+    }
+
+    /// Number of rows the terminal pane occupies. Zero when the pane
+    /// is closed or when the host terminal is too short to make room
+    /// for it without crushing the editor below a usable threshold.
+    /// Same target heuristic as the debug pane (≈h/3 in [8, 20]).
+    pub fn terminal_pane_rows(&self) -> usize {
+        if !self.terminal_pane_open {
+            return 0;
+        }
+        let h = self.height as usize;
+        // Reserve chrome (status line + tab bar) + the debug pane if it's
+        // also open. Both panes share the bottom strip; terminal sits on
+        // top of debug.
+        let chrome = self.buffer_top() + 1 + self.debug_pane_rows();
+        let avail = h.saturating_sub(chrome);
+        if avail < 10 {
+            return 0;
+        }
+        let target = (h / 3).clamp(8, 20);
+        target.min(avail.saturating_sub(6))
+    }
+
+    /// First terminal-row of the embedded terminal pane. Sits above
+    /// the debug pane (or above the status line if debug is closed).
+    /// Callers must check `terminal_pane_rows() > 0` first.
+    pub fn terminal_pane_top(&self) -> usize {
+        (self.height as usize)
+            .saturating_sub(1)
+            .saturating_sub(self.debug_pane_rows())
+            .saturating_sub(self.terminal_pane_rows())
     }
 
     /// Number of rows the bottom debug pane occupies. Zero when the pane is

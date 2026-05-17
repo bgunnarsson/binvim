@@ -361,20 +361,28 @@ pub struct App {
     /// Paths with an in-flight `textDocument/semanticTokens/full`
     /// request. Same cap-to-one semantics as the others.
     pub semantic_tokens_in_flight: std::collections::HashSet<PathBuf>,
-    /// Active `:terminal` overlay, if any. The PTY child + grid live
-    /// inside this `Terminal`; the overlay renders via
-    /// `render::draw_terminal_page` whenever `show_terminal_page` is
-    /// true. None when the terminal has been closed (`:q` inside
+    /// Active `:terminal` pane, if any. The PTY child + grid live
+    /// inside this `Terminal`; the pane renders at the bottom of
+    /// the editor area when `terminal_pane_open` is true. None
+    /// when the terminal has been closed (`:q` in
     /// `Mode::TerminalNormal`) — opening again via `:terminal`
     /// re-spawns a fresh shell.
     pub terminal: Option<crate::terminal::Terminal>,
-    pub show_terminal_page: bool,
+    pub terminal_pane_open: bool,
     /// View offset into the terminal grid's scrollback when the
     /// user is reading back history. 0 = bottom of scrollback (the
     /// live grid is fully visible); larger values shift the view
     /// up into older rows. Driven by `Ctrl-Y` / `Ctrl-E` in
     /// `Mode::TerminalNormal`.
     pub terminal_scroll: usize,
+    /// Vim-style selection inside the terminal grid. When Some,
+    /// the user has entered `v` in `Mode::TerminalNormal` and the
+    /// anchor + `terminal_cursor` define a region to be yanked
+    /// with `y`. Coordinates are (row, col) in the visible grid.
+    pub terminal_visual_anchor: Option<(usize, usize)>,
+    /// Reading-cursor position in `Mode::TerminalNormal`. Driven
+    /// by `h/j/k/l`/word motions; rendered as an inverted block.
+    pub terminal_cursor: (usize, usize),
     /// Ring buffer of server-emitted `window/showMessage` /
     /// `window/logMessage` notifications. Newest at the tail. Bounded
     /// so a chatty server (jdtls warming up, OmniSharp resolving
@@ -586,8 +594,10 @@ impl App {
             semantic_tokens: HashMap::new(),
             last_semantic_tokens_request_version: HashMap::new(),
             terminal: None,
-            show_terminal_page: false,
+            terminal_pane_open: false,
             terminal_scroll: 0,
+            terminal_visual_anchor: None,
+            terminal_cursor: (0, 0),
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
             inlay_hints_in_flight: std::collections::HashSet::new(),

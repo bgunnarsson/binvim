@@ -372,6 +372,15 @@ impl super::App {
         let col = ev.column as usize;
         let buffer_rows = self.buffer_rows();
 
+        // Mouse events that land inside the terminal pane belong to
+        // the embedded shell — either forwarded as escape sequences
+        // (when the program has enabled DECSET mouse tracking) or
+        // turned into a focus-the-terminal click. Return early so
+        // the editor's mouse handling doesn't also fire.
+        if self.terminal_pane_open && self.handle_terminal_mouse_event(&ev, row, col) {
+            return;
+        }
+
         // Left-click on the top-right notification → copy its content to the
         // system clipboard and the unnamed register. Lets the user grab paths
         // and other reported strings without dropping into selection mode.
@@ -1240,7 +1249,7 @@ impl super::App {
                     self.show_health_page = false;
                 } else if self.show_messages_page {
                     self.show_messages_page = false;
-                } else if self.show_terminal_page {
+                } else if self.terminal_pane_open {
                     self.close_terminal();
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();

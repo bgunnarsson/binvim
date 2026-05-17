@@ -21,9 +21,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     // Start / health pages take over the full editor area — splits stay
     // dormant while they're up so the user isn't looking at a partitioned
     // "[No Name]" placeholder.
-    if app.show_terminal_page {
-        draw_terminal_page(out, app)?;
-    } else if app.show_health_page {
+    if app.show_health_page {
         draw_health_page(out, app)?;
     } else if app.show_messages_page {
         draw_messages_page(out, app)?;
@@ -46,6 +44,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         }
         draw_pane_dividers(out, app, editor_rect)?;
     }
+    draw_terminal_pane(out, app)?;
     draw_debug_pane(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
@@ -1548,65 +1547,107 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
 /// so the most recent entries are visible on open. Severity colours
 /// match diagnostics (red error / yellow warn / blue info / overlay
 /// log) so the user scans them the same way as inline diagnostics.
-/// `:terminal` overlay — paint the PTY grid as a full-screen
-/// replacement of the buffer area. The grid's own dimensions match
-/// the editor's editable size (set at `Terminal::spawn` time and
-/// kept in sync on every resize), so we paint cell-for-cell. The
-/// terminal's own cursor is reflected by a Show + MoveTo at the
-/// end; the status line still renders below as usual so the user
-/// can see `TERMINAL` / `T-NORMAL` mode.
-fn draw_terminal_page(out: &mut impl Write, app: &App) -> Result<()> {
-    let Some(term) = app.terminal.as_ref() else {
-        return Ok(());
-    };
-    let total_w = app.width as usize;
-    let body_rows = (app.height as usize).saturating_sub(1);
-    if total_w == 0 || body_rows == 0 {
+/// `:terminal` bottom pane — paints the PTY grid in the rows
+/// reserved by `terminal_pane_rows()`, leaving the buffer area
+/// above and the status line / debug pane below. Cell-for-cell
+/// paint with the SGR colour + attr fidelity the host terminal
+/// supports. The grid's logical size is kept in sync with the
+/// pane's row/col count by `cmd_open_terminal` / the resize
+/// handler, so we never have to scale here. Active-cursor +
+/// selection highlights overlay the cells.
+fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
+    if !app.terminal_pane_open {
         return Ok(());
     }
+    let pane_rows = app.terminal_pane_rows();
+    if pane_rows == 0 {
+        return Ok(());
+    }
+    let top = app.terminal_pane_top();
+    let total_w = app.width as usize;
+    if total_w == 0 {
+        return Ok(());
+    }
+    let Some(term) = app.terminal.as_ref() else {
+        // Pane is open but no terminal yet — paint a blank pane so
+        // the layout doesn't show stale buffer content underneath.
+        for r in 0..pane_rows {
+            queue!(out, MoveTo(0, (top + r) as u16), Clear(ClearType::CurrentLine))?;
+        }
+        return Ok(());
+    };
     let inner = term.grid();
     let grid = &inner.handler.grid;
     let (cur_row, cur_col) = inner.cursor();
-
-    // The grid's logical size might lag a resize by one frame —
-    // clamp so we never index past either dim.
-    let grid_rows = grid.rows.min(body_rows);
+    let grid_rows = grid.rows.min(pane_rows);
     let grid_cols = grid.cols.min(total_w);
 
-    for row in 0..body_rows {
-        queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+    // Selection range, normalised so start <= end.
+    let selection = app.terminal_visual_anchor.map(|anchor| {
+        let cur = app.terminal_cursor;
+        if anchor <= cur { (anchor, cur) } else { (cur, anchor) }
+    });
+
+    for row in 0..pane_rows {
+        let screen_y = (top + row) as u16;
+        queue!(out, MoveTo(0, screen_y), Clear(ClearType::CurrentLine))?;
         if row < grid_rows {
             for col in 0..grid_cols {
                 let cell = grid.cells[row][col];
-                paint_terminal_cell(out, cell)?;
+                let in_sel = selection
+                    .map(|(s, e)| {
+                        let p = (row, col);
+                        p >= s && p <= e
+                    })
+                    .unwrap_or(false);
+                let in_t_normal_cursor = app.mode == Mode::TerminalNormal
+                    && app.terminal_cursor == (row, col);
+                paint_terminal_cell(out, cell, in_sel, in_t_normal_cursor)?;
             }
         }
     }
     queue!(out, ResetColor)?;
 
-    // Cursor in `Mode::Terminal` — show as a normal block at the
-    // grid's recorded position. In `Mode::TerminalNormal` we want
-    // a subtler indication (the user is reading, not typing) so
-    // we leave it hidden and rely on the status-line label.
-    if app.mode == Mode::Terminal && cur_row < body_rows && cur_col < total_w {
+    // In `Mode::Terminal` the PTY-tracked cursor wins (real terminal
+    // caret at the grid's cursor position). In `TerminalNormal` we
+    // paint the reading-cursor as an inverted cell above (handled
+    // already in the cell loop), and hide the system cursor.
+    if app.mode == Mode::Terminal && cur_row < pane_rows && cur_col < total_w {
         queue!(
             out,
             crossterm::cursor::Show,
-            MoveTo(cur_col as u16, cur_row as u16),
+            MoveTo(cur_col as u16, (top + cur_row) as u16),
         )?;
-    } else {
-        queue!(out, crossterm::cursor::Hide)?;
     }
     Ok(())
 }
 
 /// Translate one `crate::terminal::Cell` to crossterm style + glyph
-/// and emit. Reverse attribute swaps fg/bg before applying.
-fn paint_terminal_cell(out: &mut impl Write, cell: crate::terminal::Cell) -> std::io::Result<()> {
+/// and emit. Reverse attribute swaps fg/bg before applying. The
+/// `selected` flag pulls in the Surface2 background (matching
+/// match-pair / documentHighlight) so a Vim-style visual selection
+/// in `TerminalNormal` reads clearly without obliterating the
+/// underlying glyph. `t_normal_cursor` paints the
+/// `TerminalNormal` reading-cursor as an inverted cell.
+fn paint_terminal_cell(
+    out: &mut impl Write,
+    cell: crate::terminal::Cell,
+    selected: bool,
+    t_normal_cursor: bool,
+) -> std::io::Result<()> {
     let mut fg = cell.fg.unwrap_or(Color::Reset);
     let mut bg = cell.bg.unwrap_or(Color::Reset);
     if cell.reverse {
         std::mem::swap(&mut fg, &mut bg);
+    }
+    if t_normal_cursor {
+        // Lavender block + Base fg — matches the multi-cursor / DAP
+        // selection style elsewhere so the eye recognises "this is
+        // where the cursor is" without learning a new colour.
+        bg = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
+        fg = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
+    } else if selected {
+        bg = Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 }; // Surface2
     }
     queue!(
         out,
@@ -4656,11 +4697,18 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, Hide)?;
         return Ok(());
     }
-    // Terminal overlay — the cursor's position lives in the PTY grid,
-    // not the host buffer, and we paint it inside `draw_terminal_page`
-    // so the place_cursor call here would just fight it. Hide the
-    // host cursor; the overlay's caret is what the user sees.
-    if app.show_terminal_page
+    // Focus on the terminal pane (input mode). `draw_terminal_pane`
+    // already moved the cursor onto the PTY grid + showed it, so
+    // bailing here keeps the buffer-area logic below from fighting
+    // it. Cmdline / search overlays still take priority.
+    if matches!(app.mode, Mode::Terminal)
+        && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
+    {
+        return Ok(());
+    }
+    // TerminalNormal — reading-cursor is painted inline as an
+    // inverted cell by the pane loop. Hide the system cursor.
+    if matches!(app.mode, Mode::TerminalNormal)
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
         queue!(out, Hide)?;

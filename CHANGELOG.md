@@ -30,20 +30,30 @@ follows [Semantic Versioning](https://semver.org/).
   first install drops from minutes (compile from source) to seconds.
   `install.sh` now resolves Darwin/{arm64,x86_64} so the `curl … | sh`
   path works on Mac too.
-- **`:terminal` overlay.** The terminal model from earlier in this
-  cycle is now integrated as a fullscreen overlay (like `:health`
-  / `:messages`). `:terminal` / `:term` opens; `:terminal <cmd>`
-  spawns the given command instead of `$SHELL`. Two paired modes:
-  `Mode::Terminal` forwards every keystroke as PTY input (with
-  full xterm sequences for arrows / F-keys / Page / Home / End /
-  Delete / etc., Ctrl-letter → C0 control codes, Alt-prefix for
-  Meta); `Esc` drops into `Mode::TerminalNormal` so the editor's
-  bindings work again (`:` for ex commands, `i` / `a` re-enters
-  Terminal mode). `:q` closes the terminal. PTY auto-resizes on
-  terminal resize; main loop runs at 16ms poll budget while a
-  terminal is alive so typing feels snappy. Yank-from-scrollback
-  is the remaining roadmap polish item — the grid is publicly
-  exposed via `Terminal::grid()` for it.
+- **`:terminal` bottom split.** Earlier in this cycle the terminal
+  shipped as a fullscreen overlay; promoted now to a real bottom-
+  split pane that stacks above the debug pane and below the editor.
+  Two paired modes:
+  - `Mode::Terminal` forwards every keystroke to the PTY (xterm
+    sequences for arrows / F-keys / Page / Home / End / Delete /
+    Insert / Tab; Ctrl-letter → C0; Alt-prefix for Meta).
+  - `Mode::TerminalNormal` (`Esc` from Terminal) — Vim-style
+    grid navigation + selection:  `h`/`j`/`k`/`l` (and arrows)
+    move a reading-cursor, `0`/`$`/`g`/`G` move to row / col
+    extremes, `v` toggles Visual selection, `y` yanks the selected
+    region to the unnamed register and the OS clipboard (multi-row
+    selections produce one `\n`-separated string with trailing
+    whitespace per row trimmed), `Y` yanks the current row, `i`/`a`
+    re-enters Terminal, `<C-w>q` (or `:q`) closes the pane.
+  - **Mouse forwarding** when the inner program enables DECSET
+    mouse tracking (1000 button-only, 1002 button+drag, 1003
+    any-motion, 1006 SGR encoding). htop / less mouse mode / vim
+    mouse=a / lazygit all get clicks + drag + scroll forwarded
+    with the appropriate xterm escape. When mouse tracking is
+    off, clicking the pane just pulls focus into Terminal mode.
+    Both SGR (modern, unlimited coords) and legacy X10 (button
+    state byte + coord bytes offset by 32) encodings are
+    implemented.
 - **Terminal model (PTY + vte parser + grid + scrollback).** New
   self-contained `terminal` module — landed earlier in this cycle
   as scaffolding for the `:terminal` overlay above. PTY spawn via `portable-pty`,
