@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-17
+
 ### Added
 - **`<leader>tp` toggles the terminal pane.** Mirrors `<leader>dp`
   for the debug pane — open + focus if no terminal is alive, close

@@ -148,12 +148,21 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Quality / Tooling
 
-- [ ] **CI: `cargo test` + `cargo clippy` on PRs.** Today only `release.yml` runs (on tag push). Tests exist
-      but nothing gates them. **next**
-- [ ] **CI: `cargo fmt --check`.** Cheap, catches drift. **next**
-- [ ] **Crash-handler.** Catch panics in the event loop, restore the terminal, write the panic + buffer state
-      to `~/.cache/binvim/crash/`, and exit cleanly. Currently a panic leaves the terminal in raw mode.
-      **next**
+- [x] **CI: `cargo test` + `cargo clippy` on PRs.** `.github/workflows/ci.yml`
+      runs `cargo test --locked` and `cargo clippy --locked --all-targets`
+      on every push to main and every PR. Concurrent runs cancel on rapid
+      pushes to the same ref.
+- [ ] **CI: `cargo fmt --check`.** Cheap on paper, but the codebase has
+      hand-rolled formatting (compact let-else, single-line method chains)
+      that stock rustfmt rewrites in ~560 places. Needs a conscious
+      style-policy decision before turning the gate on. **considering**
+- [x] **Crash-handler.** `panic::set_hook` installed before any terminal-
+      touching code: best-effort restores the terminal (disables raw mode,
+      leaves alt screen, shows cursor, drops kitty keyboard flags) and
+      writes a diagnostic log (payload + location + force-captured
+      backtrace + binvim version + unix timestamp) to
+      `~/.cache/binvim/crash/<ts>.log`. The path is echoed to stderr after
+      the unwind so the user knows where to look.
 - [ ] **Property tests for motion / text-object.** Both modules are pure functions — good targets for
       `proptest`. The existing unit tests cover named cases; properties would surface boundary bugs on
       Unicode, empty buffers, multi-byte sequences. **planned**
@@ -162,9 +171,13 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Distribution
 
-- [ ] **macOS prebuilt binaries in `release.yml`.** Today release CI builds Linux musl only; macOS users go
-      through Homebrew, which builds from source (slow on first install). Add `aarch64-apple-darwin` and
-      `x86_64-apple-darwin` matrix entries. **next**
+- [x] **macOS prebuilt binaries in `release.yml`.** Matrix gained
+      `aarch64-apple-darwin` (macos-14 runner) and `x86_64-apple-darwin`
+      (macos-13). Each target builds natively per arch — no cross-compile
+      toolchain to wrangle — and the resulting binary picks up the host's
+      codesigning so Gatekeeper doesn't trip on first launch. `install.sh`
+      now resolves `Darwin/{arm64,x86_64}` so the `curl … | sh` path works
+      on Mac too.
 - [ ] **Windows.** A real undertaking — terminal, clipboard, file paths, child-process plumbing all need
       audit. Probably ConPTY + `arboard` Windows backend + `\\?\` long-path handling. Consider only after the
       editor is feature-complete enough to be worth the porting cost. **considering**
