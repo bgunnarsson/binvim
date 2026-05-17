@@ -199,6 +199,9 @@ impl super::App {
                         } => {
                             self.dap_start_target(&adapter_key, path, name);
                         }
+                        PickerPayload::TestTarget { adapter_key, name } => {
+                            self.test_run_picked_target(adapter_key, name);
+                        }
                     }
                 }
             }
@@ -252,7 +255,8 @@ impl super::App {
             | PickerKind::CodeActions
             | PickerKind::DebugProject
             | PickerKind::DebugProfile
-            | PickerKind::DebugTarget => picker.refilter(),
+            | PickerKind::DebugTarget
+            | PickerKind::TestTarget => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());

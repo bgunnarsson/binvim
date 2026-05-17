@@ -45,6 +45,8 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         draw_health_page(out, app)?;
     } else if app.show_messages_page {
         draw_messages_page(out, app)?;
+    } else if app.show_test_results_page {
+        draw_test_results_page(out, app)?;
     } else if app.show_start_page {
         draw_start_page(out, app)?;
     } else {
@@ -1877,6 +1879,203 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
+            MessageRow::Blank => {}
+            MessageRow::Entry { prefix, prefix_colour, body } => {
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
+                queue!(
+                    out,
+                    SetForegroundColor(*prefix_colour),
+                    Print(prefix),
+                    SetForegroundColor(p.text),
+                    Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
+                )?;
+                reset_to_buf_bg(out, page_bg)?;
+            }
+            MessageRow::Continuation { indent, body } => {
+                queue!(out, MoveTo(left as u16, screen_y))?;
+                apply_buf_bg(out, page_bg)?;
+                queue!(
+                    out,
+                    SetForegroundColor(p.overlay1),
+                    Print(indent),
+                    SetForegroundColor(p.subtext1),
+                    Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
+                )?;
+                reset_to_buf_bg(out, page_bg)?;
+            }
+        }
+    }
+
+    let has_more_below = scroll + viewport_rows < lines.len();
+    let has_more_above = scroll > 0;
+    let footer = match (has_more_above, has_more_below) {
+        (false, false) => "Esc · q · :q to dismiss",
+        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
+        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
+        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
+    };
+    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
+    apply_buf_bg(out, page_bg)?;
+    queue!(
+        out,
+        SetForegroundColor(p.overlay0),
+        Print(truncate(footer, total_w.saturating_sub(left))),
+    )?;
+    reset_to_buf_bg(out, page_bg)?;
+    Ok(())
+}
+
+fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
+    let total_w = app.width as usize;
+    let rows = app.buffer_rows();
+    let top = app.buffer_top();
+    if rows == 0 || total_w < 30 {
+        return Ok(());
+    }
+    let page_bg = app.config.background_color();
+    let blank_row: String = " ".repeat(total_w);
+    for row in 0..rows {
+        queue!(out, MoveTo(0, (row + top) as u16))?;
+        if let Some(c) = page_bg {
+            queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
+        } else {
+            queue!(out, Clear(ClearType::CurrentLine))?;
+        }
+    }
+    let p = DashboardPalette::from_config(&app.config);
+    let left = 2usize;
+    let viewport_rows = rows.saturating_sub(1);
+    let body_w = total_w.saturating_sub(left + 2).max(40);
+
+    let mut lines: Vec<MessageRow> = Vec::new();
+    let header_text = if app.test.is_running() {
+        " Test run (running…)".to_string()
+    } else {
+        let s = &app.test.summary;
+        format!(
+            " Test run — {} passed · {} failed · {} ignored",
+            s.passed, s.failed, s.ignored
+        )
+    };
+    lines.push(MessageRow::Entry {
+        prefix: header_text,
+        prefix_colour: p.lavender,
+        body: String::new(),
+    });
+    lines.push(MessageRow::Blank);
+
+    for row in &app.test.output_buffer {
+        match row {
+            crate::test::TestOutputRow::Header { command_line, .. } => {
+                let prefix = "$ ".to_string();
+                lines.push(MessageRow::Entry {
+                    prefix,
+                    prefix_colour: p.overlay1,
+                    body: command_line.clone(),
+                });
+            }
+            crate::test::TestOutputRow::Case {
+                name,
+                status,
+                message,
+            } => {
+                let (label, colour) = match status {
+                    crate::test::TestStatus::Passed => ("PASS ", p.green),
+                    crate::test::TestStatus::Failed => ("FAIL ", p.red),
+                    crate::test::TestStatus::Ignored => ("SKIP ", p.yellow),
+                };
+                let body = match message {
+                    Some(m) if !m.is_empty() => format!("{name}  — {m}"),
+                    _ => name.clone(),
+                };
+                let body_max = body_w.saturating_sub(label.chars().count()).max(10);
+                let mut first = true;
+                let cont_indent = " ".repeat(label.chars().count());
+                for chunk in chunk_by_width(&body, body_max) {
+                    if first {
+                        lines.push(MessageRow::Entry {
+                            prefix: label.to_string(),
+                            prefix_colour: colour,
+                            body: chunk,
+                        });
+                        first = false;
+                    } else {
+                        lines.push(MessageRow::Continuation {
+                            indent: cont_indent.clone(),
+                            body: chunk,
+                        });
+                    }
+                }
+            }
+            crate::test::TestOutputRow::Output { stream, text } => {
+                let prefix = match stream {
+                    crate::test::OutputStream::Stdout => "  ",
+                    crate::test::OutputStream::Stderr => "! ",
+                };
+                let prefix_colour = match stream {
+                    crate::test::OutputStream::Stdout => p.overlay0,
+                    crate::test::OutputStream::Stderr => p.red,
+                };
+                let body_max = body_w.saturating_sub(prefix.chars().count()).max(10);
+                let mut first = true;
+                let cont_indent = " ".repeat(prefix.chars().count());
+                for chunk in chunk_by_width(text, body_max) {
+                    if first {
+                        lines.push(MessageRow::Entry {
+                            prefix: prefix.to_string(),
+                            prefix_colour,
+                            body: chunk,
+                        });
+                        first = false;
+                    } else {
+                        lines.push(MessageRow::Continuation {
+                            indent: cont_indent.clone(),
+                            body: chunk,
+                        });
+                    }
+                }
+            }
+            crate::test::TestOutputRow::Summary(s) => {
+                lines.push(MessageRow::Blank);
+                let body = format!(
+                    "{} passed · {} failed · {} ignored{}",
+                    s.passed,
+                    s.failed,
+                    s.ignored,
+                    if s.filtered_out > 0 {
+                        format!(" · {} filtered", s.filtered_out)
+                    } else {
+                        String::new()
+                    },
+                );
+                let colour = if s.failed > 0 { p.red } else { p.green };
+                lines.push(MessageRow::Entry {
+                    prefix: " = ".to_string(),
+                    prefix_colour: colour,
+                    body,
+                });
+                lines.push(MessageRow::Blank);
+            }
+            crate::test::TestOutputRow::Aborted(msg) => {
+                lines.push(MessageRow::Entry {
+                    prefix: "ABORT ".to_string(),
+                    prefix_colour: p.red,
+                    body: msg.clone(),
+                });
+            }
+        }
+    }
+
+    app.test_results_content_height.set(lines.len());
+    let scroll = app
+        .test_results_scroll
+        .min(lines.len().saturating_sub(viewport_rows));
+
+    for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
+        let screen_y = (top + (i - scroll)) as u16;
+        match row {
+            MessageRow::Header => {}
             MessageRow::Blank => {}
             MessageRow::Entry { prefix, prefix_colour, body } => {
                 queue!(out, MoveTo(left as u16, screen_y))?;
@@ -5414,7 +5613,10 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
 fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // On the start page, no buffer cursor — only the cmdline/picker overlays
     // ever steal focus from the logo.
-    if (app.show_start_page || app.show_health_page || app.show_messages_page)
+    if (app.show_start_page
+        || app.show_health_page
+        || app.show_messages_page
+        || app.show_test_results_page)
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
         queue!(out, Hide)?;

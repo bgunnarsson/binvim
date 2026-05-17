@@ -220,28 +220,35 @@ impl super::App {
                 {
                     return Ok(());
                 }
-                // While the health dashboard or the messages overlay is
-                // up, only Esc / `q` (in Normal mode) / `:` to enter the
-                // cmdline pass through. `:q` then dismisses via the
-                // ExCommand::Quit handler above. Other keys are
-                // swallowed so the user can't accidentally type into
-                // the underlying buffer. The two overlays share the
-                // same scroll bindings — only the dismiss flag differs.
-                let overlay_active = self.show_health_page || self.show_messages_page;
+                // While the health dashboard, messages overlay, or
+                // test-results overlay is up, only Esc / `q` (in Normal
+                // mode) / `:` to enter the cmdline pass through. `:q`
+                // then dismisses via the ExCommand::Quit handler above.
+                // Other keys are swallowed so the user can't
+                // accidentally type into the underlying buffer. The
+                // three overlays share the same scroll bindings — only
+                // the dismiss flag differs.
+                let overlay_active =
+                    self.show_health_page || self.show_messages_page || self.show_test_results_page;
                 if overlay_active {
                     let normal = matches!(self.mode, Mode::Normal);
                     let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
                     let messages = self.show_messages_page;
+                    let test_results = self.show_test_results_page;
                     let scroll = |this: &mut Self, delta: isize| {
-                        if messages {
+                        if test_results {
+                            this.test_results_scroll_by(delta);
+                        } else if messages {
                             this.messages_scroll_by(delta);
                         } else {
                             this.health_scroll_by(delta);
                         }
                     };
                     let dismiss = |this: &mut Self| {
-                        if messages {
+                        if test_results {
+                            this.show_test_results_page = false;
+                        } else if messages {
                             this.show_messages_page = false;
                         } else {
                             this.show_health_page = false;
@@ -298,7 +305,9 @@ impl super::App {
                             return Ok(());
                         }
                         KeyCode::Char('g') | KeyCode::Home if normal && no_ctrl => {
-                            if messages {
+                            if test_results {
+                                self.test_results_scroll = 0;
+                            } else if messages {
                                 self.messages_scroll = 0;
                             } else {
                                 self.health_scroll = 0;
@@ -306,7 +315,9 @@ impl super::App {
                             return Ok(());
                         }
                         KeyCode::Char('G') | KeyCode::End if normal => {
-                            if messages {
+                            if test_results {
+                                self.test_results_scroll = self.test_results_max_scroll();
+                            } else if messages {
                                 self.messages_scroll = self.messages_max_scroll();
                             } else {
                                 self.health_scroll = self.health_max_scroll();
@@ -428,6 +439,8 @@ impl super::App {
                     self.health_scroll_by(-3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(-3);
+                } else if self.show_test_results_page {
+                    self.test_results_scroll_by(-3);
                 } else {
                     self.scroll_view(-3);
                 }
@@ -444,6 +457,8 @@ impl super::App {
                     self.health_scroll_by(3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(3);
+                } else if self.show_test_results_page {
+                    self.test_results_scroll_by(3);
                 } else {
                     self.scroll_view(3);
                 }
@@ -1261,6 +1276,8 @@ impl super::App {
                     self.show_health_page = false;
                 } else if self.show_messages_page {
                     self.show_messages_page = false;
+                } else if self.show_test_results_page {
+                    self.show_test_results_page = false;
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
@@ -1362,6 +1379,17 @@ impl super::App {
                     QuickfixSubCmd::List => self.qf_list(),
                     QuickfixSubCmd::Diagnostics => self.qf_load_from_diagnostics(),
                     QuickfixSubCmd::Close => self.qf_close(),
+                }
+            }
+            ExCommand::Test(sub) => {
+                use crate::command::TestSubCmd;
+                match sub {
+                    TestSubCmd::Picker => self.cmd_test_picker(),
+                    TestSubCmd::Nearest => self.cmd_test_nearest(),
+                    TestSubCmd::File => self.cmd_test_file(),
+                    TestSubCmd::Last => self.cmd_test_last(),
+                    TestSubCmd::Cancel => self.cmd_test_cancel(),
+                    TestSubCmd::Results => self.cmd_test_results(),
                 }
             }
             ExCommand::Goto(n) => {

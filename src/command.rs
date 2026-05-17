@@ -59,7 +59,28 @@ pub enum ExCommand {
     /// reports current sign-in state; subcommands drive the auth
     /// flow without restarting the editor.
     Copilot(CopilotSubCmd),
+    /// `:test` (picker) / `:testnearest` / `:testfile` / `:testlast`
+    /// / `:testcancel` / `:testresults`. Dispatched into
+    /// `app/test_glue.rs`.
+    Test(TestSubCmd),
     Unknown(String),
+}
+
+/// Test-runner sub-commands. Grouped so the dispatch arm stays tight.
+#[derive(Debug, Clone, Copy)]
+pub enum TestSubCmd {
+    /// Open a picker of discovered tests for the active workspace.
+    Picker,
+    /// Run the test enclosing the cursor.
+    Nearest,
+    /// Run every test in the active buffer's file.
+    File,
+    /// Re-run the most recent test invocation.
+    Last,
+    /// Kill the running adapter.
+    Cancel,
+    /// Toggle the streaming results overlay.
+    Results,
 }
 
 /// Sub-commands under `:copilot`. Bare `:copilot` falls through to
@@ -261,6 +282,12 @@ pub fn parse(line: &str) -> ExCommand {
             };
             ExCommand::Copilot(sub)
         }
+        "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
+        "testnearest" | "testn" | "tn" => ExCommand::Test(TestSubCmd::Nearest),
+        "testfile" | "testf" | "tf" => ExCommand::Test(TestSubCmd::File),
+        "testlast" | "testl" | "tl" => ExCommand::Test(TestSubCmd::Last),
+        "testcancel" | "testq" => ExCommand::Test(TestSubCmd::Cancel),
+        "testresults" | "testr" => ExCommand::Test(TestSubCmd::Results),
         _ => ExCommand::Unknown(line.to_string()),
     }
 }

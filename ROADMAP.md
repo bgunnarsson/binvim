@@ -140,17 +140,22 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Test runner
 
-- [ ] **Integrated test runner.** Per-language adapter pattern parallel to DAP — one `TestAdapterSpec` per
-      toolchain in `test/specs.rs` (cargo test for Rust, `go test`, pytest, vitest/jest for JS/TS, `dotnet
-      test`, etc.) keyed off workspace root markers. Discovery walks the project for test items (cargo
-      `--list`, `pytest --collect-only`, `go test -list`, vitest `--reporter=json --listTests`) and feeds the
-      generic picker. UI surface: `:test` opens the picker; `:testnearest` runs the test under the cursor;
-      `:testfile` runs the current file; `:testlast` re-runs. Results stream into a bottom split (same pane
-      family as `:terminal` / debug) with pass / fail / skipped counts in the status line and a gutter sign
-      column for per-test status. Failures populate the existing quickfix list so `]q` / `[q` walks them.
-      "Debug test" routes through the DAP layer — adapter dispatch picks the matching `DapAdapterSpec` and
-      hands it the test name as launch args. No plugin system; every adapter is hard-wired, same as LSP / DAP.
-      **considering**
+- [x] **Integrated test runner (cargo).** Per-language adapter pattern parallel to DAP — one
+      `TestAdapterSpec` per toolchain in `test/specs.rs`, picked by walking the active buffer up for the
+      adapter's root markers. UI surface: `:test` opens a fuzzy picker of discovered tests (cargo's
+      `cargo test -- --list --format=terse` for now); `:testnearest` walks the buffer up for
+      `#[test]` / `#[tokio::test]` / `#[rstest]` / `#[async_std::test]` and runs the enclosing fn;
+      `:testfile` derives a libtest substring filter from the active path's module location; `:testlast`
+      re-runs the most recent request; `:testcancel` kills the in-flight adapter. Streaming results render
+      into a `:health`-style scrollable overlay (`j`/`k`/`Ctrl-D`/`Ctrl-U`/`g`/`G`, dismiss with Esc /
+      `q` / `:q`); pass / fail / ignored counts surface in the status line on completion. Failures populate
+      the quickfix list with parsed `panicked at FILE:LINE:COL` locations so `]q` / `[q` walks them.
+- [ ] **More adapters: go / pytest / vitest / dotnet.** Each adds one `TestAdapterSpec` entry +
+      a sibling parser module (mirrors the LSP/DAP per-language flow). The framework — picker, overlay,
+      quickfix, status line, ex-commands — is shared. **planned**
+- [ ] **Debug test.** Route a `:testnearest`-style pick through the DAP layer instead of running it
+      directly. Adapter dispatch picks the matching `DapAdapterSpec` and hands it the test name as launch
+      args. **considering**
 
 ## Quality / Tooling
 

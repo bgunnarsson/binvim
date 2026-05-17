@@ -40,6 +40,7 @@ mod save;
 mod search;
 pub(crate) mod state;
 mod terminal_glue;
+mod test_glue;
 mod view;
 mod visual;
 mod windows;
@@ -483,6 +484,15 @@ pub struct App {
     /// render — used to clamp `messages_scroll`. `Cell` because
     /// `render::draw` borrows `App` immutably.
     pub messages_content_height: std::cell::Cell<usize>,
+    /// Integrated test runner — owns the active run + the streaming
+    /// output buffer. Drained per main-loop tick alongside `lsp` /
+    /// `dap`; the resulting events go through `handle_test_events`.
+    pub test: crate::test::TestManager,
+    /// `:testresults` / auto-opened-on-run overlay toggle. Same
+    /// scrollable-overlay pattern as `:health` / `:messages`.
+    pub show_test_results_page: bool,
+    pub test_results_scroll: usize,
+    pub test_results_content_height: std::cell::Cell<usize>,
 }
 
 /// Decoded `textDocument/semanticTokens/full` tokens for one buffer,
@@ -692,6 +702,10 @@ impl App {
             show_messages_page: false,
             messages_scroll: 0,
             messages_content_height: std::cell::Cell::new(0),
+            test: crate::test::TestManager::new(),
+            show_test_results_page: false,
+            test_results_scroll: 0,
+            test_results_content_height: std::cell::Cell::new(0),
         };
         // Mirror the user's Copilot opt-in onto the LSP manager so
         // copilot-language-server is included in every spec lookup
@@ -767,6 +781,13 @@ impl App {
             // typing in the embedded shell feels laggy. 16ms is
             // ~60fps and well under the threshold of perception.
             if !self.terminals.is_empty() {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
+            // Active test run — adapter output streams in
+            // asynchronously. Same 16ms cap as the DAP / terminal
+            // cases so the user watches tests tick by live rather
+            // than waiting on the next keystroke.
+            if self.test.is_running() {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
             // A live yank flash needs us to wake up at its deadline so the
@@ -862,6 +883,14 @@ impl App {
             // event — render anyway so the pane reflects the new frames
             // and locals immediately instead of on the next keypress.
             if had_dap_events || dap_progress {
+                needs_render = true;
+            }
+            let (test_events, test_progress) = self.test.drain();
+            let had_test_events = !test_events.is_empty();
+            if had_test_events {
+                self.handle_test_events(test_events);
+            }
+            if had_test_events || test_progress {
                 needs_render = true;
             }
             // Drain PTY output → grid mutations once per loop. Any

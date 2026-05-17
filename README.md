@@ -254,6 +254,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:copilot`                | Report Copilot sign-in status in the status line. Subcommands: `signin` re-fires device-flow auth; `reload` re-checks status (auto-polled every 3s while pending); `signout` clears the local sign-in. |
+| `:test` (+ aliases)       | Integrated test runner. `:test` opens a fuzzy picker of discovered tests for the active workspace's adapter (currently `cargo test` only — adapter is selected by walking up from the active buffer for `Cargo.toml`). `:testnearest` runs the test enclosing the cursor (walks upward for `#[test]` / `#[tokio::test]` / `#[rstest]` / `#[async_std::test]`). `:testfile` runs every test whose module path matches the active buffer's file. `:testlast` re-runs the most recent invocation. `:testcancel` kills the running adapter. Results stream live into a `:health`-style scrollable overlay (`j`/`k`/`Ctrl-D`/`Ctrl-U`/`g`/`G` to scroll, `Esc` / `q` / `:q` to dismiss), with pass / fail / ignored counts on completion. Failures populate the quickfix list — `]q` / `[q` walks them; `cargo test`'s panic-location output gives you accurate file:line entries for assertion failures. |
 
 ## External tools
 

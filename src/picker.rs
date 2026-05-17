@@ -23,6 +23,10 @@ pub enum PickerKind {
     /// `DebugProject` only so the picker title + accept hint can be
     /// adapter-flavoured.
     DebugTarget,
+    /// Pick a single test to run via the integrated test runner.
+    /// Items are adapter-canonical test names (e.g. `motion::tests::foo`
+    /// for the cargo adapter).
+    TestTarget,
 }
 
 pub struct PickerState {
@@ -68,6 +72,14 @@ pub enum PickerPayload {
         adapter_key: String,
         path: PathBuf,
         name: Option<String>,
+    },
+    /// One picked test — `name` is the adapter-canonical test name
+    /// (passed verbatim as the run filter), `adapter_key` ties the
+    /// pick back to a specific adapter so a workspace change between
+    /// open and accept is detectable.
+    TestTarget {
+        adapter_key: String,
+        name: String,
     },
 }
 
