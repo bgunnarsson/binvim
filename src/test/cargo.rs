@@ -362,15 +362,23 @@ fn parse_panic_header(line: &str) -> Option<TestLocation> {
 }
 
 fn parse_test_result_line(line: &str) -> Option<TestSummary> {
-    // Format: `test result: ok. N passed; M failed; K ignored; … filtered out; …`
+    // Format: `test result: ok. N passed; M failed; K ignored; … filtered out; finished in X.YYs`
     let rest = line.strip_prefix("test result: ")?;
     // Drop the leading `ok.` / `FAILED.` verdict.
     let rest = rest.split_once('.').map(|(_, r)| r.trim()).unwrap_or(rest);
     let mut summary = TestSummary::default();
     for chunk in rest.split(';') {
         let chunk = chunk.trim().trim_end_matches('.');
-        let (num_s, label_s) = chunk.split_once(' ')?;
-        let n: usize = num_s.parse().ok()?;
+        // `finished in X.YYs` (and any other trailing chunks libtest
+        // adds in the future) lack a leading numeric. Skip them
+        // instead of `?`-bailing — that bug used to zero out the
+        // entire summary the moment cargo emitted a timing tail.
+        let Some((num_s, label_s)) = chunk.split_once(' ') else {
+            continue;
+        };
+        let Ok(n) = num_s.parse::<usize>() else {
+            continue;
+        };
         let label = label_s.trim();
         if label.starts_with("passed") {
             summary.passed += n;
@@ -452,6 +460,26 @@ mod tests {
             TestEvent::Finished { summary } => {
                 assert_eq!(summary.passed, 2);
                 assert_eq!(summary.failed, 0);
+            }
+            _ => panic!("last event should be Finished"),
+        }
+    }
+
+    #[test]
+    fn summary_handles_finished_in_trailing_chunk() {
+        // The real libtest output ends with a `; finished in X.YYs`
+        // tail. Earlier the parser bailed on the first non-numeric
+        // chunk, which zeroed out the whole summary the moment cargo
+        // included that tail. This is the regression.
+        let events = parse_lines(&[
+            "test a ... ok",
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 275 filtered out; finished in 0.01s",
+        ]);
+        let last = events.last().expect("flush always emits Finished");
+        match last {
+            TestEvent::Finished { summary } => {
+                assert_eq!(summary.passed, 1, "passed not aggregated");
+                assert_eq!(summary.filtered_out, 275, "filtered_out not aggregated");
             }
             _ => panic!("last event should be Finished"),
         }
