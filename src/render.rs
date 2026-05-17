@@ -4416,8 +4416,13 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, SetAttribute(Attribute::NormalIntensity))?;
         hitboxes.push((*tab, tab_x, tab_x + chip_chars));
         // 1-cell gap between tabs so the active green chip doesn't
-        // butt against the next label.
-        tab_x += chip_chars + 1;
+        // butt against the next label. Explicitly paint the gap with
+        // the pane background — without this, buffer content drawn
+        // earlier in the same frame (git stripe glyphs, line content)
+        // leaks through the unpainted column.
+        tab_x += chip_chars;
+        queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
+        tab_x += 1;
     }
     queue!(out, SetBackgroundColor(pane_bg))?;
     if (tab_x as usize) < width {
