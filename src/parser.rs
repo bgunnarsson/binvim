@@ -218,6 +218,12 @@ pub enum Action {
     /// `<leader>hr` — discard the working-tree change for the hunk under
     /// the cursor (reset to the staged version).
     HunkReset,
+    /// `<leader>to` — open the embedded terminal pane (or focus it
+    /// if already alive). Same effect as `:terminal`.
+    TerminalOpen,
+    /// `<leader>tq` — close the embedded terminal pane. Same effect
+    /// as `:q` while focused on it.
+    TerminalClose,
     /// `<C-w>V` — split the active window vertically with the *same*
     /// buffer in the new pane (Vim default — two viewports of one file).
     WindowSplitVertical,
@@ -304,6 +310,9 @@ pub struct PendingCmd {
     /// Set after `<leader>h` — next char picks a git-hunk action
     /// (`p` preview, `s` stage, `u` unstage, `r` reset).
     pub awaiting_hunk_leader: bool,
+    /// Set after `<leader>t` — next char picks a terminal action
+    /// (`o` open, `q` close).
+    pub awaiting_terminal_leader: bool,
     /// Set after `<C-w>` — next char picks a window action
     /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
     /// Wired in Normal mode only; cancels on any unrecognised follow-up.
@@ -658,6 +667,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_hunk_leader = true;
             return ParseResult::Pending;
         }
+        // `t` opens the terminal sub-menu (`<leader>to` open,
+        // `<leader>tq` close).
+        if ch == 't' {
+            state.awaiting_terminal_leader = true;
+            return ParseResult::Pending;
+        }
         let action = match ch {
             ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
             '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
@@ -771,6 +786,21 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             's' => Some(Action::HunkStage),
             'u' => Some(Action::HunkUnstage),
             'r' => Some(Action::HunkReset),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Terminal prefix dispatch (after `<leader>t`).
+    if state.awaiting_terminal_leader {
+        state.awaiting_terminal_leader = false;
+        let action = match ch {
+            'o' => Some(Action::TerminalOpen),
+            'q' => Some(Action::TerminalClose),
             _ => None,
         };
         state.reset();

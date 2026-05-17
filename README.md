@@ -184,8 +184,10 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>df` | Focus debug pane                      |
 | `<space>do` | Document symbols (LSP)                |
 | `<space>dS` | Workspace symbols (LSP)               |
+| `<space>to` | Open / focus the embedded terminal pane |
+| `<space>tq` | Close the embedded terminal pane      |
 
-Hold `<space>` (or `<space>b` / `<space>d`) for ~250 ms and a which-key popup lists the available next keys.
+Hold `<space>` (or `<space>b` / `<space>d` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 

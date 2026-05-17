@@ -1568,28 +1568,69 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     if total_w == 0 {
         return Ok(());
     }
+
+    // The first row of the pane is a header chip that doubles as a
+    // visual separator from the buffer area above. Same model as the
+    // debug pane's header.
+    let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
+    let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };    // Overlay0
+    let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
+    let accent_terminal = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
+    let accent_normal = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };   // Lavender
+    let label = " TERMINAL ";
+    let (chip_bg, hint) = match app.mode {
+        Mode::Terminal => (accent_terminal, "  typing → shell · Esc to read".to_string()),
+        Mode::TerminalNormal => (
+            accent_normal,
+            "  reading · i/a type · v select · y yank · <C-w>q close".to_string(),
+        ),
+        _ => (muted, "  :term focus · <leader>tq close".to_string()),
+    };
+    queue!(out, MoveTo(0, top as u16), Clear(ClearType::CurrentLine))?;
+    queue!(
+        out,
+        SetBackgroundColor(chip_bg),
+        SetForegroundColor(base),
+        SetAttribute(Attribute::Bold),
+        Print(label),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(pane_bg),
+        SetForegroundColor(muted),
+        Print(&hint),
+    )?;
+    let used = label.chars().count() + hint.chars().count();
+    if total_w > used {
+        queue!(out, SetBackgroundColor(pane_bg), Print(" ".repeat(total_w - used)))?;
+    }
+    queue!(out, ResetColor)?;
+
+    // Body = pane minus the header row. The PTY grid is sized to
+    // these body rows by `cmd_open_terminal` + the resize handler,
+    // so we paint cell-for-cell starting at `top + 1`.
+    let body_top = top + 1;
+    let body_rows = pane_rows.saturating_sub(1);
     let Some(term) = app.terminal.as_ref() else {
-        // Pane is open but no terminal yet — paint a blank pane so
-        // the layout doesn't show stale buffer content underneath.
-        for r in 0..pane_rows {
-            queue!(out, MoveTo(0, (top + r) as u16), Clear(ClearType::CurrentLine))?;
+        for r in 0..body_rows {
+            queue!(
+                out,
+                MoveTo(0, (body_top + r) as u16),
+                Clear(ClearType::CurrentLine)
+            )?;
         }
         return Ok(());
     };
     let inner = term.grid();
     let grid = &inner.handler.grid;
-    let (cur_row, cur_col) = inner.cursor();
-    let grid_rows = grid.rows.min(pane_rows);
+    let grid_rows = grid.rows.min(body_rows);
     let grid_cols = grid.cols.min(total_w);
 
-    // Selection range, normalised so start <= end.
     let selection = app.terminal_visual_anchor.map(|anchor| {
         let cur = app.terminal_cursor;
         if anchor <= cur { (anchor, cur) } else { (cur, anchor) }
     });
 
-    for row in 0..pane_rows {
-        let screen_y = (top + row) as u16;
+    for row in 0..body_rows {
+        let screen_y = (body_top + row) as u16;
         queue!(out, MoveTo(0, screen_y), Clear(ClearType::CurrentLine))?;
         if row < grid_rows {
             for col in 0..grid_cols {
@@ -1607,18 +1648,10 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     queue!(out, ResetColor)?;
-
-    // In `Mode::Terminal` the PTY-tracked cursor wins (real terminal
-    // caret at the grid's cursor position). In `TerminalNormal` we
-    // paint the reading-cursor as an inverted cell above (handled
-    // already in the cell loop), and hide the system cursor.
-    if app.mode == Mode::Terminal && cur_row < pane_rows && cur_col < total_w {
-        queue!(
-            out,
-            crossterm::cursor::Show,
-            MoveTo(cur_col as u16, (top + cur_row) as u16),
-        )?;
-    }
+    // Cursor positioning is intentionally deferred to `place_cursor`
+    // — subsequent draw passes (debug pane / status line /
+    // notification) MoveTo around, so any Show + MoveTo we emit
+    // here gets stomped by the time the frame flushes.
     Ok(())
 }
 
@@ -4697,20 +4730,32 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, Hide)?;
         return Ok(());
     }
-    // Focus on the terminal pane (input mode). `draw_terminal_pane`
-    // already moved the cursor onto the PTY grid + showed it, so
-    // bailing here keeps the buffer-area logic below from fighting
-    // it. Cmdline / search overlays still take priority.
-    if matches!(app.mode, Mode::Terminal)
-        && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
-    {
+    // Focus on the terminal pane (input mode) — show the system
+    // cursor at the PTY grid position. This is the last cursor
+    // move of the frame so the subsequent flush leaves it where
+    // we want it, instead of wherever the last Print landed.
+    if matches!(app.mode, Mode::Terminal) {
+        if let Some(t) = app.terminal.as_ref() {
+            let (cur_row, cur_col) = t.cursor();
+            // Body of the pane starts one row below `terminal_pane_top()`
+            // (the first pane row is the header chip).
+            let body_top = app.terminal_pane_top() + 1;
+            let screen_y = body_top + cur_row;
+            if (screen_y as u16) < app.height && (cur_col as u16) < app.width {
+                queue!(
+                    out,
+                    Show,
+                    MoveTo(cur_col as u16, screen_y as u16),
+                )?;
+                return Ok(());
+            }
+        }
+        queue!(out, Hide)?;
         return Ok(());
     }
     // TerminalNormal — reading-cursor is painted inline as an
     // inverted cell by the pane loop. Hide the system cursor.
-    if matches!(app.mode, Mode::TerminalNormal)
-        && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
-    {
+    if matches!(app.mode, Mode::TerminalNormal) {
         queue!(out, Hide)?;
         return Ok(());
     }

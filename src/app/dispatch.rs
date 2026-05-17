@@ -115,6 +115,14 @@ impl super::App {
             Action::HunkStage => self.hunk_stage(),
             Action::HunkUnstage => self.hunk_unstage(),
             Action::HunkReset => self.hunk_reset(),
+            Action::TerminalOpen => self.cmd_open_terminal(None),
+            Action::TerminalClose => {
+                if self.terminal.is_some() {
+                    self.close_terminal();
+                } else {
+                    self.status_msg = "terminal: no pane to close".into();
+                }
+            }
             Action::WindowSplitVertical => self.window_split(crate::layout::SplitDir::Vertical),
             Action::WindowSplitHorizontal => self.window_split(crate::layout::SplitDir::Horizontal),
             Action::WindowSplitVerticalPick => {

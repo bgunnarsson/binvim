@@ -28,7 +28,9 @@ impl super::App {
         // the right value when we ask for dimensions. Toggle back
         // off if the spawn fails.
         self.terminal_pane_open = true;
-        let rows = self.terminal_pane_rows().max(4) as u16;
+        // PTY grid covers the body of the pane — the first row of
+        // the pane is the header chip rendered by the renderer.
+        let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
         let cols = (self.width as usize).max(8) as u16;
         match Terminal::spawn(rows, cols, cmd.as_deref()) {
             Ok(t) => {
@@ -96,9 +98,23 @@ impl super::App {
         if row < pane_top || row >= pane_bottom {
             return false;
         }
-        // Coords relative to the pane (1-based — that's what xterm
-        // mouse protocols use).
-        let pane_row = row - pane_top + 1;
+        // The first pane row is the header chip — not part of the
+        // PTY grid. A click on the header just focuses the pane
+        // (no forwarding).
+        let body_top = pane_top + 1;
+        if row < body_top {
+            if matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+            ) {
+                self.terminal_visual_anchor = None;
+                self.mode = Mode::Terminal;
+            }
+            return true;
+        }
+        // Coords relative to the grid body (1-based — that's what
+        // xterm mouse protocols use).
+        let pane_row = row - body_top + 1;
         let pane_col = col + 1;
 
         let term = match self.terminal.as_ref() {

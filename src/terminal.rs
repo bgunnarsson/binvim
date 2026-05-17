@@ -609,6 +609,12 @@ impl Terminal {
         // (alternate screen, mouse modes will quietly noop on our
         // side — they're handled by our outer terminal anyway).
         cmd.env("TERM", "xterm-256color");
+        // Suppress zsh's PROMPT_EOL_MARK (`%`) — zsh prints an
+        // inverse-video `%` + newline at startup if it can't
+        // verify the previous output ended with a newline, which
+        // looks like a stray glyph in our empty pane. Other shells
+        // ignore this env entirely.
+        cmd.env("PROMPT_EOL_MARK", "");
 
         let _child = pair
             .slave

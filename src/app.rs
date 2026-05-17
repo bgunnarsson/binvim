@@ -746,6 +746,11 @@ impl App {
                             title: "Hunk".into(),
                             entries: state::hunk_prefix_entries(),
                         })
+                    } else if self.pending.awaiting_terminal_leader {
+                        Some(WhichKeyState {
+                            title: "Terminal".into(),
+                            entries: state::terminal_prefix_entries(),
+                        })
                     } else {
                         None
                     };

@@ -352,9 +352,10 @@ impl super::App {
                 self.width = w;
                 self.height = h;
                 // Propagate to the embedded PTY so the child gets
-                // a SIGWINCH and re-renders at the new size.
+                // a SIGWINCH and re-renders at the new size. Body
+                // height is the pane height minus the header row.
                 if let Some(t) = self.terminal.as_ref() {
-                    let rows = (h as usize).saturating_sub(1).max(4) as u16;
+                    let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
                     let cols = (w as usize).max(8) as u16;
                     let _ = t.resize(rows, cols);
                 }
@@ -745,7 +746,8 @@ impl super::App {
         let prefix_active = self.pending.awaiting_leader
             || self.pending.awaiting_buffer_leader
             || self.pending.awaiting_debug_leader
-            || self.pending.awaiting_hunk_leader;
+            || self.pending.awaiting_hunk_leader
+            || self.pending.awaiting_terminal_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());
