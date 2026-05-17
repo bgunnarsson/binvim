@@ -138,12 +138,12 @@ impl Grid {
 /// more of these. The parser keeps no state of its own beyond what
 /// it needs to recognise sequences — so when we resize / reset /
 /// re-init, the handler is what we touch.
-struct VteHandler {
-    grid: Grid,
+pub struct VteHandler {
+    pub(crate) grid: Grid,
     /// 0-based cursor row.
-    cur_row: usize,
+    pub(crate) cur_row: usize,
     /// 0-based cursor column.
-    cur_col: usize,
+    pub(crate) cur_col: usize,
     /// Saved cursor (DECSC / DECRC, `\x1b 7` / `\x1b 8`).
     saved: Option<(usize, usize)>,
     /// Pen state — applied to every printed cell until SGR resets it.
@@ -524,12 +524,12 @@ pub struct Terminal {
     inner: Mutex<TerminalInner>,
 }
 
-struct TerminalInner {
-    parser: Parser,
-    handler: VteHandler,
+pub struct TerminalInner {
+    pub(crate) parser: Parser,
+    pub(crate) handler: VteHandler,
     /// Set once `is_alive()` discovers the child has died, so we
     /// don't keep polling its exit status.
-    exited: bool,
+    pub(crate) exited: bool,
 }
 
 impl Terminal {

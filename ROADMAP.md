@@ -17,8 +17,21 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       adjust height. Parser accumulates digits inside the window-leader prefix; the layout walks to the
       deepest matching-axis ancestor of the focused leaf and converts cells to a ratio against that subtree's
       own rect (clamped to `[0.1, 0.9]`).
-- [ ] **Built-in `:terminal` split.** A pane running a shell, with a way to yank from its scrollback. The
-      split work is done; this is the PTY + scrollback widget on top. **next**
+- [x] **Built-in `:terminal` overlay.** `:terminal` (or `:term`)
+      opens a fullscreen PTY-backed shell as an overlay (alongside
+      `:health` / `:messages`), with `Mode::Terminal` for typing
+      (every keystroke → bytes → PTY stdin, xterm escape sequences
+      for arrows / F-keys / Page / Home / End / Delete / etc.) and
+      `Mode::TerminalNormal` for reading / scrolling (`i` / `a`
+      re-enters Terminal; `:q` closes). vte-parsed grid with full
+      SGR colour + bold / italic / underline / reverse, CUP / CUF
+      / CUB / CUU / CUD / CHA cursor moves, ED / EL clears, IND /
+      RI / DECSC / DECRC / RIS, line wrap into a 10k-row scrollback.
+      Yank-from-scrollback is the remaining polish item — the
+      grid is exposed via `Terminal::grid()` so it's straightforward
+      to add. Split-pane integration (as opposed to fullscreen
+      overlay) deferred: more invasive (Window refactor), less
+      essential than the model.
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm

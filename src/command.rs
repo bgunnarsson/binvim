@@ -38,6 +38,10 @@ pub enum ExCommand {
     /// `:messages` — open the captured `window/showMessage` /
     /// `window/logMessage` log as a scrollable overlay.
     Messages,
+    /// `:terminal [cmd]` — open the embedded terminal overlay. With
+    /// no argument, spawns `$SHELL` (fallback `/bin/sh`); with an
+    /// argument, spawns that command line.
+    Terminal(Option<String>),
     Debug(DebugSubCmd),
     /// `:dapwatch <expr>` / `:dapunwatch <idx>` / `:dapunwatch all`.
     DebugWatch(DebugWatchCmd),
@@ -199,6 +203,13 @@ pub fn parse(line: &str) -> ExCommand {
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
         "messages" | "message" | "mes" => ExCommand::Messages,
+        "terminal" | "term" => {
+            if rest.is_empty() {
+                ExCommand::Terminal(None)
+            } else {
+                ExCommand::Terminal(Some(rest.to_string()))
+            }
+        }
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
         "dapbreak" | "dapb" => ExCommand::Debug(DebugSubCmd::Break),

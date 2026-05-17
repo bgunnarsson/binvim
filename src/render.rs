@@ -21,7 +21,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     // Start / health pages take over the full editor area — splits stay
     // dormant while they're up so the user isn't looking at a partitioned
     // "[No Name]" placeholder.
-    if app.show_health_page {
+    if app.show_terminal_page {
+        draw_terminal_page(out, app)?;
+    } else if app.show_health_page {
         draw_health_page(out, app)?;
     } else if app.show_messages_page {
         draw_messages_page(out, app)?;
@@ -1546,6 +1548,90 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
 /// so the most recent entries are visible on open. Severity colours
 /// match diagnostics (red error / yellow warn / blue info / overlay
 /// log) so the user scans them the same way as inline diagnostics.
+/// `:terminal` overlay — paint the PTY grid as a full-screen
+/// replacement of the buffer area. The grid's own dimensions match
+/// the editor's editable size (set at `Terminal::spawn` time and
+/// kept in sync on every resize), so we paint cell-for-cell. The
+/// terminal's own cursor is reflected by a Show + MoveTo at the
+/// end; the status line still renders below as usual so the user
+/// can see `TERMINAL` / `T-NORMAL` mode.
+fn draw_terminal_page(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(term) = app.terminal.as_ref() else {
+        return Ok(());
+    };
+    let total_w = app.width as usize;
+    let body_rows = (app.height as usize).saturating_sub(1);
+    if total_w == 0 || body_rows == 0 {
+        return Ok(());
+    }
+    let inner = term.grid();
+    let grid = &inner.handler.grid;
+    let (cur_row, cur_col) = inner.cursor();
+
+    // The grid's logical size might lag a resize by one frame —
+    // clamp so we never index past either dim.
+    let grid_rows = grid.rows.min(body_rows);
+    let grid_cols = grid.cols.min(total_w);
+
+    for row in 0..body_rows {
+        queue!(out, MoveTo(0, row as u16), Clear(ClearType::CurrentLine))?;
+        if row < grid_rows {
+            for col in 0..grid_cols {
+                let cell = grid.cells[row][col];
+                paint_terminal_cell(out, cell)?;
+            }
+        }
+    }
+    queue!(out, ResetColor)?;
+
+    // Cursor in `Mode::Terminal` — show as a normal block at the
+    // grid's recorded position. In `Mode::TerminalNormal` we want
+    // a subtler indication (the user is reading, not typing) so
+    // we leave it hidden and rely on the status-line label.
+    if app.mode == Mode::Terminal && cur_row < body_rows && cur_col < total_w {
+        queue!(
+            out,
+            crossterm::cursor::Show,
+            MoveTo(cur_col as u16, cur_row as u16),
+        )?;
+    } else {
+        queue!(out, crossterm::cursor::Hide)?;
+    }
+    Ok(())
+}
+
+/// Translate one `crate::terminal::Cell` to crossterm style + glyph
+/// and emit. Reverse attribute swaps fg/bg before applying.
+fn paint_terminal_cell(out: &mut impl Write, cell: crate::terminal::Cell) -> std::io::Result<()> {
+    let mut fg = cell.fg.unwrap_or(Color::Reset);
+    let mut bg = cell.bg.unwrap_or(Color::Reset);
+    if cell.reverse {
+        std::mem::swap(&mut fg, &mut bg);
+    }
+    queue!(
+        out,
+        SetForegroundColor(fg),
+        SetBackgroundColor(bg),
+    )?;
+    if cell.bold {
+        queue!(out, SetAttribute(Attribute::Bold))?;
+    } else {
+        queue!(out, SetAttribute(Attribute::NormalIntensity))?;
+    }
+    if cell.italic {
+        queue!(out, SetAttribute(Attribute::Italic))?;
+    } else {
+        queue!(out, SetAttribute(Attribute::NoItalic))?;
+    }
+    if cell.underline {
+        queue!(out, SetAttribute(Attribute::Underlined))?;
+    } else {
+        queue!(out, SetAttribute(Attribute::NoUnderline))?;
+    }
+    queue!(out, Print(cell.ch))?;
+    Ok(())
+}
+
 fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
     let total_w = app.width as usize;
     let rows = app.buffer_rows();
@@ -3966,6 +4052,8 @@ fn mode_color(mode: Mode) -> Color {
         Mode::Picker => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
         Mode::Prompt(_) => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
         Mode::DebugPane => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach — matches debug pane accent
+        Mode::Terminal => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green — typing flows like Insert
+        Mode::TerminalNormal => Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe }, // Lavender — paired with Normal
     }
 }
 
@@ -4563,6 +4651,16 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // On the start page, no buffer cursor — only the cmdline/picker overlays
     // ever steal focus from the logo.
     if (app.show_start_page || app.show_health_page || app.show_messages_page)
+        && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
+    {
+        queue!(out, Hide)?;
+        return Ok(());
+    }
+    // Terminal overlay — the cursor's position lives in the PTY grid,
+    // not the host buffer, and we paint it inside `draw_terminal_page`
+    // so the place_cursor call here would just fight it. Hide the
+    // host cursor; the overlay's caret is what the user sees.
+    if app.show_terminal_page
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {
         queue!(out, Hide)?;

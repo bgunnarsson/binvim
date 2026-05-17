@@ -333,6 +333,16 @@ impl super::App {
                     Mode::DebugPane => {
                         self.handle_debug_pane_key(k);
                     }
+                    Mode::Terminal => self.handle_terminal_key(k),
+                    Mode::TerminalNormal => {
+                        // i / a transitions back to Terminal mode;
+                        // everything else falls through to the Normal
+                        // handler so the user can `:`, `gg`/G to
+                        // scroll, etc.
+                        if !self.handle_terminal_normal_key(k) {
+                            self.handle_keyboard(k, ParseCtx::Normal);
+                        }
+                    }
                 }
             }
             crossterm::event::Event::Mouse(me) => {
@@ -341,6 +351,13 @@ impl super::App {
             crossterm::event::Event::Resize(w, h) => {
                 self.width = w;
                 self.height = h;
+                // Propagate to the embedded PTY so the child gets
+                // a SIGWINCH and re-renders at the new size.
+                if let Some(t) = self.terminal.as_ref() {
+                    let rows = (h as usize).saturating_sub(1).max(4) as u16;
+                    let cols = (w as usize).max(8) as u16;
+                    let _ = t.resize(rows, cols);
+                }
             }
             _ => {}
         }
@@ -1223,6 +1240,8 @@ impl super::App {
                     self.show_health_page = false;
                 } else if self.show_messages_page {
                     self.show_messages_page = false;
+                } else if self.show_terminal_page {
+                    self.close_terminal();
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
@@ -1285,6 +1304,7 @@ impl super::App {
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
             ExCommand::Messages => self.cmd_messages(),
+            ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::DebugWatch(sub) => self.dispatch_debug_watch(sub),
             ExCommand::DebugWatchesShow => self.dispatch_debug_watches_show(),

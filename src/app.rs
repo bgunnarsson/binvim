@@ -39,6 +39,7 @@ mod registers;
 mod save;
 mod search;
 pub(crate) mod state;
+mod terminal_glue;
 mod view;
 mod visual;
 mod windows;
@@ -360,6 +361,20 @@ pub struct App {
     /// Paths with an in-flight `textDocument/semanticTokens/full`
     /// request. Same cap-to-one semantics as the others.
     pub semantic_tokens_in_flight: std::collections::HashSet<PathBuf>,
+    /// Active `:terminal` overlay, if any. The PTY child + grid live
+    /// inside this `Terminal`; the overlay renders via
+    /// `render::draw_terminal_page` whenever `show_terminal_page` is
+    /// true. None when the terminal has been closed (`:q` inside
+    /// `Mode::TerminalNormal`) — opening again via `:terminal`
+    /// re-spawns a fresh shell.
+    pub terminal: Option<crate::terminal::Terminal>,
+    pub show_terminal_page: bool,
+    /// View offset into the terminal grid's scrollback when the
+    /// user is reading back history. 0 = bottom of scrollback (the
+    /// live grid is fully visible); larger values shift the view
+    /// up into older rows. Driven by `Ctrl-Y` / `Ctrl-E` in
+    /// `Mode::TerminalNormal`.
+    pub terminal_scroll: usize,
     /// Ring buffer of server-emitted `window/showMessage` /
     /// `window/logMessage` notifications. Newest at the tail. Bounded
     /// so a chatty server (jdtls warming up, OmniSharp resolving
@@ -570,6 +585,9 @@ impl App {
             last_copilot_status_poll: Instant::now(),
             semantic_tokens: HashMap::new(),
             last_semantic_tokens_request_version: HashMap::new(),
+            terminal: None,
+            show_terminal_page: false,
+            terminal_scroll: 0,
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
             inlay_hints_in_flight: std::collections::HashSet::new(),
@@ -645,6 +663,14 @@ impl App {
             // the reader channel. Tightening the budget here turns
             // stepping from "noticeably slow" into "instant".
             if self.dap.is_active() {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
+            // Active `:terminal` overlay — same reasoning as the
+            // DAP case. PTY output arrives asynchronously; a long
+            // poll budget delays the next render by that much, so
+            // typing in the embedded shell feels laggy. 16ms is
+            // ~60fps and well under the threshold of perception.
+            if self.terminal.is_some() {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
             // A live yank flash needs us to wake up at its deadline so the
@@ -735,6 +761,11 @@ impl App {
             // event — render anyway so the pane reflects the new frames
             // and locals immediately instead of on the next keypress.
             if had_dap_events || dap_progress {
+                needs_render = true;
+            }
+            // Drain PTY output → grid mutations once per loop. Any
+            // bytes processed = something visible has changed.
+            if self.terminal_drain_if_open() {
                 needs_render = true;
             }
             // Drop the yank flash once its deadline has passed so the next

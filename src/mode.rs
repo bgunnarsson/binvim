@@ -14,6 +14,18 @@ pub enum Mode {
     /// move the selection; `Enter` / `Tab` toggles a variable's expansion;
     /// `Esc` returns to Normal mode in the editor.
     DebugPane,
+    /// Focus is on the `:terminal` overlay. Every keystroke is
+    /// translated to bytes and forwarded to the PTY (so the embedded
+    /// shell sees them, not the editor). `Esc` leaves Terminal mode
+    /// for `TerminalNormal` — the grid stays painted but the editor
+    /// regains its bindings.
+    Terminal,
+    /// Terminal overlay still showing, but the editor's bindings are
+    /// active again. Used for "look at the output / scroll without
+    /// sending input to the shell." `i` / `a` re-enters Terminal
+    /// mode; `:q` (or `<C-w>q`) closes the terminal and drops the
+    /// overlay.
+    TerminalNormal,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +61,8 @@ impl Mode {
             Mode::Picker => "PICK",
             Mode::Prompt(_) => "PROMPT",
             Mode::DebugPane => "DEBUG",
+            Mode::Terminal => "TERMINAL",
+            Mode::TerminalNormal => "T-NORMAL",
         }
     }
 }

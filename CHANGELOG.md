@@ -30,9 +30,23 @@ follows [Semantic Versioning](https://semver.org/).
   first install drops from minutes (compile from source) to seconds.
   `install.sh` now resolves Darwin/{arm64,x86_64} so the `curl … | sh`
   path works on Mac too.
+- **`:terminal` overlay.** The terminal model from earlier in this
+  cycle is now integrated as a fullscreen overlay (like `:health`
+  / `:messages`). `:terminal` / `:term` opens; `:terminal <cmd>`
+  spawns the given command instead of `$SHELL`. Two paired modes:
+  `Mode::Terminal` forwards every keystroke as PTY input (with
+  full xterm sequences for arrows / F-keys / Page / Home / End /
+  Delete / etc., Ctrl-letter → C0 control codes, Alt-prefix for
+  Meta); `Esc` drops into `Mode::TerminalNormal` so the editor's
+  bindings work again (`:` for ex commands, `i` / `a` re-enters
+  Terminal mode). `:q` closes the terminal. PTY auto-resizes on
+  terminal resize; main loop runs at 16ms poll budget while a
+  terminal is alive so typing feels snappy. Yank-from-scrollback
+  is the remaining roadmap polish item — the grid is publicly
+  exposed via `Terminal::grid()` for it.
 - **Terminal model (PTY + vte parser + grid + scrollback).** New
-  self-contained `terminal` module — not yet integrated with the
-  editor (waits on follow-up session). PTY spawn via `portable-pty`,
+  self-contained `terminal` module — landed earlier in this cycle
+  as scaffolding for the `:terminal` overlay above. PTY spawn via `portable-pty`,
   reader thread funnels bytes into an mpsc channel, vte 0.15 parses
   escape sequences and mutates a `Cell` grid + cursor + pen state.
   Covers CUP / CUF / CUB / CUU / CUD / CHA, ED / EL, SGR (basic +
