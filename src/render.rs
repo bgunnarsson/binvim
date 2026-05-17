@@ -1577,10 +1577,9 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // text). The [TERMINAL] chip itself stays constant.
     let pane_bg = Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }; // Mantle
     let muted = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };    // Overlay0
-    let text = Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 };     // Text
     let base = Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e };
     let accent_terminal = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }; // Green
-    let active_tab_bg = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa }; // Blue
+    let active_tab_bg = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };  // Peach
     let label = " TERMINAL ";
     let label_w = label.chars().count() as u16;
     let chip_bg = match app.mode {
@@ -1611,7 +1610,7 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
             let chip_chars = tab_label.chars().count() as u16;
             let is_active = idx == app.active_terminal_idx;
             let (bg, fg) = if is_active {
-                (active_tab_bg, text)
+                (active_tab_bg, base)
             } else {
                 (pane_bg, muted)
             };
