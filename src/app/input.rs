@@ -1261,17 +1261,35 @@ impl super::App {
                     self.show_health_page = false;
                 } else if self.show_messages_page {
                     self.show_messages_page = false;
-                } else if self.terminal_pane_open {
+                } else if matches!(self.mode, crate::mode::Mode::Terminal) {
+                    // `:q` from inside a terminal tab still closes
+                    // just that tab — old single-terminal habit.
                     self.close_terminal();
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
+                    // `:q` from the editor quits the whole editor.
+                    // Drop every terminal before flipping the flag
+                    // so any background processes (`pnpm dev`,
+                    // `cargo watch`, an SSH session, …) get SIGHUP
+                    // when their master PTY fd is released, rather
+                    // than orphaning on the OS until we exit.
+                    self.terminals.clear();
+                    self.terminal_pane_open = false;
                     self.should_quit = true;
                 }
             }
-            ExCommand::QuitForce => self.should_quit = true,
+            ExCommand::QuitForce => {
+                self.terminals.clear();
+                self.terminal_pane_open = false;
+                self.should_quit = true;
+            }
             ExCommand::WriteQuit => match self.save_active() {
-                Ok(_) => self.should_quit = true,
+                Ok(_) => {
+                    self.terminals.clear();
+                    self.terminal_pane_open = false;
+                    self.should_quit = true;
+                }
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
             ExCommand::Edit(p) => {
