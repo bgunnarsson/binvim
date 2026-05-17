@@ -185,13 +185,22 @@ impl Config {
     }
 
     /// Background for editor *chrome* — popups, status line, tab bar, side
-    /// panes. The buffer body wants `None` to fall through to the terminal
-    /// default; chrome surfaces always need a concrete colour, so this
-    /// returns Catppuccin Mantle as the fallback. When a theme sets a
-    /// background, every chrome surface follows it for a consistent look.
+    /// panes. Set with `[colors] chrome_bg = "#…"`. When unset and a
+    /// `background` is configured, this derives a slightly *darker* shade so
+    /// chrome stays visually distinct from the buffer (dark themes: 15%
+    /// toward black; light themes: 5% toward black — matches the
+    /// Mantle/Base relationship Catppuccin uses). With no `background`
+    /// set at all, falls through to Catppuccin Mantle so chrome always
+    /// has a concrete colour against any terminal.
     pub fn chrome_bg(&self) -> Color {
-        self.background_color()
-            .unwrap_or(Color::Rgb { r: 0x18, g: 0x18, b: 0x25 })
+        if let Some(c) = self.user_color("chrome_bg") {
+            return c;
+        }
+        match self.background_color() {
+            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.15),
+            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.05),
+            None => Color::Rgb { r: 0x18, g: 0x18, b: 0x25 },
+        }
     }
 
     /// Generic per-key palette lookup with a default fallback. The chrome

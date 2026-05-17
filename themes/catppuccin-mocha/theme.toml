@@ -12,6 +12,15 @@ schema_version = 1
 # to Catppuccin Mantle so they still have visible contrast.
 background        = "#1e1e2e"
 
+# Chrome bg — what tabs, popups, status segments, and side panes
+# paint against. Always slightly different from `background` so the
+# chrome reads as "sitting above" the buffer. When you omit this,
+# binvim derives it by mixing `background` toward black (15% on dark
+# themes, 5% on light), so a one-line `background = …` theme still
+# gets a visible layered chrome. Override to match a theme's
+# canonical Mantle / sidebar / panel colour.
+chrome_bg         = "#181825"
+
 # ── Chrome palette ──────────────────────────────────────────────────
 # These twelve keys drive every chrome colour: tab bar, status line
 # chips, popup borders, terminal / debug headers, dashboard text,
