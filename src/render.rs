@@ -2548,27 +2548,16 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-/// Wide robot logo — a head + chest in box-drawing characters,
-/// shown over the side-pane loading splash. 6 rows × 17 cols, sized
-/// to fit the narrow side pane without crowding the caption row
-/// below. The robot reads as "an assistant is booting up" without
-/// the editor identity claim a "binvim" logo would carry in a
-/// surface that's about to host Claude / Codex / opencode.
-const SIDE_LOADING_LOGO_WIDE: &[&str] = &[
-    "╭───────────────╮",
-    "│ ◉     ─     ◉ │",
-    "╰───────┬───────╯",
-    "╔═══════╧═══════╗",
-    "║ ░░░░░░░░░░░░░ ║",
-    "╚═══════════════╝",
-];
-
-/// Compact robot mark used when the pane is too narrow for the
-/// full body. Just the head; 3 rows × 9 cols.
-const SIDE_LOADING_LOGO_SMALL: &[&str] = &[
-    "╔═══════╗",
-    "║ ◉ ─ ◉ ║",
-    "╚═══╤═══╝",
+/// Robot head shown over the side-pane loading splash. 3 rows ×
+/// 9 cols — small enough that it always fits the side pane (min
+/// ~28 cols), so no multi-variant fallback is needed. Reads as
+/// "an assistant is booting up" without the editor identity claim
+/// a "binvim" wordmark would carry in a surface that's about to
+/// host Claude / Codex / opencode.
+const SIDE_LOADING_LOGO: &[&str] = &[
+    "╭───────╮",
+    "│ ◉ ─ ◉ │",
+    "╰───────╯",
 ];
 
 /// Braille spinner frames — 10 frames at ~80ms each rotates once
@@ -2604,13 +2593,10 @@ fn draw_side_loading_splash(
             Print(&blank),
         )?;
     }
-    // Pick the widest logo that fits with a 2-cell margin either
-    // side. Falls back to the compact mark on narrow panes, and to
-    // no logo at all if even the compact mark is too wide.
-    let logo: &[&str] = if pane_cols >= SIDE_LOADING_LOGO_WIDE[0].chars().count() + 4 {
-        SIDE_LOADING_LOGO_WIDE
-    } else if pane_cols >= SIDE_LOADING_LOGO_SMALL[0].chars().count() + 4 {
-        SIDE_LOADING_LOGO_SMALL
+    // Show the head only when there's a 2-cell margin either side;
+    // otherwise drop it and just show the spinner + caption.
+    let logo: &[&str] = if pane_cols >= SIDE_LOADING_LOGO[0].chars().count() + 4 {
+        SIDE_LOADING_LOGO
     } else {
         &[]
     };
