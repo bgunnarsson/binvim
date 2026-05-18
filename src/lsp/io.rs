@@ -20,6 +20,7 @@ pub(super) fn reader_loop(
     legend: Arc<Mutex<Option<SemanticTokensLegend>>>,
     code_lens_provider: Arc<Mutex<bool>>,
     code_lens_resolve_provider: Arc<Mutex<bool>>,
+    workspace_folders_supported: Arc<Mutex<bool>>,
     tx: Sender<LspIncoming>,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -51,6 +52,7 @@ pub(super) fn reader_loop(
             &legend,
             &code_lens_provider,
             &code_lens_resolve_provider,
+            &workspace_folders_supported,
             &tx,
         );
     }
@@ -63,6 +65,7 @@ fn dispatch(
     legend: &Arc<Mutex<Option<SemanticTokensLegend>>>,
     code_lens_provider: &Arc<Mutex<bool>>,
     code_lens_resolve_provider: &Arc<Mutex<bool>>,
+    workspace_folders_supported: &Arc<Mutex<bool>>,
     tx: &Sender<LspIncoming>,
 ) {
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
@@ -108,6 +111,9 @@ fn dispatch(
                 }
                 if has_resolve {
                     *code_lens_resolve_provider.lock().unwrap() = true;
+                }
+                if extract_workspace_folders_supported(&result) {
+                    *workspace_folders_supported.lock().unwrap() = true;
                 }
                 let frames = match std::mem::replace(&mut *g, InitState::Ready) {
                     InitState::Buffering(f) => f,
@@ -271,6 +277,67 @@ fn extract_code_lens_caps(init_result: &Value) -> (bool, bool) {
         }
         Some(v) => (v.as_bool().unwrap_or(false), false),
         None => (false, false),
+    }
+}
+
+/// Pull the `workspace.workspaceFolders.supported` flag out of an
+/// `initialize` response. Servers that advertise this can grow their
+/// indexed folder set at runtime via
+/// `workspace/didChangeWorkspaceFolders`; servers that don't get the
+/// single-root treatment forever. The flag is also implicitly true
+/// when the server reports `workspace.workspaceFolders` as a bare
+/// `true` (older spec shape) — we honour both.
+fn extract_workspace_folders_supported(init_result: &Value) -> bool {
+    let Some(caps) = init_result.get("capabilities") else { return false; };
+    let Some(ws) = caps.get("workspace") else { return false; };
+    let Some(folders) = ws.get("workspaceFolders") else { return false; };
+    match folders {
+        Value::Bool(b) => *b,
+        Value::Object(_) => folders
+            .get("supported")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod cap_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_folders_supported_reads_object_form() {
+        let v: Value = serde_json::from_str(
+            r#"{"capabilities":{"workspace":{"workspaceFolders":{"supported":true}}}}"#,
+        )
+        .unwrap();
+        assert!(extract_workspace_folders_supported(&v));
+    }
+
+    #[test]
+    fn workspace_folders_supported_reads_bool_shorthand() {
+        let v: Value = serde_json::from_str(
+            r#"{"capabilities":{"workspace":{"workspaceFolders":true}}}"#,
+        )
+        .unwrap();
+        assert!(extract_workspace_folders_supported(&v));
+    }
+
+    #[test]
+    fn workspace_folders_supported_returns_false_when_object_says_no() {
+        let v: Value = serde_json::from_str(
+            r#"{"capabilities":{"workspace":{"workspaceFolders":{"supported":false}}}}"#,
+        )
+        .unwrap();
+        assert!(!extract_workspace_folders_supported(&v));
+    }
+
+    #[test]
+    fn workspace_folders_supported_returns_false_when_field_absent() {
+        let v: Value = serde_json::from_str(r#"{"capabilities":{}}"#).unwrap();
+        assert!(!extract_workspace_folders_supported(&v));
+        let v: Value = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(!extract_workspace_folders_supported(&v));
     }
 }
 

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -54,6 +54,20 @@ pub struct LspClient {
     /// csharp-ls / OmniSharp work this way; rust-analyzer inlines
     /// titles in the first reply and leaves this `false`.
     pub code_lens_resolve_provider: Arc<Mutex<bool>>,
+    /// Workspace folders this client currently has attached. Starts
+    /// with the root used for `initialize`; subsequent files opened
+    /// from a sibling project root append (and the manager fires
+    /// `workspace/didChangeWorkspaceFolders` if the server supports
+    /// it). Single-root use leaves this at one entry, unchanged from
+    /// pre-multi-root behaviour.
+    pub workspace_folders: Arc<Mutex<Vec<PathBuf>>>,
+    /// `serverCapabilities.workspace.workspaceFolders.supported`,
+    /// captured from the `initialize` response. When `false` the
+    /// manager skips the didChangeWorkspaceFolders dance — there's
+    /// no point telling a server about a folder it can't model.
+    /// rust-analyzer / tsserver / gopls all support this; some
+    /// niche servers don't.
+    pub workspace_folders_supported: Arc<Mutex<bool>>,
 }
 
 /// Decoded `semanticTokensProvider.legend` from the server's
@@ -96,6 +110,8 @@ impl LspClient {
         let code_lens_for_reader = code_lens_provider.clone();
         let code_lens_resolve_provider: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let code_lens_resolve_for_reader = code_lens_resolve_provider.clone();
+        let workspace_folders_supported: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let folders_supported_for_reader = workspace_folders_supported.clone();
         let in_tx_for_reader = in_tx.clone();
         thread::spawn(move || {
             reader_loop(
@@ -105,6 +121,7 @@ impl LspClient {
                 legend_for_reader,
                 code_lens_for_reader,
                 code_lens_resolve_for_reader,
+                folders_supported_for_reader,
                 in_tx_for_reader,
             );
         });
@@ -143,6 +160,8 @@ impl LspClient {
             semantic_tokens_legend,
             code_lens_provider,
             code_lens_resolve_provider,
+            workspace_folders: Arc::new(Mutex::new(vec![root.to_path_buf()])),
+            workspace_folders_supported,
         };
 
         // Send initialize directly (bypassing the queue gate, which only holds
