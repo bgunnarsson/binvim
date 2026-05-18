@@ -66,13 +66,11 @@ pub struct SideTerminal {
     /// Deadline for the next per-byte write. `None` means "write
     /// immediately on the next eligible frame"; after each write
     /// we schedule the next byte one cadence-tick into the future.
+    /// The trailing `\r` is the last byte in
+    /// `pending_initial_input`, so when the queue empties the
+    /// submit has already been sent and no extra scheduling is
+    /// needed.
     pub next_byte_at: Cell<Option<Instant>>,
-    /// Deadline for the trailing Enter (`\r`). Set once the input
-    /// queue empties; cleared after the submit fires. Sitting in
-    /// its own field rather than inline with the queue so an empty
-    /// queue with no submit scheduled (the no-handoff case) reads
-    /// as cleanly idle.
-    pub pending_submit_at: Cell<Option<Instant>>,
 }
 
 /// Which terminal pane consumes keystrokes while `Mode::Terminal`
@@ -149,8 +147,23 @@ impl super::App {
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(t) => {
                 let now = Instant::now();
+                // Append the submitting `\r` to the byte queue so it
+                // gets dripped at typing cadence just like the rest
+                // of the path. Sending it as a separate write 250ms
+                // later put each tool into a different
+                // "user paused typing" state where the Enter no
+                // longer registered as submit (autocomplete popup
+                // capture, mode change, etc.). Modelling the whole
+                // sequence as one continuous typing event matches
+                // what a fast user actually does — type the path,
+                // hit Enter — and works uniformly across all three
+                // tools.
                 let pending_bytes = pending_input
-                    .map(|s| s.into_bytes())
+                    .map(|s| {
+                        let mut bytes = s.into_bytes();
+                        bytes.push(b'\r');
+                        bytes
+                    })
                     .unwrap_or_default();
                 self.side_terminals.push(SideTerminal {
                     terminal: t,
@@ -161,7 +174,6 @@ impl super::App {
                     pending_initial_input: RefCell::new(pending_bytes),
                     loading_settled_at: Cell::new(None),
                     next_byte_at: Cell::new(None),
-                    pending_submit_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
                 self.terminal_focus = TerminalFocus::Side;
@@ -207,39 +219,41 @@ impl super::App {
         Some(format!("@{display}"))
     }
 
-    /// Per-frame flush — drips the pending `@<path>` queue into the
-    /// tool's input box one byte per frame at typing cadence, then
-    /// submits with a discrete `\r`.
+    /// Per-frame flush — drips the pending `@<path>\r` queue into
+    /// the tool's input box one byte per frame at typing cadence.
+    /// The trailing `\r` is part of the queue (last byte) so it
+    /// gets typed at the same cadence as the rest, modelling the
+    /// whole sequence as one continuous typing event.
     ///
     /// **Why the drip.** Every TUI we target (Claude / Codex /
     /// opencode) detects pastes by input timing — bytes arriving in
     /// microseconds are bucketed as a single paste event and the
     /// trailing Enter is treated as pasted content (a newline-in-
-    /// input), not a submit. A single bulk write of `@path\r`
-    /// therefore fails on every tool, in tool-specific ways:
-    /// Claude swallows the `\r` silently, Codex inserts a literal
-    /// newline below the path, opencode drops the whole burst
-    /// during boot. Typing at ~15ms/byte stays well above each
-    /// tool's paste-detection threshold; the trailing `\r` then
-    /// registers as a normal keystroke and submits cleanly.
+    /// input), not a submit. Typing at ~15ms/byte stays well above
+    /// each tool's paste-detection threshold; the trailing `\r`
+    /// then registers as a normal keystroke and submits cleanly.
+    ///
+    /// **Why no separate-write delay before `\r`.** An earlier
+    /// version sent the path, paused 250ms, then wrote `\r`. That
+    /// put each tool into a different "user paused typing" state
+    /// where the trailing Enter was captured by autocomplete /
+    /// mode-change / debounce logic instead of submitting.
+    /// Modelling Enter as the last typed character (the way a fast
+    /// human user actually does it) sidesteps the pause-detection
+    /// branches.
     ///
     /// **Stages.**
     /// 1. Splash settles — `loading_done` flips off.
-    /// 2. Wait for PTY output to go quiet — tool-agnostic "init
-    ///    is done" signal, far more reliable than a fixed delay.
-    /// 3. Drip one byte per frame at `PER_BYTE_DELAY` cadence.
-    /// 4. Once the queue empties, wait `SUBMIT_DELAY` and write
-    ///    the discrete trailing `\r`.
+    /// 2. Wait for PTY output to go quiet (per-tool tuning via
+    ///    `handoff_tuning`) — tool-agnostic "init is done" signal.
+    /// 3. Drip one byte per frame at `PER_BYTE_DELAY` cadence
+    ///    until the queue (path + trailing `\r`) empties.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
         // Per-byte cadence. ~15ms reads as fast typing but stays
         // well above every paste-detection threshold I've seen in
         // the TUI libraries the three tools are built on (ink /
         // ratatui / bubbletea).
         const PER_BYTE_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
-        // Final pause between the last byte of the path and the
-        // trailing Enter. The discrete-event boundary the tools
-        // need to treat `\r` as submit rather than content.
-        const SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
         for s in &self.side_terminals {
             if side_terminal_loading(s) {
                 continue;
@@ -262,39 +276,24 @@ impl super::App {
             if !ready {
                 continue;
             }
-            // Phase 1: drip one byte from the path queue per
-            // cadence tick. The `RefCell` borrow has to drop
-            // before we touch `pending_submit_at` below since
-            // those are sibling fields on the same struct.
+            // Drip one byte per cadence tick.
             let mut queue = s.pending_initial_input.borrow_mut();
-            if !queue.is_empty() {
-                let due = match s.next_byte_at.get() {
-                    Some(at) => now >= at,
-                    None => true,
-                };
-                if !due {
-                    continue;
-                }
-                let byte = queue.remove(0);
-                let _ = s.terminal.write_bytes(&[byte]);
-                if queue.is_empty() {
-                    // Last byte just went out — schedule the
-                    // submit and clear the per-byte timer.
-                    s.next_byte_at.set(None);
-                    s.pending_submit_at.set(Some(now + SUBMIT_DELAY));
-                } else {
-                    s.next_byte_at.set(Some(now + PER_BYTE_DELAY));
-                }
+            if queue.is_empty() {
                 continue;
             }
-            drop(queue);
-            // Phase 2: trailing Enter once the submit deadline
-            // has elapsed.
-            if let Some(at) = s.pending_submit_at.get() {
-                if now >= at {
-                    let _ = s.terminal.write_bytes(b"\r");
-                    s.pending_submit_at.set(None);
-                }
+            let due = match s.next_byte_at.get() {
+                Some(at) => now >= at,
+                None => true,
+            };
+            if !due {
+                continue;
+            }
+            let byte = queue.remove(0);
+            let _ = s.terminal.write_bytes(&[byte]);
+            if queue.is_empty() {
+                s.next_byte_at.set(None);
+            } else {
+                s.next_byte_at.set(Some(now + PER_BYTE_DELAY));
             }
         }
     }
