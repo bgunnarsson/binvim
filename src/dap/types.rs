@@ -87,12 +87,27 @@ pub struct OutputLine {
 /// `setBreakpoints` to the adapter whenever a session starts or this list
 /// changes.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct SourceBreakpoint {
     pub line: usize,
-    /// User-supplied conditional expression. Phase-2 territory — none of
-    /// the keybindings expose this yet.
+    /// User-supplied conditional expression — DAP `condition` field. The
+    /// adapter pauses only when this evaluates truthy in the target
+    /// language. `:dapb if <expr>` sets it; `:dapb plain` strips it.
     pub condition: Option<String>,
+    /// Hit-count expression — DAP `hitCondition`. Most adapters accept a
+    /// bare integer ("pause after N hits"); some also accept comparators
+    /// ("== 5", ">= 10"). We pass the user's string through verbatim and
+    /// let the adapter complain if it's malformed.
+    pub hit_condition: Option<String>,
+}
+
+impl SourceBreakpoint {
+    /// True when this breakpoint carries a `condition` or a
+    /// `hitCondition` — i.e. it's not an unconditional pause-here. Used
+    /// by the gutter renderer to pick a different glyph and by the
+    /// breakpoints pane to show the expression alongside the line.
+    pub fn is_conditional(&self) -> bool {
+        self.condition.is_some() || self.hit_condition.is_some()
+    }
 }
 
 /// Breakpoint state as reported back by the adapter — verified flag,

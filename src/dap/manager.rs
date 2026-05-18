@@ -113,6 +113,7 @@ impl DapManager {
             entry.push(SourceBreakpoint {
                 line,
                 condition: None,
+                hit_condition: None,
             });
             true
         };
@@ -142,6 +143,87 @@ impl DapManager {
             .get(path)
             .map(|v| v.iter().any(|b| b.line == line))
             .unwrap_or(false)
+    }
+
+    /// Read accessor for the breakpoint at `(path, line)`. The gutter
+    /// renderer and the breakpoints pane use this to pick a glyph /
+    /// surface the condition string. Returns `None` when no breakpoint
+    /// exists at that site; cloning is cheap (Strings are short).
+    pub fn breakpoint_at(&self, path: &Path, line: usize) -> Option<SourceBreakpoint> {
+        self.breakpoints
+            .get(path)
+            .and_then(|v| v.iter().find(|b| b.line == line))
+            .cloned()
+    }
+
+    /// Set (or replace) the `condition` on the breakpoint at `(path,
+    /// line)`. Creates an unconditional breakpoint first if none
+    /// exists. Returns `true` when the call mutated state (so the
+    /// caller can surface a confirmation), `false` only if `path`
+    /// is somehow not absolutisable — currently always true in
+    /// practice. Push to the adapter immediately if a session is
+    /// alive.
+    pub fn set_breakpoint_condition(
+        &mut self,
+        path: &Path,
+        line: usize,
+        condition: Option<String>,
+    ) -> bool {
+        let entry = self.breakpoints.entry(path.to_path_buf()).or_default();
+        if let Some(bp) = entry.iter_mut().find(|b| b.line == line) {
+            bp.condition = condition;
+        } else {
+            entry.push(SourceBreakpoint {
+                line,
+                condition,
+                hit_condition: None,
+            });
+        }
+        self.resend_breakpoints_for(path);
+        true
+    }
+
+    /// Set (or replace) the `hitCondition` on the breakpoint at
+    /// `(path, line)`. Same semantics as `set_breakpoint_condition`.
+    pub fn set_breakpoint_hit_condition(
+        &mut self,
+        path: &Path,
+        line: usize,
+        hit_condition: Option<String>,
+    ) -> bool {
+        let entry = self.breakpoints.entry(path.to_path_buf()).or_default();
+        if let Some(bp) = entry.iter_mut().find(|b| b.line == line) {
+            bp.hit_condition = hit_condition;
+        } else {
+            entry.push(SourceBreakpoint {
+                line,
+                condition: None,
+                hit_condition,
+            });
+        }
+        self.resend_breakpoints_for(path);
+        true
+    }
+
+    /// Strip both `condition` and `hitCondition` from the breakpoint
+    /// at `(path, line)`. Returns `true` if a breakpoint existed at
+    /// that site (whether or not it had conditions to strip), `false`
+    /// when the caller asked to "plain-ify" a line without one — that
+    /// way the dispatcher can show a sensible status message instead
+    /// of silently no-op'ing. Pushes the adapter update.
+    pub fn strip_breakpoint_conditions(&mut self, path: &Path, line: usize) -> bool {
+        let entry = match self.breakpoints.get_mut(path) {
+            Some(e) => e,
+            None => return false,
+        };
+        let bp = match entry.iter_mut().find(|b| b.line == line) {
+            Some(b) => b,
+            None => return false,
+        };
+        bp.condition = None;
+        bp.hit_condition = None;
+        self.resend_breakpoints_for(path);
+        true
     }
 
     /// Spawn the adapter, run its prelaunch hook (synchronous — typically
@@ -956,17 +1038,7 @@ impl DapManager {
         // doesn't need a request, but sending it is harmless.
         for (path, list) in &self.breakpoints {
             let seq = session.client.alloc_seq();
-            let bps_json: Vec<Value> = list
-                .iter()
-                .map(|b| {
-                    let mut o = serde_json::Map::new();
-                    o.insert("line".into(), json!(b.line));
-                    if let Some(c) = &b.condition {
-                        o.insert("condition".into(), json!(c));
-                    }
-                    Value::Object(o)
-                })
-                .collect();
+            let bps_json: Vec<Value> = list.iter().map(encode_source_breakpoint).collect();
             let _ = session.client.send_request(
                 seq,
                 "setBreakpoints",
@@ -990,10 +1062,13 @@ impl DapManager {
             return;
         }
         let list = self.breakpoints.get(path).cloned().unwrap_or_default();
-        let bps_json: Vec<Value> = list
-            .iter()
-            .map(|b| json!({ "line": b.line }))
-            .collect();
+        // Use the same encoder as the configurationDone path so
+        // condition + hitCondition aren't dropped on the post-toggle
+        // resend. (Prior implementation built `{"line":N}` inline and
+        // silently lost both fields — any conditional set before a
+        // toggle reverted to a plain breakpoint on the next adapter
+        // sync.)
+        let bps_json: Vec<Value> = list.iter().map(encode_source_breakpoint).collect();
         let seq = session.client.alloc_seq();
         let _ = session.client.send_request(
             seq,
@@ -1004,6 +1079,21 @@ impl DapManager {
             }),
         );
     }
+}
+
+/// Build the DAP `SourceBreakpoint` JSON object for one breakpoint.
+/// Honours `condition` and `hitCondition` when present so a toggle /
+/// resend doesn't strip the user's conditional expression.
+fn encode_source_breakpoint(b: &SourceBreakpoint) -> Value {
+    let mut o = serde_json::Map::new();
+    o.insert("line".into(), json!(b.line));
+    if let Some(c) = &b.condition {
+        o.insert("condition".into(), json!(c));
+    }
+    if let Some(h) = &b.hit_condition {
+        o.insert("hitCondition".into(), json!(h));
+    }
+    Value::Object(o)
 }
 
 fn parse_scopes(body: &Value) -> Vec<Scope> {
@@ -1167,6 +1257,95 @@ mod tests {
         assert!(m.has_breakpoint(&a, 5));
         assert!(m.has_breakpoint(&b, 5));
         assert_eq!(m.breakpoints.len(), 2);
+    }
+
+    #[test]
+    fn set_breakpoint_condition_creates_when_absent() {
+        let mut m = DapManager::new();
+        let p = PathBuf::from("/tmp/x.cs");
+        assert!(m.breakpoint_at(&p, 7).is_none());
+        m.set_breakpoint_condition(&p, 7, Some("i == 3".into()));
+        let bp = m.breakpoint_at(&p, 7).unwrap();
+        assert_eq!(bp.condition.as_deref(), Some("i == 3"));
+        assert!(bp.hit_condition.is_none());
+        assert!(bp.is_conditional());
+    }
+
+    #[test]
+    fn set_breakpoint_condition_replaces_existing() {
+        let mut m = DapManager::new();
+        let p = PathBuf::from("/tmp/x.cs");
+        m.toggle_breakpoint(&p, 12); // plain
+        m.set_breakpoint_condition(&p, 12, Some("len > 0".into()));
+        let bp = m.breakpoint_at(&p, 12).unwrap();
+        assert_eq!(bp.condition.as_deref(), Some("len > 0"));
+        // Replace with a different expression.
+        m.set_breakpoint_condition(&p, 12, Some("len > 5".into()));
+        assert_eq!(m.breakpoint_at(&p, 12).unwrap().condition.as_deref(), Some("len > 5"));
+        // None clears the condition (but keeps the breakpoint).
+        m.set_breakpoint_condition(&p, 12, None);
+        let bp = m.breakpoint_at(&p, 12).unwrap();
+        assert!(bp.condition.is_none());
+        assert!(!bp.is_conditional());
+        assert!(m.has_breakpoint(&p, 12));
+    }
+
+    #[test]
+    fn hit_condition_independent_of_condition() {
+        let mut m = DapManager::new();
+        let p = PathBuf::from("/tmp/x.cs");
+        m.set_breakpoint_condition(&p, 3, Some("x > 0".into()));
+        m.set_breakpoint_hit_condition(&p, 3, Some("5".into()));
+        let bp = m.breakpoint_at(&p, 3).unwrap();
+        assert_eq!(bp.condition.as_deref(), Some("x > 0"));
+        assert_eq!(bp.hit_condition.as_deref(), Some("5"));
+        assert!(bp.is_conditional());
+    }
+
+    #[test]
+    fn strip_breakpoint_conditions_keeps_breakpoint() {
+        let mut m = DapManager::new();
+        let p = PathBuf::from("/tmp/x.cs");
+        m.set_breakpoint_condition(&p, 9, Some("y == 1".into()));
+        m.set_breakpoint_hit_condition(&p, 9, Some("10".into()));
+        assert!(m.strip_breakpoint_conditions(&p, 9));
+        let bp = m.breakpoint_at(&p, 9).unwrap();
+        assert!(bp.condition.is_none());
+        assert!(bp.hit_condition.is_none());
+        assert!(!bp.is_conditional());
+        assert!(m.has_breakpoint(&p, 9));
+    }
+
+    #[test]
+    fn strip_breakpoint_conditions_returns_false_for_missing() {
+        let mut m = DapManager::new();
+        let p = PathBuf::from("/tmp/x.cs");
+        assert!(!m.strip_breakpoint_conditions(&p, 1));
+    }
+
+    #[test]
+    fn encode_source_breakpoint_includes_both_fields() {
+        let bp = SourceBreakpoint {
+            line: 42,
+            condition: Some("k != 0".into()),
+            hit_condition: Some(">= 3".into()),
+        };
+        let v = encode_source_breakpoint(&bp);
+        assert_eq!(v["line"], json!(42));
+        assert_eq!(v["condition"], json!("k != 0"));
+        assert_eq!(v["hitCondition"], json!(">= 3"));
+    }
+
+    #[test]
+    fn encode_source_breakpoint_omits_empty_fields() {
+        let bp = SourceBreakpoint {
+            line: 1,
+            condition: None,
+            hit_condition: None,
+        };
+        let v = encode_source_breakpoint(&bp);
+        assert!(v.get("condition").is_none());
+        assert!(v.get("hitCondition").is_none());
     }
 
     #[test]
