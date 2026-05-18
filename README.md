@@ -409,6 +409,7 @@ document_highlight = true  # Surface2 bg on every occurrence of the symbol under
 | Git stripe | `git.{added,modified,deleted}` |
 | Diagnostics | `diagnostic.{error,warning,info,hint}` |
 | Gutter | `gutter.{breakpoint,pc_marker}` |
+| File tree | `file_tree.folder` |
 | Tab bar | `tab.{active_bg,active_fg,inactive_fg,dirty,close}` |
 | Terminal pane | `terminal.{chip_bg,chip_fg,active_tab_bg}` |
 | Debug pane | `debug.{chip_bg,active_tab_bg}` |

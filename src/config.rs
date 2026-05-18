@@ -475,6 +475,16 @@ impl Config {
         self.theme_override("debug.active_tab_bg").unwrap_or_else(|| self.theme_accent_secondary())
     }
 
+    // ── File tree ────────────────────────────────────────────────────────
+    /// Folder-icon colour in the sidebar file tree. Catppuccin Mocha
+    /// blue by default — chosen against the warmer terminal-chip /
+    /// breakpoint / dirty-dot accents so directories pop out as
+    /// "structure" rather than reading like another flavour of accent.
+    /// Override via `[colors] "file_tree.folder" = "#...".
+    pub fn file_tree_folder(&self) -> Color {
+        self.theme_override("file_tree.folder").unwrap_or(CATP_BLUE)
+    }
+
     // ── Gutter signs ─────────────────────────────────────────────────────
     pub fn gutter_breakpoint(&self) -> Color {
         self.theme_override("gutter.breakpoint").unwrap_or_else(|| self.theme_error())

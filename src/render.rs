@@ -2179,8 +2179,7 @@ fn draw_file_tree_pane(out: &mut impl Write, app: &App) -> Result<()> {
 
     let pane_bg = app.config.chrome_bg();
     let muted = app.config.theme_dim();
-    let dir_fg = app.config.color_for_capture("keyword")
-        .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+    let dir_fg = app.config.file_tree_folder();
     let file_fg = app.config.theme_fg();
     let accent = app.config.mode_picker();
     let title_fg = app.config.theme_emphasis();
