@@ -653,12 +653,10 @@ impl super::App {
                 }
             }
         }
-        self.open_locations_picker("References", merged);
-        // When the augment ran, surface the per-source counts so the user
-        // can tell at a glance whether the grep half actually fired.
-        // Falsey results (grep_count == 0 when matches were expected) point
-        // at the root walk; non-zero confirms the merge is wired.
-        if let Some(root) = augment_root {
+        // Encode the per-source counts + augment root into the picker
+        // title — it survives keystrokes (unlike `status_msg`, which is
+        // cleared on every keypress in `handle_event`).
+        let title = if let Some(root) = augment_root {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let root_display = root
                 .strip_prefix(&cwd)
@@ -666,10 +664,11 @@ impl super::App {
                 .map(|p| p.display().to_string())
                 .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| root.display().to_string());
-            self.status_msg = format!(
-                "refs: {lsp_count} LSP + {grep_count} grep (root: {root_display})",
-            );
-        }
+            format!("References [{lsp_count} LSP + {grep_count} grep, root: {root_display}]")
+        } else {
+            "References".to_string()
+        };
+        self.open_locations_picker(&title, merged);
     }
 
     pub(super) fn lsp_request_signature_help(&mut self) {
