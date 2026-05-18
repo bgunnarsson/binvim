@@ -9,7 +9,6 @@ use std::time::Instant;
 
 use crate::lsp::{
     CodeActionItem, CompletionItem, Diagnostic, LocationItem, LspEvent, Severity, SymbolItem,
-    find_workspace_root,
 };
 use crate::mode::Mode;
 use crate::picker::{PickerKind, PickerPayload, PickerState};
@@ -2366,19 +2365,65 @@ fn razor_ref_augment(path: &Path, needle: Option<String>) -> Option<PendingRefAu
         "cshtml" | "razor" => vec!["cs", "cshtml", "razor"],
         _ => return None,
     };
-    let markers = [
-        "*.sln".to_string(),
-        "*.csproj".to_string(),
-        "*.fsproj".to_string(),
-        ".git".to_string(),
-    ];
+    // Use the *outermost* marker (`.sln` / `.git`) — not the closest
+    // `.csproj`. Multi-project .NET solutions keep the C# in
+    // `Foo.Core/` and the Razor views in `Foo.Web/`, both siblings
+    // under the same `.sln`. Anchoring on `Foo.Core.csproj` would
+    // miss every `.cshtml` in `Foo.Web/`.
     let start = path.parent().unwrap_or_else(|| Path::new("."));
-    let root = find_workspace_root(start, &markers);
+    let root = find_outermost_root(start);
     Some(PendingRefAugment {
         needle,
         extensions,
         root,
     })
+}
+
+/// Walk up from `start` and return the topmost ancestor that contains a
+/// `.sln` or `.git` marker. Falls back to the closest `.csproj` /
+/// `.fsproj` ancestor when there's no solution / git boundary above
+/// it, and finally to `start` itself if nothing matched. Differs from
+/// `find_workspace_root` (which returns the *closest* marker) — the
+/// Razor augment specifically wants the wider scope so it can reach
+/// sibling projects under the same solution.
+fn find_outermost_root(start: &Path) -> PathBuf {
+    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut outermost: Option<PathBuf> = None;
+    let mut closest_project: Option<PathBuf> = None;
+    let mut dir: &Path = canon.as_path();
+    loop {
+        let has_sln = dir_has_extension(dir, "sln");
+        let has_git = dir.join(".git").exists();
+        if has_sln || has_git {
+            outermost = Some(dir.to_path_buf());
+        }
+        if closest_project.is_none()
+            && (dir_has_extension(dir, "csproj") || dir_has_extension(dir, "fsproj"))
+        {
+            closest_project = Some(dir.to_path_buf());
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => break,
+        }
+    }
+    outermost
+        .or(closest_project)
+        .unwrap_or_else(|| canon.clone())
+}
+
+fn dir_has_extension(dir: &Path, ext: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if let Some(e) = entry.path().extension().and_then(|s| s.to_str()) {
+            if e.eq_ignore_ascii_case(ext) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Run `rg` for the augment's needle across the listed extensions and
