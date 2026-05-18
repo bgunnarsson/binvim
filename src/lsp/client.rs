@@ -47,6 +47,13 @@ pub struct LspClient {
     /// `textDocument/codeLens` on this so we don't burn a request
     /// against a server that doesn't advertise the capability.
     pub code_lens_provider: Arc<Mutex<bool>>,
+    /// `serverCapabilities.codeLensProvider.resolveProvider` flag.
+    /// True when the server expects the client to follow up the
+    /// initial `textDocument/codeLens` reply with a
+    /// `codeLens/resolve` per item to fill in `command.title`.
+    /// csharp-ls / OmniSharp work this way; rust-analyzer inlines
+    /// titles in the first reply and leaves this `false`.
+    pub code_lens_resolve_provider: Arc<Mutex<bool>>,
 }
 
 /// Decoded `semanticTokensProvider.legend` from the server's
@@ -87,6 +94,8 @@ impl LspClient {
         let legend_for_reader = semantic_tokens_legend.clone();
         let code_lens_provider: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let code_lens_for_reader = code_lens_provider.clone();
+        let code_lens_resolve_provider: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+        let code_lens_resolve_for_reader = code_lens_resolve_provider.clone();
         let in_tx_for_reader = in_tx.clone();
         thread::spawn(move || {
             reader_loop(
@@ -95,6 +104,7 @@ impl LspClient {
                 init_state_for_reader,
                 legend_for_reader,
                 code_lens_for_reader,
+                code_lens_resolve_for_reader,
                 in_tx_for_reader,
             );
         });
@@ -132,6 +142,7 @@ impl LspClient {
             language_id: spec.language_id.clone(),
             semantic_tokens_legend,
             code_lens_provider,
+            code_lens_resolve_provider,
         };
 
         // Send initialize directly (bypassing the queue gate, which only holds

@@ -532,9 +532,11 @@ fn paint_code_lens_row(
 ) -> Result<()> {
     let Some(path) = app.buffer.path.as_ref() else { return Ok(()); };
     let Some(cache) = app.code_lens.get(path) else { return Ok(()); };
-    if cache.buffer_version != app.buffer.version {
-        return Ok(());
-    }
+    // Not gated on `cache.buffer_version` — `refresh_merged_code_lens`
+    // keeps stale LSP entries in the merge across edits to stop the
+    // viewport from reflowing on every keystroke. The titles match
+    // the slightly-stale lens positions and snap back into place
+    // once the LSP responds at the new version.
     // Pad the gutter so the lens text aligns with the buffer body
     // column, not the line-number column. Without this the title
     // would start at col 0 and overlap any future gutter glyph.

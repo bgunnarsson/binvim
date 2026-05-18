@@ -158,14 +158,72 @@ impl super::App {
                         None => false,
                     };
                     if !stale {
+                        // Servers that defer titles to `codeLens/resolve`
+                        // (csharp-ls, OmniSharp, …) hand us items with
+                        // an absent or empty `command.title`. Fire a
+                        // resolve per such item right after caching the
+                        // batch — responses patch the slot in place via
+                        // `LspEvent::CodeLensResolved` and trigger a
+                        // re-merge. Only worth doing when the server
+                        // advertised `resolveProvider: true`; otherwise
+                        // the request would error.
+                        let wants_resolve = self.lsp.code_lens_resolve_capability(&path);
                         // Always record the LSP answer — even an
                         // empty array is meaningful: it says "I have
                         // no lenses for this buffer version" and
                         // gates the retry check.
                         self.lsp_only_code_lens
-                            .insert(path.clone(), (buffer_version, lenses));
+                            .insert(path.clone(), (buffer_version, lenses.clone()));
                         self.refresh_merged_code_lens(&path);
+                        if wants_resolve {
+                            for (idx, lens) in lenses.iter().enumerate() {
+                                let needs = lens
+                                    .command
+                                    .as_ref()
+                                    .map(|c| c.title.is_empty())
+                                    .unwrap_or(true);
+                                if !needs {
+                                    continue;
+                                }
+                                if lens.raw.is_null() {
+                                    continue;
+                                }
+                                self.lsp.request_code_lens_resolve(
+                                    &path,
+                                    lens.raw.clone(),
+                                    buffer_version,
+                                    idx,
+                                );
+                            }
+                        }
                     }
+                }
+                LspEvent::CodeLensResolved {
+                    path,
+                    buffer_version,
+                    lens_index,
+                    command,
+                } => {
+                    // Patch the slot only when the original batch is
+                    // still in the cache. A later `textDocument/codeLens`
+                    // reply could have replaced it; in that case the
+                    // resolve answer is for a now-gone item and would
+                    // mis-attribute the title to whatever lives at
+                    // `lens_index` now.
+                    let still_current = self
+                        .lsp_only_code_lens
+                        .get(&path)
+                        .map(|(v, _)| *v == buffer_version)
+                        .unwrap_or(false);
+                    if !still_current {
+                        continue;
+                    }
+                    if let Some((_, list)) = self.lsp_only_code_lens.get_mut(&path) {
+                        if let Some(item) = list.get_mut(lens_index) {
+                            item.command = command;
+                        }
+                    }
+                    self.refresh_merged_code_lens(&path);
                 }
                 LspEvent::DocumentHighlights {
                     path,
@@ -853,29 +911,45 @@ impl super::App {
             self.last_synth_lens_version.insert(path, version);
             return;
         };
-        let synth = crate::code_lens_synth::synthesize_lenses(lang, &self.buffer);
+        // Languages without a synth implementation (everything outside
+        // JS/TS/TSX) bail before touching `synth_only_code_lens` and
+        // before triggering a `refresh_merged_code_lens` pass. The old
+        // shape inserted an empty Vec on every keystroke, which still
+        // ran the merge and briefly collapsed any cached LSP lenses to
+        // empty — that's what made `.cs` (csharp-ls) and `.cshtml`
+        // (OmniSharp) buffers reflow on each Enter.
+        let Some(synth) = crate::code_lens_synth::synthesize_lenses(lang, &self.buffer) else {
+            self.last_synth_lens_version.insert(path, version);
+            return;
+        };
         self.last_synth_lens_version.insert(path.clone(), version);
         self.synth_only_code_lens.insert(path.clone(), (version, synth));
         self.refresh_merged_code_lens(&path);
     }
 
     /// Rebuild `code_lens[path]` as the union of `lsp_only_code_lens`
-    /// and `synth_only_code_lens` for the current buffer version.
-    /// Either source can be missing or stale — we filter for matching
-    /// versions and skip non-current entries so a stale stash doesn't
-    /// leak into the merged view.
+    /// and `synth_only_code_lens`. Neither source is version-gated:
+    /// `synth_code_lens_if_due` runs synchronously on every keystroke
+    /// at the new version, while the LSP half only refreshes when the
+    /// server responds (50–200 ms after a `didChange`). Filtering both
+    /// halves on the live version would briefly collapse the merged
+    /// cache to "synth-only" on each Enter, which drops the LSP-side
+    /// anchors — and with them the per-anchor phantom row that
+    /// `visible_rows_between` counts. The viewport then jumps up,
+    /// then back down once the LSP response lands. Keeping the stale
+    /// LSP half in the merge means anchor positions may sit at
+    /// slightly outdated line numbers for a frame, but the row count
+    /// stays steady so the screen doesn't reflow.
     pub(super) fn refresh_merged_code_lens(&mut self, path: &std::path::Path) {
         let version = self.buffer_version_for_path(path);
         let lsp_part: Vec<crate::lsp::CodeLensItem> = self
             .lsp_only_code_lens
             .get(path)
-            .filter(|(v, _)| *v == version)
             .map(|(_, l)| l.clone())
             .unwrap_or_default();
         let synth_part: Vec<crate::lsp::CodeLensItem> = self
             .synth_only_code_lens
             .get(path)
-            .filter(|(v, _)| *v == version)
             .map(|(_, l)| l.clone())
             .unwrap_or_default();
         if lsp_part.is_empty() && synth_part.is_empty() {
@@ -935,6 +1009,16 @@ impl super::App {
             return;
         }
         let Some(path) = self.buffer.path.clone() else { return; };
+        // Razor opts out — see the matching guard in
+        // `synth_code_lens_if_due` for why. Skipping the request keeps
+        // `code_lens[path]` empty so the renderer never reserves a
+        // phantom row that would later vanish on the next keystroke.
+        if matches!(
+            crate::lang::Lang::detect(&path),
+            Some(crate::lang::Lang::Razor)
+        ) {
+            return;
+        }
         let version = self.buffer.version;
         let last = self
             .last_code_lens_request_version
@@ -1725,6 +1809,39 @@ impl super::App {
                 return;
             }
         }
+        // VS Code's built-in "show references" command (used by gopls,
+        // some servers) and rust-analyzer's variant both ship the
+        // resolved locations inline as the third argument. Open the
+        // same picker `gr` uses instead of forwarding the command to
+        // the LSP — the server has no way to *display* anything, and
+        // `executeCommand` would no-op.
+        if cmd.command == "editor.action.showReferences"
+            || cmd.command == "rust-analyzer.showReferences"
+            || cmd.command == "csharp.showReferences"
+        {
+            let items = extract_show_references_locations(&cmd.arguments);
+            if !items.is_empty() {
+                self.open_locations_picker("References", items);
+                return;
+            }
+            self.status_msg = "code lens: no references attached".into();
+            return;
+        }
+        // csharp-ls (and other Roslyn-based servers) uses the LSP method
+        // name `textDocument/references` as the lens command — the
+        // contract is "fire this method at the lens anchor, then open
+        // your picker." Extract the position from `arguments`
+        // (standard `ReferenceParams` shape) and fire a real
+        // references request; the reply comes back through
+        // `LspEvent::References` which already opens the picker.
+        if cmd.command == "textDocument/references" {
+            let (line, col) = extract_text_document_position(&cmd.arguments)
+                .unwrap_or((self.window.cursor.line, self.window.cursor.col));
+            if !self.lsp.request_references(path, line, col) {
+                self.status_msg = "code lens: no LSP client for this buffer".into();
+            }
+            return;
+        }
         let command_obj = serde_json::json!({
             "title": cmd.title,
             "command": cmd.command,
@@ -1774,6 +1891,60 @@ fn extract_synthetic_run_filter(arguments: &[serde_json::Value]) -> Option<Strin
         return None;
     }
     Some(name)
+}
+
+/// Decode the third argument of an `editor.action.showReferences`-style
+/// lens command into our internal `LocationItem` list. The shape is
+/// the standard VS Code one: `arguments = [uri, position, locations]`
+/// where `locations` is an array of `Location` objects (`{ uri, range
+/// { start: { line, character } } }`). Returns an empty Vec on any
+/// parse failure so the caller can fall back gracefully.
+fn extract_show_references_locations(
+    arguments: &[serde_json::Value],
+) -> Vec<crate::lsp::LocationItem> {
+    let Some(arr) = arguments.get(2).and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(arr.len());
+    for entry in arr {
+        let uri = entry
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .or_else(|| entry.get("targetUri").and_then(|v| v.as_str()));
+        let range = entry
+            .get("range")
+            .or_else(|| entry.get("targetSelectionRange"))
+            .or_else(|| entry.get("targetRange"));
+        let (Some(uri), Some(range)) = (uri, range) else { continue };
+        let Some(path) = crate::lsp::uri_to_path(uri) else { continue };
+        let Some(start) = range.get("start") else { continue };
+        let Some(line) = start.get("line").and_then(|v| v.as_u64()) else { continue };
+        let Some(col) = start.get("character").and_then(|v| v.as_u64()) else { continue };
+        out.push(crate::lsp::LocationItem {
+            path,
+            line: line as usize,
+            col: col as usize,
+        });
+    }
+    out
+}
+
+/// Pull a `(line, col)` out of an LSP `ReferenceParams`-shaped
+/// arguments list. Accepts either `[{ textDocument, position }]`
+/// (object-style) or `[uri, position]` (array-style); both forms
+/// turn up across servers that bind a method-name as a lens
+/// command. Returns `None` when no position is recoverable so the
+/// caller can fall back to the cursor.
+fn extract_text_document_position(
+    arguments: &[serde_json::Value],
+) -> Option<(usize, usize)> {
+    let position = arguments
+        .iter()
+        .find_map(|v| v.get("position"))
+        .or_else(|| arguments.get(1))?;
+    let line = position.get("line").and_then(|v| v.as_u64())? as usize;
+    let col = position.get("character").and_then(|v| v.as_u64())? as usize;
+    Some((line, col))
 }
 
 fn extract_rust_analyzer_runnable_filter(arguments: &[serde_json::Value]) -> Option<String> {

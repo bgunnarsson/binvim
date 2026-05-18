@@ -101,14 +101,18 @@ pub struct DocumentHighlightRange {
 /// One `textDocument/codeLens` entry. `line`/`col` is the anchor —
 /// LSP's `range.start`, i.e. the position the lens decorates (a `fn`
 /// keyword, a class header, …). `command` may be `None` for an
-/// "unresolved" lens that needs a follow-up `codeLens/resolve`; the
-/// renderer hides those today rather than printing a blank slot.
+/// "unresolved" lens that needs a follow-up `codeLens/resolve`.
+/// `raw` is the verbatim `CodeLens` object the server sent (including
+/// the opaque `data` field): the resolve roundtrip echoes the same
+/// object back, and the server uses `data` to identify which lens
+/// the client is asking about.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct CodeLensItem {
     pub line: usize,
     pub col: usize,
     pub command: Option<LspCommand>,
+    pub raw: Value,
 }
 
 /// LSP `Command` — what gets invoked when the user activates a code
@@ -189,6 +193,17 @@ pub enum LspEvent {
         path: PathBuf,
         buffer_version: u64,
         lenses: Vec<CodeLensItem>,
+    },
+    /// `codeLens/resolve` reply for a single item from a prior
+    /// `textDocument/codeLens` batch. `lens_index` points back into
+    /// the original array; `buffer_version` lets the App drop replies
+    /// that arrived after a newer code-lens batch overwrote the
+    /// indexed slot.
+    CodeLensResolved {
+        path: PathBuf,
+        buffer_version: u64,
+        lens_index: usize,
+        command: Option<LspCommand>,
     },
     /// Copilot `checkStatus` reply — used to drive `App.lsp.copilot_status`
     /// + the status-line indicator. `kind` is the raw protocol string

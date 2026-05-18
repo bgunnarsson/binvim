@@ -549,9 +549,18 @@ pub(super) fn parse_code_lens_response(result: &Value) -> Vec<CodeLensItem> {
         let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let col = start.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let command = entry.get("command").and_then(parse_command);
-        out.push(CodeLensItem { line, col, command });
+        out.push(CodeLensItem { line, col, command, raw: entry.clone() });
     }
     out
+}
+
+/// Parse a `codeLens/resolve` reply. The response is a single
+/// `CodeLens` object — same shape as one element of
+/// `textDocument/codeLens`, with the `command` populated. We pull
+/// only the command back out; the anchor position is owned by the
+/// original lens slot the caller is updating in place.
+pub(super) fn parse_code_lens_resolve_response(result: &Value) -> Option<LspCommand> {
+    result.get("command").and_then(parse_command)
 }
 
 /// Decode an LSP `Command` object — used by `codeLens` and `codeAction`

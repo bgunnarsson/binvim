@@ -19,6 +19,7 @@ pub(super) fn reader_loop(
     init_state: Arc<Mutex<InitState>>,
     legend: Arc<Mutex<Option<SemanticTokensLegend>>>,
     code_lens_provider: Arc<Mutex<bool>>,
+    code_lens_resolve_provider: Arc<Mutex<bool>>,
     tx: Sender<LspIncoming>,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -43,7 +44,15 @@ pub(super) fn reader_loop(
             return;
         }
         let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
-        dispatch(value, &stdin, &init_state, &legend, &code_lens_provider, &tx);
+        dispatch(
+            value,
+            &stdin,
+            &init_state,
+            &legend,
+            &code_lens_provider,
+            &code_lens_resolve_provider,
+            &tx,
+        );
     }
 }
 
@@ -53,6 +62,7 @@ fn dispatch(
     init_state: &Arc<Mutex<InitState>>,
     legend: &Arc<Mutex<Option<SemanticTokensLegend>>>,
     code_lens_provider: &Arc<Mutex<bool>>,
+    code_lens_resolve_provider: &Arc<Mutex<bool>>,
     tx: &Sender<LspIncoming>,
 ) {
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
@@ -92,8 +102,12 @@ fn dispatch(
                 if let Some(l) = extract_semantic_tokens_legend(&result) {
                     *legend.lock().unwrap() = Some(l);
                 }
-                if extract_code_lens_provider(&result) {
+                let (has_lens, has_resolve) = extract_code_lens_caps(&result);
+                if has_lens {
                     *code_lens_provider.lock().unwrap() = true;
+                }
+                if has_resolve {
+                    *code_lens_resolve_provider.lock().unwrap() = true;
                 }
                 let frames = match std::mem::replace(&mut *g, InitState::Ready) {
                     InitState::Buffering(f) => f,
@@ -239,18 +253,24 @@ fn extract_semantic_tokens_legend(init_result: &Value) -> Option<SemanticTokensL
     })
 }
 
-/// True when the server advertised `codeLensProvider` in the initialize
-/// response. Accepts both the boolean shorthand (`codeLensProvider:
-/// true`) and the object form (`codeLensProvider: { resolveProvider:
-/// bool }`) — presence of the key is what gates the request, the
-/// resolveProvider sub-field is consulted later when (and if) we wire
-/// `codeLens/resolve`.
-fn extract_code_lens_provider(init_result: &Value) -> bool {
-    let Some(caps) = init_result.get("capabilities") else { return false; };
+/// Inspect the initialize response for code-lens capabilities. The
+/// first bool is `codeLensProvider` (boolean shorthand or object
+/// form); the second is `codeLensProvider.resolveProvider`, which
+/// gates the `codeLens/resolve` round-trip. Servers like csharp-ls
+/// return lens items with empty `command` and rely on resolve for
+/// the title.
+fn extract_code_lens_caps(init_result: &Value) -> (bool, bool) {
+    let Some(caps) = init_result.get("capabilities") else { return (false, false); };
     match caps.get("codeLensProvider") {
-        Some(v) if v.is_object() => true,
-        Some(v) => v.as_bool().unwrap_or(false),
-        None => false,
+        Some(v) if v.is_object() => {
+            let resolve = v
+                .get("resolveProvider")
+                .and_then(|r| r.as_bool())
+                .unwrap_or(false);
+            (true, resolve)
+        }
+        Some(v) => (v.as_bool().unwrap_or(false), false),
+        None => (false, false),
     }
 }
 

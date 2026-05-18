@@ -511,12 +511,24 @@ impl super::App {
                 blame_visible: self.blame_visible,
                 markdown_meta: self.markdown_meta.as_ref(),
                 markdown_render_active: md_active,
+                // Anchor lines are NOT version-gated. While the user
+                // types, `buffer.version` ticks every keystroke but the
+                // LSP only re-answers `textDocument/codeLens` after the
+                // 50 ms debounce — gating on a strict version match
+                // would drop every phantom row during the gap, then
+                // restore them when the response lands. The row-count
+                // delta walks straight through `visible_rows_between`
+                // and shifts `view_top`, so the screen visibly jumps up
+                // and back on every Enter in lens-dense files (Razor +
+                // csharp-ls is the worst case). Letting the previous
+                // anchor set keep counting means a single phantom may
+                // sit on a stale line for a frame; never a viewport
+                // reflow.
                 code_lens_anchor_lines: if self.config.lsp.code_lens {
                     self.buffer
                         .path
                         .as_ref()
                         .and_then(|p| self.code_lens.get(p))
-                        .filter(|c| c.buffer_version == self.buffer.version)
                         .map(|c| &c.anchor_lines)
                 } else {
                     None
@@ -769,9 +781,10 @@ impl super::App {
         }
         let Some(path) = self.buffer.path.as_ref() else { return false; };
         let Some(cache) = self.code_lens.get(path) else { return false; };
-        if cache.buffer_version != self.buffer.version {
-            return false;
-        }
+        // Intentionally not gated on `cache.buffer_version` — see the
+        // matching comment in `buffer_state`. Keeping the answer stable
+        // across the LSP debounce keeps `visible_rows_between` stable
+        // and avoids a viewport jump on every keystroke.
         cache.anchor_lines.contains(&line)
     }
 

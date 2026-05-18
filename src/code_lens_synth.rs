@@ -26,12 +26,14 @@ use crate::lsp::{CodeLensItem, LspCommand};
 pub const SYNTHETIC_RUN_COMMAND: &str = "binvim.runTestByName";
 
 /// Emit synthetic code lenses for `buf` if the language is one we
-/// know how to parse for tests. Returns an empty vec for unsupported
-/// languages or when the parse fails — callers merge unconditionally.
-pub fn synthesize_lenses(lang: Lang, buf: &Buffer) -> Vec<CodeLensItem> {
+/// know how to parse for tests. Returns `None` for unsupported
+/// languages so callers can skip the whole synth/merge cycle —
+/// returning an empty `Vec` would still trip a `refresh_merged_code_lens`
+/// pass on every keystroke and collapse the cached LSP lenses.
+pub fn synthesize_lenses(lang: Lang, buf: &Buffer) -> Option<Vec<CodeLensItem>> {
     match lang {
-        Lang::TypeScript | Lang::Tsx | Lang::JavaScript => synthesize_js_ts(lang, buf),
-        _ => Vec::new(),
+        Lang::TypeScript | Lang::Tsx | Lang::JavaScript => Some(synthesize_js_ts(lang, buf)),
+        _ => None,
     }
 }
 
@@ -121,6 +123,10 @@ fn maybe_test_call(call: Node, src: &[u8]) -> Option<CodeLensItem> {
         line,
         col,
         command: Some(command),
+        // Synthetic lenses don't round-trip through `codeLens/resolve`
+        // — they're terminal at the binvim side, so `raw` is just a
+        // placeholder.
+        raw: serde_json::Value::Null,
     })
 }
 
@@ -234,7 +240,7 @@ mod tests {
     #[test]
     fn it_call_emits_lens_with_test_name() {
         let src = "import { it } from 'vitest';\nit(\"adds numbers\", () => {});\n";
-        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src));
+        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src)).unwrap();
         assert_eq!(lenses.len(), 1);
         let lens = &lenses[0];
         assert_eq!(lens.line, 1);
@@ -253,7 +259,7 @@ describe(\"suite\", () => {
   test.only(\"three\", () => {});
 });
 ";
-        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src));
+        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src)).unwrap();
         let names: Vec<String> = lenses
             .iter()
             .filter_map(|l| l.command.as_ref())
@@ -269,7 +275,7 @@ describe(\"suite\", () => {
     #[test]
     fn tsx_files_get_synthetic_lenses_too() {
         let src = "it('renders', () => {});\n";
-        let lenses = synthesize_lenses(Lang::Tsx, &buf(src));
+        let lenses = synthesize_lenses(Lang::Tsx, &buf(src)).unwrap();
         assert_eq!(lenses.len(), 1);
         assert_eq!(
             lenses[0].command.as_ref().unwrap().arguments[0]["name"],
@@ -280,7 +286,7 @@ describe(\"suite\", () => {
     #[test]
     fn template_literal_without_interpolation_is_extracted() {
         let src = "it(`stable name`, () => {});\n";
-        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src));
+        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src)).unwrap();
         assert_eq!(lenses.len(), 1);
         assert_eq!(
             lenses[0].command.as_ref().unwrap().arguments[0]["name"],
@@ -291,26 +297,26 @@ describe(\"suite\", () => {
     #[test]
     fn template_literal_with_interpolation_is_skipped() {
         let src = "const x = 1; it(`name ${x}`, () => {});\n";
-        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src));
+        let lenses = synthesize_lenses(Lang::TypeScript, &buf(src)).unwrap();
         assert!(lenses.is_empty(), "interpolated templates skipped");
     }
 
     #[test]
-    fn unsupported_language_returns_empty_vec() {
+    fn unsupported_language_returns_none() {
         let src = "fn foo() {}";
-        assert!(synthesize_lenses(Lang::Rust, &buf(src)).is_empty());
+        assert!(synthesize_lenses(Lang::Rust, &buf(src)).is_none());
     }
 
     #[test]
     fn unrelated_call_expressions_are_ignored() {
         let src = "expect(foo).toBe(bar);\nconsole.log('hi');\n";
-        assert!(synthesize_lenses(Lang::TypeScript, &buf(src)).is_empty());
+        assert!(synthesize_lenses(Lang::TypeScript, &buf(src)).unwrap().is_empty());
     }
 
     #[test]
     fn javascript_dialect_is_recognised() {
         let src = "it('plain js', () => {});\n";
-        let lenses = synthesize_lenses(Lang::JavaScript, &buf(src));
+        let lenses = synthesize_lenses(Lang::JavaScript, &buf(src)).unwrap();
         assert_eq!(lenses.len(), 1);
     }
 }
