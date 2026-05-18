@@ -11,7 +11,7 @@
 //! tracks which one consumes keystrokes while `Mode::Terminal` is
 //! active — see `app::input::handle_terminal_key` for the routing.
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::time::Instant;
 
 use crate::mode::Mode;
@@ -40,41 +40,20 @@ pub struct SideTerminal {
     /// alt-screen or has a quiet stretch. Without this latch, every
     /// stutter in the tool's output would flash the splash on / off.
     pub loading_done: Cell<bool>,
-    /// Bytes to drip into the tool's input box one byte per frame,
-    /// mimicking typing speed. Populated when `[ai] path_handoff =
-    /// true` and the active buffer had a path at open-time.
-    ///
-    /// Why the slow drip: every modern TUI uses timing-based paste
-    /// detection — characters arriving in microseconds get bucketed
-    /// as a "paste event" and the trailing Enter is treated as
-    /// pasted content (newline-in-input), not as a discrete submit
-    /// keypress. The three target tools (Claude / Codex / opencode)
-    /// each have their own threshold and their own handling of
-    /// paste-mode Enter, so a single bulk write fails differently
-    /// on each. Typing at ~15ms/byte stays under every tool's
-    /// paste-detection threshold; the trailing `\r` then registers
-    /// as a normal keystroke and submits cleanly.
-    ///
-    /// `RefCell<Vec<u8>>` rather than `Cell<Option<String>>` so we
-    /// can pop the head byte each frame without taking + reinserting
-    /// the whole string.
-    pub pending_initial_input: RefCell<Vec<u8>>,
+    /// The `@<path>` prefix to write into the tool's input box once
+    /// the loading splash has settled. Populated when
+    /// `[ai] path_handoff = true` and the active buffer had a path
+    /// at open-time. The user presses Enter manually to submit —
+    /// we tried auto-submit (drip + discrete `\r`) but it never
+    /// settled reliably across all three tools; each one
+    /// classified the Enter slightly differently depending on
+    /// timing. Pre-typing the path is the part that works
+    /// universally, so we keep just that.
+    pub pending_initial_input: Cell<Option<String>>,
     /// Captured the first time the loading splash flips off — the
-    /// flush waits a short grace AFTER this before starting the
-    /// per-byte drip so the tool's input field is fully wired up.
+    /// flush waits a per-tool quiet window AFTER this before
+    /// writing, so the input field is fully wired up by then.
     pub loading_settled_at: Cell<Option<Instant>>,
-    /// Deadline for the next per-byte write. `None` means "write
-    /// immediately on the next eligible frame"; after each write
-    /// we schedule the next byte one cadence-tick into the future.
-    pub next_byte_at: Cell<Option<Instant>>,
-    /// Deadline for the trailing Enter (`\r`). Set once the path
-    /// queue empties; consumed when the deadline elapses. The
-    /// pause between the last typed byte and the discrete Enter
-    /// has to be long enough that the tool's input handler reads
-    /// "user typed, then paused, then pressed Enter" instead of
-    /// "user typed several lines including a newline at the end" —
-    /// which is what happens when `\r` arrives at typing cadence.
-    pub pending_submit_at: Cell<Option<Instant>>,
 }
 
 /// Which terminal pane consumes keystrokes while `Mode::Terminal`
@@ -151,19 +130,14 @@ impl super::App {
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(t) => {
                 let now = Instant::now();
-                let pending_bytes = pending_input
-                    .map(|s| s.into_bytes())
-                    .unwrap_or_default();
                 self.side_terminals.push(SideTerminal {
                     terminal: t,
                     label: label.to_string(),
                     spawned_at: now,
                     last_byte_at: Cell::new(now),
                     loading_done: Cell::new(false),
-                    pending_initial_input: RefCell::new(pending_bytes),
+                    pending_initial_input: Cell::new(pending_input),
                     loading_settled_at: Cell::new(None),
-                    next_byte_at: Cell::new(None),
-                    pending_submit_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
                 self.terminal_focus = TerminalFocus::Side;
@@ -180,7 +154,7 @@ impl super::App {
         }
     }
 
-    /// Build the `@<rel-path>` payload to type into a freshly-
+    /// Build the `@<rel-path>` payload to write into a freshly-
     /// spawned side terminal, or `None` when handoff is disabled,
     /// the active buffer has no path, or the path can't be
     /// project-relativised. Project-relative anchoring is by cwd
@@ -188,11 +162,12 @@ impl super::App {
     /// expansion); when the path lies outside cwd we fall through
     /// to the absolute form because that still resolves.
     ///
-    /// The auto-submit Enter is NOT part of this string — it goes
-    /// out as a separate `\r` write after a short delay so the
-    /// tool's input handler sees the path-paste and the submit as
-    /// two distinct events. See `side_terminal_flush_pending_inputs`
-    /// for the two-phase write.
+    /// No trailing newline / Enter — the user submits manually.
+    /// Auto-submit was attempted and abandoned: each of the three
+    /// tools classified our programmatic `\r` differently
+    /// depending on timing, and no single tuning made all three
+    /// submit reliably. Pre-typing the path is the part that
+    /// works universally, so we keep just that.
     fn ai_path_handoff_prefix(&self) -> Option<String> {
         if !self.config.ai.path_handoff {
             return None;
@@ -209,40 +184,22 @@ impl super::App {
         Some(format!("@{display}"))
     }
 
-    /// Per-frame flush — drips the path one byte per frame at
-    /// typing cadence, then sends a discrete `\r` after a deliberate
-    /// pause so the tool reads it as a normal "user pressed Enter"
-    /// keystroke rather than as content typed inline with the path.
+    /// Per-frame flush — once the loading splash settles AND the
+    /// per-tool quiet window has elapsed (so the input field is
+    /// fully wired up), write the pending `@<path>` prefix into
+    /// the tool's input box as a single chunk and clear the slot.
+    /// The user then presses Enter to submit.
     ///
-    /// **Why the drip.** Every TUI we target detects pastes by
-    /// input timing — bytes arriving in microseconds get bucketed
-    /// as a paste event. Typing at ~15ms/byte stays well above each
-    /// tool's paste-detection threshold.
-    ///
-    /// **Why the long pause before `\r`.** Sending Enter at typing
-    /// cadence (15ms after the last byte) failed across all three
-    /// tools — the trailing `\r` got grouped into the same typing
-    /// burst and treated as newline-in-content. The pause has to
-    /// be long enough that the tool's input handler reads "user
-    /// typed, then paused, then pressed Enter" as three discrete
-    /// events.
-    ///
-    /// **Stages.**
-    /// 1. Splash settles — `loading_done` flips off.
-    /// 2. Wait for PTY output to go quiet (per-tool tuning via
-    ///    `handoff_tuning`).
-    /// 3. Drip path bytes at `PER_BYTE_DELAY` cadence.
-    /// 4. After the queue empties, wait `SUBMIT_DELAY` and write
-    ///    a discrete `\r`.
+    /// We tried auto-submit (drip the path at typing cadence,
+    /// follow with a discrete `\r`) and could not find a single
+    /// timing that submitted reliably across Claude / Codex /
+    /// opencode — each tool classified the trailing Enter
+    /// differently depending on context (autocomplete capture,
+    /// debounce window, paste-mode newline). Pre-typing the path
+    /// is the part that works universally, so that's what we
+    /// keep. Two-keypress flow (`:claude` → Enter) instead of
+    /// one, but reliable on all three tools.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        // Per-byte cadence. ~15ms reads as fast typing.
-        const PER_BYTE_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
-        // Pause between the last path byte and the trailing `\r`.
-        // Has to be long enough that the typing event clearly ends
-        // before the Enter keypress lands — 250ms wasn't enough on
-        // any tool (Enter still got grouped with typing). 800ms is
-        // empirically past every group-with-typing window observed.
-        const SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
         for s in &self.side_terminals {
             if side_terminal_loading(s) {
                 continue;
@@ -265,35 +222,13 @@ impl super::App {
             if !ready {
                 continue;
             }
-            // Phase 1: drip one byte per cadence tick.
-            let mut queue = s.pending_initial_input.borrow_mut();
-            if !queue.is_empty() {
-                let due = match s.next_byte_at.get() {
-                    Some(at) => now >= at,
-                    None => true,
-                };
-                if !due {
-                    continue;
-                }
-                let byte = queue.remove(0);
-                let _ = s.terminal.write_bytes(&[byte]);
-                if queue.is_empty() {
-                    // Last path byte just went out — schedule the
-                    // discrete Enter for a deliberate pause later.
-                    s.next_byte_at.set(None);
-                    s.pending_submit_at.set(Some(now + SUBMIT_DELAY));
-                } else {
-                    s.next_byte_at.set(Some(now + PER_BYTE_DELAY));
-                }
-                continue;
-            }
-            drop(queue);
-            // Phase 2: trailing Enter once the submit deadline elapses.
-            if let Some(at) = s.pending_submit_at.get() {
-                if now >= at {
-                    let _ = s.terminal.write_bytes(b"\r");
-                    s.pending_submit_at.set(None);
-                }
+            // Atomic write of the whole `@<path>` payload. The
+            // per-tool quiet guard already ensured the input field
+            // is ready, so front-of-path truncation isn't a risk
+            // here the way it was when we wrote at the splash
+            // boundary.
+            if let Some(prefix) = s.pending_initial_input.take() {
+                let _ = s.terminal.write_bytes(prefix.as_bytes());
             }
         }
     }

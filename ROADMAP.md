@@ -90,21 +90,27 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [x] **AI side pane file-context handoff (`[ai] path_handoff`).** Shipped, opt-in. Set
       `[ai] path_handoff = true` in `~/.config/binvim/config.toml`; from then on, opening
       `:claude` / `:codex` / `:opencode` with an active buffer that has a path pre-types
-      `@<cwd-relative path> ` into the freshly-spawned tool so the conversation starts
-      already aware of what you're editing. Universal across the three tools (they all accept
-      the `@`-prefix file reference) and tool-agnostic (no per-tool CLI flag coupling) — the
-      bytes just go into the PTY's input field after the loading splash settles.
+      `@<cwd-relative path>` into the freshly-spawned tool's input field so the
+      conversation starts already aware of what you're editing. You press Enter to submit.
+      Universal across the three tools (they all accept the `@`-prefix file reference) and
+      tool-agnostic (no per-tool CLI flag coupling) — the bytes go into the PTY after a
+      per-tool quiet window (Claude ~300ms, Codex ~800ms, opencode ~1500ms) so the input
+      field is wired up by then and the front of the path doesn't get eaten by startup.
       Design decisions:
       (a) **First open per session only.** Re-running `:claude` re-focuses the existing tab
           (the dedup-by-label path) without injecting again, so an in-progress conversation
           doesn't get `@path` stuffed back into it. Manually closing the tab and re-opening
           counts as a new first-open and re-injects.
-      (b) **File-only, no visual ranges yet.** v1 always injects the whole-file reference.
-          `@<path>:start-end` for visual selections is a follow-up if there's demand —
-          it'd need to capture the selection at open-time before mode flips back to Normal
-          via the picker / cmdline. Skipped from v1 because the cost (extra state, edge
-          cases around moving cursor between selection and `:claude`) isn't worth the
-          niche win for the dominant use case.
+      (b) **No auto-submit.** Spent a long iteration trying to make the trailing `\r`
+          register as a discrete Enter across all three tools (drip at typing cadence,
+          atomic write + pause, separate write at various delays, `\r` appended to the
+          typed sequence). Each tool classified the trailing Enter differently depending
+          on context (autocomplete popup capture, paste-mode newline-in-content, debounce
+          window) and no single timing worked everywhere. Pre-typing the path is the part
+          that worked universally, so that's where we landed. The user presses Enter once
+          to submit.
+      (c) **File-only, no visual ranges yet.** v1 always injects the whole-file reference.
+          `@<path>:start-end` for visual selections is a follow-up if there's demand.
       Off by default because `@path` references inline the file's contents into the first
       turn for most tools — a few thousand tokens on a 500-line buffer, more on generated
       bundles / JSON dumps — and that adds up over a day of pair-programming.
