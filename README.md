@@ -385,6 +385,13 @@ enabled = false   # GitHub Copilot via copilot-language-server (npm). Off by def
 [file_explorer]
 tree = false      # `<space>e` opens yazi by default; set true for the built-in sidebar tree.
 
+[ai]
+path_handoff = false  # On first open of `:claude` / `:codex` / `:opencode`, pre-type
+                      # `@<active-buffer cwd-relative path> ` into the tool so the
+                      # conversation starts already aware of what you're editing. Off
+                      # by default — `@<path>` inlines the file's contents into the
+                      # first turn for most tools, which adds up over a session.
+
 [lsp]
 semantic_tokens = true     # `textDocument/semanticTokens/full` layered over tree-sitter.
 document_highlight = true  # Surface2 bg on every occurrence of the symbol under the cursor.
@@ -419,6 +426,8 @@ document_highlight = true  # Surface2 bg on every occurrence of the symbol under
 **`[lsp]`** — both toggles default `true`. `semantic_tokens = false` gates the `textDocument/semanticTokens/full` request and the highlight-cache overlay off entirely (no wire traffic, no render delta). `document_highlight = false` gates `textDocument/documentHighlight` similarly. Useful if your LSP's semantic-token output collides badly with the tree-sitter pass, or if the on-every-cursor-settle highlight echo is more distracting than useful for your workflow.
 
 **`[file_explorer]`** — `tree = false` (the default) keeps `<leader>e` as the yazi shell-out. Setting `tree = true` switches it to a built-in left-side sidebar tree pane: `j` / `k` navigate, `Enter` / `l` opens a file (or expands a folder), `h` collapses (or jumps to the parent), `g` / `G` top / bottom, `r` rebuilds after external file changes, `<space>e` from inside the pane closes it. Three-state `<leader>e` toggle from the editor: closed → focused → unfocused-but-visible → closed, so clicking into a buffer drops focus without losing the pane. The file currently open in the focused window renders in the accent colour + bold so it stays identifiable even after the j/k cursor moves elsewhere; double-click in the pane opens a file. No file operations (create / delete / rename) yet.
+
+**`[ai]`** — `path_handoff = true` enables the file-context handoff for the right-side AI panes. With it on, the *first* open of `:claude` / `:codex` / `:opencode` while an active buffer has a path pre-types `@<cwd-relative path> ` into the tool's input field once its loading splash settles, so the conversation starts already aware of what you're editing. Re-running the command re-focuses the existing tab without injecting again (the dedup-by-label path stays quiet) so an in-progress conversation doesn't get `@path` stuffed back into it. Off by default because `@<path>` inlines the file's contents into the first turn for most tools — a few thousand tokens on a medium-sized buffer, more on generated bundles / JSON dumps. Whole-file references only for v1; visual-selection ranges (`@src/foo.rs:42-58`) would be a follow-up.
 
 **`[copilot]`** — `enabled = true` opts into GitHub Copilot. binvim attaches `copilot-language-server` (npm package `@github/copilot-language-server`, install with `npm i -g @github/copilot-language-server`) as an auxiliary LSP for every buffer. Authentication happens through the language server itself: on first launch the server emits a device-flow prompt with a verification URL + user code, which binvim surfaces in the status line. Visit the URL, enter the code, and the token persists at `~/.config/github-copilot/hosts.json` for the next session. The status auto-polls every 3 s while you complete the device flow so the editor flips to "signed in" within seconds of you clicking through. binvim itself doesn't carry an HTTP client or talk to GitHub directly — the language server handles all networking and auth. Once signed in, ghost completions appear inline as muted italic text after the cursor in Insert mode (~250 ms idle pause to trigger). Accept / dismiss split: `<Tab>` accepts the Copilot ghost (it wins over the LSP popup when both are visible — the popup auto-closes on accept), `<Enter>` accepts the LSP completion popup item, any other key dismisses the ghost. Default is `enabled = false`.
 

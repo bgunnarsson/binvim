@@ -87,25 +87,27 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       call returns, lazygit is done. No PTY plumbing, no tab management, no SIGWINCH dance.
       `<leader>g` became a git sub-leader; grep (formerly `<leader>g`) moved to `<leader>G`.
       `<leader>g` hold surfaces the hint via the which-key popup.
-- [ ] **AI side pane file-context handoff.** When the active buffer
-      has a path, pre-type `@<project-relative path> ` into the
-      newly-opened `:claude` / `:codex` / `:opencode` side pane so
-      the tool starts the conversation already aware of what the
-      user is editing. Universal — all three tools accept `@`-prefix
-      file references — and tool-agnostic (no per-tool CLI flag
-      coupling). Doesn't disable each tool's normal project-wide
-      context (CLAUDE.md / AGENTS.md auto-load, on-demand file
-      reads); the `@` reference is additive, not exclusive. The
-      cost worth flagging: `@<path>` inlines the file's contents
-      into the first turn for most tools, so every open of an
-      assistant against a large file (think 1k+ lines, generated
-      schemas, JSON dumps) eats 3–5k+ tokens before the user types
-      anything. Two design knobs to decide before shipping:
-      (a) every invocation vs. only the first focus per session
-      (so re-focusing an existing tab doesn't keep stuffing
-      `@path` into an ongoing conversation); (b) selection-aware
-      ranges (`@src/foo.rs:42-58`) when Visual mode is active vs.
-      file-only. **considering**
+- [x] **AI side pane file-context handoff (`[ai] path_handoff`).** Shipped, opt-in. Set
+      `[ai] path_handoff = true` in `~/.config/binvim/config.toml`; from then on, opening
+      `:claude` / `:codex` / `:opencode` with an active buffer that has a path pre-types
+      `@<cwd-relative path> ` into the freshly-spawned tool so the conversation starts
+      already aware of what you're editing. Universal across the three tools (they all accept
+      the `@`-prefix file reference) and tool-agnostic (no per-tool CLI flag coupling) — the
+      bytes just go into the PTY's input field after the loading splash settles.
+      Design decisions:
+      (a) **First open per session only.** Re-running `:claude` re-focuses the existing tab
+          (the dedup-by-label path) without injecting again, so an in-progress conversation
+          doesn't get `@path` stuffed back into it. Manually closing the tab and re-opening
+          counts as a new first-open and re-injects.
+      (b) **File-only, no visual ranges yet.** v1 always injects the whole-file reference.
+          `@<path>:start-end` for visual selections is a follow-up if there's demand —
+          it'd need to capture the selection at open-time before mode flips back to Normal
+          via the picker / cmdline. Skipped from v1 because the cost (extra state, edge
+          cases around moving cursor between selection and `:claude`) isn't worth the
+          niche win for the dominant use case.
+      Off by default because `@path` references inline the file's contents into the first
+      turn for most tools — a few thousand tokens on a 500-line buffer, more on generated
+      bundles / JSON dumps — and that adds up over a day of pair-programming.
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm

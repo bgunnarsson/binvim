@@ -40,6 +40,15 @@ pub struct SideTerminal {
     /// alt-screen or has a quiet stretch. Without this latch, every
     /// stutter in the tool's output would flash the splash on / off.
     pub loading_done: Cell<bool>,
+    /// Bytes to write to the PTY once the tool's input field is
+    /// ready. Populated when `[ai] path_handoff = true` and the
+    /// active buffer had a path at open-time; the actual write
+    /// happens on the first frame `loading_done` flips true, so the
+    /// `@<path>` text lands in the tool's input box (post-splash)
+    /// rather than getting eaten by startup chatter (pre-splash).
+    /// `Cell` so the per-frame writer can clear it from a `&App`
+    /// render path without an outer `&mut`.
+    pub pending_initial_input: Cell<Option<String>>,
 }
 
 /// Which terminal pane consumes keystrokes while `Mode::Terminal`
@@ -104,6 +113,15 @@ impl super::App {
         // never sees a residual shell prompt.
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
         let launcher = format!("exec {command}");
+        // Compute the `@<path> ` prefix on the spawn path only — the
+        // re-focus branch above returns early so an ongoing
+        // conversation never gets `@path` re-stuffed into it. Honour
+        // [ai] path_handoff (default off); when on, anchor the path
+        // on the cwd so generated `@src/foo.rs` references resolve in
+        // the tool's eye against the same root binvim is editing
+        // from. Falls back gracefully when the active buffer has no
+        // path or the strip-prefix doesn't apply.
+        let pending_input = self.ai_path_handoff_prefix();
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(t) => {
                 let now = Instant::now();
@@ -113,6 +131,7 @@ impl super::App {
                     spawned_at: now,
                     last_byte_at: Cell::new(now),
                     loading_done: Cell::new(false),
+                    pending_initial_input: Cell::new(pending_input),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
                 self.terminal_focus = TerminalFocus::Side;
@@ -126,6 +145,48 @@ impl super::App {
                 }
                 self.status_msg = format!("{label}: spawn failed: {e:#}");
             }
+        }
+    }
+
+    /// Build the `@<rel-path> ` string to inject into a freshly-
+    /// spawned side terminal, or `None` when handoff is disabled,
+    /// the active buffer has no path, or the path can't be
+    /// project-relativised. Project-relative anchoring is by cwd
+    /// (matches what the tools expect for their `@<path>`
+    /// expansion); when the path lies outside cwd we fall through
+    /// to the absolute form because that still resolves.
+    fn ai_path_handoff_prefix(&self) -> Option<String> {
+        if !self.config.ai.path_handoff {
+            return None;
+        }
+        let path = self.buffer.path.as_ref()?;
+        let cwd = std::env::current_dir().ok();
+        let display = match cwd.as_ref().and_then(|c| path.strip_prefix(c).ok()) {
+            Some(rel) => rel.display().to_string(),
+            None => path.display().to_string(),
+        };
+        if display.is_empty() {
+            return None;
+        }
+        Some(format!("@{display} "))
+    }
+
+    /// Per-frame flush: if any side terminal has finished its
+    /// loading splash AND still carries a `pending_initial_input`,
+    /// write the prefix to the PTY and clear the slot. Called from
+    /// the main loop after `side_terminal_drain_if_open` so the
+    /// write happens on the same tick the splash flips off (the
+    /// tool's input field is ready by then, so the bytes land in
+    /// the prompt rather than getting eaten by startup chatter).
+    pub(super) fn side_terminal_flush_pending_inputs(&self) {
+        for s in &self.side_terminals {
+            if side_terminal_loading(s) {
+                continue;
+            }
+            let Some(prefix) = s.pending_initial_input.take() else {
+                continue;
+            };
+            let _ = s.terminal.write_bytes(prefix.as_bytes());
         }
     }
 

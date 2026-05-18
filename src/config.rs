@@ -24,6 +24,8 @@ pub struct Config {
     pub lsp: LspConfig,
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 /// LSP feature toggles. All default on — semantic tokens layer
@@ -173,6 +175,30 @@ pub struct FileExplorerConfig {
     pub tree: bool,
 }
 
+/// AI side-pane integration. Today's only knob is `path_handoff`,
+/// which controls whether opening `:claude` / `:codex` / `:opencode`
+/// pre-types `@<project-relative-path> ` into the freshly-spawned
+/// tool so it starts the conversation already aware of the active
+/// buffer. Off by default — the inline-file expansion most tools do
+/// on `@<path>` references inflates the first turn by a few thousand
+/// tokens (more for generated bundles / JSON dumps), which adds up
+/// over a day of pair-programming. Opt in via:
+///
+/// ```toml
+/// [ai]
+/// path_handoff = true
+/// ```
+///
+/// Only the FIRST open of a side-pane tab gets the injection; re-
+/// focusing an existing tab (the dedup-by-label path) leaves the
+/// in-progress conversation untouched. Visual-mode line ranges are
+/// not yet honoured — the injection is always the whole file.
+#[derive(Debug, Default, Deserialize)]
+pub struct AiConfig {
+    #[serde(default)]
+    pub path_handoff: bool,
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -189,6 +215,7 @@ impl Default for Config {
             copilot: CopilotConfig::default(),
             lsp: LspConfig::default(),
             file_explorer: FileExplorerConfig::default(),
+            ai: AiConfig::default(),
         }
     }
 }
