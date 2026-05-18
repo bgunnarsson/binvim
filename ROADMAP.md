@@ -74,6 +74,15 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       consumes the y/N confirmation (`remove_dir_all` for folders;
       anything other than `y`/`Y` cancels). `R` rebuilds (was both
       `r` and `R`; `r` moved to rename).
+- [ ] **Lazygit integration (`:lazygit`).** Open lazygit in a PTY-backed full-window pane (or a bottom
+      split, sized to taste), reusing the existing `Terminal` infrastructure — vte-parsed grid, SGR
+      colours, scrollback, mouse forwarding — so lazygit's TUI and its drag-to-stage / scroll
+      interactions work without bespoke wiring. Single mode while focused: every keystroke (incl.
+      `Esc`) forwards to the PTY; `<C-w>` is the escape hatch back to the window-leader parser.
+      Keybind `<leader>gg` to toggle. On lazygit exit (and on a debounced focus-out tick while it's
+      running), refresh the gutter diff for every open buffer so stages / commits / checkouts
+      reflect immediately. This replaces the would-have-been "source-control panel" — lazygit
+      already nailed that UI, no reason to reinvent it. **planned**
 - [ ] **AI side pane file-context handoff.** When the active buffer
       has a path, pre-type `@<project-relative path> ` into the
       newly-opened `:claude` / `:codex` / `:opencode` side pane so
@@ -173,6 +182,16 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       server-side commands like rust-analyzer's `rust-analyzer.runSingle` are intercepted client-side and
       routed into the integrated test runner (`cmd_test_nearest` codepath) so lens + `:testnearest` share
       one engine.
+- [ ] **Project-wide refactor UI.** LSP rename today applies the server's `WorkspaceEdit` blind —
+      every changed file is mutated in place with no preview. The refactor UI intercepts the same
+      `WorkspaceEdit` (rename, plus any code action that returns workspace edits like
+      "extract function" / "inline variable" / "move to module") and routes it through a preview
+      overlay before commit: file list on the left, before/after diff per hunk on the right,
+      `<Tab>` cycles files, `<Space>` toggles per-hunk accept, `a` accept-all / `r` reject-all,
+      `<Enter>` applies the accepted subset, `Esc` / `q` aborts. Reuses the existing picker engine
+      for the file list and the existing `apply_workspace_edit` codepath for the commit phase, so
+      the new surface is the preview + selection state, not the edit machinery itself. Opt in via
+      `[lsp] refactor_preview = true` initially; flip the default once it's settled. **planned**
 - [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [x] **`window/showMessage` and `window/logMessage` surfacing.** Both
@@ -263,6 +282,21 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       (`module: pytest`, `args: [<file>::<test>, -s]`) and go (`mode: test`, `args: ["-test.run",
       "^<name>$", "-test.v"]`). cargo / dotnet / vitest fall back to a "not yet supported" status
       message — wire format is in place, the per-adapter test-binary discovery is the open part.
+
+## Task runner
+
+- [ ] **Task runner.** Generic build / lint / dev-server runner, adapter pattern parallel to the test
+      runner. One `TaskAdapterSpec` per toolchain in `task/specs.rs`, picked by walking the active
+      buffer up for the adapter's root markers: cargo (`build`, `check`, `clippy`, `doc`), pnpm /
+      npm / yarn (scripts harvested from `package.json`), go (`build`, `vet`, `generate`), dotnet
+      (`build`, `format`, `restore`), uv / pip (project scripts), make (Makefile targets). `:task`
+      opens a fuzzy picker of every discovered task across matching adapters; `:tasklast` re-runs
+      the most recent request; `:taskcancel` kills the in-flight task. Output streams into a
+      `:health`-style scrollable overlay; tool diagnostics with `path:line:col` patterns populate
+      the quickfix list (the test-runner's location parsers are mostly reusable). Long-running
+      tasks (`pnpm dev`, `cargo watch`, `npm run start`) can route into a `:terminal` tab instead
+      of the overlay via a `:task!` variant so the user can keep them visible while editing.
+      **planned**
 
 ## Quality / Tooling
 
