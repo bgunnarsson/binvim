@@ -11,7 +11,7 @@
 //! tracks which one consumes keystrokes while `Mode::Terminal` is
 //! active — see `app::input::handle_terminal_key` for the routing.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::time::Instant;
 
 use crate::mode::Mode;
@@ -40,34 +40,38 @@ pub struct SideTerminal {
     /// alt-screen or has a quiet stretch. Without this latch, every
     /// stutter in the tool's output would flash the splash on / off.
     pub loading_done: Cell<bool>,
-    /// Bytes to write to the PTY once the tool's input field is
-    /// ready. Populated when `[ai] path_handoff = true` and the
-    /// active buffer had a path at open-time; the actual write
-    /// happens on the first frame `loading_done` flips true, so the
-    /// `@<path>` text lands in the tool's input box (post-splash)
-    /// rather than getting eaten by startup chatter (pre-splash).
-    /// `Cell` so the per-frame writer can clear it from a `&App`
-    /// render path without an outer `&mut`.
-    pub pending_initial_input: Cell<Option<String>>,
+    /// Bytes to drip into the tool's input box one byte per frame,
+    /// mimicking typing speed. Populated when `[ai] path_handoff =
+    /// true` and the active buffer had a path at open-time.
+    ///
+    /// Why the slow drip: every modern TUI uses timing-based paste
+    /// detection — characters arriving in microseconds get bucketed
+    /// as a "paste event" and the trailing Enter is treated as
+    /// pasted content (newline-in-input), not as a discrete submit
+    /// keypress. The three target tools (Claude / Codex / opencode)
+    /// each have their own threshold and their own handling of
+    /// paste-mode Enter, so a single bulk write fails differently
+    /// on each. Typing at ~15ms/byte stays under every tool's
+    /// paste-detection threshold; the trailing `\r` then registers
+    /// as a normal keystroke and submits cleanly.
+    ///
+    /// `RefCell<Vec<u8>>` rather than `Cell<Option<String>>` so we
+    /// can pop the head byte each frame without taking + reinserting
+    /// the whole string.
+    pub pending_initial_input: RefCell<Vec<u8>>,
     /// Captured the first time the loading splash flips off — the
-    /// flush uses this to delay the path-write by a grace window
-    /// AFTER the splash, not just at the splash boundary. Different
-    /// tools wire up their input field at different speeds: Claude
-    /// enters alt-screen after a deliberate logo/version splash and
-    /// is input-ready by the time we see it; Codex and opencode
-    /// enter alt-screen earlier, so the path text we write right at
-    /// `loading_done` lands before their input field exists and gets
-    /// silently dropped. The grace window absorbs that difference.
+    /// flush waits a short grace AFTER this before starting the
+    /// per-byte drip so the tool's input field is fully wired up.
     pub loading_settled_at: Cell<Option<Instant>>,
-    /// Deadline for the trailing Enter (`\r`) that submits the
-    /// path. Set once the path bytes are written; consumed when
-    /// `Instant::now()` crosses the deadline. The two-phase write
-    /// matters because Claude Code / Codex / opencode all process
-    /// input event-by-event — sending `@path\r` as one contiguous
-    /// chunk lets the tool absorb the path text but skips the
-    /// submit (the trailing CR gets folded into the same paste
-    /// event, never registers as a discrete Enter keypress). A
-    /// small gap between the two writes makes them separate events.
+    /// Deadline for the next per-byte write. `None` means "write
+    /// immediately on the next eligible frame"; after each write
+    /// we schedule the next byte one cadence-tick into the future.
+    pub next_byte_at: Cell<Option<Instant>>,
+    /// Deadline for the trailing Enter (`\r`). Set once the input
+    /// queue empties; cleared after the submit fires. Sitting in
+    /// its own field rather than inline with the queue so an empty
+    /// queue with no submit scheduled (the no-handoff case) reads
+    /// as cleanly idle.
     pub pending_submit_at: Cell<Option<Instant>>,
 }
 
@@ -145,14 +149,18 @@ impl super::App {
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(t) => {
                 let now = Instant::now();
+                let pending_bytes = pending_input
+                    .map(|s| s.into_bytes())
+                    .unwrap_or_default();
                 self.side_terminals.push(SideTerminal {
                     terminal: t,
                     label: label.to_string(),
                     spawned_at: now,
                     last_byte_at: Cell::new(now),
                     loading_done: Cell::new(false),
-                    pending_initial_input: Cell::new(pending_input),
+                    pending_initial_input: RefCell::new(pending_bytes),
                     loading_settled_at: Cell::new(None),
+                    next_byte_at: Cell::new(None),
                     pending_submit_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
@@ -199,46 +207,51 @@ impl super::App {
         Some(format!("@{display}"))
     }
 
-    /// Per-frame flush: a three-stage write that walks `@path` and
-    /// its submitting `\r` through the tool's startup grace windows
-    /// so neither byte gets eaten.
+    /// Per-frame flush — drips the pending `@<path>` queue into the
+    /// tool's input box one byte per frame at typing cadence, then
+    /// submits with a discrete `\r`.
     ///
-    /// 1. **Splash settles.** `loading_done` flips off when alt-screen
-    ///    enters / output goes quiet / hard cap elapses. We capture
-    ///    that moment in `loading_settled_at`.
-    /// 2. **Post-splash grace.** Wait `POST_SPLASH_GRACE` before the
-    ///    first byte. Claude doesn't strictly need this (it buffers
-    ///    paste events during init); Codex and opencode do (their
-    ///    input field isn't wired up the instant alt-screen lands,
-    ///    so bytes arriving right at the splash boundary get
-    ///    silently dropped). We standardise on the longer wait
-    ///    because the user-visible cost is < 1 frame at human scale.
-    /// 3. **Path → Enter.** Path text first, then `\r` after
-    ///    `SUBMIT_DELAY`. The gap matters because every tool we
-    ///    target processes input event-by-event — without it, the
-    ///    trailing CR rides along on the same paste-burst as the
-    ///    path and the input handler treats it as content, not a
-    ///    discrete Enter keypress.
+    /// **Why the drip.** Every TUI we target (Claude / Codex /
+    /// opencode) detects pastes by input timing — bytes arriving in
+    /// microseconds are bucketed as a single paste event and the
+    /// trailing Enter is treated as pasted content (a newline-in-
+    /// input), not a submit. A single bulk write of `@path\r`
+    /// therefore fails on every tool, in tool-specific ways:
+    /// Claude swallows the `\r` silently, Codex inserts a literal
+    /// newline below the path, opencode drops the whole burst
+    /// during boot. Typing at ~15ms/byte stays well above each
+    /// tool's paste-detection threshold; the trailing `\r` then
+    /// registers as a normal keystroke and submits cleanly.
+    ///
+    /// **Stages.**
+    /// 1. Splash settles — `loading_done` flips off.
+    /// 2. Brief post-splash grace so the input field is wired up.
+    /// 3. Drip one byte per frame at `PER_BYTE_DELAY` cadence.
+    /// 4. Once the queue empties, wait `SUBMIT_DELAY` and write
+    ///    the discrete trailing `\r`.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        // Post-splash settling time before we write the first byte.
-        // Tuned for Codex / opencode, which need ~half a second
-        // between alt-screen and a usable input field. Claude is
-        // fine without it but doesn't mind the wait.
-        const POST_SPLASH_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
-        // Gap between writing the path and writing the trailing
-        // `\r`. Long enough for the input handler to process the
-        // paste event as a discrete event before the Enter; short
-        // enough to read as "instant" to the user.
+        // Short grace post-splash so the tool's input field is
+        // fully wired up before the first byte lands. Tuned so
+        // Claude (which is input-ready as soon as alt-screen
+        // enters) doesn't time out into "no longer expecting
+        // bytes" state, and so opencode (which boots more
+        // gradually) has runway to finish initialisation.
+        const POST_SPLASH_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+        // Per-byte cadence. ~15ms reads as fast typing but stays
+        // well above every paste-detection threshold I've seen in
+        // the TUI libraries the three tools are built on (ink /
+        // ratatui-ish / bubbletea).
+        const PER_BYTE_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
+        // Final pause between the last byte of the path and the
+        // trailing Enter. The discrete-event boundary the tools
+        // need to treat `\r` as submit rather than content.
         const SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
         for s in &self.side_terminals {
             if side_terminal_loading(s) {
                 continue;
             }
-            // Record the splash-done moment on first sight so the
-            // grace window anchors against the actual splash exit,
-            // not against spawn time (splash duration varies per
-            // tool — see the splash detection in
-            // `side_terminal_loading`).
+            // Anchor the grace window on splash-exit, not on spawn —
+            // splash duration varies per tool, see `side_terminal_loading`.
             let settled_at = match s.loading_settled_at.get() {
                 Some(t) => t,
                 None => {
@@ -247,18 +260,40 @@ impl super::App {
                     now
                 }
             };
-            if Instant::now().duration_since(settled_at) < POST_SPLASH_GRACE {
+            let now = Instant::now();
+            if now.duration_since(settled_at) < POST_SPLASH_GRACE {
                 continue;
             }
-            // Phase 1: write the path text, schedule the submit.
-            if let Some(prefix) = s.pending_initial_input.take() {
-                let _ = s.terminal.write_bytes(prefix.as_bytes());
-                s.pending_submit_at.set(Some(Instant::now() + SUBMIT_DELAY));
+            // Phase 1: drip one byte from the path queue per
+            // cadence tick. The `RefCell` borrow has to drop
+            // before we touch `pending_submit_at` below since
+            // those are sibling fields on the same struct.
+            let mut queue = s.pending_initial_input.borrow_mut();
+            if !queue.is_empty() {
+                let due = match s.next_byte_at.get() {
+                    Some(at) => now >= at,
+                    None => true,
+                };
+                if !due {
+                    continue;
+                }
+                let byte = queue.remove(0);
+                let _ = s.terminal.write_bytes(&[byte]);
+                if queue.is_empty() {
+                    // Last byte just went out — schedule the
+                    // submit and clear the per-byte timer.
+                    s.next_byte_at.set(None);
+                    s.pending_submit_at.set(Some(now + SUBMIT_DELAY));
+                } else {
+                    s.next_byte_at.set(Some(now + PER_BYTE_DELAY));
+                }
                 continue;
             }
-            // Phase 2: trailing Enter once the delay has elapsed.
+            drop(queue);
+            // Phase 2: trailing Enter once the submit deadline
+            // has elapsed.
             if let Some(at) = s.pending_submit_at.get() {
-                if Instant::now() >= at {
+                if now >= at {
                     let _ = s.terminal.write_bytes(b"\r");
                     s.pending_submit_at.set(None);
                 }
