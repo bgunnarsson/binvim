@@ -24,7 +24,12 @@ pub struct Config {
     pub lsp: LspConfig,
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
-    #[serde(default)]
+    // Accept both `[ai]` (matches the other lowercase section names —
+    // `[copilot]`, `[lsp]`, `[file_explorer]`) and `[AI]` because the
+    // acronym capitalisation is what most users reach for. The alias
+    // is one-way: serializing back would always emit `ai`, but we
+    // never serialize the config out anyway.
+    #[serde(default, alias = "AI")]
     pub ai: AiConfig,
 }
 
@@ -729,5 +734,32 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "text" => None,
         "regex" => Some(CATP_PINK),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ai_section_lowercase_binds_path_handoff() {
+        let cfg: Config = toml::from_str("[ai]\npath_handoff = true\n").unwrap();
+        assert!(cfg.ai.path_handoff);
+    }
+
+    #[test]
+    fn ai_section_uppercase_alias_also_binds() {
+        // `[AI]` is the natural acronym capitalisation — users
+        // shouldn't have to know the internal lowercase convention
+        // for the feature to switch on. Serde alias makes both
+        // section names route into the same struct.
+        let cfg: Config = toml::from_str("[AI]\npath_handoff = true\n").unwrap();
+        assert!(cfg.ai.path_handoff);
+    }
+
+    #[test]
+    fn ai_section_defaults_to_false_when_absent() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(!cfg.ai.path_handoff);
     }
 }
