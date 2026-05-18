@@ -130,6 +130,48 @@ impl super::App {
         )
     }
 
+    /// Word at an explicit `(line, col)` — same identifier-class scan
+    /// as `word_under_cursor` but restricted to `[A-Za-z0-9_]` runs so
+    /// it can be used to derive a grep needle from an LSP-provided
+    /// position (code lens click, etc.) without picking up surrounding
+    /// punctuation.
+    pub(super) fn identifier_at(&self, line: usize, col: usize) -> Option<String> {
+        let line_len = self.buffer.line_len(line);
+        if line_len == 0 {
+            return None;
+        }
+        let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+        let here = self.buffer.char_at(line, col)?;
+        if !is_ident(here) {
+            return None;
+        }
+        let mut start = col;
+        while start > 0 {
+            let c = self.buffer.char_at(line, start - 1)?;
+            if is_ident(c) {
+                start -= 1;
+            } else {
+                break;
+            }
+        }
+        let mut end = col + 1;
+        while end < line_len {
+            let c = self.buffer.char_at(line, end)?;
+            if is_ident(c) {
+                end += 1;
+            } else {
+                break;
+            }
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        Some(
+            self.buffer
+                .rope
+                .slice((line_start + start)..(line_start + end))
+                .to_string(),
+        )
+    }
+
     pub(super) fn run_search_next(&self, reverse: bool, _count: usize) -> MotionResult {
         let Some((query, was_backward)) = self.last_search.clone() else {
             return MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive };

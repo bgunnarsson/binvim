@@ -1894,7 +1894,19 @@ impl super::App {
         {
             let items = extract_show_references_locations(&cmd.arguments);
             if !items.is_empty() {
-                self.open_locations_picker("References", items);
+                // Route through the merge step so the Razor grep
+                // augment also fires on code-lens clicks (the lens
+                // carries the locations inline, so without this it
+                // would bypass `present_references` entirely). The
+                // needle is derived from the lens's encoded position,
+                // not the cursor — the user might have clicked the
+                // lens with the mouse from anywhere on screen.
+                if let Some(path) = self.buffer.path.clone() {
+                    let needle = extract_text_document_position(&cmd.arguments)
+                        .and_then(|(line, col)| self.identifier_at(line, col));
+                    self.pending_ref_augment = razor_ref_augment(&path, needle);
+                }
+                self.present_references(items);
                 return;
             }
             self.status_msg = "code lens: no references attached".into();
