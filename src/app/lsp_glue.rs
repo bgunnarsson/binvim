@@ -4,16 +4,19 @@
 
 use anyhow::Result;
 use serde_json::Value as JsonValue;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use crate::lsp::{
     CodeActionItem, CompletionItem, Diagnostic, LocationItem, LspEvent, Severity, SymbolItem,
+    find_workspace_root,
 };
 use crate::mode::Mode;
 use crate::picker::{PickerKind, PickerPayload, PickerState};
 
-use super::state::{CompletionState, HoverState, CODE_LENS_EMPTY_RETRY, LSP_SYNC_DEBOUNCE};
+use super::state::{
+    CODE_LENS_EMPTY_RETRY, CompletionState, HoverState, LSP_SYNC_DEBOUNCE, PendingRefAugment,
+};
 
 impl super::App {
     pub(super) fn handle_lsp_events(&mut self, events: Vec<LspEvent>) {
@@ -44,7 +47,7 @@ impl super::App {
                     self.signature_help = Some(sig);
                 }
                 LspEvent::References { items } => {
-                    self.open_locations_picker("References", items);
+                    self.present_references(items);
                 }
                 LspEvent::Symbols { items, workspace } => {
                     if workspace {
@@ -310,6 +313,13 @@ impl super::App {
                             _ => {}
                         }
                     }
+                    if kind == "References" {
+                        // Server errored on references — still run the
+                        // Razor grep augment if it was queued.
+                        if self.pending_ref_augment.is_some() {
+                            self.present_references(Vec::new());
+                        }
+                    }
                 }
                 LspEvent::NotFound(kind) => {
                     if kind == "completions" {
@@ -330,6 +340,12 @@ impl super::App {
                         // shouting about. Swallow it; the ghost render
                         // path already shows nothing when there's
                         // nothing to show.
+                    } else if kind == "references" {
+                        // Hand off to the merge step — it'll fold in
+                        // the Razor grep augment if one was queued,
+                        // or post the "no references" status if both
+                        // sources are empty.
+                        self.present_references(Vec::new());
                     } else {
                         self.status_msg = format!("LSP: no {kind} found");
                     }
@@ -593,9 +609,47 @@ impl super::App {
         self.lsp_sync_active();
         let line = self.window.cursor.line;
         let col = self.window.cursor.col;
-        if !self.lsp.request_references(&path, line, col) {
+
+        // Stash the C# / Razor augment context up front — it survives
+        // both success and failure paths so the merge step can fire
+        // regardless of how the LSP reply arrives.
+        self.pending_ref_augment = razor_ref_augment(&path, self.word_under_cursor());
+
+        if self.lsp.request_references(&path, line, col) {
+            return;
+        }
+        // No LSP client attached to this buffer. If we still have an
+        // augment to grep, present the grep-only list; otherwise this
+        // is a true "nothing to do".
+        if self.pending_ref_augment.is_some() {
+            self.present_references(Vec::new());
+        } else {
             self.status_msg = "LSP: not active for this buffer".into();
         }
+    }
+
+    /// Merge the LSP `textDocument/references` result with the Razor
+    /// grep augment (if one was queued) and open the locations picker.
+    /// Called from every references reply path — success, empty
+    /// (`NotFound("references")`), and failure (`RequestFailed`) —
+    /// so the augment fires whether the server returned matches or not.
+    fn present_references(&mut self, items: Vec<LocationItem>) {
+        let augment = self.pending_ref_augment.take();
+        let mut merged = items;
+        if let Some(aug) = augment {
+            let grep_items = run_razor_ref_grep(&aug);
+            let mut seen: std::collections::HashSet<(PathBuf, usize, usize)> = merged
+                .iter()
+                .map(|i| (i.path.clone(), i.line, i.col))
+                .collect();
+            for g in grep_items {
+                let key = (g.path.clone(), g.line, g.col);
+                if seen.insert(key) {
+                    merged.push(g);
+                }
+            }
+        }
+        self.open_locations_picker("References", merged);
     }
 
     pub(super) fn lsp_request_signature_help(&mut self) {
@@ -2107,7 +2161,44 @@ pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent:
 
 #[cfg(test)]
 mod tests {
-    use super::expand_snippet;
+    use super::{expand_snippet, razor_ref_augment};
+    use std::path::Path;
+
+    #[test]
+    fn ref_augment_cs_buffer_targets_razor_extensions() {
+        let aug = razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("Bar".into())).unwrap();
+        assert_eq!(aug.needle, "Bar");
+        assert_eq!(aug.extensions, vec!["cshtml", "razor"]);
+    }
+
+    #[test]
+    fn ref_augment_razor_buffer_includes_cs() {
+        let aug = razor_ref_augment(Path::new("/tmp/Index.cshtml"), Some("Model".into())).unwrap();
+        assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
+        let aug = razor_ref_augment(Path::new("/tmp/Page.razor"), Some("Model".into())).unwrap();
+        assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
+    }
+
+    #[test]
+    fn ref_augment_skips_unrelated_buffers() {
+        assert!(razor_ref_augment(Path::new("/tmp/main.rs"), Some("foo".into())).is_none());
+        assert!(razor_ref_augment(Path::new("/tmp/script.ts"), Some("foo".into())).is_none());
+    }
+
+    #[test]
+    fn ref_augment_skips_non_identifier_needles() {
+        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("=>".into())).is_none());
+        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("@".into())).is_none());
+        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), Some(String::new())).is_none());
+        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), None).is_none());
+    }
+
+    #[test]
+    fn ref_augment_allows_underscore_identifiers() {
+        let aug =
+            razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("_private_field".into())).unwrap();
+        assert_eq!(aug.needle, "_private_field");
+    }
 
     #[test]
     fn snippet_plain_text_passthrough() {
@@ -2242,6 +2333,98 @@ fn filter_completion_items(items: Vec<CompletionItem>, prefix: &str) -> Vec<Comp
     tiered.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.sort_text.cmp(&b.1.sort_text)));
     tiered.truncate(VISIBLE_CAP);
     tiered.into_iter().map(|(_, item)| item).collect()
+}
+
+/// Build the Razor / C# find-references augment for a buffer. The C#
+/// language servers we ship (csharp-ls, OmniSharp) don't index
+/// `.cshtml` / `.razor` files, so a `textDocument/references` request
+/// for a C# symbol misses every Razor use — and references *from* a
+/// Razor buffer don't work at all because the Razor LSP itself is
+/// unwired. We work around both by grepping the relevant file
+/// extensions for the symbol name and merging the matches into the
+/// LSP reply. Returns `None` for buffers / cursor positions where
+/// the augment doesn't apply.
+fn razor_ref_augment(path: &Path, needle: Option<String>) -> Option<PendingRefAugment> {
+    let needle = needle?;
+    if needle.is_empty() {
+        return None;
+    }
+    // Identifier-only — punctuation runs (`@`, `=>`, `=`) are useless
+    // as a needle and would produce thousands of bogus matches.
+    if !needle.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())?
+        .to_ascii_lowercase();
+    // From a .cs buffer the LSP already covers .cs, so grep is only
+    // useful for the extensions it can't see. From a Razor buffer the
+    // LSP is unusable, so grep is the whole story — include .cs too.
+    let extensions: Vec<&'static str> = match ext.as_str() {
+        "cs" => vec!["cshtml", "razor"],
+        "cshtml" | "razor" => vec!["cs", "cshtml", "razor"],
+        _ => return None,
+    };
+    let markers = [
+        "*.sln".to_string(),
+        "*.csproj".to_string(),
+        "*.fsproj".to_string(),
+        ".git".to_string(),
+    ];
+    let start = path.parent().unwrap_or_else(|| Path::new("."));
+    let root = find_workspace_root(start, &markers);
+    Some(PendingRefAugment {
+        needle,
+        extensions,
+        root,
+    })
+}
+
+/// Run `rg` for the augment's needle across the listed extensions and
+/// return one `LocationItem` per match. Whole-word, fixed-string match
+/// against `<root>` so PascalCase C# identifiers don't get matched as
+/// substrings of unrelated names. ripgrep emits `path:line:col:content`
+/// — we drop the content column. Silently returns an empty list when
+/// `rg` is missing from PATH or the pattern has no matches; the merge
+/// step handles the "empty + empty" case via the picker's own empty-
+/// list status message.
+fn run_razor_ref_grep(aug: &PendingRefAugment) -> Vec<LocationItem> {
+    let mut rg = std::process::Command::new("rg");
+    rg.arg("--no-heading")
+        .arg("--color=never")
+        .arg("--line-number")
+        .arg("--column")
+        .arg("--word-regexp")
+        .arg("--fixed-strings");
+    for ext in &aug.extensions {
+        rg.arg("-g").arg(format!("*.{ext}"));
+    }
+    rg.arg("--").arg(&aug.needle).arg(&aug.root);
+    let Ok(out) = rg.output() else {
+        return Vec::new();
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let mut items = Vec::new();
+    for line in stdout.lines() {
+        // `path:line:col:content` — content may itself contain ':',
+        // so cap the split at 4 and discard the trailing field.
+        let mut parts = line.splitn(4, ':');
+        let path = parts.next();
+        let lnum = parts.next();
+        let cnum = parts.next();
+        let (Some(p), Some(l), Some(c)) = (path, lnum, cnum) else {
+            continue;
+        };
+        let Ok(l): Result<usize, _> = l.parse() else { continue };
+        let Ok(c): Result<usize, _> = c.parse() else { continue };
+        items.push(LocationItem {
+            path: PathBuf::from(p),
+            line: l.saturating_sub(1),
+            col: c.saturating_sub(1),
+        });
+    }
+    items
 }
 
 /// True if every char of `needle` appears in `hay` in order (not necessarily

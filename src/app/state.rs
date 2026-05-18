@@ -161,6 +161,19 @@ pub struct SnippetSession {
     pub anchor_chars: usize,
 }
 
+/// Stashed when a `textDocument/references` request is fired for a C# or
+/// Razor buffer. The LSP servers we ship for C# (csharp-ls / OmniSharp)
+/// don't index `.cshtml` / `.razor` files, so the server's reply misses
+/// every Razor use of a symbol. When the reply arrives (success, empty,
+/// or error) we run a ripgrep pass for `needle` across the listed
+/// extensions under `root` and merge the matches into the picker.
+#[derive(Debug, Clone)]
+pub struct PendingRefAugment {
+    pub needle: String,
+    pub extensions: Vec<&'static str>,
+    pub root: std::path::PathBuf,
+}
+
 pub struct CompletionState {
     pub items: Vec<CompletionItem>,
     pub selected: usize,

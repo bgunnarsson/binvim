@@ -385,6 +385,11 @@ pub struct App {
     /// rename request needs the original `(line, col)` even after the
     /// prompt has stolen focus and the user has moved focus around.
     pub rename_anchor: Option<(PathBuf, usize, usize, String)>,
+    /// C# / Razor find-references augment context. Stashed when the
+    /// request is fired; consumed when the LSP reply arrives so a
+    /// ripgrep pass across `.cshtml` / `.razor` can be merged into
+    /// the picker. See `state::PendingRefAugment`.
+    pub pending_ref_augment: Option<crate::app::state::PendingRefAugment>,
     /// Computed fold ranges for the active buffer (cached against `folds_version`).
     pub folds: Vec<FoldRange>,
     pub folds_version: u64,
@@ -802,6 +807,7 @@ impl App {
             pending_debug_project: None,
             pending_debug_profiles: Vec::new(),
             rename_anchor: None,
+            pending_ref_augment: None,
             folds: Vec::new(),
             folds_version: u64::MAX,
             closed_folds: std::collections::HashSet::new(),
