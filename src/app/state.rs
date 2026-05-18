@@ -521,12 +521,16 @@ pub fn leader_entries() -> Vec<(String, String)> {
 }
 
 pub fn ai_prefix_entries() -> Vec<(String, String)> {
+    // Lowercase pairs first (the "just open" variants), then the
+    // uppercase handoff variants grouped together. Reads as "pick
+    // your tool, then optionally add file context" rather than
+    // interleaving the two modes per tool.
     vec![
         ("c".into(), "Claude".into()),
-        ("C".into(), "Claude + @path handoff".into()),
         ("x".into(), "Codex".into()),
-        ("X".into(), "Codex + @path handoff".into()),
         ("o".into(), "opencode".into()),
+        ("C".into(), "Claude + @path handoff".into()),
+        ("X".into(), "Codex + @path handoff".into()),
         ("O".into(), "opencode + @path handoff".into()),
         ("q".into(), "Close tab".into()),
     ]
