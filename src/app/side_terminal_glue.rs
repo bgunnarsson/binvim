@@ -231,21 +231,6 @@ impl super::App {
     /// 4. Once the queue empties, wait `SUBMIT_DELAY` and write
     ///    the discrete trailing `\r`.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        // Output-quiet window. Splash detection flips `loading_done`
-        // the moment alt-screen enters, but the tool keeps rendering
-        // its initial UI for hundreds of ms after that — input that
-        // arrives during the render window gets silently dropped
-        // (front-of-path truncation). Waiting for the PTY to go
-        // quiet is a tool-agnostic ready signal: when no bytes have
-        // arrived for `OUTPUT_QUIET_GUARD`, the tool has finished
-        // its boot output and is sitting at the input prompt.
-        const OUTPUT_QUIET_GUARD: std::time::Duration = std::time::Duration::from_millis(500);
-        // Hard cap on the wait, for tools that have a periodic
-        // redraw (cursor blink, status-line clock) that keeps the
-        // PTY from ever going truly quiet. After this many ms
-        // post-splash we trust the tool is ready regardless.
-        const MAX_POST_SPLASH_WAIT: std::time::Duration =
-            std::time::Duration::from_millis(2500);
         // Per-byte cadence. ~15ms reads as fast typing but stays
         // well above every paste-detection threshold I've seen in
         // the TUI libraries the three tools are built on (ink /
@@ -272,8 +257,8 @@ impl super::App {
             let now = Instant::now();
             let since_settled = now.duration_since(settled_at);
             let since_byte = now.duration_since(s.last_byte_at.get());
-            let ready =
-                since_byte >= OUTPUT_QUIET_GUARD || since_settled >= MAX_POST_SPLASH_WAIT;
+            let (quiet_guard, max_wait) = handoff_tuning(&s.label);
+            let ready = since_byte >= quiet_guard || since_settled >= max_wait;
             if !ready {
                 continue;
             }
@@ -432,6 +417,42 @@ impl super::App {
 ///     user isn't staring at the loader forever.
 ///
 /// A `MIN_SPLASH` floor under all three keeps a fast-starting tool
+/// Per-tool tuning for the path-handoff drip — returns
+/// `(output_quiet_guard, max_post_splash_wait)`.
+///
+/// Each TUI we target boots and accepts input on its own timeline.
+/// A single shared tuning makes one tool work while another loses
+/// bytes or fails to submit, so the dispatch is tool-aware via the
+/// tab label (which doubles as a stable identity — `:claude` tabs
+/// are always labelled `"claude"`, etc.).
+///
+/// Empirical values, gathered by iterating with the three tools:
+/// - **Claude** boots fast — alt-screen + a render of the welcome
+///   pane, then idle. 300ms quiet is enough; longer waits seem to
+///   put Claude into a state where the trailing `\r` no longer
+///   registers as submit.
+/// - **Codex** takes a bit longer to wire up its input field after
+///   the splash render. 800ms quiet catches it cleanly.
+/// - **opencode** is the slowest — its TUI does a lot of background
+///   initialisation after rendering the splash, and we've seen
+///   front-of-path truncation as late as ~700ms in. 1500ms quiet
+///   gives a comfortable safety margin.
+///
+/// `max_post_splash_wait` is the fallback for tools with periodic
+/// PTY redraws that keep `last_byte_at` updating (cursor blink,
+/// status-line clocks) and would otherwise prevent the quiet guard
+/// from ever tripping. Set ~1s above the quiet guard.
+fn handoff_tuning(label: &str) -> (std::time::Duration, std::time::Duration) {
+    use std::time::Duration;
+    match label {
+        "claude" => (Duration::from_millis(300), Duration::from_millis(1500)),
+        "codex" => (Duration::from_millis(800), Duration::from_millis(2500)),
+        "opencode" => (Duration::from_millis(1500), Duration::from_millis(3500)),
+        // Unknown tool — split the difference.
+        _ => (Duration::from_millis(800), Duration::from_millis(2500)),
+    }
+}
+
 /// from popping through in one frame, which would itself look like
 /// a flash.
 pub fn side_terminal_loading(s: &SideTerminal) -> bool {
