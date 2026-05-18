@@ -1922,8 +1922,14 @@ impl super::App {
         if cmd.command == "textDocument/references" {
             let (line, col) = extract_text_document_position(&cmd.arguments)
                 .unwrap_or((self.window.cursor.line, self.window.cursor.col));
+            // Stash the Razor grep augment using the lens's encoded
+            // position — the LSP reply arrives via `LspEvent::References`
+            // and the merge step picks it up there.
+            let needle = self.identifier_at(line, col);
+            self.pending_ref_augment = razor_ref_augment(path, needle);
             if !self.lsp.request_references(path, line, col) {
                 self.status_msg = "code lens: no LSP client for this buffer".into();
+                self.pending_ref_augment = None;
             }
             return;
         }
