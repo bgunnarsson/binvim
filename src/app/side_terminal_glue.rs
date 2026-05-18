@@ -225,22 +225,31 @@ impl super::App {
     ///
     /// **Stages.**
     /// 1. Splash settles — `loading_done` flips off.
-    /// 2. Brief post-splash grace so the input field is wired up.
+    /// 2. Wait for PTY output to go quiet — tool-agnostic "init
+    ///    is done" signal, far more reliable than a fixed delay.
     /// 3. Drip one byte per frame at `PER_BYTE_DELAY` cadence.
     /// 4. Once the queue empties, wait `SUBMIT_DELAY` and write
     ///    the discrete trailing `\r`.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        // Short grace post-splash so the tool's input field is
-        // fully wired up before the first byte lands. Tuned so
-        // Claude (which is input-ready as soon as alt-screen
-        // enters) doesn't time out into "no longer expecting
-        // bytes" state, and so opencode (which boots more
-        // gradually) has runway to finish initialisation.
-        const POST_SPLASH_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+        // Output-quiet window. Splash detection flips `loading_done`
+        // the moment alt-screen enters, but the tool keeps rendering
+        // its initial UI for hundreds of ms after that — input that
+        // arrives during the render window gets silently dropped
+        // (front-of-path truncation). Waiting for the PTY to go
+        // quiet is a tool-agnostic ready signal: when no bytes have
+        // arrived for `OUTPUT_QUIET_GUARD`, the tool has finished
+        // its boot output and is sitting at the input prompt.
+        const OUTPUT_QUIET_GUARD: std::time::Duration = std::time::Duration::from_millis(500);
+        // Hard cap on the wait, for tools that have a periodic
+        // redraw (cursor blink, status-line clock) that keeps the
+        // PTY from ever going truly quiet. After this many ms
+        // post-splash we trust the tool is ready regardless.
+        const MAX_POST_SPLASH_WAIT: std::time::Duration =
+            std::time::Duration::from_millis(2500);
         // Per-byte cadence. ~15ms reads as fast typing but stays
         // well above every paste-detection threshold I've seen in
         // the TUI libraries the three tools are built on (ink /
-        // ratatui-ish / bubbletea).
+        // ratatui / bubbletea).
         const PER_BYTE_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
         // Final pause between the last byte of the path and the
         // trailing Enter. The discrete-event boundary the tools
@@ -250,7 +259,7 @@ impl super::App {
             if side_terminal_loading(s) {
                 continue;
             }
-            // Anchor the grace window on splash-exit, not on spawn —
+            // Anchor the wait window on splash-exit, not on spawn —
             // splash duration varies per tool, see `side_terminal_loading`.
             let settled_at = match s.loading_settled_at.get() {
                 Some(t) => t,
@@ -261,7 +270,11 @@ impl super::App {
                 }
             };
             let now = Instant::now();
-            if now.duration_since(settled_at) < POST_SPLASH_GRACE {
+            let since_settled = now.duration_since(settled_at);
+            let since_byte = now.duration_since(s.last_byte_at.get());
+            let ready =
+                since_byte >= OUTPUT_QUIET_GUARD || since_settled >= MAX_POST_SPLASH_WAIT;
+            if !ready {
                 continue;
             }
             // Phase 1: drip one byte from the path queue per
