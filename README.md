@@ -159,10 +159,11 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 |-------------|---------------------------------------|
 | `<space>`   | File picker                           |
 | `<space>?`  | Recent files                          |
-| `<space>g`  | Live grep                             |
+| `<space>G`  | Live grep                             |
+| `<space>gg` | Open lazygit — suspends the editor, hands the terminal to lazygit, refreshes every buffer's git gutter on exit (same as `:lazygit` / `:lg`) |
 | `<space>e`  | File explorer — yazi by default; opens the built-in sidebar tree instead when `[file_explorer] tree = true` |
 | `<space>a`  | Code actions                          |
-| `<space>r`  | Rename (LSP-aware)                    |
+| `<space>r`  | Rename (LSP-aware) — opens a modal preview overlay (per-edit checkboxes, before/after snippet per occurrence) before anything touches disk. `j`/`k` move, `<Space>` toggles, `a`/`n` flip all on/off, `o` jumps to the edit site (cancels), `<Enter>` applies only the enabled edits, `<Esc>` cancels |
 | `<space>R`  | Replace all (literal-string in buffer)|
 | `<space>f`  | Format active buffer                  |
 | `<space>/`  | Toggle line comment(s) — current line in Normal, every selected line in Visual. Per-language prefix (`//`, `#`, `--`); block-only languages (HTML / Markdown / CSS / XML / Razor) wrap with their pair |
@@ -189,6 +190,8 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>tp` | Toggle terminal pane visibility — PTYs stay alive in the background while hidden |
 | `<space>tf` | Focus the terminal pane (drop into `Mode::Terminal` — typing flows to the shell again) |
 | `<space>tq` | Close the active terminal tab (pane hides when the last one goes) |
+| `<space>mm` | Task picker — discover + run a workspace task (same as `:task` / `:tasks`) |
+| `<space>ml` | Re-run the most recent task (same as `:tasklast` / `:trun`) |
 | `<space>ss` | Test picker (same as `:test`)         |
 | `<space>sn` | Run the nearest test (same as `:testnearest`) |
 | `<space>sf` | Run every test in the active file (same as `:testfile`) |
@@ -196,7 +199,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
 | `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
 
-Hold `<space>` (or `<space>b` / `<space>d` / `<space>h` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
+Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>m` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 
@@ -262,6 +265,9 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:copilot`                | Report Copilot sign-in status in the status line. Subcommands: `signin` re-fires device-flow auth; `reload` re-checks status (auto-polled every 3s while pending); `signout` clears the local sign-in. |
 | `:test` (+ aliases)       | Integrated test runner. `:test` opens a fuzzy picker of discovered tests for the active workspace's adapter (currently `cargo test` only — adapter is selected by walking up from the active buffer for `Cargo.toml`). `:testnearest` runs the test enclosing the cursor (walks upward for `#[test]` / `#[tokio::test]` / `#[rstest]` / `#[async_std::test]`). `:testfile` runs every test whose module path matches the active buffer's file. `:testlast` re-runs the most recent invocation. `:testcancel` kills the running adapter. Results stream live into a `:health`-style scrollable overlay (`j`/`k`/`Ctrl-D`/`Ctrl-U`/`g`/`G` to scroll, `Esc` / `q` / `:q` to dismiss), with pass / fail / ignored counts on completion. Failures populate the quickfix list — `]q` / `[q` walks them; `cargo test`'s panic-location output gives you accurate file:line entries for assertion failures. |
+| `:task` / `:tasks`        | Integrated task runner. Discovers workspace tasks from **npm scripts** (`package.json:scripts.*` — npm / pnpm / yarn auto-picked from the lockfile), **Justfile** recipes (skips `_private` + `[private]`), **cargo aliases** (`.cargo/config.toml:[alias]`) + the builtin verbs (`build` / `check` / `test` / `clippy` / `run` / `fmt` / `doc`), **Makefile** top-level targets, and **dotnet** verbs (`build` / `run` / `test` / `restore` / `clean` / `publish`). Picker rows tag the source so duplicate names disambiguate themselves. Selecting a task spawns it in a fresh bottom-terminal tab labelled with the task name, so you can run `dev` + `lint` + `build` in parallel and tell them apart in the tab strip. |
+| `:tasklast` / `:trun`     | Re-run the most recent task. Spawns a new tab rather than re-using the previous one so consecutive runs sit side-by-side for comparison. |
+| `:lazygit` / `:lg`        | Suspend the editor, hand the full terminal to `lazygit`, and refresh every open buffer's git gutter on exit. Same effect as `<leader>gg`. |
 
 ## External tools
 

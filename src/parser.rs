@@ -318,6 +318,17 @@ pub enum Action {
     /// uncomments; otherwise it comments at the minimum-indent
     /// column so a uniformly-indented block stays aligned.
     ToggleComment,
+    /// `<leader>gg` — suspend the editor and hand the host terminal
+    /// to `lazygit`. On exit binvim reclaims the terminal and
+    /// refreshes git gutter state for every open buffer. Same effect
+    /// as `:lazygit` / `:lg`.
+    Lazygit,
+    /// `<leader>mm` — open the task-runner picker. Same effect as
+    /// `:task`.
+    TaskPicker,
+    /// `<leader>ml` — re-run the most recent task. Same effect as
+    /// `:tasklast`.
+    TaskLast,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -365,6 +376,17 @@ pub struct PendingCmd {
     /// Set after `<leader>h` — next char picks a git-hunk action
     /// (`p` preview, `s` stage, `u` unstage, `r` reset).
     pub awaiting_hunk_leader: bool,
+    /// Set after `<leader>g` — next char picks a git action.
+    /// Today only `g` (lazygit) is wired; the sub-leader exists so
+    /// follow-ups (`gb` blame toggle, `gp` push, …) can land without
+    /// reshuffling top-level leader keys. Grep moved to `<leader>G`
+    /// (capital) to free this slot for the conventional Vim-community
+    /// `<leader>gg` → lazygit binding.
+    pub awaiting_git_leader: bool,
+    /// Set after `<leader>m` — next char picks a task-runner action
+    /// (`m` picker, `l` re-run last). `m` mnemonic from Vim's `:make`
+    /// convention.
+    pub awaiting_task_leader: bool,
     /// Set after `<leader>t` — next char picks a terminal action
     /// (`o` open, `q` close).
     pub awaiting_terminal_leader: bool,
@@ -415,6 +437,8 @@ impl PendingCmd {
             && !self.awaiting_bracket_close
             && !self.awaiting_bracket_open
             && !self.awaiting_hunk_leader
+            && !self.awaiting_git_leader
+            && !self.awaiting_task_leader
             && !self.awaiting_terminal_leader
             && !self.awaiting_test_leader
             && !self.awaiting_ai_leader
@@ -772,6 +796,23 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_hunk_leader = true;
             return ParseResult::Pending;
         }
+        // `g` opens the git sub-menu (`<leader>gg` lazygit). Sub-leader
+        // rather than a direct action so future git-flavoured chords
+        // (`<leader>gb` blame, `<leader>gp` push, …) can extend without
+        // breaking muscle memory. Grep (formerly `<leader>g`) moved to
+        // `<leader>G` so this slot can host the conventional lazygit
+        // binding.
+        if ch == 'g' {
+            state.awaiting_git_leader = true;
+            return ParseResult::Pending;
+        }
+        // `m` opens the task-runner sub-menu (`<leader>mm` picker,
+        // `<leader>ml` re-run last). Mnemonic from Vim's `:make` —
+        // the task runner is the modern equivalent.
+        if ch == 'm' {
+            state.awaiting_task_leader = true;
+            return ParseResult::Pending;
+        }
         // `t` opens the terminal sub-menu (`<leader>to` open,
         // `<leader>tq` close).
         if ch == 't' {
@@ -793,7 +834,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let action = match ch {
             ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
             '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
-            'g' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
+            // Grep promoted to capital `G`. The lowercase `g` is now
+            // the git sub-leader (handled above) so `<leader>gg` can
+            // land on lazygit.
+            'G' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
             'e' => Some(Action::OpenYazi),
             // Doc-symbol / workspace-symbol pickers moved under
             // `<leader>d` so the debug sub-menu collects every
@@ -904,6 +948,39 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             's' => Some(Action::HunkStage),
             'u' => Some(Action::HunkUnstage),
             'r' => Some(Action::HunkReset),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Git prefix dispatch (after `<leader>g`). Today only `gg` is
+    // wired — the sub-leader exists so further git chords can land
+    // without reshuffling top-level leader keys.
+    if state.awaiting_git_leader {
+        state.awaiting_git_leader = false;
+        let action = match ch {
+            'g' => Some(Action::Lazygit),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Task-runner prefix dispatch (after `<leader>m`). `m` for picker
+    // (the doubled-letter convention used by `<leader>gg`/`<leader>ss`),
+    // `l` for the most-recent re-run (mirrors `<leader>sl` for tests).
+    if state.awaiting_task_leader {
+        state.awaiting_task_leader = false;
+        let action = match ch {
+            'm' => Some(Action::TaskPicker),
+            'l' => Some(Action::TaskLast),
             _ => None,
         };
         state.reset();

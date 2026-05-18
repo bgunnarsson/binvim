@@ -161,6 +161,86 @@ pub struct SnippetSession {
     pub anchor_chars: usize,
 }
 
+/// One concrete edit derived from a `WorkspaceEdit` JSON payload —
+/// already resolved to char-index positions in the file's current
+/// contents. Used both as the "apply this" input to the writer and as
+/// the per-row entry in the rename preview overlay.
+#[derive(Debug, Clone)]
+pub struct ConcreteEdit {
+    pub path: std::path::PathBuf,
+    /// 0-indexed LSP-style positions. Kept rather than collapsing to
+    /// char indices because the preview reads the file once to grab
+    /// the surrounding line; doing the char-index conversion at
+    /// apply-time keeps the preview cheap.
+    pub start_line: usize,
+    pub start_col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
+    pub new_text: String,
+}
+
+/// One row in the LSP-rename preview overlay. Pairs a parsed edit with
+/// the rendered before/after snippet + an enabled flag the user toggles
+/// before accept. The applier consumes only the enabled subset.
+#[derive(Debug, Clone)]
+pub struct RenamePreviewEdit {
+    pub edit: ConcreteEdit,
+    /// The full line text from disk at the edit's start row, captured
+    /// when the preview opens. Currently unused by the renderer (which
+    /// prefers the post-rename `after_text` so the user sees what
+    /// they'll get); kept for a possible future "highlight the changed
+    /// range in the original" enhancement.
+    #[allow(dead_code)]
+    pub line_text: String,
+    /// What the line will look like after applying just this edit.
+    /// Pre-computed so the renderer doesn't run substring math per
+    /// frame.
+    pub after_text: String,
+    /// Per-row checkbox. Defaults to `true`; the user toggles with
+    /// `<Space>` (or flips all on/off with `a` / `n`).
+    pub enabled: bool,
+}
+
+/// Modal LSP-rename preview state. Built from the server's
+/// `WorkspaceEdit` reply — held on the App until the user accepts
+/// (apply enabled rows) or cancels (drop the lot).
+#[derive(Debug, Clone)]
+pub struct RenamePreview {
+    pub original: String,
+    pub new_name: String,
+    /// One entry per edit, grouped by file in source order (the
+    /// server's). Lookups for "which file is row N in" walk this list;
+    /// it's small (~tens of entries even for big renames), so no
+    /// indexing structure needed.
+    pub edits: Vec<RenamePreviewEdit>,
+    /// Cursor row — index into `edits`. `<Space>` toggles
+    /// `edits[cursor].enabled`. Clamped on every move.
+    pub cursor: usize,
+    /// Top visible row (in render-row space, which counts file-header
+    /// pseudo-rows + edit rows). The render layer is responsible for
+    /// translating this into a slice; we keep it on state so j/k can
+    /// keep `cursor` visible without the renderer doing the scrolling.
+    pub scroll: usize,
+}
+
+impl RenamePreview {
+    pub fn files_affected(&self) -> usize {
+        let mut last: Option<&std::path::Path> = None;
+        let mut count = 0;
+        for e in &self.edits {
+            if last != Some(&e.edit.path) {
+                count += 1;
+                last = Some(&e.edit.path);
+            }
+        }
+        count
+    }
+
+    pub fn enabled_count(&self) -> usize {
+        self.edits.iter().filter(|e| e.enabled).count()
+    }
+}
+
 /// Stashed when a `textDocument/references` request is fired for a C# or
 /// Razor buffer. The LSP servers we ship for C# (csharp-ls / OmniSharp)
 /// don't index `.cshtml` / `.razor` files, so the server's reply misses
@@ -425,11 +505,13 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("<space>".into(), "Files".into()),
         ("b".into(), "+Buffer".into()),
         ("d".into(), "+Debug".into()),
+        ("g".into(), "+Git".into()),
         ("h".into(), "+Hunk".into()),
         ("j".into(), "+AI".into()),
+        ("m".into(), "+Task".into()),
         ("s".into(), "+Test".into()),
         ("t".into(), "+Terminal".into()),
-        ("g".into(), "Grep".into()),
+        ("G".into(), "Grep".into()),
         ("e".into(), "File explorer".into()),
         ("a".into(), "Code actions".into()),
         ("r".into(), "Rename".into()),
@@ -485,6 +567,17 @@ pub fn hunk_prefix_entries() -> Vec<(String, String)> {
         ("s".into(), "Stage hunk".into()),
         ("u".into(), "Unstage hunk".into()),
         ("r".into(), "Reset hunk".into()),
+    ]
+}
+
+pub fn git_prefix_entries() -> Vec<(String, String)> {
+    vec![("g".into(), "Lazygit".into())]
+}
+
+pub fn task_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("m".into(), "Task picker".into()),
+        ("l".into(), "Re-run last task".into()),
     ]
 }
 

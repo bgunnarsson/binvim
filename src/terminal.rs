@@ -819,6 +819,13 @@ pub struct Terminal {
     /// shell". `Option` because Drop takes the handle out to move it
     /// into the reaper thread.
     child: Mutex<Option<Box<dyn Child + Send + Sync>>>,
+    /// Optional display label shown in the tab strip — set when the
+    /// terminal was spawned for a specific purpose (e.g. a task run
+    /// labelled "build" / "dev"). When `None` the renderer falls back
+    /// to the positional tab number. Held as a `Mutex` so non-`mut`
+    /// call sites (the renderer holds `&App`) can read it without
+    /// fighting borrow rules; writes are one-shot at spawn time.
+    label: Mutex<Option<String>>,
 }
 
 pub struct TerminalInner {
@@ -923,7 +930,25 @@ impl Terminal {
                 exited: false,
             }),
             child: Mutex::new(Some(child)),
+            label: Mutex::new(None),
         })
+    }
+
+    /// Attach (or replace) the display label shown in the tab strip.
+    /// Callers set this right after spawn for terminals that run a
+    /// specific named purpose — the task runner does so with the task
+    /// name. `None` (or an unset label) leaves the renderer on its
+    /// positional-number fallback.
+    pub fn set_label(&self, label: Option<String>) {
+        if let Ok(mut slot) = self.label.lock() {
+            *slot = label;
+        }
+    }
+
+    /// Snapshot of the current label, if any. Cheap clone — the
+    /// renderer reads this once per frame.
+    pub fn label(&self) -> Option<String> {
+        self.label.lock().ok().and_then(|l| l.clone())
     }
 }
 

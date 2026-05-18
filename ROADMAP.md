@@ -74,15 +74,19 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       consumes the y/N confirmation (`remove_dir_all` for folders;
       anything other than `y`/`Y` cancels). `R` rebuilds (was both
       `r` and `R`; `r` moved to rename).
-- [ ] **Lazygit integration (`:lazygit`).** Open lazygit in a PTY-backed full-window pane (or a bottom
-      split, sized to taste), reusing the existing `Terminal` infrastructure — vte-parsed grid, SGR
-      colours, scrollback, mouse forwarding — so lazygit's TUI and its drag-to-stage / scroll
-      interactions work without bespoke wiring. Single mode while focused: every keystroke (incl.
-      `Esc`) forwards to the PTY; `<C-w>` is the escape hatch back to the window-leader parser.
-      Keybind `<leader>gg` to toggle. On lazygit exit (and on a debounced focus-out tick while it's
-      running), refresh the gutter diff for every open buffer so stages / commits / checkouts
-      reflect immediately. This replaces the would-have-been "source-control panel" — lazygit
-      already nailed that UI, no reason to reinvent it. **planned**
+- [x] **Lazygit integration (`:lazygit` / `:lg` / `<leader>gg`).** Shipped as a yazi-style
+      full-screen takeover rather than a PTY-embedded pane. binvim suspends (pops kitty keyboard
+      protocol, disables mouse capture, leaves the alt screen, drops raw mode), spawns `lazygit` as
+      a foreground child with the host terminal handed directly to it via inherited stdio, and
+      blocks until exit. On return we reclaim the terminal (re-enable raw mode, re-enter alt
+      screen, re-arm mouse capture + keyboard enhancement flags) and call
+      `refresh_all_git_hunks` so every open buffer's git gutter reflects the new index / worktree
+      state, plus refresh the status-line branch label. The takeover model gives lazygit the full
+      screen — its UI hard-codes panel widths against terminal cols, and the bottom `:terminal`
+      pane caps out at 20 rows — and clean exit detection for free: when the blocking `status()`
+      call returns, lazygit is done. No PTY plumbing, no tab management, no SIGWINCH dance.
+      `<leader>g` became a git sub-leader; grep (formerly `<leader>g`) moved to `<leader>G`.
+      `<leader>g` hold surfaces the hint via the which-key popup.
 - [ ] **AI side pane file-context handoff.** When the active buffer
       has a path, pre-type `@<project-relative path> ` into the
       newly-opened `:claude` / `:codex` / `:opencode` side pane so
@@ -182,16 +186,24 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       server-side commands like rust-analyzer's `rust-analyzer.runSingle` are intercepted client-side and
       routed into the integrated test runner (`cmd_test_nearest` codepath) so lens + `:testnearest` share
       one engine.
-- [ ] **Project-wide refactor UI.** LSP rename today applies the server's `WorkspaceEdit` blind —
-      every changed file is mutated in place with no preview. The refactor UI intercepts the same
-      `WorkspaceEdit` (rename, plus any code action that returns workspace edits like
-      "extract function" / "inline variable" / "move to module") and routes it through a preview
-      overlay before commit: file list on the left, before/after diff per hunk on the right,
-      `<Tab>` cycles files, `<Space>` toggles per-hunk accept, `a` accept-all / `r` reject-all,
-      `<Enter>` applies the accepted subset, `Esc` / `q` aborts. Reuses the existing picker engine
-      for the file list and the existing `apply_workspace_edit` codepath for the commit phase, so
-      the new surface is the preview + selection state, not the edit machinery itself. Opt in via
-      `[lsp] refactor_preview = true` initially; flip the default once it's settled. **planned**
+- [x] **Project-wide refactor UI (LSP rename).** Shipped — `<leader>r` now opens a modal preview
+      overlay between the server's `WorkspaceEdit` reply and the on-disk apply. Layout: file
+      headers (path + edit count) with one selectable checkbox row per edit underneath, scrollable
+      with `j`/`k` + `Ctrl-D`/`U` + `g`/`G`. Per-row `<Space>` toggle, `a` / `n` flip every edit
+      on / off, `o` jumps to the cursor edit (cancels the preview), `<Enter>` applies only the
+      enabled edits, `<Esc>` cancels the whole rename. Implementation split `apply_workspace_edit`
+      into `parse_workspace_edit` (JSON → typed `ConcreteEdit`) + `apply_concrete_edits` (writer);
+      the rename path builds a `RenamePreview` from the parsed list and stores it on App, the
+      writer is reused by the apply path. Code actions and the server-initiated `workspace/applyEdit`
+      flow still apply blind — they're typically single-file quick fixes where a preview would just
+      add friction. Lives on a dedicated `Mode::RenamePreview`; the test-results-style overlay-
+      passthrough gates don't apply (the preview is strictly modal).
+- [ ] **Refactor preview v2 — same UI for `workspace/applyEdit` + code actions.** Open follow-up:
+      route server-initiated edits and `WorkspaceEdit`-returning code actions ("extract function",
+      "inline variable", "move to module") through the same overlay. Most of those are still
+      single-file so the friction-vs-confidence tradeoff is per-action; could gate behind an
+      opt-in setting or expose `:refactor` to invoke the preview explicitly on top of an
+      already-buffered edit. **considering**
 - [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling
       repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
 - [x] **`window/showMessage` and `window/logMessage` surfacing.** Both
@@ -285,18 +297,24 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 
 ## Task runner
 
-- [ ] **Task runner.** Generic build / lint / dev-server runner, adapter pattern parallel to the test
-      runner. One `TaskAdapterSpec` per toolchain in `task/specs.rs`, picked by walking the active
-      buffer up for the adapter's root markers: cargo (`build`, `check`, `clippy`, `doc`), pnpm /
-      npm / yarn (scripts harvested from `package.json`), go (`build`, `vet`, `generate`), dotnet
-      (`build`, `format`, `restore`), uv / pip (project scripts), make (Makefile targets). `:task`
-      opens a fuzzy picker of every discovered task across matching adapters; `:tasklast` re-runs
-      the most recent request; `:taskcancel` kills the in-flight task. Output streams into a
-      `:health`-style scrollable overlay; tool diagnostics with `path:line:col` patterns populate
-      the quickfix list (the test-runner's location parsers are mostly reusable). Long-running
-      tasks (`pnpm dev`, `cargo watch`, `npm run start`) can route into a `:terminal` tab instead
-      of the overlay via a `:task!` variant so the user can keep them visible while editing.
-      **planned**
+- [x] **Task runner (`:task` / `:tasklast` / `<leader>m{m,l}`).** v1 shipped — discovery + picker +
+      labelled bottom-terminal-tab execution. Five sources unioned per workspace: **npm scripts**
+      (npm / pnpm / yarn auto-picked from the lockfile), **Justfile** recipes (skips `_private` +
+      `[private]`), **cargo aliases** + the builtin verbs (`build` / `check` / `test` / `clippy` /
+      `run` / `fmt` / `doc`), **Makefile** top-level targets, and **dotnet** verbs (`build` / `run`
+      / `test` / `restore` / `clean` / `publish`). Each source has its own root walk in
+      `src/task/specs.rs` so a pnpm project nested inside a cargo workspace yields both. Picker
+      rows tag the source for disambiguation (`npm  dev  · vite`); selecting a task spawns
+      `$SHELL -l -i -c "cd <cwd> && exec <command>"` in a fresh bottom-terminal tab whose label
+      (rendered in the tab strip) is the task name. Reuses everything the `:terminal` pane
+      already gives — vte grid, scrollback, mouse forwarding, multi-tab.
+      Deliberately **not** a dedicated streaming overlay (the test runner has one; tasks
+      don't need per-event parsing — the terminal grid does it for free).
+- [ ] **Task runner v2 — quickfix scrape + long-running classification.** Open follow-ups: parse
+      `path:line:col: error` patterns from common tools (rustc, tsc, eslint, ruff) into the
+      quickfix list on a tab's child-process exit, so `]q` walks compiler errors after a `build`;
+      and a "long-running" hint (annotation in the picker, or a `<leader>mL` variant) for dev
+      servers so they don't get re-spawned by accident on `:tasklast`. **considering**
 
 ## Quality / Tooling
 

@@ -32,12 +32,15 @@ mod file_tree;
 mod git_glue;
 mod health;
 mod input;
+mod lazygit_glue;
 mod lsp_glue;
+mod task_glue;
 mod multi_cursor;
 mod pair;
 mod picker_glue;
 mod quickfix;
 mod registers;
+mod rename_preview;
 mod save;
 mod search;
 mod side_terminal_glue;
@@ -381,6 +384,19 @@ pub struct App {
     /// goes into the LaunchContext.
     pub pending_debug_project: Option<std::path::PathBuf>,
     pub pending_debug_profiles: Vec<crate::dap::LaunchProfile>,
+    /// Discovered tasks staged between picker open and accept. Indexed
+    /// by `PickerPayload::TaskIdx`. Cleared on picker accept / cancel.
+    pub pending_tasks: Vec<crate::task::Task>,
+    /// Most recent task spawned this session. Drives `:tasklast` /
+    /// `<leader>ml`. Kept across picker invocations so re-runs survive
+    /// independent picker sessions; cleared on a clean shutdown when
+    /// the session is saved.
+    pub last_task: Option<crate::task::Task>,
+    /// LSP rename preview state. `Some` while the user is reviewing
+    /// a `WorkspaceEdit` from `textDocument/rename` and hasn't yet
+    /// accepted (apply enabled rows) or cancelled. Drives the modal
+    /// overlay; cleared on either resolution path.
+    pub pending_rename_preview: Option<crate::app::state::RenamePreview>,
     /// Symbol position captured when a rename prompt opened — the LSP
     /// rename request needs the original `(line, col)` even after the
     /// prompt has stolen focus and the user has moved focus around.
@@ -806,6 +822,9 @@ impl App {
             pending_code_lens_commands: Vec::new(),
             pending_debug_project: None,
             pending_debug_profiles: Vec::new(),
+            pending_tasks: Vec::new(),
+            last_task: None,
+            pending_rename_preview: None,
             rename_anchor: None,
             pending_ref_augment: None,
             folds: Vec::new(),
@@ -1053,6 +1072,16 @@ impl App {
                         Some(WhichKeyState {
                             title: "Hunk".into(),
                             entries: state::hunk_prefix_entries(),
+                        })
+                    } else if self.pending.awaiting_git_leader {
+                        Some(WhichKeyState {
+                            title: "Git".into(),
+                            entries: state::git_prefix_entries(),
+                        })
+                    } else if self.pending.awaiting_task_leader {
+                        Some(WhichKeyState {
+                            title: "Task".into(),
+                            entries: state::task_prefix_entries(),
                         })
                     } else if self.pending.awaiting_terminal_leader {
                         Some(WhichKeyState {

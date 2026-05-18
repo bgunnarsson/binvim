@@ -58,17 +58,9 @@ impl super::App {
                 LspEvent::CodeActions { items } => {
                     self.open_code_actions_picker(items);
                 }
-                LspEvent::Rename { edit } => match self.apply_workspace_edit(&edit) {
-                    Ok((edits, files)) if edits > 0 => {
-                        self.status_msg = format!(
-                            "renamed {edits} occurrence{} across {files} file{}",
-                            if edits == 1 { "" } else { "s" },
-                            if files == 1 { "" } else { "s" },
-                        );
-                    }
-                    Ok(_) => self.status_msg = "rename: no edits returned".into(),
-                    Err(e) => self.status_msg = format!("rename error: {e}"),
-                },
+                LspEvent::Rename { edit } => {
+                    self.open_rename_preview(&edit);
+                }
                 LspEvent::ApplyEditRequest { client_key, id, edit } => {
                     let applied = match self.apply_workspace_edit(&edit) {
                         Ok((edits, _)) => edits > 0,
@@ -1433,16 +1425,35 @@ impl super::App {
         }
     }
 
-    /// Apply a `WorkspaceEdit` JSON value to disk and to any open buffers.
-    /// Returns (total edits, distinct files affected). Saves each modified
-    /// buffer so the LSP server sees the result on its next didChange.
-    fn apply_workspace_edit(&mut self, edit: &JsonValue) -> Result<(usize, usize)> {
-        let mut grouped: Vec<(PathBuf, Vec<JsonValue>)> = Vec::new();
-        let mut push = |path: PathBuf, edits: Vec<JsonValue>| {
-            if let Some(slot) = grouped.iter_mut().find(|(p, _)| *p == path) {
-                slot.1.extend(edits);
-            } else {
-                grouped.push((path, edits));
+    /// Parse a `WorkspaceEdit` JSON payload into typed `ConcreteEdit`s,
+    /// in source order grouped by file. Honours both shapes the spec
+    /// uses (`documentChanges` and the older `changes` map) and folds
+    /// duplicate-file entries together. Returns `(grouped, total)` so
+    /// callers that just want the count don't have to re-walk.
+    pub(super) fn parse_workspace_edit(
+        &self,
+        edit: &JsonValue,
+    ) -> Vec<crate::app::state::ConcreteEdit> {
+        let mut out: Vec<crate::app::state::ConcreteEdit> = Vec::new();
+        let mut push = |path: &PathBuf, edits: &[JsonValue]| {
+            for e in edits {
+                let Some(range) = e.get("range") else { continue };
+                let s = range.get("start");
+                let n = range.get("end");
+                let (Some(s), Some(n)) = (s, n) else { continue };
+                let start_line = s.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let start_col = s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let end_line = n.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let end_col = n.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                let new_text = e.get("newText").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                out.push(crate::app::state::ConcreteEdit {
+                    path: path.clone(),
+                    start_line,
+                    start_col,
+                    end_line,
+                    end_col,
+                    new_text,
+                });
             }
         };
         if let Some(doc_changes) = edit.get("documentChanges").and_then(|v| v.as_array()) {
@@ -1454,39 +1465,63 @@ impl super::App {
                 else { continue };
                 let Some(path) = crate::lsp::uri_to_path(uri) else { continue };
                 let Some(edits) = ch.get("edits").and_then(|v| v.as_array()) else { continue };
-                push(path, edits.clone());
+                push(&path, edits);
             }
         } else if let Some(changes) = edit.get("changes").and_then(|v| v.as_object()) {
             for (uri, v) in changes {
                 let Some(path) = crate::lsp::uri_to_path(uri) else { continue };
                 let Some(edits) = v.as_array() else { continue };
-                push(path, edits.clone());
+                push(&path, edits);
             }
         }
-        if grouped.is_empty() {
+        out
+    }
+
+    /// Apply a `WorkspaceEdit` JSON value to disk and to any open buffers.
+    /// Convenience wrapper around `parse_workspace_edit` +
+    /// `apply_concrete_edits` — kept for the server-initiated apply
+    /// path (`workspace/applyEdit`) and the code-action flow, where we
+    /// don't surface a preview UI. Returns (total edits, distinct files
+    /// affected).
+    fn apply_workspace_edit(&mut self, edit: &JsonValue) -> Result<(usize, usize)> {
+        let parsed = self.parse_workspace_edit(edit);
+        self.apply_concrete_edits(&parsed)
+    }
+
+    /// Write a pre-parsed batch of `ConcreteEdit`s to disk. Groups by
+    /// file, applies each file's edits in reverse position order so
+    /// earlier edits don't shift later offsets, and saves so the LSP
+    /// picks up the new contents on its next didChange. Returns
+    /// (total edits, distinct files affected).
+    pub(super) fn apply_concrete_edits(
+        &mut self,
+        edits: &[crate::app::state::ConcreteEdit],
+    ) -> Result<(usize, usize)> {
+        if edits.is_empty() {
             return Ok((0, 0));
         }
-
+        // Group by file path, preserving first-seen order so the user-
+        // visible status message lists files in source-of-WorkspaceEdit
+        // order rather than HashMap-arbitrary order.
+        let mut grouped: Vec<(PathBuf, Vec<&crate::app::state::ConcreteEdit>)> = Vec::new();
+        for e in edits {
+            if let Some(slot) = grouped.iter_mut().find(|(p, _)| *p == e.path) {
+                slot.1.push(e);
+            } else {
+                grouped.push((e.path.clone(), vec![e]));
+            }
+        }
         let original_active = self.active;
         let mut total_edits = 0usize;
         let files = grouped.len();
-        for (path, edits) in grouped {
+        for (path, group) in grouped {
             self.open_buffer(path.clone())?;
             self.history.record(&self.buffer.rope, self.window.cursor);
-            let mut concrete: Vec<(usize, usize, String)> = Vec::with_capacity(edits.len());
-            for e in &edits {
-                let Some(range) = e.get("range") else { continue };
-                let s = range.get("start");
-                let n = range.get("end");
-                let (Some(s), Some(n)) = (s, n) else { continue };
-                let s_line = s.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let s_col = s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let e_line = n.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let e_col = n.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let new_text = e.get("newText").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let s_idx = self.buffer.pos_to_char(s_line, s_col);
-                let e_idx = self.buffer.pos_to_char(e_line, e_col);
-                concrete.push((s_idx, e_idx, new_text));
+            let mut concrete: Vec<(usize, usize, String)> = Vec::with_capacity(group.len());
+            for e in &group {
+                let s_idx = self.buffer.pos_to_char(e.start_line, e.start_col);
+                let e_idx = self.buffer.pos_to_char(e.end_line, e.end_col);
+                concrete.push((s_idx, e_idx, e.new_text.clone()));
             }
             // Apply in reverse position order so earlier edits don't shift later offsets.
             concrete.sort_by(|a, b| b.0.cmp(&a.0));

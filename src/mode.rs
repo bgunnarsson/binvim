@@ -28,6 +28,14 @@ pub enum Mode {
     /// `h` collapses, `q` / `Esc` closes the pane and returns to
     /// Normal in the editor.
     FileTree,
+    /// Modal LSP-rename preview overlay. The server's `WorkspaceEdit`
+    /// has been parsed but not applied yet — the user is picking which
+    /// per-site edits to accept before binvim writes them to disk.
+    /// `j`/`k` move the selection across edits, `<Space>` toggles the
+    /// current edit, `a`/`n` flip every edit on/off, `o` opens the file
+    /// at the selected edit (cancelling the preview), `<Enter>` applies
+    /// only the enabled edits, `<Esc>` cancels the whole rename.
+    RenamePreview,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,6 +83,7 @@ impl Mode {
             Mode::DebugPane => "DEBUG",
             Mode::Terminal => "TERMINAL",
             Mode::FileTree => "FILES",
+            Mode::RenamePreview => "RENAME",
         }
     }
 }

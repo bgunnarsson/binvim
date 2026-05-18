@@ -92,6 +92,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if app.whichkey.is_some() {
         draw_whichkey(out, app)?;
     }
+    if app.pending_rename_preview.is_some() {
+        draw_rename_preview(out, app)?;
+    }
     place_cursor(out, app)?;
     queue!(out, EndSynchronizedUpdate)?;
     Ok(())
@@ -219,6 +222,305 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
         ResetColor,
     )?;
     Ok(())
+}
+
+/// Modal LSP-rename preview overlay. Grouped by file (a non-selectable
+/// header per file, then one checkbox row per edit underneath). The
+/// user navigates between edit rows with `j` / `k`, toggles with
+/// `<Space>`, and accepts (`<Enter>`) or cancels (`<Esc>`).
+fn draw_rename_preview(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(preview) = app.pending_rename_preview.as_ref() else {
+        return Ok(());
+    };
+    if preview.edits.is_empty() {
+        return Ok(());
+    }
+    let total_w = app.width as usize;
+    let total_h = app.height as usize;
+    if total_w < 40 || total_h < 8 {
+        return Ok(());
+    }
+
+    // Popup occupies ~85% of the host width, bounded to fit. Height
+    // is whatever the body + chrome would naturally take, capped at
+    // `total_h - 2`.
+    let popup_w = (total_w * 85 / 100).clamp(50, total_w.saturating_sub(4));
+    let content_w = popup_w.saturating_sub(2);
+    if content_w < 30 {
+        return Ok(());
+    }
+
+    // Build the display-row list: alternating file-headers + edit rows
+    // in source order. The cursor index in state refers to edits; we
+    // need to look up which display row the cursor is currently on.
+    enum RowKind {
+        Header(std::path::PathBuf, usize),
+        Edit(usize),
+    }
+    let mut rows: Vec<RowKind> = Vec::new();
+    let mut last: Option<&std::path::Path> = None;
+    for (i, e) in preview.edits.iter().enumerate() {
+        if last != Some(&e.edit.path) {
+            // Count edits in this file for the header tally.
+            let n = preview.edits.iter().filter(|x| x.edit.path == e.edit.path).count();
+            rows.push(RowKind::Header(e.edit.path.clone(), n));
+            last = Some(&e.edit.path);
+        }
+        rows.push(RowKind::Edit(i));
+    }
+    let cursor_row = rows
+        .iter()
+        .position(|r| matches!(r, RowKind::Edit(i) if *i == preview.cursor))
+        .unwrap_or(0);
+
+    // Body height = popup_h - top_border - bottom_border - footer (2 hint rows + a divider).
+    let footer_h = 3usize; // divider + 2 hint lines
+    let max_popup_h = total_h.saturating_sub(2);
+    let want_h = rows.len() + 2 + footer_h + 1; // +1 spacer below header border
+    let popup_h = want_h.min(max_popup_h).max(footer_h + 4);
+    let body_h = popup_h.saturating_sub(footer_h + 2);
+    if body_h == 0 {
+        return Ok(());
+    }
+    // Keep cursor visible — adjust the scroll the renderer uses
+    // locally; we don't write back into App state from a `&App`
+    // render path. The handler's loose clamp keeps us in the right
+    // ballpark; this just trims further to the live body height.
+    let stash_scroll = preview.scroll.min(rows.len().saturating_sub(1));
+    let scroll = if cursor_row < stash_scroll {
+        cursor_row
+    } else if cursor_row >= stash_scroll + body_h {
+        cursor_row.saturating_sub(body_h.saturating_sub(1))
+    } else {
+        stash_scroll
+    };
+
+    let left = total_w.saturating_sub(popup_w) / 2;
+    let top = total_h.saturating_sub(popup_h) / 2;
+    let bg = app.config.chrome_bg();
+    let border = app.config.theme_border();
+    let title_fg = app.config.theme_emphasis();
+    let label_fg = app.config.theme_fg();
+    let dim_fg = app.config.theme_dim();
+    let header_fg = app
+        .config
+        .color_for_capture("type")
+        .unwrap_or_else(|| app.config.theme_emphasis());
+    let accent = app
+        .config
+        .color_for_capture("keyword")
+        .unwrap_or_else(|| app.config.theme_emphasis());
+    let disabled_fg = app.config.theme_dim();
+    let selected_bg = app
+        .config
+        .color_for_capture("surface")
+        .unwrap_or_else(|| app.config.chrome_bg());
+
+    // ── Top border with embedded title ──────────────────────────────────
+    let title = format!(
+        " Rename: {} → {}  ({} edit{} · {} file{} · {} selected) ",
+        preview.original,
+        preview.new_name,
+        preview.edits.len(),
+        if preview.edits.len() == 1 { "" } else { "s" },
+        preview.files_affected(),
+        if preview.files_affected() == 1 { "" } else { "s" },
+        preview.enabled_count(),
+    );
+    let title_chars: String = title.chars().take(content_w.saturating_sub(4)).collect();
+    let title_w = title_chars.chars().count();
+    let pre = content_w.saturating_sub(title_w) / 2;
+    let post = content_w.saturating_sub(title_w + pre);
+    queue!(
+        out,
+        MoveTo(left as u16, top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print("─".repeat(pre)),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
+        Print(&title_chars),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("─".repeat(post)),
+        Print('╮'),
+    )?;
+
+    // ── Body rows ───────────────────────────────────────────────────────
+    let visible: Vec<&RowKind> = rows.iter().skip(scroll).take(body_h).collect();
+    for (i, row) in visible.iter().enumerate() {
+        let y = (top + 1 + i) as u16;
+        queue!(
+            out,
+            MoveTo(left as u16, y),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+        )?;
+        match row {
+            RowKind::Header(path, n) => {
+                // Path rendered relative to cwd when possible — easier
+                // to scan than a full absolute path.
+                let display_path = match std::env::current_dir() {
+                    Ok(cwd) => path
+                        .strip_prefix(&cwd)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string(),
+                    Err(_) => path.display().to_string(),
+                };
+                let tail = format!(" [{}]", n);
+                let tail_w = tail.chars().count();
+                let head_max = content_w.saturating_sub(2 + tail_w);
+                let display_path: String = display_path.chars().take(head_max).collect();
+                let used = display_path.chars().count() + 1 + tail_w + 1;
+                queue!(
+                    out,
+                    SetBackgroundColor(bg),
+                    Print(' '),
+                    SetForegroundColor(header_fg),
+                    SetAttribute(Attribute::Bold),
+                    Print(&display_path),
+                    SetAttribute(Attribute::Reset),
+                    SetBackgroundColor(bg),
+                    SetForegroundColor(dim_fg),
+                    Print(&tail),
+                )?;
+                let pad = content_w.saturating_sub(used);
+                queue!(out, SetBackgroundColor(bg), Print(" ".repeat(pad)))?;
+            }
+            RowKind::Edit(idx) => {
+                let e = &preview.edits[*idx];
+                let is_cursor = *idx == preview.cursor;
+                let row_bg = if is_cursor { selected_bg } else { bg };
+                let cursor_glyph = if is_cursor { '>' } else { ' ' };
+                let checkbox = if e.enabled { "[x]" } else { "[ ]" };
+                let line_no = format!("{}:{}", e.edit.start_line + 1, e.edit.start_col + 1);
+                // Render the after-line, trimmed for width and tab-
+                // collapsed so a deeply-indented row doesn't push the
+                // rename off the right edge.
+                let preview_text = collapse_tabs(&e.after_text);
+                // Layout: ` > [x]  ll:cc  preview…`
+                // 1 cursor + 1 sp + 3 checkbox + 2 sp + ll:cc + 2 sp + preview
+                let fixed = 1 + 1 + 3 + 2 + line_no.chars().count() + 2;
+                let preview_max = content_w.saturating_sub(fixed + 1);
+                let preview_trunc: String = preview_text.chars().take(preview_max).collect();
+                let preview_w = preview_trunc.chars().count();
+                let pad = content_w.saturating_sub(fixed + preview_w);
+                let check_fg = if e.enabled { accent } else { disabled_fg };
+                let text_fg = if e.enabled { label_fg } else { disabled_fg };
+                queue!(
+                    out,
+                    SetBackgroundColor(row_bg),
+                    SetForegroundColor(if is_cursor { accent } else { dim_fg }),
+                    Print(cursor_glyph),
+                    Print(' '),
+                    SetForegroundColor(check_fg),
+                    Print(checkbox),
+                    SetForegroundColor(dim_fg),
+                    Print("  "),
+                    Print(&line_no),
+                    SetForegroundColor(text_fg),
+                    Print("  "),
+                    Print(&preview_trunc),
+                    Print(" ".repeat(pad)),
+                )?;
+            }
+        }
+        queue!(
+            out,
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+        )?;
+    }
+    // Pad any unused body rows with empty borders so the popup stays
+    // rectangular when the rename has fewer edits than `body_h`.
+    if visible.len() < body_h {
+        for i in visible.len()..body_h {
+            let y = (top + 1 + i) as u16;
+            queue!(
+                out,
+                MoveTo(left as u16, y),
+                SetBackgroundColor(bg),
+                SetForegroundColor(border),
+                Print('│'),
+                Print(" ".repeat(content_w)),
+                Print('│'),
+            )?;
+        }
+    }
+
+    // ── Footer ──────────────────────────────────────────────────────────
+    let footer_top = top + 1 + body_h;
+    // Divider
+    queue!(
+        out,
+        MoveTo(left as u16, footer_top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        Print(" ".repeat(content_w)),
+        Print('│'),
+    )?;
+    let hint1 = " j/k move · <Space> toggle · a all · n none ";
+    let hint2 = format!(
+        " <Enter> apply {} · <Esc> cancel · o open file at edit ",
+        preview.enabled_count()
+    );
+    for (i, hint) in [hint1.to_string(), hint2].iter().enumerate() {
+        let y = (footer_top + 1 + i) as u16;
+        let hint_chars: String = hint.chars().take(content_w).collect();
+        let pad = content_w.saturating_sub(hint_chars.chars().count());
+        queue!(
+            out,
+            MoveTo(left as u16, y),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+            SetForegroundColor(dim_fg),
+            Print(&hint_chars),
+            Print(" ".repeat(pad)),
+            SetForegroundColor(border),
+            Print('│'),
+        )?;
+    }
+
+    // ── Bottom border ───────────────────────────────────────────────────
+    queue!(
+        out,
+        MoveTo(left as u16, (top + popup_h - 1) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(content_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
+/// Collapse runs of tabs in `s` into single spaces. Source lines often
+/// lead with tab indentation; printing them verbatim in the overlay
+/// stretches the row out by 8 cells per tab. A single space gives the
+/// reader the shape of the line without burning the width budget.
+fn collapse_tabs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut last_was_tab = false;
+    for ch in s.chars() {
+        if ch == '\t' {
+            if !last_was_tab {
+                out.push(' ');
+            }
+            last_was_tab = true;
+        } else {
+            out.push(ch);
+            last_was_tab = false;
+        }
+    }
+    out
 }
 
 fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
@@ -1710,7 +2012,14 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         used += 1;
         let mut tab_x: u16 = label_w + 1;
         for idx in 0..term_count {
-            let tab_label = format!(" {} ", idx + 1);
+            // Labelled tabs (e.g. "build" / "dev" set by the task
+            // runner) show the name; un-labelled shells fall back to
+            // the positional number so the strip stays predictable
+            // for a freshly opened `:terminal`.
+            let tab_label = match app.terminals.get(idx).and_then(|t| t.label()) {
+                Some(name) => format!(" {} ", name),
+                None => format!(" {} ", idx + 1),
+            };
             let chip_chars = tab_label.chars().count() as u16;
             let is_active = idx == app.active_terminal_idx;
             let (bg, fg) = if is_active {
@@ -5262,6 +5571,7 @@ fn mode_color(app: &App, mode: Mode) -> Color {
         Mode::DebugPane => app.config.mode_debug(),
         Mode::Terminal => app.config.mode_terminal(),
         Mode::FileTree => app.config.mode_picker(),
+        Mode::RenamePreview => app.config.mode_picker(),
     }
 }
 

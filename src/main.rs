@@ -24,6 +24,7 @@ mod picker;
 mod render;
 mod session;
 mod spell;
+mod task;
 mod terminal;
 mod test;
 mod text_object;

@@ -209,6 +209,9 @@ impl super::App {
                         PickerPayload::SpellSuggestion { word, replacement } => {
                             self.apply_spell_suggestion(&word, &replacement);
                         }
+                        PickerPayload::TaskIdx(idx) => {
+                            self.task_run_picked(idx);
+                        }
                     }
                 }
             }
@@ -265,7 +268,8 @@ impl super::App {
             | PickerKind::DebugTarget
             | PickerKind::TestTarget
             | PickerKind::CodeLens
-            | PickerKind::SpellSuggestions => picker.refilter(),
+            | PickerKind::SpellSuggestions
+            | PickerKind::Task => picker.refilter(),
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());

@@ -368,36 +368,9 @@ impl super::App {
             return true;
         }
 
-        let (button, is_release, is_drag) = match ev.kind {
-            MouseEventKind::Down(MouseButton::Left) => (0u32, false, false),
-            MouseEventKind::Down(MouseButton::Middle) => (1, false, false),
-            MouseEventKind::Down(MouseButton::Right) => (2, false, false),
-            MouseEventKind::Up(MouseButton::Left) => (0, true, false),
-            MouseEventKind::Up(MouseButton::Middle) => (1, true, false),
-            MouseEventKind::Up(MouseButton::Right) => (2, true, false),
-            MouseEventKind::Drag(MouseButton::Left) if mouse.drag => (0, false, true),
-            MouseEventKind::Drag(MouseButton::Middle) if mouse.drag => (1, false, true),
-            MouseEventKind::Drag(MouseButton::Right) if mouse.drag => (2, false, true),
-            MouseEventKind::Moved if mouse.motion => (3, false, false),
-            MouseEventKind::ScrollUp => (64, false, false),
-            MouseEventKind::ScrollDown => (65, false, false),
-            _ => return true,
-        };
-        let mut cb = button;
-        if is_drag {
-            cb |= 32;
-        }
-        let bytes = if mouse.sgr {
-            let trail = if is_release { 'm' } else { 'M' };
-            format!("\x1b[<{cb};{pane_col};{pane_row}{trail}").into_bytes()
-        } else {
-            let cb_byte = if is_release { 3u32 } else { cb };
-            let mut out = Vec::with_capacity(6);
-            out.extend_from_slice(b"\x1b[M");
-            out.push((cb_byte + 32) as u8);
-            out.push((pane_col as u32 + 32).min(255) as u8);
-            out.push((pane_row as u32 + 32).min(255) as u8);
-            out
+        let bytes = match encode_mouse_event_for_pty(ev, pane_row, pane_col, mouse) {
+            Some(b) => b,
+            None => return true,
         };
         let _ = term.write_bytes(&bytes);
         if matches!(ev.kind, MouseEventKind::Down(_))
@@ -407,6 +380,53 @@ impl super::App {
             self.terminal_focus = crate::app::TerminalFocus::Bottom;
         }
         true
+    }
+}
+
+/// Translate a mouse event into the xterm PTY byte sequence the
+/// embedded program expects. Returns `None` when the event doesn't
+/// correspond to a tracked mouse action (drag without drag tracking,
+/// motion without motion tracking, an unsupported button, …) so the
+/// caller can skip the write. Coords are 1-based pane-relative
+/// (xterm convention). Shared between the bottom `:terminal` pane
+/// and the right-side AI pane so both honour DECSET 1000/1002/1003
+/// + 1006 the same way.
+pub(super) fn encode_mouse_event_for_pty(
+    ev: &MouseEvent,
+    pane_row: usize,
+    pane_col: usize,
+    mouse: crate::terminal::MouseModeState,
+) -> Option<Vec<u8>> {
+    let (button, is_release, is_drag) = match ev.kind {
+        MouseEventKind::Down(MouseButton::Left) => (0u32, false, false),
+        MouseEventKind::Down(MouseButton::Middle) => (1, false, false),
+        MouseEventKind::Down(MouseButton::Right) => (2, false, false),
+        MouseEventKind::Up(MouseButton::Left) => (0, true, false),
+        MouseEventKind::Up(MouseButton::Middle) => (1, true, false),
+        MouseEventKind::Up(MouseButton::Right) => (2, true, false),
+        MouseEventKind::Drag(MouseButton::Left) if mouse.drag => (0, false, true),
+        MouseEventKind::Drag(MouseButton::Middle) if mouse.drag => (1, false, true),
+        MouseEventKind::Drag(MouseButton::Right) if mouse.drag => (2, false, true),
+        MouseEventKind::Moved if mouse.motion => (3, false, false),
+        MouseEventKind::ScrollUp => (64, false, false),
+        MouseEventKind::ScrollDown => (65, false, false),
+        _ => return None,
+    };
+    let mut cb = button;
+    if is_drag {
+        cb |= 32;
+    }
+    if mouse.sgr {
+        let trail = if is_release { 'm' } else { 'M' };
+        Some(format!("\x1b[<{cb};{pane_col};{pane_row}{trail}").into_bytes())
+    } else {
+        let cb_byte = if is_release { 3u32 } else { cb };
+        let mut out = Vec::with_capacity(6);
+        out.extend_from_slice(b"\x1b[M");
+        out.push((cb_byte + 32) as u8);
+        out.push((pane_col as u32 + 32).min(255) as u8);
+        out.push((pane_row as u32 + 32).min(255) as u8);
+        Some(out)
     }
 }
 

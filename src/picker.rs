@@ -33,6 +33,10 @@ pub enum PickerKind {
     /// `z=` suggestion picker — choose one of the up-to-12 single-edit
     /// neighbours of the misspelled word under the cursor.
     SpellSuggestions,
+    /// Pick a discoverable workspace task (npm script, justfile recipe,
+    /// cargo alias / builtin verb, Makefile target, dotnet verb). The
+    /// selected task spawns in a labelled bottom-terminal tab.
+    Task,
 }
 
 pub struct PickerState {
@@ -101,6 +105,10 @@ pub enum PickerPayload {
         word: String,
         replacement: String,
     },
+    /// Index into `App.pending_tasks` — the picked task. The full
+    /// `Task` is too heavy to embed (path + arg list), so the picker
+    /// payload is just a route key. Same pattern as `CodeActionIdx`.
+    TaskIdx(usize),
 }
 
 impl PickerState {

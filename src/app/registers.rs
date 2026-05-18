@@ -139,6 +139,10 @@ impl super::App {
                     // open files from a sidebar mid-record cleanly, so
                     // bail rather than fire half-meaningful keystrokes.
                     Mode::FileTree => break 'outer,
+                    // Rename preview is a single-purpose modal flow —
+                    // macros mid-replay would race the user's accept
+                    // decision; bail cleanly.
+                    Mode::RenamePreview => break 'outer,
                 }
             }
         }

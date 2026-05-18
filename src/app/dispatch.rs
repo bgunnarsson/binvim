@@ -321,6 +321,9 @@ impl super::App {
                     self.window.cursor = anchor;
                 }
             }
+            Action::Lazygit => self.cmd_lazygit(),
+            Action::TaskPicker => self.cmd_task_picker(),
+            Action::TaskLast => self.cmd_task_last(),
             Action::VisualSwitch(target) => match self.mode {
                 Mode::Visual(cur) if cur == target => self.exit_visual(),
                 _ => {

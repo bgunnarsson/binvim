@@ -239,6 +239,8 @@ impl super::App {
                     || self.pending.awaiting_buffer_leader
                     || self.pending.awaiting_debug_leader
                     || self.pending.awaiting_hunk_leader
+                    || self.pending.awaiting_git_leader
+                    || self.pending.awaiting_task_leader
                     || self.pending.awaiting_ai_leader;
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
@@ -390,6 +392,7 @@ impl super::App {
                     }
                     Mode::Terminal => self.handle_terminal_key(k),
                     Mode::FileTree => self.handle_file_tree_key(k),
+                    Mode::RenamePreview => self.handle_rename_preview_key(k),
                 }
             }
             crossterm::event::Event::Mouse(me) => {
@@ -431,8 +434,12 @@ impl super::App {
         // Side-pane (`:claude` etc.) mouse handling. Header row
         // clicks switch tabs via the hit-box table the renderer
         // populated; clicks anywhere else in the pane pull focus to
-        // the side terminal. Everything inside the pane is swallowed
-        // so editor windows behind don't also fire.
+        // the side terminal AND (when the embedded program has DECSET
+        // mouse tracking enabled) forward the event to the PTY as an
+        // xterm mouse escape sequence so scroll / drag / click inside
+        // claude / codex / opencode reach the tool. Without the
+        // forwarding path scroll-wheel events fell into the swallow
+        // arm and never reached the tool.
         if self.side_terminal_pane_open
             && self.side_pane_cols() > 0
             && col >= self.side_pane_left()
@@ -467,6 +474,33 @@ impl super::App {
                 self.terminal_focus = crate::app::TerminalFocus::Side;
                 self.mode = Mode::Terminal;
                 return;
+            }
+            // Body: forward to the PTY when the program asked for
+            // mouse tracking; otherwise just consume the event (and
+            // pull focus on a click). Coords are pane-relative,
+            // 1-based to match the xterm mouse protocol.
+            let content_left = self.side_pane_content_left();
+            let body_top = header_row + 1;
+            if row >= body_top && col >= content_left {
+                let pane_row = row - body_top + 1;
+                let pane_col = col - content_left + 1;
+                if let Some(term) = self.active_side_terminal() {
+                    let mouse = term.mouse_state();
+                    if mouse.any {
+                        if let Some(bytes) = super::terminal_glue::encode_mouse_event_for_pty(
+                            &ev, pane_row, pane_col, mouse,
+                        ) {
+                            let _ = term.write_bytes(&bytes);
+                        }
+                        if matches!(ev.kind, MouseEventKind::Down(_))
+                            && !matches!(self.mode, Mode::Terminal)
+                        {
+                            self.mode = Mode::Terminal;
+                            self.terminal_focus = crate::app::TerminalFocus::Side;
+                        }
+                        return;
+                    }
+                }
             }
             if matches!(
                 ev.kind,
@@ -986,6 +1020,8 @@ impl super::App {
             || self.pending.awaiting_buffer_leader
             || self.pending.awaiting_debug_leader
             || self.pending.awaiting_hunk_leader
+            || self.pending.awaiting_git_leader
+            || self.pending.awaiting_task_leader
             || self.pending.awaiting_terminal_leader
             || self.pending.awaiting_test_leader
             || self.pending.awaiting_ai_leader;
@@ -1595,6 +1631,9 @@ impl super::App {
             ExCommand::Registers => self.cmd_registers(),
             ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
+            ExCommand::Lazygit => self.cmd_lazygit(),
+            ExCommand::TaskPicker => self.cmd_task_picker(),
+            ExCommand::TaskLast => self.cmd_task_last(),
             ExCommand::AiTool(tool) => self.open_side_terminal(tool.label(), tool.command()),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::DebugWatch(sub) => self.dispatch_debug_watch(sub),

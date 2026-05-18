@@ -50,6 +50,21 @@ pub enum ExCommand {
     /// no argument, spawns `$SHELL` (fallback `/bin/sh`); with an
     /// argument, spawns that command line.
     Terminal(Option<String>),
+    /// `:task` / `:tasks` — open a fuzzy picker of every discoverable
+    /// task in the workspace (npm scripts, justfile recipes, cargo
+    /// aliases + builtins, Makefile targets, dotnet verbs). Selecting
+    /// a task spawns it in a fresh, labelled bottom-terminal tab.
+    TaskPicker,
+    /// `:tasklast` / `:trun` — re-run the most recent task. No-op (with
+    /// a status hint) when no task has been run yet this session.
+    TaskLast,
+    /// `:lazygit` / `:lg` — suspend the editor, run `lazygit` as a
+    /// foreground child with the host terminal handed off to it
+    /// directly (yazi-style takeover, not a PTY-embedded pane), and
+    /// on exit reclaim the terminal + refresh git gutter state for
+    /// every open buffer so staged / committed / checked-out changes
+    /// show up immediately.
+    Lazygit,
     /// `:claude` / `:codex` / `:opencode` — open (or focus) the
     /// right-side AI-assistant terminal pane and start the named
     /// tool inside a fresh shell tab. Re-running the same command
@@ -288,6 +303,9 @@ pub fn parse(line: &str) -> ExCommand {
                 ExCommand::Terminal(Some(rest.to_string()))
             }
         }
+        "task" | "tasks" => ExCommand::TaskPicker,
+        "tasklast" | "trun" => ExCommand::TaskLast,
+        "lazygit" | "lg" => ExCommand::Lazygit,
         "claude" => ExCommand::AiTool(AiTool::Claude),
         "codex" => ExCommand::AiTool(AiTool::Codex),
         "opencode" => ExCommand::AiTool(AiTool::Opencode),
