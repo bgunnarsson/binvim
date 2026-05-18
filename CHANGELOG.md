@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-18
+
 ### Added
 - **Debug test.** `:debugtest` (alias `:dt`) walks up from the
   cursor for the enclosing test function, then routes through the
