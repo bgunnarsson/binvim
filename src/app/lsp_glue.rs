@@ -634,14 +634,10 @@ impl super::App {
     /// so the augment fires whether the server returned matches or not.
     fn present_references(&mut self, items: Vec<LocationItem>) {
         let augment = self.pending_ref_augment.take();
-        let lsp_count = items.len();
+        let pre_merge = items.len();
         let mut merged = items;
-        let mut grep_count = 0usize;
-        let mut augment_root: Option<PathBuf> = None;
         if let Some(aug) = augment {
-            augment_root = Some(aug.root.clone());
             let grep_items = run_razor_ref_grep(&aug);
-            grep_count = grep_items.len();
             let mut seen: std::collections::HashSet<(PathBuf, usize, usize)> = merged
                 .iter()
                 .map(|i| (i.path.clone(), i.line, i.col))
@@ -653,18 +649,13 @@ impl super::App {
                 }
             }
         }
-        // Encode the per-source counts + augment root into the picker
-        // title — it survives keystrokes (unlike `status_msg`, which is
-        // cleared on every keypress in `handle_event`).
-        let title = if let Some(root) = augment_root {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let root_display = root
-                .strip_prefix(&cwd)
-                .ok()
-                .map(|p| p.display().to_string())
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| root.display().to_string());
-            format!("References [{lsp_count} LSP + {grep_count} grep, root: {root_display}]")
+        // Mark the title when the Razor grep contributed extra matches
+        // beyond what the LSP returned. Quiet when the augment found
+        // nothing new — the picker title is the only persistent
+        // notification surface for this UI.
+        let added = merged.len().saturating_sub(pre_merge);
+        let title = if added > 0 {
+            format!("References (+{added} razor)")
         } else {
             "References".to_string()
         };
