@@ -2548,23 +2548,27 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-/// Wide ANSI Shadow "binvim" logo — same one the start page uses
-/// when the pane is wide enough to hold it. 6 rows × 44 cols.
+/// Wide robot logo — a head + chest in box-drawing characters,
+/// shown over the side-pane loading splash. 6 rows × 17 cols, sized
+/// to fit the narrow side pane without crowding the caption row
+/// below. The robot reads as "an assistant is booting up" without
+/// the editor identity claim a "binvim" logo would carry in a
+/// surface that's about to host Claude / Codex / opencode.
 const SIDE_LOADING_LOGO_WIDE: &[&str] = &[
-    "██████╗ ██╗███╗   ██╗██╗   ██╗██╗███╗   ███╗",
-    "██╔══██╗██║████╗  ██║██║   ██║██║████╗ ████║",
-    "██████╔╝██║██╔██╗ ██║██║   ██║██║██╔████╔██║",
-    "██╔══██╗██║██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║",
-    "██████╔╝██║██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║",
-    "╚═════╝ ╚═╝╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝",
+    "╭───────────────╮",
+    "│ ◉     ─     ◉ │",
+    "╰───────┬───────╯",
+    "╔═══════╧═══════╗",
+    "║ ░░░░░░░░░░░░░ ║",
+    "╚═══════════════╝",
 ];
 
-/// Compact "bin·vim" mark used when the pane is too narrow for the
-/// ANSI Shadow block. Half-height block characters give a tidy
-/// rectangular logo that still reads as binvim.
+/// Compact robot mark used when the pane is too narrow for the
+/// full body. Just the head; 3 rows × 9 cols.
 const SIDE_LOADING_LOGO_SMALL: &[&str] = &[
-    "▛▀▖▗ ▗▖ ▌▌▌▌▛▚▞▌",
-    "▙▄▘▌▌▌▚▌▚▘▌▌▌ ▌",
+    "╔═══════╗",
+    "║ ◉ ─ ◉ ║",
+    "╚═══╤═══╝",
 ];
 
 /// Braille spinner frames — 10 frames at ~80ms each rotates once
