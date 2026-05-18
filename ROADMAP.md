@@ -204,8 +204,17 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       single-file so the friction-vs-confidence tradeoff is per-action; could gate behind an
       opt-in setting or expose `:refactor` to invoke the preview explicitly on top of an
       already-buffered edit. **considering**
-- [ ] **Workspace folders / multi-root.** Currently one project root per buffer; opening files from a sibling
-      repo doesn't fan a second workspace into the same client. Important for monorepos. **considering**
+- [x] **Workspace folders / multi-root.** Shipped — `LspClient` carries a runtime-mutable set of
+      attached `workspace_folders` plus a `workspace_folders_supported` flag captured from the
+      `initialize` response (object form `{"supported": true}` and the older bool shorthand both
+      honoured). `ensure_for_path` now branches on "client exists?": if yes and the file's resolved
+      root isn't already attached, `add_workspace_folder` appends it and (when the server supports
+      the cap) fires `workspace/didChangeWorkspaceFolders` with the new folder; if no, spawn as
+      before. Net effect: opening files from sibling repos into the same session grows the
+      existing server's known-folder set instead of spawning a second process. rust-analyzer /
+      tsserver / gopls / jdtls all advertise the cap; the few that don't fall back to the
+      previous "first root wins" behaviour with no change. Surfaced via `:workspaces` / `:ws`,
+      which dumps `key: ~/path  +  ~/path · key: ~/path` to the status line.
 - [x] **`window/showMessage` and `window/logMessage` surfacing.** Both
       notifications are captured into a bounded ring (500 entries) on
       the App. `showMessage` Error / Warning fires through `status_msg`

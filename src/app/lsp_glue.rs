@@ -1701,6 +1701,38 @@ impl super::App {
     /// request has fired for this buffer version, whether a request
     /// is currently in flight, and the contents of the cache (count,
     /// anchor lines, resolved-command states).
+    /// `:workspaces` — dump every running LSP client + its attached
+    /// workspace folders to the status line. Output shape:
+    /// `rust-analyzer: ~/code/api  +  ~/code/shared-lib · tsserver: ~/code/web`.
+    /// Paths are rendered relative to `$HOME` when possible (the
+    /// editor's cwd would be ambiguous in a multi-root session).
+    pub(super) fn cmd_workspaces(&mut self) {
+        let per_client = self.lsp.workspace_folders_per_client();
+        if per_client.is_empty() {
+            self.status_msg = "workspaces: no LSP clients running".into();
+            return;
+        }
+        let home = std::env::var("HOME").ok().map(PathBuf::from);
+        let pretty = |p: &Path| -> String {
+            if let Some(h) = home.as_ref() {
+                if let Ok(rest) = p.strip_prefix(h) {
+                    return format!("~/{}", rest.display());
+                }
+            }
+            p.display().to_string()
+        };
+        let mut parts: Vec<String> = Vec::with_capacity(per_client.len());
+        for (key, folders) in &per_client {
+            let folders_str = folders
+                .iter()
+                .map(|f| pretty(f))
+                .collect::<Vec<_>>()
+                .join("  +  ");
+            parts.push(format!("{key}: {folders_str}"));
+        }
+        self.status_msg = parts.join(" · ");
+    }
+
     pub(super) fn cmd_code_lens_status(&mut self) {
         if !self.config.lsp.code_lens {
             self.status_msg =

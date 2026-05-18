@@ -125,8 +125,10 @@ const COMMAND_NAMES: &[&str] = &[
     "tn",
     "trun",
     "w",
+    "workspaces",
     "wq",
     "write",
+    "ws",
     "x",
 ];
 

@@ -308,6 +308,33 @@ impl LspClient {
         Some(client)
     }
 
+    /// Attach a new workspace folder to a live client. Returns `true`
+    /// if the folder was actually added (the manager surfaces this so
+    /// it can fire `workspace/didChangeWorkspaceFolders` only when
+    /// something changed), `false` if it was already attached.
+    /// Caller is responsible for honoring the supported-cap — this
+    /// helper just maintains the local set.
+    pub fn add_workspace_folder(&self, folder: &Path) -> bool {
+        let folder = folder.to_path_buf();
+        let mut g = self.workspace_folders.lock().unwrap();
+        if g.iter().any(|f| f == &folder) {
+            return false;
+        }
+        g.push(folder);
+        true
+    }
+
+    /// Snapshot the attached folders. Cheap clone — typical sessions
+    /// stay at 1-2 folders; even an aggressive monorepo session
+    /// rarely climbs past 10.
+    pub fn workspace_folders_snapshot(&self) -> Vec<PathBuf> {
+        self.workspace_folders.lock().unwrap().clone()
+    }
+
+    pub fn supports_workspace_folders(&self) -> bool {
+        *self.workspace_folders_supported.lock().unwrap()
+    }
+
     pub fn alloc_id(&self) -> u64 {
         let mut g = self.next_id.lock().unwrap();
         let id = *g;

@@ -1630,6 +1630,7 @@ impl super::App {
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Registers => self.cmd_registers(),
             ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
+            ExCommand::Workspaces => self.cmd_workspaces(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
             ExCommand::Lazygit => self.cmd_lazygit(),
             ExCommand::TaskPicker => self.cmd_task_picker(),

@@ -168,14 +168,40 @@ impl LspManager {
             return false;
         }
         for spec in &specs {
-            if self.clients.contains_key(&spec.key) {
-                continue;
-            }
             let start = path
                 .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| fallback_root.to_path_buf());
             let root = find_workspace_root(&start, &spec.root_markers);
+            if let Some(client) = self.clients.get(&spec.key) {
+                // Client already running for this server type. If the
+                // file's workspace root isn't already attached AND the
+                // server advertised the workspaceFolders capability,
+                // attach it via the spec's runtime mutation path. Skip
+                // the notification for servers that don't support it —
+                // sending `didChangeWorkspaceFolders` to a server that
+                // doesn't model multiple folders would be ignored at
+                // best and confusing at worst.
+                if client.add_workspace_folder(&root) && client.supports_workspace_folders() {
+                    let folder_name = root
+                        .file_name()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "root".into());
+                    let _ = client.send_notification(
+                        "workspace/didChangeWorkspaceFolders",
+                        json!({
+                            "event": {
+                                "added": [{
+                                    "uri": super::types::path_to_uri(&root),
+                                    "name": folder_name,
+                                }],
+                                "removed": []
+                            }
+                        }),
+                    );
+                }
+                continue;
+            }
             if let Some(client) = LspClient::spawn_spec(spec, &root) {
                 let key = spec.key.clone();
                 self.clients.insert(key.clone(), client);
@@ -191,6 +217,19 @@ impl LspManager {
             }
         }
         specs.iter().any(|s| self.clients.contains_key(&s.key))
+    }
+
+    /// Snapshot of every running client's `(key, attached folders)`
+    /// for the `:workspaces` ex command. Sorted by key so the output
+    /// is deterministic across calls.
+    pub fn workspace_folders_per_client(&self) -> Vec<(String, Vec<PathBuf>)> {
+        let mut out: Vec<(String, Vec<PathBuf>)> = self
+            .clients
+            .iter()
+            .map(|(k, c)| (k.clone(), c.workspace_folders_snapshot()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     /// Send Copilot's custom `checkStatus` request. Optional `options`

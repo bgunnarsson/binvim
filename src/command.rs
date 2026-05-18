@@ -46,6 +46,11 @@ pub enum ExCommand {
     /// showing up: surfaces whether lenses were received, what lines
     /// they're anchored on, and the resolved-command state.
     CodeLensStatus,
+    /// `:workspaces` / `:ws` — dump every running LSP client + the
+    /// list of workspace folders it currently has attached. Surfaces
+    /// the multi-root state for monorepo / sibling-repo sessions; in
+    /// a single-root session each client lists exactly one folder.
+    Workspaces,
     /// `:terminal [cmd]` — open the embedded terminal overlay. With
     /// no argument, spawns `$SHELL` (fallback `/bin/sh`); with an
     /// argument, spawns that command line.
@@ -309,6 +314,7 @@ pub fn parse(line: &str) -> ExCommand {
         "messages" | "message" | "mes" => ExCommand::Messages,
         "reg" | "registers" | "display" => ExCommand::Registers,
         "codelens" | "codelenses" => ExCommand::CodeLensStatus,
+        "workspaces" | "ws" => ExCommand::Workspaces,
         "terminal" | "term" => {
             if rest.is_empty() {
                 ExCommand::Terminal(None)
