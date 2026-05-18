@@ -207,17 +207,32 @@ impl super::App {
             Action::AiClaude => {
                 use crate::command::AiTool;
                 let t = AiTool::Claude;
-                self.open_side_terminal(t.label(), t.command());
+                self.open_side_terminal(t.label(), t.command(), false);
+            }
+            Action::AiClaudeHandoff => {
+                use crate::command::AiTool;
+                let t = AiTool::Claude;
+                self.open_side_terminal(t.label(), t.command(), true);
             }
             Action::AiCodex => {
                 use crate::command::AiTool;
                 let t = AiTool::Codex;
-                self.open_side_terminal(t.label(), t.command());
+                self.open_side_terminal(t.label(), t.command(), false);
+            }
+            Action::AiCodexHandoff => {
+                use crate::command::AiTool;
+                let t = AiTool::Codex;
+                self.open_side_terminal(t.label(), t.command(), true);
             }
             Action::AiOpencode => {
                 use crate::command::AiTool;
                 let t = AiTool::Opencode;
-                self.open_side_terminal(t.label(), t.command());
+                self.open_side_terminal(t.label(), t.command(), false);
+            }
+            Action::AiOpencodeHandoff => {
+                use crate::command::AiTool;
+                let t = AiTool::Opencode;
+                self.open_side_terminal(t.label(), t.command(), true);
             }
             Action::AiClose => {
                 if self.side_terminals.is_empty() {

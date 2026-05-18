@@ -87,33 +87,22 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       call returns, lazygit is done. No PTY plumbing, no tab management, no SIGWINCH dance.
       `<leader>g` became a git sub-leader; grep (formerly `<leader>g`) moved to `<leader>G`.
       `<leader>g` hold surfaces the hint via the which-key popup.
-- [x] **AI side pane file-context handoff (`[ai] path_handoff`).** Shipped, opt-in. Set
-      `[ai] path_handoff = true` in `~/.config/binvim/config.toml`; from then on, opening
-      `:claude` / `:codex` / `:opencode` with an active buffer that has a path pre-types
-      `@<cwd-relative path>` into the freshly-spawned tool's input field so the
-      conversation starts already aware of what you're editing. You press Enter to submit.
-      Universal across the three tools (they all accept the `@`-prefix file reference) and
-      tool-agnostic (no per-tool CLI flag coupling) — the bytes go into the PTY after a
-      per-tool quiet window (Claude ~300ms, Codex ~800ms, opencode ~1500ms) so the input
-      field is wired up by then and the front of the path doesn't get eaten by startup.
-      Design decisions:
-      (a) **First open per session only.** Re-running `:claude` re-focuses the existing tab
-          (the dedup-by-label path) without injecting again, so an in-progress conversation
-          doesn't get `@path` stuffed back into it. Manually closing the tab and re-opening
-          counts as a new first-open and re-injects.
-      (b) **No auto-submit.** Spent a long iteration trying to make the trailing `\r`
-          register as a discrete Enter across all three tools (drip at typing cadence,
-          atomic write + pause, separate write at various delays, `\r` appended to the
-          typed sequence). Each tool classified the trailing Enter differently depending
-          on context (autocomplete popup capture, paste-mode newline-in-content, debounce
-          window) and no single timing worked everywhere. Pre-typing the path is the part
-          that worked universally, so that's where we landed. The user presses Enter once
-          to submit.
-      (c) **File-only, no visual ranges yet.** v1 always injects the whole-file reference.
-          `@<path>:start-end` for visual selections is a follow-up if there's demand.
-      Off by default because `@path` references inline the file's contents into the first
-      turn for most tools — a few thousand tokens on a 500-line buffer, more on generated
-      bundles / JSON dumps — and that adds up over a day of pair-programming.
+- [x] **AI side pane file-context handoff — shift-pair leader bindings.** Each AI tool has
+      two leader bindings now: a lowercase letter opens the tool as-is, an uppercase letter
+      opens it AND pre-types `@<cwd-relative path>` into the input field once the tool is
+      ready. `<leader>jc` / `<leader>jC` for Claude, `<leader>jx` / `<leader>jX` for Codex,
+      `<leader>jo` / `<leader>jO` for opencode. The shift-pair convention puts the choice
+      one keypress away — same letter, just hold shift when you want file context. No config
+      knob and no global "path handoff on/off" toggle; the per-invocation decision is the
+      knob. `:claude` / `:codex` / `:opencode` ex commands open without handoff.
+      The handoff writes bytes after a per-tool quiet window (Claude ~300ms, Codex ~800ms,
+      opencode ~1500ms) so the input field is wired up before the path arrives and the
+      front of the string doesn't get eaten by startup. You press Enter to submit. Earlier
+      auto-submit attempts (drip at typing cadence + discrete `\r`, atomic + pause, `\r`
+      appended, various delays) failed to settle reliably across all three tools — each
+      classified the Enter differently depending on context (autocomplete capture, paste-
+      mode newline, debounce window). Pre-typing the path is the part that worked
+      universally, so that's where we landed.
 - [x] **Cmdline & search history.** `:<Up>` cycles previous ex commands; `/<Up>` cycles previous searches.
       Capped at 100 entries, dedup against the immediate previous, independent rings for `:` vs `/`. Persisted
       to the existing per-cwd session JSON; histories load even on `binvim foo.rs` so recall stays warm

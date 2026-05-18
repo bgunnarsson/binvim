@@ -1635,7 +1635,10 @@ impl super::App {
             ExCommand::Lazygit => self.cmd_lazygit(),
             ExCommand::TaskPicker => self.cmd_task_picker(),
             ExCommand::TaskLast => self.cmd_task_last(),
-            ExCommand::AiTool(tool) => self.open_side_terminal(tool.label(), tool.command()),
+            // Ex commands open the tool without the path handoff — the
+            // uppercase leader bindings (`<leader>jC` / `jX` / `jO`) are
+            // the explicit "with file context" path.
+            ExCommand::AiTool(tool) => self.open_side_terminal(tool.label(), tool.command(), false),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::DebugWatch(sub) => self.dispatch_debug_watch(sub),
             ExCommand::DebugWatchesShow => self.dispatch_debug_watches_show(),

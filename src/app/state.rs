@@ -523,8 +523,11 @@ pub fn leader_entries() -> Vec<(String, String)> {
 pub fn ai_prefix_entries() -> Vec<(String, String)> {
     vec![
         ("c".into(), "Claude".into()),
+        ("C".into(), "Claude + @path handoff".into()),
         ("x".into(), "Codex".into()),
+        ("X".into(), "Codex + @path handoff".into()),
         ("o".into(), "opencode".into()),
+        ("O".into(), "opencode + @path handoff".into()),
         ("q".into(), "Close tab".into()),
     ]
 }

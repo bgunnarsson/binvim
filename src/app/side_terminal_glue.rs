@@ -90,7 +90,12 @@ impl super::App {
     /// itself with the AI tool via `exec`. The intermediate
     /// prompt + echo never reaches the user because the loading
     /// splash sits on top of the pane until the tool is settled.
-    pub(super) fn open_side_terminal(&mut self, label: &str, command: &str) {
+    pub(super) fn open_side_terminal(
+        &mut self,
+        label: &str,
+        command: &str,
+        with_handoff: bool,
+    ) {
         // Re-focus an existing tab with the same label.
         if let Some(idx) = self.side_terminals.iter().position(|t| t.label == label) {
             self.side_terminal_pane_open = true;
@@ -126,7 +131,11 @@ impl super::App {
         // the tool's eye against the same root binvim is editing
         // from. Falls back gracefully when the active buffer has no
         // path or the strip-prefix doesn't apply.
-        let pending_input = self.ai_path_handoff_prefix();
+        let pending_input = if with_handoff {
+            self.ai_path_handoff_prefix()
+        } else {
+            None
+        };
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(t) => {
                 let now = Instant::now();
@@ -169,9 +178,6 @@ impl super::App {
     /// submit reliably. Pre-typing the path is the part that
     /// works universally, so we keep just that.
     fn ai_path_handoff_prefix(&self) -> Option<String> {
-        if !self.config.ai.path_handoff {
-            return None;
-        }
         let path = self.buffer.path.as_ref()?;
         let cwd = std::env::current_dir().ok();
         let display = match cwd.as_ref().and_then(|c| path.strip_prefix(c).ok()) {
