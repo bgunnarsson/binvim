@@ -4668,14 +4668,18 @@ fn draw_buffer(
             // ground truth and should win when they collide.
             let line_one_based = line_idx + 1;
             let pc_here = pc_line == Some(line_one_based);
+            // Look up the per-site breakpoint so a conditional /
+            // hit-count one renders with a different glyph (`◆`) than
+            // a plain pause (`●`). The shape is enough at glance —
+            // the actual expression shows up in the breakpoints pane.
             let bp_here = canon_buf_path
                 .as_deref()
-                .map(|p| app.dap.has_breakpoint(p, line_one_based))
-                .unwrap_or(false);
+                .and_then(|p| app.dap.breakpoint_at(p, line_one_based));
             let sign = if pc_here {
                 Some(('▶', app.config.gutter_pc_marker()))
-            } else if bp_here {
-                Some(('●', app.config.gutter_breakpoint()))
+            } else if let Some(bp) = &bp_here {
+                let glyph = if bp.is_conditional() { '◆' } else { '●' };
+                Some((glyph, app.config.gutter_breakpoint()))
             } else if let Some(diag_path) = bs.buffer.path.as_deref() {
                 app.worst_diagnostic_for(diag_path, line_idx).map(|s| match s {
                     Severity::Error => ('!', app.config.diagnostic_error()),
@@ -6197,14 +6201,31 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
     };
     for (display, _, bps) in &entries {
         for bp in *bps {
-            let parts = vec![
-                DapTabPart::plain("●  ", palette.red),
+            // `◆` for conditional / hit-count, `●` for plain — same
+            // glyph convention as the editor gutter so the user can
+            // tell them apart at a glance in the pane.
+            let glyph = if bp.is_conditional() { "◆  " } else { "●  " };
+            let mut parts = vec![
+                DapTabPart::plain(glyph, palette.red),
                 DapTabPart::plain(display.clone(), palette.peach),
                 DapTabPart::plain(":", palette.muted),
                 DapTabPart::plain(format!("{}", bp.line), palette.yellow),
             ];
+            // Surface the expression(s) inline so the user can see
+            // *why* this is a `◆` without round-tripping through the
+            // status line. Conditions and hit-counts can both be
+            // present; print them as `if <expr>` / `hit <expr>` with
+            // a separator.
+            if let Some(cond) = &bp.condition {
+                parts.push(DapTabPart::plain("  if ", palette.muted));
+                parts.push(DapTabPart::plain(cond.clone(), palette.green));
+            }
+            if let Some(hit) = &bp.hit_condition {
+                parts.push(DapTabPart::plain("  hit ", palette.muted));
+                parts.push(DapTabPart::plain(hit.clone(), palette.green));
+            }
             rows.push(DapTabRow {
-            selection_range: None,
+                selection_range: None,
                 parts,
                 selected: selected == Some(idx),
             });

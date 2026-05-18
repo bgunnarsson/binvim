@@ -17,6 +17,9 @@ impl super::App {
             DebugSubCmd::Start => self.dap_start_session(),
             DebugSubCmd::Stop => self.dap_stop_session(),
             DebugSubCmd::Break => self.dap_toggle_breakpoint(),
+            DebugSubCmd::BreakCondition(expr) => self.dap_set_breakpoint_condition(expr),
+            DebugSubCmd::BreakHitCondition(expr) => self.dap_set_breakpoint_hit_condition(expr),
+            DebugSubCmd::BreakPlain => self.dap_strip_breakpoint_conditions(),
             DebugSubCmd::ClearBreakpointsInFile => self.dap_clear_breakpoints_in_file(),
             DebugSubCmd::Continue => self.dap_step(StepKind::Continue),
             DebugSubCmd::Next => self.dap_step(StepKind::Next),
@@ -1433,6 +1436,54 @@ impl super::App {
         // user-visible confirmation, so a status-line notification is
         // redundant noise on every press.
         let _ = self.dap.toggle_breakpoint(&abs, line);
+    }
+
+    fn dap_set_breakpoint_condition(&mut self, expr: Option<String>) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "debug: buffer has no path".into();
+            return;
+        };
+        let abs = path.canonicalize().unwrap_or(path);
+        let line = self.window.cursor.line + 1;
+        let creating = !self.dap.has_breakpoint(&abs, line);
+        let echo = expr.clone();
+        self.dap.set_breakpoint_condition(&abs, line, expr);
+        self.status_msg = match (creating, echo) {
+            (true, Some(e)) => format!("debug: conditional breakpoint @ {line} ({e})"),
+            (false, Some(e)) => format!("debug: condition @ {line} → {e}"),
+            (_, None) => format!("debug: cleared condition @ {line}"),
+        };
+    }
+
+    fn dap_set_breakpoint_hit_condition(&mut self, expr: Option<String>) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "debug: buffer has no path".into();
+            return;
+        };
+        let abs = path.canonicalize().unwrap_or(path);
+        let line = self.window.cursor.line + 1;
+        let creating = !self.dap.has_breakpoint(&abs, line);
+        let echo = expr.clone();
+        self.dap.set_breakpoint_hit_condition(&abs, line, expr);
+        self.status_msg = match (creating, echo) {
+            (true, Some(e)) => format!("debug: hit-count breakpoint @ {line} ({e})"),
+            (false, Some(e)) => format!("debug: hit-count @ {line} → {e}"),
+            (_, None) => format!("debug: cleared hit-count @ {line}"),
+        };
+    }
+
+    fn dap_strip_breakpoint_conditions(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            self.status_msg = "debug: buffer has no path".into();
+            return;
+        };
+        let abs = path.canonicalize().unwrap_or(path);
+        let line = self.window.cursor.line + 1;
+        if self.dap.strip_breakpoint_conditions(&abs, line) {
+            self.status_msg = format!("debug: breakpoint @ {line} → plain");
+        } else {
+            self.status_msg = format!("debug: no breakpoint @ {line}");
+        }
     }
 
     fn dap_clear_breakpoints_in_file(&mut self) {

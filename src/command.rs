@@ -182,11 +182,24 @@ pub enum QuickfixSubCmd {
 /// Debugger sub-commands accessible via `:debug`, `:dapstop`, `:dapbreak`,
 /// `:dapc`, etc. Grouped into one variant so the dispatch in `input.rs`
 /// has a single arm and the parser stays compact.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum DebugSubCmd {
     Start,
     Stop,
+    /// Bare `:dapb` — toggle a plain breakpoint at the cursor line.
     Break,
+    /// `:dapb if <expr>` — attach a `condition` to the cursor line's
+    /// breakpoint (creates one if absent). `None` strips the condition
+    /// while keeping the breakpoint intact (same as `:dapb if`).
+    BreakCondition(Option<String>),
+    /// `:dapb hit <expr>` — attach a `hitCondition` (DAP-style: bare
+    /// integer for "pause after N hits", `>= 5` for comparators).
+    /// `None` strips it.
+    BreakHitCondition(Option<String>),
+    /// `:dapb plain` — strip BOTH `condition` and `hitCondition` from
+    /// the cursor line's breakpoint, keeping it as an unconditional
+    /// pause. Status hint when there's no breakpoint to plain-ify.
+    BreakPlain,
     /// Clear every breakpoint in the active buffer.
     ClearBreakpointsInFile,
     Continue,
@@ -311,7 +324,7 @@ pub fn parse(line: &str) -> ExCommand {
         "opencode" => ExCommand::AiTool(AiTool::Opencode),
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
-        "dapbreak" | "dapb" => ExCommand::Debug(DebugSubCmd::Break),
+        "dapbreak" | "dapb" => parse_dapbreak_args(rest),
         "dapclear" => ExCommand::Debug(DebugSubCmd::ClearBreakpointsInFile),
         "dapcontinue" | "dapc" => ExCommand::Debug(DebugSubCmd::Continue),
         "dapnext" | "dapn" => ExCommand::Debug(DebugSubCmd::Next),
@@ -369,6 +382,41 @@ pub fn parse(line: &str) -> ExCommand {
         "testcancel" | "testq" => ExCommand::Test(TestSubCmd::Cancel),
         "testresults" | "testr" => ExCommand::Test(TestSubCmd::Results),
         _ => ExCommand::Unknown(line.to_string()),
+    }
+}
+
+/// Parse the optional argument tail on `:dapb`. Recognised forms:
+/// - bare (no rest) → toggle a plain breakpoint
+/// - `if <expr>` / `if` → set / clear the `condition`
+/// - `hit <expr>` / `hit` → set / clear the `hitCondition`
+/// - `plain` → strip both
+///
+/// Anything else lands in `ExCommand::Unknown` with a hint so the
+/// user knows the expected shape.
+fn parse_dapbreak_args(rest: &str) -> ExCommand {
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return ExCommand::Debug(DebugSubCmd::Break);
+    }
+    // Split on first whitespace; the head is the sub-verb, the tail
+    // (if any) is the user expression and passes through verbatim.
+    let (head, tail) = match rest.split_once(char::is_whitespace) {
+        Some((h, t)) => (h, t.trim()),
+        None => (rest, ""),
+    };
+    match head {
+        "if" | "cond" | "condition" => {
+            let expr = if tail.is_empty() { None } else { Some(tail.to_string()) };
+            ExCommand::Debug(DebugSubCmd::BreakCondition(expr))
+        }
+        "hit" | "hitcount" => {
+            let expr = if tail.is_empty() { None } else { Some(tail.to_string()) };
+            ExCommand::Debug(DebugSubCmd::BreakHitCondition(expr))
+        }
+        "plain" | "clear" => ExCommand::Debug(DebugSubCmd::BreakPlain),
+        _ => ExCommand::Unknown(format!(
+            ":dapb expected `if <expr>` | `hit <expr>` | `plain`, got `{rest}`"
+        )),
     }
 }
 

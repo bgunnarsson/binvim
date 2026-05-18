@@ -245,10 +245,18 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       reports an error for the expression). Survives across sessions
       — the user list is on `DapManager`; only the cached `result`
       clears at session start.
-- [ ] **Conditional + hit-count breakpoints.** Wire format is already plumbed — `BreakpointSpec`
-      carries an `Option<String> condition` field that flows through `setBreakpoints`
-      (`dap/manager.rs:964`). What's missing is the UI to set it: an ex-command (`:dapbreak <expr>`
-      style) or a keybind that prompts for the condition on the current line. **considering**
+- [x] **Conditional + hit-count breakpoints.** Shipped via `:dapb` arg forms — `:dapb if <expr>`
+      attaches a `condition`, `:dapb hit <expr>` attaches a `hitCondition` (DAP-style: bare
+      integer for "pause after N hits", `>= 5` for comparators); both create an unconditional
+      breakpoint first if none exists at the line, so it's one keystroke from cold.
+      `:dapb plain` strips both fields while keeping the breakpoint as an unconditional pause;
+      `:dapb if` / `:dapb hit` with no arg clears just that field. Aliases: `cond` / `condition`
+      / `hitcount` / `clear`. Sites with either field render as `◆` in the gutter (vs `●` for
+      plain) and the breakpoints pane lists each row's expression inline. Side fix: extracted
+      `encode_source_breakpoint` so `resend_breakpoints_for` (the post-toggle path) carries
+      `condition` + `hitCondition` — the previous code built `{"line": N}` inline and silently
+      dropped both, so a conditional set before a toggle reverted to plain on the next adapter
+      sync.
 
 ## Test runner
 
