@@ -66,11 +66,15 @@ pub struct SideTerminal {
     /// Deadline for the next per-byte write. `None` means "write
     /// immediately on the next eligible frame"; after each write
     /// we schedule the next byte one cadence-tick into the future.
-    /// The trailing `\r` is the last byte in
-    /// `pending_initial_input`, so when the queue empties the
-    /// submit has already been sent and no extra scheduling is
-    /// needed.
     pub next_byte_at: Cell<Option<Instant>>,
+    /// Deadline for the trailing Enter (`\r`). Set once the path
+    /// queue empties; consumed when the deadline elapses. The
+    /// pause between the last typed byte and the discrete Enter
+    /// has to be long enough that the tool's input handler reads
+    /// "user typed, then paused, then pressed Enter" instead of
+    /// "user typed several lines including a newline at the end" —
+    /// which is what happens when `\r` arrives at typing cadence.
+    pub pending_submit_at: Cell<Option<Instant>>,
 }
 
 /// Which terminal pane consumes keystrokes while `Mode::Terminal`
@@ -147,23 +151,8 @@ impl super::App {
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(t) => {
                 let now = Instant::now();
-                // Append the submitting `\r` to the byte queue so it
-                // gets dripped at typing cadence just like the rest
-                // of the path. Sending it as a separate write 250ms
-                // later put each tool into a different
-                // "user paused typing" state where the Enter no
-                // longer registered as submit (autocomplete popup
-                // capture, mode change, etc.). Modelling the whole
-                // sequence as one continuous typing event matches
-                // what a fast user actually does — type the path,
-                // hit Enter — and works uniformly across all three
-                // tools.
                 let pending_bytes = pending_input
-                    .map(|s| {
-                        let mut bytes = s.into_bytes();
-                        bytes.push(b'\r');
-                        bytes
-                    })
+                    .map(|s| s.into_bytes())
                     .unwrap_or_default();
                 self.side_terminals.push(SideTerminal {
                     terminal: t,
@@ -174,6 +163,7 @@ impl super::App {
                     pending_initial_input: RefCell::new(pending_bytes),
                     loading_settled_at: Cell::new(None),
                     next_byte_at: Cell::new(None),
+                    pending_submit_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
                 self.terminal_focus = TerminalFocus::Side;
@@ -219,41 +209,40 @@ impl super::App {
         Some(format!("@{display}"))
     }
 
-    /// Per-frame flush — drips the pending `@<path>\r` queue into
-    /// the tool's input box one byte per frame at typing cadence.
-    /// The trailing `\r` is part of the queue (last byte) so it
-    /// gets typed at the same cadence as the rest, modelling the
-    /// whole sequence as one continuous typing event.
+    /// Per-frame flush — drips the path one byte per frame at
+    /// typing cadence, then sends a discrete `\r` after a deliberate
+    /// pause so the tool reads it as a normal "user pressed Enter"
+    /// keystroke rather than as content typed inline with the path.
     ///
-    /// **Why the drip.** Every TUI we target (Claude / Codex /
-    /// opencode) detects pastes by input timing — bytes arriving in
-    /// microseconds are bucketed as a single paste event and the
-    /// trailing Enter is treated as pasted content (a newline-in-
-    /// input), not a submit. Typing at ~15ms/byte stays well above
-    /// each tool's paste-detection threshold; the trailing `\r`
-    /// then registers as a normal keystroke and submits cleanly.
+    /// **Why the drip.** Every TUI we target detects pastes by
+    /// input timing — bytes arriving in microseconds get bucketed
+    /// as a paste event. Typing at ~15ms/byte stays well above each
+    /// tool's paste-detection threshold.
     ///
-    /// **Why no separate-write delay before `\r`.** An earlier
-    /// version sent the path, paused 250ms, then wrote `\r`. That
-    /// put each tool into a different "user paused typing" state
-    /// where the trailing Enter was captured by autocomplete /
-    /// mode-change / debounce logic instead of submitting.
-    /// Modelling Enter as the last typed character (the way a fast
-    /// human user actually does it) sidesteps the pause-detection
-    /// branches.
+    /// **Why the long pause before `\r`.** Sending Enter at typing
+    /// cadence (15ms after the last byte) failed across all three
+    /// tools — the trailing `\r` got grouped into the same typing
+    /// burst and treated as newline-in-content. The pause has to
+    /// be long enough that the tool's input handler reads "user
+    /// typed, then paused, then pressed Enter" as three discrete
+    /// events.
     ///
     /// **Stages.**
     /// 1. Splash settles — `loading_done` flips off.
     /// 2. Wait for PTY output to go quiet (per-tool tuning via
-    ///    `handoff_tuning`) — tool-agnostic "init is done" signal.
-    /// 3. Drip one byte per frame at `PER_BYTE_DELAY` cadence
-    ///    until the queue (path + trailing `\r`) empties.
+    ///    `handoff_tuning`).
+    /// 3. Drip path bytes at `PER_BYTE_DELAY` cadence.
+    /// 4. After the queue empties, wait `SUBMIT_DELAY` and write
+    ///    a discrete `\r`.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        // Per-byte cadence. ~15ms reads as fast typing but stays
-        // well above every paste-detection threshold I've seen in
-        // the TUI libraries the three tools are built on (ink /
-        // ratatui / bubbletea).
+        // Per-byte cadence. ~15ms reads as fast typing.
         const PER_BYTE_DELAY: std::time::Duration = std::time::Duration::from_millis(15);
+        // Pause between the last path byte and the trailing `\r`.
+        // Has to be long enough that the typing event clearly ends
+        // before the Enter keypress lands — 250ms wasn't enough on
+        // any tool (Enter still got grouped with typing). 800ms is
+        // empirically past every group-with-typing window observed.
+        const SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(800);
         for s in &self.side_terminals {
             if side_terminal_loading(s) {
                 continue;
@@ -276,24 +265,35 @@ impl super::App {
             if !ready {
                 continue;
             }
-            // Drip one byte per cadence tick.
+            // Phase 1: drip one byte per cadence tick.
             let mut queue = s.pending_initial_input.borrow_mut();
-            if queue.is_empty() {
+            if !queue.is_empty() {
+                let due = match s.next_byte_at.get() {
+                    Some(at) => now >= at,
+                    None => true,
+                };
+                if !due {
+                    continue;
+                }
+                let byte = queue.remove(0);
+                let _ = s.terminal.write_bytes(&[byte]);
+                if queue.is_empty() {
+                    // Last path byte just went out — schedule the
+                    // discrete Enter for a deliberate pause later.
+                    s.next_byte_at.set(None);
+                    s.pending_submit_at.set(Some(now + SUBMIT_DELAY));
+                } else {
+                    s.next_byte_at.set(Some(now + PER_BYTE_DELAY));
+                }
                 continue;
             }
-            let due = match s.next_byte_at.get() {
-                Some(at) => now >= at,
-                None => true,
-            };
-            if !due {
-                continue;
-            }
-            let byte = queue.remove(0);
-            let _ = s.terminal.write_bytes(&[byte]);
-            if queue.is_empty() {
-                s.next_byte_at.set(None);
-            } else {
-                s.next_byte_at.set(Some(now + PER_BYTE_DELAY));
+            drop(queue);
+            // Phase 2: trailing Enter once the submit deadline elapses.
+            if let Some(at) = s.pending_submit_at.get() {
+                if now >= at {
+                    let _ = s.terminal.write_bytes(b"\r");
+                    s.pending_submit_at.set(None);
+                }
             }
         }
     }
