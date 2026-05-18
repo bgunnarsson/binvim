@@ -2555,9 +2555,9 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 /// a "binvim" wordmark would carry in a surface that's about to
 /// host Claude / Codex / opencode.
 const SIDE_LOADING_LOGO: &[&str] = &[
-    "╭───────╮",
-    "│ ◉ ─ ◉ │",
-    "╰───────╯",
+    "╔═══════╗",
+    "║ ◉ ─ ◉ ║",
+    "╚═══════╝",
 ];
 
 /// Braille spinner frames — 10 frames at ~80ms each rotates once
