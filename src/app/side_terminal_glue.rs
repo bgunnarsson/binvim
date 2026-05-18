@@ -148,13 +148,20 @@ impl super::App {
         }
     }
 
-    /// Build the `@<rel-path> ` string to inject into a freshly-
+    /// Build the `@<rel-path>\r` payload to inject into a freshly-
     /// spawned side terminal, or `None` when handoff is disabled,
     /// the active buffer has no path, or the path can't be
     /// project-relativised. Project-relative anchoring is by cwd
     /// (matches what the tools expect for their `@<path>`
     /// expansion); when the path lies outside cwd we fall through
     /// to the absolute form because that still resolves.
+    ///
+    /// The trailing `\r` auto-submits the path — terminals encode
+    /// Enter as CR, so this is the same byte the user would send
+    /// pressing Return. No "is this prompted or waiting?" knob: the
+    /// only point of opting into `path_handoff` is to skip the
+    /// boilerplate `@path<enter>` keypresses entirely, so we send
+    /// both.
     fn ai_path_handoff_prefix(&self) -> Option<String> {
         if !self.config.ai.path_handoff {
             return None;
@@ -168,7 +175,7 @@ impl super::App {
         if display.is_empty() {
             return None;
         }
-        Some(format!("@{display} "))
+        Some(format!("@{display}\r"))
     }
 
     /// Per-frame flush: if any side terminal has finished its
