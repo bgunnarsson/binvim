@@ -49,6 +49,16 @@ pub struct SideTerminal {
     /// `Cell` so the per-frame writer can clear it from a `&App`
     /// render path without an outer `&mut`.
     pub pending_initial_input: Cell<Option<String>>,
+    /// Deadline for the trailing Enter (`\r`) that submits the
+    /// path. Set once the path bytes are written; consumed when
+    /// `Instant::now()` crosses the deadline. The two-phase write
+    /// matters because Claude Code / Codex / opencode all process
+    /// input event-by-event — sending `@path\r` as one contiguous
+    /// chunk lets the tool absorb the path text but skips the
+    /// submit (the trailing CR gets folded into the same paste
+    /// event, never registers as a discrete Enter keypress). A
+    /// small gap between the two writes makes them separate events.
+    pub pending_submit_at: Cell<Option<Instant>>,
 }
 
 /// Which terminal pane consumes keystrokes while `Mode::Terminal`
@@ -132,6 +142,7 @@ impl super::App {
                     last_byte_at: Cell::new(now),
                     loading_done: Cell::new(false),
                     pending_initial_input: Cell::new(pending_input),
+                    pending_submit_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
                 self.terminal_focus = TerminalFocus::Side;
@@ -148,7 +159,7 @@ impl super::App {
         }
     }
 
-    /// Build the `@<rel-path>\r` payload to inject into a freshly-
+    /// Build the `@<rel-path>` payload to type into a freshly-
     /// spawned side terminal, or `None` when handoff is disabled,
     /// the active buffer has no path, or the path can't be
     /// project-relativised. Project-relative anchoring is by cwd
@@ -156,12 +167,11 @@ impl super::App {
     /// expansion); when the path lies outside cwd we fall through
     /// to the absolute form because that still resolves.
     ///
-    /// The trailing `\r` auto-submits the path — terminals encode
-    /// Enter as CR, so this is the same byte the user would send
-    /// pressing Return. No "is this prompted or waiting?" knob: the
-    /// only point of opting into `path_handoff` is to skip the
-    /// boilerplate `@path<enter>` keypresses entirely, so we send
-    /// both.
+    /// The auto-submit Enter is NOT part of this string — it goes
+    /// out as a separate `\r` write after a short delay so the
+    /// tool's input handler sees the path-paste and the submit as
+    /// two distinct events. See `side_terminal_flush_pending_inputs`
+    /// for the two-phase write.
     fn ai_path_handoff_prefix(&self) -> Option<String> {
         if !self.config.ai.path_handoff {
             return None;
@@ -175,25 +185,41 @@ impl super::App {
         if display.is_empty() {
             return None;
         }
-        Some(format!("@{display}\r"))
+        Some(format!("@{display}"))
     }
 
-    /// Per-frame flush: if any side terminal has finished its
-    /// loading splash AND still carries a `pending_initial_input`,
-    /// write the prefix to the PTY and clear the slot. Called from
-    /// the main loop after `side_terminal_drain_if_open` so the
-    /// write happens on the same tick the splash flips off (the
-    /// tool's input field is ready by then, so the bytes land in
-    /// the prompt rather than getting eaten by startup chatter).
+    /// Per-frame flush: write the pending path bytes once the
+    /// loading splash settles, then write the trailing `\r` after a
+    /// short grace window so the tool's event loop sees them as
+    /// separate events (otherwise the trailing CR rides along on
+    /// the same paste-burst as the path and never triggers submit —
+    /// the path sits in the input box waiting for a manual Enter).
+    /// Called once per main-loop tick after the side-pane drain.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
+        // Grace window between writing the path and writing the
+        // trailing `\r`. Long enough that Claude Code / Codex /
+        // opencode's input handler processes the path text as a
+        // discrete paste event before the Enter arrives; short
+        // enough that the user doesn't notice the lag between
+        // splash-done and message-submitted.
+        const SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
         for s in &self.side_terminals {
             if side_terminal_loading(s) {
                 continue;
             }
-            let Some(prefix) = s.pending_initial_input.take() else {
+            // Phase 1: write the path text, schedule the submit.
+            if let Some(prefix) = s.pending_initial_input.take() {
+                let _ = s.terminal.write_bytes(prefix.as_bytes());
+                s.pending_submit_at.set(Some(Instant::now() + SUBMIT_DELAY));
                 continue;
-            };
-            let _ = s.terminal.write_bytes(prefix.as_bytes());
+            }
+            // Phase 2: trailing Enter once the delay has elapsed.
+            if let Some(at) = s.pending_submit_at.get() {
+                if Instant::now() >= at {
+                    let _ = s.terminal.write_bytes(b"\r");
+                    s.pending_submit_at.set(None);
+                }
+            }
         }
     }
 
