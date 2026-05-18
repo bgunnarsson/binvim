@@ -49,6 +49,16 @@ pub struct SideTerminal {
     /// `Cell` so the per-frame writer can clear it from a `&App`
     /// render path without an outer `&mut`.
     pub pending_initial_input: Cell<Option<String>>,
+    /// Captured the first time the loading splash flips off — the
+    /// flush uses this to delay the path-write by a grace window
+    /// AFTER the splash, not just at the splash boundary. Different
+    /// tools wire up their input field at different speeds: Claude
+    /// enters alt-screen after a deliberate logo/version splash and
+    /// is input-ready by the time we see it; Codex and opencode
+    /// enter alt-screen earlier, so the path text we write right at
+    /// `loading_done` lands before their input field exists and gets
+    /// silently dropped. The grace window absorbs that difference.
+    pub loading_settled_at: Cell<Option<Instant>>,
     /// Deadline for the trailing Enter (`\r`) that submits the
     /// path. Set once the path bytes are written; consumed when
     /// `Instant::now()` crosses the deadline. The two-phase write
@@ -142,6 +152,7 @@ impl super::App {
                     last_byte_at: Cell::new(now),
                     loading_done: Cell::new(false),
                     pending_initial_input: Cell::new(pending_input),
+                    loading_settled_at: Cell::new(None),
                     pending_submit_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
@@ -188,23 +199,55 @@ impl super::App {
         Some(format!("@{display}"))
     }
 
-    /// Per-frame flush: write the pending path bytes once the
-    /// loading splash settles, then write the trailing `\r` after a
-    /// short grace window so the tool's event loop sees them as
-    /// separate events (otherwise the trailing CR rides along on
-    /// the same paste-burst as the path and never triggers submit —
-    /// the path sits in the input box waiting for a manual Enter).
-    /// Called once per main-loop tick after the side-pane drain.
+    /// Per-frame flush: a three-stage write that walks `@path` and
+    /// its submitting `\r` through the tool's startup grace windows
+    /// so neither byte gets eaten.
+    ///
+    /// 1. **Splash settles.** `loading_done` flips off when alt-screen
+    ///    enters / output goes quiet / hard cap elapses. We capture
+    ///    that moment in `loading_settled_at`.
+    /// 2. **Post-splash grace.** Wait `POST_SPLASH_GRACE` before the
+    ///    first byte. Claude doesn't strictly need this (it buffers
+    ///    paste events during init); Codex and opencode do (their
+    ///    input field isn't wired up the instant alt-screen lands,
+    ///    so bytes arriving right at the splash boundary get
+    ///    silently dropped). We standardise on the longer wait
+    ///    because the user-visible cost is < 1 frame at human scale.
+    /// 3. **Path → Enter.** Path text first, then `\r` after
+    ///    `SUBMIT_DELAY`. The gap matters because every tool we
+    ///    target processes input event-by-event — without it, the
+    ///    trailing CR rides along on the same paste-burst as the
+    ///    path and the input handler treats it as content, not a
+    ///    discrete Enter keypress.
     pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        // Grace window between writing the path and writing the
-        // trailing `\r`. Long enough that Claude Code / Codex /
-        // opencode's input handler processes the path text as a
-        // discrete paste event before the Enter arrives; short
-        // enough that the user doesn't notice the lag between
-        // splash-done and message-submitted.
+        // Post-splash settling time before we write the first byte.
+        // Tuned for Codex / opencode, which need ~half a second
+        // between alt-screen and a usable input field. Claude is
+        // fine without it but doesn't mind the wait.
+        const POST_SPLASH_GRACE: std::time::Duration = std::time::Duration::from_millis(500);
+        // Gap between writing the path and writing the trailing
+        // `\r`. Long enough for the input handler to process the
+        // paste event as a discrete event before the Enter; short
+        // enough to read as "instant" to the user.
         const SUBMIT_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
         for s in &self.side_terminals {
             if side_terminal_loading(s) {
+                continue;
+            }
+            // Record the splash-done moment on first sight so the
+            // grace window anchors against the actual splash exit,
+            // not against spawn time (splash duration varies per
+            // tool — see the splash detection in
+            // `side_terminal_loading`).
+            let settled_at = match s.loading_settled_at.get() {
+                Some(t) => t,
+                None => {
+                    let now = Instant::now();
+                    s.loading_settled_at.set(Some(now));
+                    now
+                }
+            };
+            if Instant::now().duration_since(settled_at) < POST_SPLASH_GRACE {
                 continue;
             }
             // Phase 1: write the path text, schedule the submit.
