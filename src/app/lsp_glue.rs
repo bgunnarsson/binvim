@@ -634,9 +634,14 @@ impl super::App {
     /// so the augment fires whether the server returned matches or not.
     fn present_references(&mut self, items: Vec<LocationItem>) {
         let augment = self.pending_ref_augment.take();
+        let lsp_count = items.len();
         let mut merged = items;
+        let mut grep_count = 0usize;
+        let mut augment_root: Option<PathBuf> = None;
         if let Some(aug) = augment {
+            augment_root = Some(aug.root.clone());
             let grep_items = run_razor_ref_grep(&aug);
+            grep_count = grep_items.len();
             let mut seen: std::collections::HashSet<(PathBuf, usize, usize)> = merged
                 .iter()
                 .map(|i| (i.path.clone(), i.line, i.col))
@@ -649,6 +654,22 @@ impl super::App {
             }
         }
         self.open_locations_picker("References", merged);
+        // When the augment ran, surface the per-source counts so the user
+        // can tell at a glance whether the grep half actually fired.
+        // Falsey results (grep_count == 0 when matches were expected) point
+        // at the root walk; non-zero confirms the merge is wired.
+        if let Some(root) = augment_root {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let root_display = root
+                .strip_prefix(&cwd)
+                .ok()
+                .map(|p| p.display().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| root.display().to_string());
+            self.status_msg = format!(
+                "refs: {lsp_count} LSP + {grep_count} grep (root: {root_display})",
+            );
+        }
     }
 
     pub(super) fn lsp_request_signature_help(&mut self) {
