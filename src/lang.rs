@@ -2096,63 +2096,71 @@ export function Page() {
 
     use proptest::prelude::*;
 
-    fn arb_lang() -> impl Strategy<Value = Lang> {
-        // Every grammar binvim ships. Fuzzing each one separately catches
-        // pattern_index priority bugs that only surface on a specific
-        // language's highlight query.
-        prop_oneof![
-            Just(Lang::Rust),
-            Just(Lang::TypeScript),
-            Just(Lang::Tsx),
-            Just(Lang::JavaScript),
-            Just(Lang::Json),
-            Just(Lang::Go),
-            Just(Lang::Html),
-            Just(Lang::Css),
-            Just(Lang::Markdown),
-            Just(Lang::CSharp),
-            Just(Lang::Razor),
-            Just(Lang::Bash),
-            Just(Lang::Yaml),
-            Just(Lang::Xml),
-            Just(Lang::EditorConfig),
-            Just(Lang::GitIgnore),
-            Just(Lang::Python),
-            Just(Lang::C),
-            Just(Lang::Cpp),
-            Just(Lang::Lua),
-            Just(Lang::Java),
-            Just(Lang::Ruby),
-            Just(Lang::Php),
-            Just(Lang::Toml),
-            Just(Lang::Svelte),
-            Just(Lang::Zig),
-            Just(Lang::Nix),
-            Just(Lang::Elixir),
-            Just(Lang::Kotlin),
-            Just(Lang::Dockerfile),
-            Just(Lang::Sql),
-        ]
-    }
+    // One test per grammar instead of `arb_lang()` selecting at random.
+    // When tree-sitter's C side segfaults on a specific grammar (which
+    // happened on CI for v0.4.5 against an unknown culprit — no Rust
+    // panic backtrace, no `failed` line, just SIGSEGV during teardown
+    // of the fuzz test) the failing-test name now points directly at
+    // the offending grammar. With a single fused fuzz function we
+    // lose the cargo-test name → bad grammar mapping the moment the
+    // process dies, since the harness captures output per-test and
+    // a SIGSEGV doesn't flush.
+    //
+    // Each fuzz invocation creates a fresh `Parser` + `Query` (see
+    // `compute_byte_colors`), so per-test isolation also means a
+    // crashing grammar can't leak state into the next one's run.
+    macro_rules! fuzz_lang {
+        ($name:ident, $lang:expr) => {
+            proptest! {
+                // 64 cases per grammar keeps the aggregate CI cost
+                // similar to the original combined test (30 × 64
+                // arms vs. one 64-case arm with `arb_lang()`).
+                #![proptest_config(ProptestConfig::with_cases(64))]
 
-    proptest! {
-        // Coverage-light fuzz pass — proptest doesn't have libFuzzer's
-        // mutation engine, but it surfaces panics on arbitrary UTF-8
-        // input across every grammar + highlight query we ship. Mostly
-        // a guard against future tree-sitter ABI bumps or query edits
-        // that break invariants (e.g. capture range past source.len()).
-        // Bounded inputs + capped case count keep CI cost reasonable.
-        #![proptest_config(ProptestConfig::with_cases(64))]
-
-        #[test]
-        fn compute_byte_colors_never_panics(lang in arb_lang(), src in "\\PC{0,400}") {
-            let cfg = Config::default();
-            if let Some(colors) = compute_byte_colors(lang, &src, &cfg) {
-                // The colour map is keyed by byte offset; if the length
-                // disagrees with the source, downstream renderer math
-                // would index out of bounds.
-                prop_assert_eq!(colors.len(), src.len());
+                #[test]
+                fn $name(src in "\\PC{0,400}") {
+                    let cfg = Config::default();
+                    if let Some(colors) = compute_byte_colors($lang, &src, &cfg) {
+                        // The colour map is keyed by byte offset; if
+                        // the length disagrees with the source,
+                        // downstream renderer math would index out of
+                        // bounds.
+                        prop_assert_eq!(colors.len(), src.len());
+                    }
+                }
             }
-        }
+        };
     }
+
+    fuzz_lang!(fuzz_rust, Lang::Rust);
+    fuzz_lang!(fuzz_typescript, Lang::TypeScript);
+    fuzz_lang!(fuzz_tsx, Lang::Tsx);
+    fuzz_lang!(fuzz_javascript, Lang::JavaScript);
+    fuzz_lang!(fuzz_json, Lang::Json);
+    fuzz_lang!(fuzz_go, Lang::Go);
+    fuzz_lang!(fuzz_html, Lang::Html);
+    fuzz_lang!(fuzz_css, Lang::Css);
+    fuzz_lang!(fuzz_markdown, Lang::Markdown);
+    fuzz_lang!(fuzz_csharp, Lang::CSharp);
+    fuzz_lang!(fuzz_razor, Lang::Razor);
+    fuzz_lang!(fuzz_bash, Lang::Bash);
+    fuzz_lang!(fuzz_yaml, Lang::Yaml);
+    fuzz_lang!(fuzz_xml, Lang::Xml);
+    fuzz_lang!(fuzz_editorconfig, Lang::EditorConfig);
+    fuzz_lang!(fuzz_gitignore, Lang::GitIgnore);
+    fuzz_lang!(fuzz_python, Lang::Python);
+    fuzz_lang!(fuzz_c, Lang::C);
+    fuzz_lang!(fuzz_cpp, Lang::Cpp);
+    fuzz_lang!(fuzz_lua, Lang::Lua);
+    fuzz_lang!(fuzz_java, Lang::Java);
+    fuzz_lang!(fuzz_ruby, Lang::Ruby);
+    fuzz_lang!(fuzz_php, Lang::Php);
+    fuzz_lang!(fuzz_toml, Lang::Toml);
+    fuzz_lang!(fuzz_svelte, Lang::Svelte);
+    fuzz_lang!(fuzz_zig, Lang::Zig);
+    fuzz_lang!(fuzz_nix, Lang::Nix);
+    fuzz_lang!(fuzz_elixir, Lang::Elixir);
+    fuzz_lang!(fuzz_kotlin, Lang::Kotlin);
+    fuzz_lang!(fuzz_dockerfile, Lang::Dockerfile);
+    fuzz_lang!(fuzz_sql, Lang::Sql);
 }
