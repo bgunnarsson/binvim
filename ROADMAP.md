@@ -395,7 +395,10 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       **planned**
 - [ ] **`cargo install binvim` from crates.io.** Currently install paths are Homebrew tap or `install.sh`;
       crates.io would catch the Rust-tooling crowd. Requires the licence story to permit it (source-available
-      — verify). **considering**
+      — verify). When this ships: remove `publish = false` from `Cargo.toml`, then wire `cargo publish
+      --locked` into `scripts/release.sh` (between the Cargo.lock refresh and the tag push — publish *before*
+      tagging so a failed publish doesn't leave a dangling tag) plus a `CARGO_REGISTRY_TOKEN` check in
+      pre-flight. ~15 lines of script. **considering**
 
 ## Architecture / non-goals
 
