@@ -6,6 +6,112 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Lazygit integration (`:lazygit` / `:lg` / `<leader>gg`).**
+  Yazi-style full-screen takeover — suspend the editor, hand the
+  host terminal to `lazygit`, and on exit reclaim the terminal +
+  refresh `refresh_all_git_hunks()` across every open buffer so
+  stages / commits / checkouts show up in the gutter immediately.
+  Not a PTY-embedded pane: lazygit gets the whole screen (its UI
+  hard-codes panel widths and the bottom `:terminal` pane caps at
+  20 rows). Exit detection is free — when the blocking `status()`
+  returns, lazygit is done. `<leader>g` is now a git sub-leader;
+  grep (formerly `<leader>g`) moved to `<leader>G`.
+- **Integrated task runner (`:task` / `:tasklast` / `<leader>m{m,l}`).**
+  Discovers workspace tasks from five sources, all unioned per
+  workspace: **npm scripts** (npm / pnpm / yarn auto-picked from
+  the lockfile), **Justfile** recipes (skips `_private` +
+  `[private]`), **cargo aliases** + builtin verbs (`build` /
+  `check` / `test` / `clippy` / `run` / `fmt` / `doc`), **Makefile**
+  top-level targets, and **dotnet** verbs (`build` / `run` / `test`
+  / `restore` / `clean` / `publish`). Picker rows tag the source
+  for disambiguation; selecting a task spawns it in a fresh
+  bottom-terminal tab labelled with the task name. `Terminal`
+  gained a `label: Option<String>` field so the tab strip shows
+  `[ build ]` / `[ dev ]` instead of `[ 1 ]` / `[ 2 ]` for
+  task-spawned tabs.
+- **LSP rename preview (`<leader>r`).** Modal overlay between the
+  server's `WorkspaceEdit` reply and the on-disk apply. Layout:
+  file headers (path + edit count) with selectable rows below,
+  scrollable with `j`/`k` + `Ctrl-D`/`U` + `g`/`G`. Keys:
+  `<Space>` toggle, `a`/`n` flip all on/off, `o` jump to edit site
+  (cancels), `<Enter>` apply enabled, `<Esc>` cancel. Split
+  `apply_workspace_edit` into `parse_workspace_edit`
+  (JSON → typed `ConcreteEdit`) + `apply_concrete_edits` (writer);
+  code-action and `workspace/applyEdit` paths still apply blind.
+  New `Mode::RenamePreview` for strict modality. File contents
+  read once per affected file when the overlay opens, cached for
+  the lifetime of the overlay.
+- **Conditional + hit-count breakpoints (`:dapb if/hit/plain`).**
+  `:dapb if <expr>` attaches a `condition` (creates an
+  unconditional breakpoint first if none exists); `:dapb hit
+  <expr>` attaches a `hitCondition` (DAP-style: bare integer for
+  "pause after N hits", comparators like `>= 5`); `:dapb plain`
+  strips both fields. Aliases: `cond` / `condition` / `hitcount`
+  / `clear`. Conditional breakpoints render as `◆` in the gutter
+  (plain stays `●`); the breakpoints pane lists each row's
+  expression inline. New `DapManager` API: `breakpoint_at`,
+  `set_breakpoint_condition`, `set_breakpoint_hit_condition`,
+  `strip_breakpoint_conditions`.
+- **Multi-root LSP workspaces (`:workspaces` / `:ws`).** Opening
+  files from sibling project roots no longer spawns a second
+  language server — `ensure_for_path` now checks the running
+  client's `workspace_folders` set and fires
+  `workspace/didChangeWorkspaceFolders` with the new folder if
+  the server advertised the capability. rust-analyzer / tsserver
+  / gopls / jdtls all support this; servers that don't fall back
+  to the previous "first root wins" behaviour cleanly. New
+  `:workspaces` ex command dumps `key: ~/path  +  ~/path · key:
+  ~/path` to the status line so the multi-root state is
+  observable.
+- **AI side pane: shift-pair leader bindings + path handoff.**
+  Each AI tool now has two leader bindings: lowercase opens a
+  fresh tab as-is, uppercase opens AND pre-types
+  `@<cwd-relative path>` into the input field once it's ready.
+  `<leader>jc` / `<leader>jC` for Claude, `<leader>jx` /
+  `<leader>jX` for Codex, `<leader>jo` / `<leader>jO` for
+  opencode. Per-tool quiet windows (~300ms / ~800ms / ~1500ms)
+  before the path write so the front of the string doesn't get
+  eaten during the tool's input-field initialisation. You press
+  Enter to submit — auto-submit was attempted and dropped
+  because no single timing made `\r` register as a discrete
+  keypress across all three tools.
+- **AI side pane: dedicated focus / toggle bindings (`<leader>jf`
+  / `<leader>jp`).** Mirrors `<leader>tf` / `<leader>tp` for the
+  bottom pane. `<leader>j{c,x,o}` (and their handoff variants)
+  always spawn a fresh tab now — the previous dedup-by-label
+  re-focus path is gone, replaced by the explicit focus binding.
+
+### Changed
+- **Side-pane mouse forwarding.** Scroll wheel (and drag /
+  right-click) inside the `:claude` / `:codex` / `:opencode` pane
+  now forwards to the PTY when the embedded program has enabled
+  DECSET 1000 / 1002 / 1003 / 1006 mouse tracking. Previously the
+  side-pane mouse handler only had header tab clicks and
+  focus-on-click; scroll events fell into the swallow arm and
+  never reached the tool. Extracted `encode_mouse_event_for_pty`
+  out of the bottom-pane handler so both panes share the encoder.
+- **File tree folder icons.** Now render in Catppuccin Mocha blue
+  (`#89b4fa`) instead of mauve. The mauve was inheriting from
+  the `keyword` syntax-capture colour, which competed visually
+  with the warmer terminal-chip / breakpoint / dirty-dot accents.
+  Override via `[colors] "file_tree.folder"`.
+- **Side-pane loading splash.** Now shows a small box-drawing
+  robot head (`╔═══════╗ / ║ ◉ ─ ◉ ║ / ╚═══════╝`) instead of
+  the binvim wordmark. The pane is about to host Claude / Codex /
+  opencode — claiming editor identity on its boot splash was
+  off-key. Multi-variant width fallback also dropped (the head
+  fits every pane width we ever render at).
+
+### Fixed
+- **DAP `setBreakpoints` resend dropping conditional fields.**
+  The post-toggle resend path built `{"line": N}` inline, silently
+  dropping `condition` and `hitCondition`. Any conditional set
+  before a toggle reverted to a plain breakpoint on the next
+  adapter sync. Extracted `encode_source_breakpoint` so both the
+  initial `configurationDone` path and the post-toggle resend
+  share the same encoder.
+
 ## [0.4.0] - 2026-05-18
 
 ### Added
