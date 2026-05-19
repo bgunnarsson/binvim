@@ -77,6 +77,13 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
         draw_floating_cmdline(out, app)?;
     }
+    // File-tree delete confirm — same popup chrome as the create /
+    // rename prompts so the three ops feel uniform. Rendered in
+    // FileTree mode (not Prompt mode) because the y/N input is
+    // handled by `handle_file_tree_key`, not the prompt key path.
+    if app.mode == Mode::FileTree && app.file_tree_pending_delete().is_some() {
+        draw_file_tree_confirm(out, app)?;
+    }
     if app.mode == Mode::Picker {
         draw_picker(out, app)?;
     }
@@ -1124,6 +1131,108 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         ResetColor,
     )?;
 
+    Ok(())
+}
+
+/// Confirm popup for `d` (delete) in the file-tree pane. Same chrome
+/// as the floating cmdline (title in the top border, single-row body,
+/// rounded corners) so the three file-tree ops — create / rename /
+/// delete — look uniform. The y/N keystroke is intercepted in
+/// `handle_file_tree_key`, not the prompt handler; this popup is
+/// purely visual.
+fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some((name, is_dir)) = app.file_tree_pending_delete() else {
+        return Ok(());
+    };
+    let (left, top, box_w) = cmdline_box_layout(app);
+    let inner_w = box_w.saturating_sub(2);
+
+    let border = app.config.theme_border();
+    let bg = app.config.chrome_bg();
+    let title_fg = app.config.theme_emphasis();
+    let prompt_fg = app.config.theme_error();
+    let text_fg = app.config.theme_fg();
+    let dim_fg = app.config.theme_dim();
+
+    // Top border with centred title.
+    let title_text = " Delete ";
+    let title_w = title_text.chars().count();
+    let left_pad = inner_w.saturating_sub(title_w) / 2;
+    let right_pad = inner_w.saturating_sub(title_w + left_pad);
+    queue!(
+        out,
+        MoveTo(left as u16, top as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print("─".repeat(left_pad)),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
+        Print(title_text),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("─".repeat(right_pad)),
+        Print('╮'),
+    )?;
+
+    // Body row. Layout matches the cmdline: `│ ! <target>  <hint> │`
+    // with the prompt glyph in the accent error colour so it reads
+    // as "destructive". The hint is dim and right-aligned.
+    let prompt_str = " ! ";
+    let display_name = if is_dir {
+        format!("{name}/")
+    } else {
+        name
+    };
+    let hint = "  y to delete · N / Esc to cancel";
+    let prompt_w = prompt_str.chars().count();
+    // Truncate the displayed name if the row is tight. Keep the hint
+    // intact when there's room; drop it altogether on very narrow
+    // popups so the name doesn't get squashed.
+    let body_budget = inner_w.saturating_sub(prompt_w + 1);
+    let hint_w = hint.chars().count();
+    let (name_str, hint_str): (String, String) = if body_budget >= display_name.chars().count() + hint_w {
+        (display_name.clone(), hint.to_string())
+    } else if body_budget >= display_name.chars().count() {
+        (display_name.clone(), String::new())
+    } else {
+        let trimmed: String = display_name.chars().take(body_budget).collect();
+        (trimmed, String::new())
+    };
+    let used = prompt_w + name_str.chars().count() + hint_str.chars().count();
+    let pad = inner_w.saturating_sub(used + 1);
+    queue!(
+        out,
+        MoveTo(left as u16, (top + 1) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('│'),
+        SetForegroundColor(prompt_fg),
+        SetAttribute(Attribute::Bold),
+        Print(prompt_str),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(text_fg),
+        Print(&name_str),
+        SetForegroundColor(dim_fg),
+        Print(&hint_str),
+        Print(" ".repeat(pad)),
+        SetForegroundColor(border),
+        Print('│'),
+    )?;
+
+    // Bottom border.
+    queue!(
+        out,
+        MoveTo(left as u16, (top + 2) as u16),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
     Ok(())
 }
 

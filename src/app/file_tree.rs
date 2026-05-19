@@ -314,9 +314,33 @@ impl super::App {
         self.mode = Mode::Prompt(crate::mode::PromptKind::FileTreeRename);
     }
 
+    /// Snapshot of the active delete-confirm, if one is armed —
+    /// `(basename, is_dir)`. Used by the renderer to populate the
+    /// confirmation popup without exposing the private
+    /// `FileTreePendingOp` enum across the module boundary.
+    pub fn file_tree_pending_delete(&self) -> Option<(String, bool)> {
+        let state = self.file_tree.as_ref()?;
+        match &state.pending_op {
+            Some(FileTreePendingOp::DeleteConfirm { target, is_dir }) => {
+                let name = target
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("?")
+                    .to_string();
+                Some((name, *is_dir))
+            }
+            _ => None,
+        }
+    }
+
     /// Arm a delete-confirm on the cursor entry. The next key in the
     /// file-tree handler is interpreted as `y` (confirm) / anything
-    /// else (cancel).
+    /// else (cancel). The question itself renders as a popup over
+    /// the editor (see `draw_file_tree_confirm`) — same chrome as
+    /// the create / rename prompts, so the three file-tree ops feel
+    /// uniform. We deliberately don't push to `status_msg`; popup
+    /// owns the prompt, notification line owns "operation result"
+    /// (`deleted X` / `delete: cancelled`).
     pub(super) fn start_file_tree_delete(&mut self) {
         let Some(state) = self.file_tree.as_mut() else { return };
         let Some(target) = state.cursor_path() else { return };
@@ -325,17 +349,10 @@ impl super::App {
             .get(state.cursor)
             .map(|e| e.is_dir)
             .unwrap_or(false);
-        let label = target
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("?")
-            .to_string();
         state.pending_op = Some(FileTreePendingOp::DeleteConfirm {
             target,
             is_dir,
         });
-        let suffix = if is_dir { "/ (recursive)" } else { "" };
-        self.status_msg = format!("delete {label}{suffix}? (y/N)");
     }
 
     /// Commit a Create prompt. Trailing `/` selects directory; an
