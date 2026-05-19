@@ -11,17 +11,22 @@ set -euo pipefail
 #
 # What it does, in order:
 #   1. Pre-flight checks (clean tree, on main, CHANGELOG entry exists,
-#      tag absent, sibling repos present).
+#      tag absent, sibling repos present, gh CLI available).
 #   2. Local verification (cargo fmt --check, cargo test, cargo clippy,
 #      cargo build --release) so a broken commit never gets tagged.
-#   3. Bump Cargo.toml + refresh Cargo.lock, commit, push to main.
+#   3. Stamp today's date on the CHANGELOG entry, bump Cargo.toml +
+#      refresh Cargo.lock, commit, push to main.
 #   4. Tag v<version>, push tag → triggers .github/workflows/release.yml
 #      which builds the per-target binaries + publishes the GitHub Release.
-#   5. (Optional) Wait for the release workflow to finish.
-#   6. Update the Homebrew tap repo: download the source tarball, compute
-#      sha256, rewrite url + sha256 in the formula, commit, push.
-#   7. Mirror install.sh into the binvim-web repo (for binvim.dev/install.sh),
-#      commit, push.
+#   5. (Optional) Wait for the release workflow to finish, then sanity-
+#      check the asset count (expects 12 — 4 targets × tar.gz/sha256/bundle).
+#   5b. Overwrite the auto-generated Release notes with the curated
+#       CHANGELOG section for this version.
+#   6. Verify the Homebrew tap repo is clean + current, then download
+#      the source tarball, compute sha256, rewrite url + sha256 in
+#      the formula, commit, push.
+#   7. Verify the binvim-web repo is clean + current, then mirror
+#      install.sh in for binvim.dev/install.sh, commit, push.
 #   8. Print a short summary with the release URL.
 #
 # Expected sibling layout:
@@ -98,6 +103,63 @@ confirm() {
     [[ "$ans" =~ ^[Yy]$ ]]
 }
 
+# Stamp today's date on the `## [X.Y.Z]` line in CHANGELOG.md. If the
+# header already carries a date (in any form) it's overwritten. No-op
+# if the header doesn't exist (caller's pre-flight already enforced
+# that it does). Dots in the version are escaped so `0.4.5` doesn't
+# accidentally match `0x4x5`.
+stamp_changelog_date() {
+    local v="$1"
+    local v_re="${v//./\\.}"
+    local today
+    today="$(date +%Y-%m-%d)"
+    perl -pi -e 's/^(## \[?'"$v_re"'\]?).*$/$1 - '"$today"'/' CHANGELOG.md
+}
+
+# Extract the body of the `## [X.Y.Z]` section — everything between
+# that header and the next `## ` header. Header itself is omitted.
+# Used to seed the GitHub Release notes from the curated CHANGELOG
+# instead of the auto-generated commit-message list the workflow
+# would otherwise leave behind.
+extract_changelog_section() {
+    local v="$1"
+    local v_re="${v//./\\.}"
+    awk -v ver="$v_re" '
+        BEGIN { in_section = 0 }
+        /^## / {
+            if (in_section) exit
+            if ($0 ~ "^## \\[?" ver "\\]?") { in_section = 1; next }
+            next
+        }
+        in_section { print }
+    ' CHANGELOG.md
+}
+
+# Verify a sibling repo is on a clean working tree and current with
+# origin (fast-forwardable). Aborts the release if not. The Homebrew
+# tap and binvim-web both get this treatment so a stale clone or
+# half-finished local edit can't get committed during the release.
+ensure_sibling_clean_and_current() {
+    local dir="$1"
+    local label="$2"
+    (
+        cd "$dir"
+        if ! git diff-index --quiet HEAD --; then
+            echo "  ${label} has uncommitted changes — commit/stash before re-running:" >&2
+            git status --short | sed 's/^/      /' >&2
+            return 1
+        fi
+        if ! git fetch origin >/dev/null 2>&1; then
+            echo "  ${label}: git fetch failed" >&2
+            return 1
+        fi
+        if ! git pull --ff-only origin "$(git rev-parse --abbrev-ref HEAD)" >/dev/null 2>&1; then
+            echo "  ${label} can't fast-forward — diverged or has unpushed commits: $dir" >&2
+            return 1
+        fi
+    )
+}
+
 # ─── 1. Pre-flight ────────────────────────────────────────────────
 
 step "Pre-flight checks"
@@ -165,9 +227,12 @@ cargo test --locked
 cargo clippy --locked --all-targets -- -A warnings
 cargo build --release --locked
 
-# ─── 3. Bump + commit + push ──────────────────────────────────────
+# ─── 3. Stamp CHANGELOG date + bump + commit + push ───────────────
 
-step "Bump Cargo.toml + Cargo.lock"
+step "Stamp CHANGELOG date, bump Cargo.toml + Cargo.lock"
+
+stamp_changelog_date "$VERSION"
+echo "  CHANGELOG: ## [${VERSION}] dated $(date +%Y-%m-%d)"
 
 CURRENT_VERSION="$(perl -ne 'print $1 if /^version\s*=\s*"([^"]+)"/' Cargo.toml | head -n1)"
 echo "  Cargo.toml: ${CURRENT_VERSION} -> ${VERSION}"
@@ -175,11 +240,17 @@ echo "  Cargo.toml: ${CURRENT_VERSION} -> ${VERSION}"
 if [[ "$CURRENT_VERSION" != "$VERSION" ]]; then
     perl -pi -e 's|^version = ".*"|version = "'"${VERSION}"'"|' Cargo.toml
     cargo check --quiet  # refresh Cargo.lock
-    git add Cargo.toml Cargo.lock
+    git add Cargo.toml Cargo.lock CHANGELOG.md
     git commit -m "Bump version to ${VERSION}"
     git push origin main
+elif ! git diff --quiet -- CHANGELOG.md; then
+    # Cargo already at the requested version (e.g. user manually
+    # bumped earlier) but the CHANGELOG date still needed stamping.
+    git add CHANGELOG.md
+    git commit -m "CHANGELOG: stamp ${VERSION} date"
+    git push origin main
 else
-    echo "  Already at ${VERSION}, skipping bump commit."
+    echo "  Already at ${VERSION}, no changes to commit."
 fi
 
 # ─── 4. Tag + push ────────────────────────────────────────────────
@@ -210,11 +281,51 @@ else
             exit 1
         fi
     fi
+
+    # Sanity-check the published Release. The build matrix has 4 targets
+    # and each emits 3 files (tar.gz + .sha256 + .bundle) — 12 assets
+    # total. A short count means the workflow's final upload step
+    # half-succeeded; loud enough to investigate, not fatal because the
+    # Homebrew + web push paths don't depend on these artifacts (they
+    # use the source tarball + install.sh respectively).
+    ASSETS="$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo 0)"
+    echo "  Release ${TAG} has ${ASSETS} assets attached."
+    if [[ "$ASSETS" -lt 12 ]]; then
+        echo "  WARNING: expected 12 (4 targets × tar.gz + sha256 + bundle), got ${ASSETS}." >&2
+        echo "  Inspect: gh release view ${TAG}" >&2
+    fi
 fi
+
+# ─── 5b. Push CHANGELOG section as release notes ──────────────────
+
+step "Push CHANGELOG section as GitHub Release notes"
+
+# The workflow publishes the Release with `generate_release_notes:
+# true`, which produces a commit-message dump. Overwrite that with
+# the curated CHANGELOG section so the user-facing page actually
+# reads like release notes.
+NOTES_TMP="$(mktemp)"
+extract_changelog_section "$VERSION" > "$NOTES_TMP"
+if [[ ! -s "$NOTES_TMP" ]]; then
+    echo "  CHANGELOG section empty — leaving auto-generated notes in place."
+elif gh release view "$TAG" >/dev/null 2>&1; then
+    if gh release edit "$TAG" --notes-file "$NOTES_TMP" >/dev/null 2>&1; then
+        echo "  Updated release notes from CHANGELOG."
+    else
+        echo "  WARNING: gh release edit failed. Edit manually:" >&2
+        echo "    gh release edit ${TAG}" >&2
+    fi
+else
+    echo "  Release ${TAG} not yet published (CI still building?). Skipping notes update." >&2
+    echo "  Update later with: gh release edit ${TAG} --notes-file <(awk ...)" >&2
+fi
+rm -f "$NOTES_TMP"
 
 # ─── 6. Update Homebrew tap ───────────────────────────────────────
 
 step "Update Homebrew tap"
+
+ensure_sibling_clean_and_current "$TAP_DIR" "Homebrew tap" || exit 1
 
 CANDIDATES=(
     "${TAP_DIR}/binvim.rb"
@@ -289,6 +400,8 @@ perl -pi -e 's|^  sha256 ".*"|  sha256 "'"${SHA256}"'"|' "$FORMULA_FILE"
 # ─── 7. Mirror install.sh → binvim-web ────────────────────────────
 
 step "Mirror install.sh → binvim-web"
+
+ensure_sibling_clean_and_current "$WEB_DIR" "binvim-web" || exit 1
 
 SRC_INSTALL="${ROOT}/install.sh"
 DST_INSTALL="${WEB_DIR}/install.sh"
