@@ -402,9 +402,11 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       `redistributable = false`) rather than the predefined `unfree` tag so the actual terms stay
       visible. `doCheck = false` — the test suite hits `~/.cache` which the sandbox doesn't expose;
       `cargo test` on a host remains the source of truth.
-- [x] **`cargo install binvim` from crates.io.** `Cargo.toml` carries the crates.io metadata
-      (repository, homepage, keywords, categories, anchored `include` whitelist so the playground tree
-      stays out of the published tarball); `scripts/release.sh` runs `cargo publish --locked` as step
+- [x] **`cargo install binvim` from crates.io.** Live at
+      https://crates.io/crates/binvim — 0.4.4 was the initial publish that claimed the name. `Cargo.toml`
+      carries the crates.io metadata (repository, homepage, keywords, categories, anchored `include`
+      whitelist so the playground tree stays out of the published tarball — 98 files instead of ~389
+      with default git-tracked behaviour); `scripts/release.sh` runs `cargo publish --locked` as step
       3b — after the bump commit lands on main, before the tag push — so a failed publish doesn't leave
       a dangling tag / GitHub Release / Homebrew bump pointing at a non-existent crates.io version. The
       pre-flight in step 1 checks for either `CARGO_REGISTRY_TOKEN` or a credentials file under

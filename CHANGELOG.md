@@ -31,10 +31,12 @@ follows [Semantic Versioning](https://semver.org/).
   adds the `nix run` / `nix profile install` /
   system-config-overlay paths.
 
-- **`cargo install --locked binvim` from crates.io.** Cargo.toml
-  carries the crates.io metadata (repository, homepage, keywords,
-  `command-line-utilities` + `text-editors` categories, anchored
-  `include` whitelist) so the playground tree, themes presets,
+- **`cargo install --locked binvim` from crates.io.** Live at
+  https://crates.io/crates/binvim — 0.4.4 was the initial publish
+  that claimed the name. Cargo.toml carries the crates.io metadata
+  (repository, homepage, keywords, `command-line-utilities` +
+  `text-editors` categories, anchored `include` whitelist) so the
+  playground tree, themes presets,
   scripts, and `.github/` stay out of the published tarball — the
   crate weighs ~98 files instead of ~389 with the default git-
   tracked behaviour. `publish = false` is gone, `rust-version =
