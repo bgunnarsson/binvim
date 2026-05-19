@@ -6960,7 +6960,27 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     }
     // Same for the file-tree pane — the highlighted row IS the cursor;
     // a flashing block in the buffer area would just be noise.
+    // Exception: when a delete confirm is armed the popup is up, and
+    // the user expects to see where their y/N keystroke lands. Sit
+    // the cursor at the popup body's right edge (after the filename
+    // string), matching the cmdline cursor position style.
     if app.mode == Mode::FileTree {
+        if app.file_tree_pending_delete().is_some() {
+            let (left, top, box_w) = cmdline_box_layout(app);
+            let inner_w = box_w.saturating_sub(2);
+            // Right-justify the cursor against the inside of the box
+            // so it's the most visible "your input lands here" indicator
+            // — the popup's body text is left-aligned, so a right-side
+            // cursor doesn't fight the filename for attention.
+            let col = left + 1 + inner_w.saturating_sub(2);
+            queue!(
+                out,
+                SetCursorStyle::SteadyBlock,
+                MoveTo(col as u16, (top + 1) as u16),
+                Show,
+            )?;
+            return Ok(());
+        }
         queue!(out, Hide)?;
         return Ok(());
     }
@@ -6971,12 +6991,17 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, style, Show)?;
     if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
         let (left, top, _) = cmdline_box_layout(app);
-        // Box layout:  │ <prompt> <input>   │  → cursor at left + 4 + len(input)
+        // Box layout:  │ <prompt> <input>   │  → cursor at left + 4 + len(input).
+        // Re-queue Show after MoveTo + style change so terminals that
+        // drop visibility on style transitions (Terminal.app does this
+        // intermittently inside synchronized updates) still paint
+        // the cursor at the final position.
         let col = left + 4 + app.cmdline.chars().count();
         queue!(
             out,
-            SetCursorStyle::SteadyBar,
-            MoveTo(col as u16, (top + 1) as u16)
+            SetCursorStyle::SteadyBlock,
+            MoveTo(col as u16, (top + 1) as u16),
+            Show,
         )?;
         return Ok(());
     }
