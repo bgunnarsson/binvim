@@ -391,8 +391,17 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
 - [ ] **Windows.** A real undertaking — terminal, clipboard, file paths, child-process plumbing all need
       audit. Probably ConPTY + `arboard` Windows backend + `\\?\` long-path handling. Consider only after the
       editor is feature-complete enough to be worth the porting cost. **considering**
-- [ ] **Nix flake.** `nix run github:bgunnarsson/binvim` and a flake output for use in a system config.
-      **planned**
+- [x] **Nix flake.** `flake.nix` at the repo root: `rustPlatform.buildRustPackage` with the committed
+      `Cargo.lock` for vendoring, builds both `binvim` and `binvim-install` from one derivation. Outputs:
+      `packages.default` (the editor), `apps.binvim` / `apps.binvim-install` (so `nix run
+      github:bgunnarsson/binvim#binvim-install` works), `devShells.default` (cargo + rustfmt + clippy +
+      tree-sitter build deps), and `overlays.default` so downstream NixOS / home-manager configs can
+      `nixpkgs.overlays = [ binvim.overlays.default ]` and reference `pkgs.binvim` like any other
+      package. Linux build pulls in `xorg.libxcb` for `arboard`'s X11 clipboard path; macOS leans on
+      Cocoa via the default rust stdenv. License is declared inline (BSAL v1.0, `free = false`,
+      `redistributable = false`) rather than the predefined `unfree` tag so the actual terms stay
+      visible. `doCheck = false` — the test suite hits `~/.cache` which the sandbox doesn't expose;
+      `cargo test` on a host remains the source of truth.
 - [x] **`cargo install binvim` from crates.io.** `Cargo.toml` carries the crates.io metadata
       (repository, homepage, keywords, categories, anchored `include` whitelist so the playground tree
       stays out of the published tarball); `scripts/release.sh` runs `cargo publish --locked` as step

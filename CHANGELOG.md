@@ -7,6 +7,24 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Nix flake.** New `flake.nix` at the repo root builds both
+  `binvim` and `binvim-install` from one `rustPlatform.build-
+  RustPackage` derivation, re-using the committed `Cargo.lock`
+  for vendoring so the nix-built artifacts match what `cargo
+  install --locked binvim` produces. Outputs: `packages.default`
+  (the editor), `apps.{binvim,binvim-install}` (so `nix run
+  github:bgunnarsson/binvim#binvim-install` works), `devShells.
+  default` (cargo + rustfmt + clippy + pkg-config), and
+  `overlays.default` so downstream NixOS / home-manager configs
+  can `nixpkgs.overlays = [ binvim.overlays.default ]` and
+  reference `pkgs.binvim`. Linux build adds `xorg.libxcb` for
+  `arboard`'s X11 clipboard path; macOS uses Cocoa via the
+  default rust stdenv. The BSAL v1.0 license is declared inline
+  (`free = false`, `redistributable = false`) rather than the
+  predefined `unfree` tag so the actual terms stay visible.
+  README install section adds the `nix run` / `nix profile
+  install` / system-config-overlay paths.
+
 - **`cargo install --locked binvim` from crates.io.** Cargo.toml
   carries the crates.io metadata (repository, homepage, keywords,
   `command-line-utilities` + `text-editors` categories, anchored

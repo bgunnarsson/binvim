@@ -148,6 +148,32 @@ cargo install --locked binvim
 
 Builds from source against the version published on crates.io. `--locked` uses the `Cargo.lock` shipped with the crate so the dep set matches what was tested for the release. Both `binvim` and `binvim-install` land in `~/.cargo/bin/`.
 
+### Nix flake
+
+```sh
+nix run github:bgunnarsson/binvim              # one-shot, in a temporary store path
+nix profile install github:bgunnarsson/binvim  # install permanently to your profile
+nix run github:bgunnarsson/binvim#binvim-install  # run the toolchain installer
+```
+
+For NixOS / home-manager system configs, add binvim as a flake input and use the default overlay:
+
+```nix
+{
+  inputs.binvim.url = "github:bgunnarsson/binvim";
+  outputs = { self, nixpkgs, binvim, ... }: {
+    nixosConfigurations.<hostname> = nixpkgs.lib.nixosSystem {
+      modules = [
+        { nixpkgs.overlays = [ binvim.overlays.default ]; }
+        ({ pkgs, ... }: { environment.systemPackages = [ pkgs.binvim ]; })
+      ];
+    };
+  };
+}
+```
+
+`nix develop github:bgunnarsson/binvim` drops you into a shell with the toolchain (cargo, rustfmt, clippy, pkg-config + the tree-sitter C build deps) for hacking on binvim itself.
+
 ### From source
 
 ```sh
