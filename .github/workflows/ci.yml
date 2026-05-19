@@ -27,8 +27,17 @@ jobs:
         with:
           key: ci-test
 
+      # `--test-threads=1` runs tests sequentially. Locally this is
+      # ~5s slower across the full suite but keeps the failing-test
+      # name interpretable when a tree-sitter grammar SIGSEGVs from
+      # the C side (no Rust panic, output captured per-test and lost
+      # on crash). With parallel execution the test that crashes is
+      # one of `num_cpus` in-flight, and only the ones that finished
+      # before the crash printed their result. Sequential execution
+      # means the last `... ok` line is the test that immediately
+      # preceded the one that crashed.
       - name: cargo test
-        run: cargo test --locked --all-features
+        run: cargo test --locked --all-features -- --test-threads=1
 
   clippy:
     name: cargo clippy
