@@ -6,6 +6,28 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-05-19
+
+### Changed
+- **Release pipeline brought in sync with crates.io.** 0.4.4 was
+  published to crates.io as a one-off `cargo publish --locked` to
+  claim the name and put binvim on `cargo install --locked binvim`;
+  that single command bypassed the rest of the release pipeline
+  (no `v0.4.4` git tag, no GitHub Release artifacts, no Homebrew
+  formula bump, no `install.sh` mirror to binvim-web). 0.4.5 cuts
+  a full release through `scripts/release.sh` so the v0.4.5 git
+  tag, the per-target tarballs attached to the GitHub Release, the
+  Homebrew formula on `bgunnarsson/homebrew-binvim`, and the
+  `install.sh` served from binvim.dev all line up with the
+  crates.io tarball. No editor-visible behaviour change — the
+  source tree is identical to crates.io 0.4.4 modulo CHANGELOG
+  reconciliation (the `[Unreleased]` section's features all
+  actually shipped as part of crates.io 0.4.4, so they've been
+  rolled down into the 0.4.4 section below to match what the
+  tarball contains).
+
+## [0.4.4] - 2026-05-19
+
 ### Added
 - **Nix flake.** New `flake.nix` at the repo root builds both
   `binvim` and `binvim-install` from one `rustPlatform.build-
@@ -36,39 +58,23 @@ follows [Semantic Versioning](https://semver.org/).
   that claimed the name. Cargo.toml carries the crates.io metadata
   (repository, homepage, keywords, `command-line-utilities` +
   `text-editors` categories, anchored `include` whitelist) so the
-  playground tree, themes presets,
-  scripts, and `.github/` stay out of the published tarball — the
-  crate weighs ~98 files instead of ~389 with the default git-
-  tracked behaviour. `publish = false` is gone, `rust-version =
-  "1.85"` declares the edition-2024 floor. `scripts/release.sh`
-  publishes as step 3b: bump → push to main → `cargo publish
-  --locked` → tag → GitHub Release → Homebrew → web. The publish
-  runs before the tag push, by design: a failed publish doesn't
-  leave a dangling tag, GitHub Release, or Homebrew bump pointing
-  at a non-existent crates.io version; re-running the script with
-  the same version is idempotent (the bump commit is already on
-  main, step 3 is a no-op). The pre-flight in step 1 checks for
-  either `CARGO_REGISTRY_TOKEN` or a credentials file under
+  playground tree, themes presets, scripts, and `.github/` stay
+  out of the published tarball — the crate weighs ~98 files
+  instead of ~389 with the default git-tracked behaviour.
+  `publish = false` is gone, `rust-version = "1.85"` declares the
+  edition-2024 floor. `scripts/release.sh` publishes as step 3b:
+  bump → push to main → `cargo publish --locked` → tag → GitHub
+  Release → Homebrew → web. The publish runs before the tag push,
+  by design: a failed publish doesn't leave a dangling tag,
+  GitHub Release, or Homebrew bump pointing at a non-existent
+  crates.io version; re-running the script with the same version
+  is idempotent (the bump commit is already on main, step 3 is a
+  no-op). The pre-flight in step 1 checks for either
+  `CARGO_REGISTRY_TOKEN` or a credentials file under
   `${CARGO_HOME:-$HOME/.cargo}/` so a missing token can't blow up
   mid-flow. README install section adds the `cargo install`
   invocation alongside the Homebrew / install.sh / source paths.
 
-### Changed
-- **Install catalog now pins versions matching binvim.dev.** Every
-  `npm install -g …` / `go install …` / `cargo install …` /
-  `pipx install …` / `gem install …` / `dotnet tool install …` /
-  `composer global require …` step in the catalog now carries the
-  same version pin shown on the binvim.dev install table — bumping
-  a pin here keeps the CLI installer, the in-editor `:install`
-  overlay, and the web table in sync. Brew / nix / apt formulas
-  aren't pinned in the command (their package manager owns the
-  version). `dlv`, `debugpy`, and `lazygit` stay un-pinned because
-  binvim-web doesn't track them. The `Installer::Gem` and
-  `Installer::DotnetTool` variants gained an `Option<&'static str>`
-  version field so the `-v <v>` / `--version <v>` flags don't have
-  to be encoded into the package name.
-
-### Added
 - **`:install` — in-editor toolchain installer overlay.** Same
   three-stage flow as the `binvim-install` CLI (bundles → optional
   Node.js versions → plan), rendered inside the editor as a
@@ -85,7 +91,6 @@ follows [Semantic Versioning](https://semver.org/).
   library module — both the CLI binary and the editor now drive
   the same data, so adding a language only touches one place.
 
-### Added
 - **`binvim-install` — interactive toolchain installer.** New second
   binary in the same crate. Run `binvim-install` and you get a
   checkbox list (j/k navigate, Space toggle, a/n all-none, Enter
@@ -128,9 +133,6 @@ follows [Semantic Versioning](https://semver.org/).
   on-PATH skip is bypassed (the binary on PATH belongs to one
   Node version only — the user may have picked others).
 
-## [0.4.4] - 2026-05-19
-
-### Added
 - **CI: `cargo fmt --check` gate.** New `rustfmt.toml` at the
   repo root pins the style policy — `max_width = 100` +
   `single_line_let_else_max_width = 100` so the compact
@@ -141,6 +143,20 @@ follows [Semantic Versioning](https://semver.org/).
   forward. Run `cargo fmt` before pushing or the gate fails.
 
 ### Changed
+- **Install catalog now pins versions matching binvim.dev.** Every
+  `npm install -g …` / `go install …` / `cargo install …` /
+  `pipx install …` / `gem install …` / `dotnet tool install …` /
+  `composer global require …` step in the catalog now carries the
+  same version pin shown on the binvim.dev install table — bumping
+  a pin here keeps the CLI installer, the in-editor `:install`
+  overlay, and the web table in sync. Brew / nix / apt formulas
+  aren't pinned in the command (their package manager owns the
+  version). `dlv`, `debugpy`, and `lazygit` stay un-pinned because
+  binvim-web doesn't track them. The `Installer::Gem` and
+  `Installer::DotnetTool` variants gained an `Option<&'static str>`
+  version field so the `-v <v>` / `--version <v>` flags don't have
+  to be encoded into the package name.
+
 - Tree-wide `cargo fmt` pass under the new `rustfmt.toml`.
   Mostly: rustfmt collapsing multi-line method chains that fit
   on one line, expanding a handful of long-lined `if/else`
