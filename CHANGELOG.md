@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-19
+
 ### Added
 - **Lazygit integration (`:lazygit` / `:lg` / `<leader>gg`).**
   Yazi-style full-screen takeover — suspend the editor, hand the
@@ -102,8 +104,33 @@ follows [Semantic Versioning](https://semver.org/).
   opencode — claiming editor identity on its boot splash was
   off-key. Multi-variant width fallback also dropped (the head
   fits every pane width we ever render at).
+- **File-tree delete confirm is a popup, not a status-line
+  notification.** Matches the chrome of the `a` (create) and `r`
+  (rename) prompts so the three file-tree ops feel uniform. Title
+  `Delete`, body shows `! <name>/  y to delete · N / Esc to
+  cancel` with the prompt glyph in the error accent so the
+  destructive intent reads at a glance.
+- **Cmdline cursor positioning + arrow navigation.** The cmdline
+  model was "string with cursor always at end" — Backspace popped
+  the last char, typing appended. Now it tracks a real
+  `cmdline_cursor` (byte offset, UTF-8-safe) and supports `<Left>`
+  / `<Right>` / `<Home>` / `<End>` / `<Delete>`, plus inserts /
+  Backspace at the cursor position. Applies across all cmdline-
+  style prompts (Command `:`, Search `/` `?`, LSP rename,
+  ReplaceAll, file-tree create / rename).
+- **Painted cursor cell in cmdline popups.** Some terminals dropped
+  the system cursor's visibility after a `SetCursorStyle` round-
+  trip inside a synchronized update; the popups now render the
+  cursor as a single inverted cell inside the body row so it's
+  visible regardless of terminal cursor state. System cursor is
+  hidden while these popups are up.
 
 ### Fixed
+- **File-tree create / rename prompts had no title.** The
+  `cmdline_chrome` match in the renderer had arms for `Rename` and
+  `ReplaceAll` but the two file-tree prompt kinds fell through to
+  the empty default, leaving the popup's title slot blank. Added
+  explicit `New entry` / `Rename` titles.
 - **DAP `setBreakpoints` resend dropping conditional fields.**
   The post-toggle resend path built `{"line": N}` inline, silently
   dropping `condition` and `hitCondition`. Any conditional set
