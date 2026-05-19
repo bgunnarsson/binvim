@@ -1049,6 +1049,8 @@ fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
         Mode::Search { backward: true } => ("Search", '?'),
         Mode::Prompt(crate::mode::PromptKind::Rename) => ("Rename", ' '),
         Mode::Prompt(crate::mode::PromptKind::ReplaceAll) => ("Replace in buffer", ' '),
+        Mode::Prompt(crate::mode::PromptKind::FileTreeCreate) => ("New entry", ' '),
+        Mode::Prompt(crate::mode::PromptKind::FileTreeRename) => ("Rename", ' '),
         _ => ("", ' '),
     }
 }
