@@ -32,6 +32,22 @@ follows [Semantic Versioning](https://semver.org/).
   this version on — `install.sh` extracts it next to `binvim`,
   Homebrew picks it up automatically via `cargo install`'s default
   all-binaries behaviour.
+  Node.js version handling: any plan that includes one or more
+  `npm install -g` steps triggers a second multi-select prompt
+  listing every Node.js install we can find on the system — nvm
+  (`~/.nvm/versions/node/*`), fnm (`~/.local/share/fnm/...` and
+  `~/.fnm/...`), asdf (`~/.asdf/installs/nodejs/*`), mise
+  (`~/.local/share/mise/installs/node/*`), volta
+  (`~/.volta/tools/image/node/*`), n (`/usr/local/n/versions/node/*`),
+  plus the `npm` on `$PATH` deduped via canonicalize. Single match
+  → no prompt, just use it. Multiple matches → checkbox list with
+  the newest version pre-checked; multi-select means npm installs
+  loop over each chosen version. The version's `bin/` is prepended
+  to PATH per spawn so the npm script's `#!/usr/bin/env node`
+  shebang resolves to the matching node binary regardless of which
+  one the host shell has active. For npm-installable tools the
+  on-PATH skip is bypassed (the binary on PATH belongs to one
+  Node version only — the user may have picked others).
 
 ## [0.4.4] - 2026-05-19
 

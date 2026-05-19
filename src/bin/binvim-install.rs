@@ -4,12 +4,18 @@
 //! fresh install doesn't have to read the README to know what to install.
 //!
 //! Flow: ASCII banner → multi-select language checkbox UI → dedupe tools
-//! across the selection → confirm plan → shell out to each tool's installer,
-//! picked from the first runnable candidate (brew / apt / npm / cargo / rustup
-//! / go / pipx / gem / dotnet / nix / composer) → summary.
+//! across the selection → if any `npm install -g` is in the plan, scan for
+//! installed Node.js versions across nvm / fnm / asdf / mise / volta / n
+//! (plus the system `npm` on `$PATH`) and let the user pick which to target
+//! → confirm plan → shell out to each tool's installer, picked from the
+//! first runnable candidate (brew / apt / npm / cargo / rustup / go / pipx
+//! / gem / dotnet / nix / composer). npm steps loop over every chosen Node
+//! version, with the version's bin/ prepended to PATH so the npm shebang
+//! resolves to the matching node binary. Finally a summary.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{IsTerminal, Write, stdout};
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use anyhow::{Result, anyhow};
@@ -495,6 +501,181 @@ fn pick_installer<'a>(tool: &'a Tool, managers: &BTreeSet<&'static str>) -> Opti
     })
 }
 
+fn find_on_path(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path).find_map(|dir| {
+        let p = dir.join(name);
+        p.is_file().then_some(p)
+    })
+}
+
+// ─── Node.js version discovery ─────────────────────────────────────────────
+
+/// One Node.js install we can drive `npm install -g` against. We discover
+/// these by scanning the well-known directories used by nvm / fnm / asdf /
+/// mise / volta / n, plus the system `npm` on `$PATH`. `bin_dir` is
+/// prepended to `PATH` when invoking npm so its `#!/usr/bin/env node`
+/// shebang resolves to the matching node binary rather than whatever the
+/// host shell's PATH would pick.
+#[derive(Clone)]
+struct NodeVersion {
+    label: String,
+    npm_path: PathBuf,
+    bin_dir: PathBuf,
+    /// `(major, minor, patch)` for sorting; `(0, 0, 0)` if unparseable.
+    sort_key: (u32, u32, u32),
+}
+
+fn discover_node_versions() -> Vec<NodeVersion> {
+    let mut out: Vec<NodeVersion> = Vec::new();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+
+    if let Some(h) = home.as_ref() {
+        // nvm
+        scan_node_root(
+            &h.join(".nvm").join("versions").join("node"),
+            Path::new("bin/npm"),
+            "nvm",
+            &mut out,
+        );
+        // fnm (XDG default)
+        scan_node_root(
+            &h.join(".local")
+                .join("share")
+                .join("fnm")
+                .join("node-versions"),
+            Path::new("installation/bin/npm"),
+            "fnm",
+            &mut out,
+        );
+        // fnm (legacy / custom dir)
+        scan_node_root(
+            &h.join(".fnm").join("node-versions"),
+            Path::new("installation/bin/npm"),
+            "fnm",
+            &mut out,
+        );
+        // asdf
+        scan_node_root(
+            &h.join(".asdf").join("installs").join("nodejs"),
+            Path::new("bin/npm"),
+            "asdf",
+            &mut out,
+        );
+        // mise
+        scan_node_root(
+            &h.join(".local")
+                .join("share")
+                .join("mise")
+                .join("installs")
+                .join("node"),
+            Path::new("bin/npm"),
+            "mise",
+            &mut out,
+        );
+        // volta
+        scan_node_root(
+            &h.join(".volta").join("tools").join("image").join("node"),
+            Path::new("bin/npm"),
+            "volta",
+            &mut out,
+        );
+    }
+    // n
+    scan_node_root(
+        Path::new("/usr/local/n/versions/node"),
+        Path::new("bin/npm"),
+        "n",
+        &mut out,
+    );
+
+    // Add the system `npm` on PATH if it isn't already represented by one of
+    // the scans above. De-duped via canonicalize — nvm / fnm shim a symlink
+    // into the user's PATH, so we'd otherwise list the same Node twice.
+    if let Some(system) = find_on_path("npm") {
+        let canonical = std::fs::canonicalize(&system).unwrap_or_else(|_| system.clone());
+        let already_listed = out.iter().any(|v| {
+            std::fs::canonicalize(&v.npm_path).unwrap_or_else(|_| v.npm_path.clone()) == canonical
+        });
+        if !already_listed {
+            let bin_dir = canonical
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_default();
+            let (label, sort_key) = label_system_npm(&bin_dir);
+            out.push(NodeVersion {
+                label,
+                npm_path: canonical,
+                bin_dir,
+                sort_key,
+            });
+        }
+    }
+
+    // Newest first.
+    out.sort_by_key(|v| std::cmp::Reverse(v.sort_key));
+    out
+}
+
+fn scan_node_root(root: &Path, suffix: &Path, manager: &str, out: &mut Vec<NodeVersion>) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let npm_path = dir.join(suffix);
+        if !npm_path.is_file() {
+            continue;
+        }
+        let bin_dir = npm_path.parent().map(Path::to_path_buf).unwrap_or_default();
+        let raw = entry.file_name().to_string_lossy().into_owned();
+        let sort_key = parse_node_version(&raw).unwrap_or((0, 0, 0));
+        out.push(NodeVersion {
+            label: format!("{raw}  [{manager}]"),
+            npm_path,
+            bin_dir,
+            sort_key,
+        });
+    }
+}
+
+fn parse_node_version(name: &str) -> Option<(u32, u32, u32)> {
+    let trimmed = name.trim_start_matches('v');
+    let mut parts = trimmed.split('.');
+    let major: u32 = parts.next()?.parse().ok()?;
+    let minor: u32 = parts.next()?.parse().ok()?;
+    // patch may carry a pre-release suffix ("0-rc.1") — strip non-digits.
+    let raw_patch = parts.next()?;
+    let patch_digits: String = raw_patch
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+    let patch: u32 = patch_digits.parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// Shell out to `<bin_dir>/node --version` so the picker shows the actual
+/// version string of the system Node (`v20.10.0  [system]`) rather than a
+/// generic "system" label. Falls back to `(0, 0, 0)` on parse failure so it
+/// sorts to the bottom rather than the top.
+fn label_system_npm(bin_dir: &Path) -> (String, (u32, u32, u32)) {
+    let node = bin_dir.join("node");
+    let version = Command::new(&node)
+        .arg("--version")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+    match version {
+        Some(v) if !v.is_empty() => {
+            let key = parse_node_version(&v).unwrap_or((0, 0, 0));
+            (format!("{v}  [system]"), key)
+        }
+        _ => ("system npm  [system]".to_string(), (0, 0, 0)),
+    }
+}
+
 // ─── checkbox UI ───────────────────────────────────────────────────────────
 
 struct PickerState {
@@ -502,17 +683,39 @@ struct PickerState {
     checked: Vec<bool>,
 }
 
-fn run_picker() -> Result<Option<Vec<usize>>> {
+/// Generic multi-select checkbox prompt — drives both the language bundle
+/// picker and the Node-version picker. Each `(name, summary)` pair becomes
+/// one row; `default_checked` are pre-selected indices so `Enter` alone
+/// picks a sensible default for the Node picker (newest version).
+fn run_multi_select(
+    subtitle: &str,
+    items: &[(String, String)],
+    default_checked: &[usize],
+) -> Result<Option<Vec<usize>>> {
     if !stdout().is_terminal() {
         return Err(anyhow!(
             "binvim-install needs a TTY for the checkbox UI — run it directly in a terminal."
         ));
     }
+    if items.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
 
     let mut state = PickerState {
         cursor: 0,
-        checked: vec![false; BUNDLES.len()],
+        checked: vec![false; items.len()],
     };
+    for &i in default_checked {
+        if let Some(slot) = state.checked.get_mut(i) {
+            *slot = true;
+        }
+    }
+    let name_width = items
+        .iter()
+        .map(|(n, _)| n.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(20);
 
     enable_raw_mode()?;
     let mut out = stdout();
@@ -520,7 +723,7 @@ fn run_picker() -> Result<Option<Vec<usize>>> {
 
     let result = (|| -> Result<Option<Vec<usize>>> {
         loop {
-            render_picker(&mut out, &state)?;
+            render_list(&mut out, &state, items, subtitle, name_width)?;
             let Event::Key(KeyEvent {
                 code,
                 modifiers,
@@ -537,7 +740,7 @@ fn run_picker() -> Result<Option<Vec<usize>>> {
                 (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(None),
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
                 (KeyCode::Char('j'), _) | (KeyCode::Down, _) => {
-                    if state.cursor + 1 < BUNDLES.len() {
+                    if state.cursor + 1 < items.len() {
                         state.cursor += 1;
                     }
                 }
@@ -546,7 +749,7 @@ fn run_picker() -> Result<Option<Vec<usize>>> {
                 }
                 (KeyCode::Char('g'), _) | (KeyCode::Home, _) => state.cursor = 0,
                 (KeyCode::Char('G'), _) | (KeyCode::End, _) => {
-                    state.cursor = BUNDLES.len().saturating_sub(1);
+                    state.cursor = items.len().saturating_sub(1);
                 }
                 (KeyCode::Char(' '), _) => {
                     let c = &mut state.checked[state.cursor];
@@ -574,10 +777,15 @@ fn run_picker() -> Result<Option<Vec<usize>>> {
     result
 }
 
-fn render_picker(out: &mut impl Write, state: &PickerState) -> Result<()> {
+fn render_list(
+    out: &mut impl Write,
+    state: &PickerState,
+    items: &[(String, String)],
+    subtitle: &str,
+    name_width: usize,
+) -> Result<()> {
     queue!(out, MoveTo(0, 0), Clear(ClearType::All))?;
 
-    // Banner
     queue!(
         out,
         SetForegroundColor(MAUVE),
@@ -594,11 +802,10 @@ fn render_picker(out: &mut impl Write, state: &PickerState) -> Result<()> {
     queue!(
         out,
         MoveTo(0, BANNER.len() as u16),
-        Print("  install — pick the languages you want set up")
+        Print(format!("  {subtitle}"))
     )?;
     queue!(out, ResetColor)?;
 
-    // Help line
     let help_row = (BANNER.len() + 2) as u16;
     queue!(out, MoveTo(0, help_row), SetForegroundColor(SUBTLE))?;
     queue!(
@@ -607,9 +814,8 @@ fn render_picker(out: &mut impl Write, state: &PickerState) -> Result<()> {
     )?;
     queue!(out, ResetColor)?;
 
-    // List
     let list_top = help_row + 2;
-    for (i, bundle) in BUNDLES.iter().enumerate() {
+    for (i, (name, summary)) in items.iter().enumerate() {
         let row = list_top + i as u16;
         let active = i == state.cursor;
         let checked = state.checked[i];
@@ -636,19 +842,39 @@ fn render_picker(out: &mut impl Write, state: &PickerState) -> Result<()> {
         } else {
             queue!(out, ResetColor)?;
         }
-        queue!(out, Print(format!("{:<22}", bundle.name)))?;
+        queue!(out, Print(format!("{:<width$}", name, width = name_width)))?;
         queue!(
             out,
             SetAttribute(Attribute::Reset),
             SetForegroundColor(SUBTLE)
         )?;
-        let summary = bundle_summary(bundle);
-        queue!(out, Print(format!(" {summary}")))?;
+        queue!(out, Print(format!("  {summary}")))?;
         queue!(out, ResetColor)?;
     }
 
     out.flush()?;
     Ok(())
+}
+
+fn pick_bundles() -> Result<Option<Vec<usize>>> {
+    let items: Vec<(String, String)> = BUNDLES
+        .iter()
+        .map(|b| (b.name.to_string(), bundle_summary(b)))
+        .collect();
+    run_multi_select("install — pick the languages you want set up", &items, &[])
+}
+
+fn pick_node_versions(versions: &[NodeVersion]) -> Result<Option<Vec<usize>>> {
+    let items: Vec<(String, String)> = versions
+        .iter()
+        .map(|v| (v.label.clone(), v.npm_path.display().to_string()))
+        .collect();
+    // Default-check the first (newest) so Enter alone picks a sane target.
+    run_multi_select(
+        "npm packages — pick which Node.js installations to install for",
+        &items,
+        &[0],
+    )
 }
 
 fn bundle_summary(b: &Bundle) -> String {
@@ -692,20 +918,30 @@ fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<Plan
         // Re-resolve against the catalog so every reference we hold from here
         // on (Tool, Installer) is 'static — PlanItem stores 'static refs.
         let tool: &'static Tool = find_static_tool(tool_copy.bin).expect("tool came from BUNDLES");
-        let chosen = if on_path(tool.bin) {
-            Choice::Already
-        } else if let Some(inst) = pick_installer(tool, managers) {
-            Choice::Install(inst)
-        } else if let Some(Installer::Manual(s)) = tool.installers.first() {
-            Choice::Manual(s)
-        } else {
-            let missing: Vec<String> = tool
-                .installers
-                .iter()
-                .filter(|i| !matches!(i, Installer::Manual(_)))
-                .map(|i| i.display())
-                .collect();
-            Choice::NoManager(missing)
+        // For npm installs we ignore the on-PATH shortcut: the binary on
+        // PATH belongs to exactly one Node version, but the user may have
+        // asked us to target other versions too. Always run the npm
+        // installer for those — npm will say "up to date" if the package
+        // is already there. Non-npm installers keep the original
+        // skip-when-already-on-PATH behaviour.
+        let installer = pick_installer(tool, managers);
+        let chosen = match installer {
+            Some(inst @ Installer::Npm(_)) => Choice::Install(inst),
+            _ if on_path(tool.bin) => Choice::Already,
+            Some(inst) => Choice::Install(inst),
+            None => {
+                if let Some(Installer::Manual(s)) = tool.installers.first() {
+                    Choice::Manual(s)
+                } else {
+                    let missing: Vec<String> = tool
+                        .installers
+                        .iter()
+                        .filter(|i| !matches!(i, Installer::Manual(_)))
+                        .map(|i| i.display())
+                        .collect();
+                    Choice::NoManager(missing)
+                }
+            }
         };
         plan.push(PlanItem {
             tool,
@@ -740,7 +976,7 @@ fn find_static_tool(bin: &str) -> Option<&'static Tool> {
     None
 }
 
-fn print_plan(plan: &[PlanItem]) {
+fn print_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) {
     println!();
     println!("Plan:");
     println!();
@@ -763,6 +999,14 @@ fn print_plan(plan: &[PlanItem]) {
                 print!("{}", inst.display());
                 let_color(SUBTLE, &format!("   ({used})"));
                 println!();
+                if matches!(inst, Installer::Npm(_)) {
+                    let targets = node_versions
+                        .iter()
+                        .map(|v| v.label.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let_color(SUBTLE, &format!("     targeting: {targets}\n"));
+                }
             }
             Choice::Manual(msg) => {
                 let_color(YELLOW, " ! ");
@@ -817,7 +1061,7 @@ struct Summary {
     failed: Vec<(String, String)>,
 }
 
-fn run_plan(plan: &[PlanItem]) -> Summary {
+fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
     let mut summary = Summary {
         installed: 0,
         skipped: 0,
@@ -837,6 +1081,61 @@ fn run_plan(plan: &[PlanItem]) -> Summary {
                     item.tool.label.to_string(),
                     "no package manager available".into(),
                 ));
+            }
+            Choice::Install(Installer::Npm(pkgs)) => {
+                if node_versions.is_empty() {
+                    // No node target picked — shouldn't normally happen
+                    // because `run()` aborts before reaching us, but stay
+                    // defensive.
+                    summary.failed.push((
+                        item.tool.label.to_string(),
+                        "no Node.js version selected".into(),
+                    ));
+                    continue;
+                }
+                for v in node_versions {
+                    println!();
+                    let_color(TEAL, "→ ");
+                    println!(
+                        "{} — npm install -g {}  (for {})",
+                        item.tool.label,
+                        pkgs.join(" "),
+                        v.label
+                    );
+                    let mut cmd = Command::new(&v.npm_path);
+                    cmd.args(["install", "-g"]);
+                    cmd.args(pkgs.iter().copied());
+                    // Prepend the matching node's bin dir to PATH so the
+                    // npm script's `#!/usr/bin/env node` shebang resolves
+                    // to the right node binary regardless of which version
+                    // the host shell happens to have active.
+                    let host_path = std::env::var_os("PATH").unwrap_or_default();
+                    let mut paths: Vec<PathBuf> = vec![v.bin_dir.clone()];
+                    paths.extend(std::env::split_paths(&host_path));
+                    if let Ok(joined) = std::env::join_paths(paths) {
+                        cmd.env("PATH", joined);
+                    }
+                    cmd.stdin(Stdio::inherit());
+                    cmd.stdout(Stdio::inherit());
+                    cmd.stderr(Stdio::inherit());
+                    let label = format!("{} (for {})", item.tool.label, v.label);
+                    match cmd.status() {
+                        Ok(s) if s.success() => {
+                            summary.installed += 1;
+                            let_color(GREEN, "✓ installed\n");
+                        }
+                        Ok(s) => {
+                            let msg = format!("exit code {}", s.code().unwrap_or(-1));
+                            let_color(RED, &format!("✗ failed ({msg})\n"));
+                            summary.failed.push((label, msg));
+                        }
+                        Err(e) => {
+                            let msg = format!("spawn error: {e}");
+                            let_color(RED, &format!("✗ {msg}\n"));
+                            summary.failed.push((label, msg));
+                        }
+                    }
+                }
             }
             Choice::Install(inst) => {
                 println!();
@@ -909,7 +1208,7 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<()> {
-    let picks = match run_picker()? {
+    let picks = match pick_bundles()? {
         Some(p) => p,
         None => {
             println!("Cancelled.");
@@ -925,16 +1224,76 @@ fn run() -> Result<()> {
     print_managers(&managers);
 
     let plan = build_plan(&picks, &managers);
-    print_plan(&plan);
+
+    // If the plan has any `npm install -g` step, discover installed Node
+    // versions across the common version managers (+ system) and let the
+    // user pick which ones to install for. The user's request was: "all
+    // installs that include npm -g need to be asked what version" — we
+    // ask once per run rather than once per package (15 prompts is
+    // unfriendly) and apply the selection to every npm step.
+    let needs_npm = plan
+        .iter()
+        .any(|p| matches!(p.chosen, Choice::Install(Installer::Npm(_))));
+    let node_versions = if needs_npm {
+        select_node_versions()?
+    } else {
+        Vec::new()
+    };
+    if needs_npm && node_versions.is_empty() {
+        // `select_node_versions` already printed the reason.
+        return Ok(());
+    }
+
+    print_plan(&plan, &node_versions);
 
     if !confirm_proceed()? {
         println!("Aborted.");
         return Ok(());
     }
 
-    let summary = run_plan(&plan);
+    let summary = run_plan(&plan, &node_versions);
     print_summary(&summary);
     Ok(())
+}
+
+/// Discover Node.js installations, prompt the user when there's more than
+/// one, and return the picked set. Empty `Vec` signals "abort the run" —
+/// either no Node was found at all, or the user cancelled / picked zero
+/// versions. The caller prints "Cancelled." / "Aborted." as appropriate.
+fn select_node_versions() -> Result<Vec<NodeVersion>> {
+    let detected = discover_node_versions();
+    if detected.is_empty() {
+        let_color(
+            RED,
+            "No Node.js installation found. Install Node.js (nvm, fnm, brew, apt, …) and re-run.\n",
+        );
+        return Ok(Vec::new());
+    }
+    if detected.len() == 1 {
+        let_color(
+            SUBTLE,
+            &format!("Using Node {} for npm installs.\n", detected[0].label),
+        );
+        return Ok(vec![detected[0].clone()]);
+    }
+    let_color(
+        SUBTLE,
+        &format!(
+            "Detected {} Node.js installations — pick which to install npm packages for.\n",
+            detected.len()
+        ),
+    );
+    match pick_node_versions(&detected)? {
+        None => {
+            println!("Cancelled.");
+            Ok(Vec::new())
+        }
+        Some(indices) if indices.is_empty() => {
+            println!("No Node version selected — aborting (npm installs need a target).");
+            Ok(Vec::new())
+        }
+        Some(indices) => Ok(indices.into_iter().map(|i| detected[i].clone()).collect()),
+    }
 }
 
 fn print_managers(managers: &BTreeSet<&'static str>) {
