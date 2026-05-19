@@ -1096,11 +1096,23 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         Print('╮'),
     )?;
 
-    // Input row.
+    // Input row. The "cursor" is painted as a highlighted cell at
+    // the end of the input rather than relying on the terminal
+    // cursor — some terminals drop visibility after a SetCursorStyle
+    // change inside a synchronized update, and the popup chrome
+    // makes the system cursor harder to spot against dark popup bg
+    // anyway. Painting an explicit cell with inverted colours
+    // guarantees a visible "your input lands here" indicator
+    // regardless of terminal cursor state.
     let input: String = app.cmdline.chars().take(inner_w.saturating_sub(4)).collect();
-    let pad = inner_w
+    let pad_total = inner_w
         .saturating_sub(3)
         .saturating_sub(input.chars().count());
+    // Reserve one cell for the cursor; pad gets the rest.
+    let cursor_w = if pad_total > 0 { 1 } else { 0 };
+    let pad = pad_total.saturating_sub(cursor_w);
+    let cursor_bg = app.config.theme_fg();
+    let cursor_fg = app.config.chrome_bg();
     queue!(
         out,
         MoveTo(left as u16, (top + 1) as u16),
@@ -1114,6 +1126,19 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         SetBackgroundColor(bg),
         SetForegroundColor(text_fg),
         Print(&input),
+    )?;
+    if cursor_w > 0 {
+        queue!(
+            out,
+            SetBackgroundColor(cursor_bg),
+            SetForegroundColor(cursor_fg),
+            Print(' '),
+            SetBackgroundColor(bg),
+        )?;
+    }
+    queue!(
+        out,
+        SetForegroundColor(text_fg),
         Print(" ".repeat(pad)),
         SetForegroundColor(border),
         Print('│'),
@@ -1200,8 +1225,14 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
         let trimmed: String = display_name.chars().take(body_budget).collect();
         (trimmed, String::new())
     };
-    let used = prompt_w + name_str.chars().count() + hint_str.chars().count();
+    // Same explicit-cursor trick as the cmdline popup: paint a
+    // highlighted cell as the "your y/N keystroke lands here"
+    // indicator rather than relying on the terminal cursor.
+    let cursor_w = 1usize;
+    let used = prompt_w + name_str.chars().count() + hint_str.chars().count() + cursor_w;
     let pad = inner_w.saturating_sub(used + 1);
+    let cursor_bg = app.config.theme_fg();
+    let cursor_fg = app.config.chrome_bg();
     queue!(
         out,
         MoveTo(left as u16, (top + 1) as u16),
@@ -1217,6 +1248,11 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
         Print(&name_str),
         SetForegroundColor(dim_fg),
         Print(&hint_str),
+        SetBackgroundColor(cursor_bg),
+        SetForegroundColor(cursor_fg),
+        Print(' '),
+        SetBackgroundColor(bg),
+        SetForegroundColor(text_fg),
         Print(" ".repeat(pad)),
         SetForegroundColor(border),
         Print('│'),
@@ -6959,28 +6995,20 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         return Ok(());
     }
     // Same for the file-tree pane — the highlighted row IS the cursor;
-    // a flashing block in the buffer area would just be noise.
-    // Exception: when a delete confirm is armed the popup is up, and
-    // the user expects to see where their y/N keystroke lands. Sit
-    // the cursor at the popup body's right edge (after the filename
-    // string), matching the cmdline cursor position style.
+    // a flashing block in the buffer area would just be noise. The
+    // delete-confirm popup paints its own "your input lands here"
+    // cursor as part of the popup body (see `draw_file_tree_confirm`),
+    // so the terminal cursor stays hidden in either case.
     if app.mode == Mode::FileTree {
-        if app.file_tree_pending_delete().is_some() {
-            let (left, top, box_w) = cmdline_box_layout(app);
-            let inner_w = box_w.saturating_sub(2);
-            // Right-justify the cursor against the inside of the box
-            // so it's the most visible "your input lands here" indicator
-            // — the popup's body text is left-aligned, so a right-side
-            // cursor doesn't fight the filename for attention.
-            let col = left + 1 + inner_w.saturating_sub(2);
-            queue!(
-                out,
-                SetCursorStyle::SteadyBlock,
-                MoveTo(col as u16, (top + 1) as u16),
-                Show,
-            )?;
-            return Ok(());
-        }
+        queue!(out, Hide)?;
+        return Ok(());
+    }
+    // The floating cmdline popup (Command / Search / Prompt modes)
+    // also paints its own cursor as a highlighted cell — bulletproof
+    // against terminals that drop the system cursor inside
+    // synchronized updates. Keep the system cursor hidden so we don't
+    // get a duplicate.
+    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
         queue!(out, Hide)?;
         return Ok(());
     }
@@ -6989,22 +7017,6 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         _ => SetCursorStyle::SteadyBlock,
     };
     queue!(out, style, Show)?;
-    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
-        let (left, top, _) = cmdline_box_layout(app);
-        // Box layout:  │ <prompt> <input>   │  → cursor at left + 4 + len(input).
-        // Re-queue Show after MoveTo + style change so terminals that
-        // drop visibility on style transitions (Terminal.app does this
-        // intermittently inside synchronized updates) still paint
-        // the cursor at the final position.
-        let col = left + 4 + app.cmdline.chars().count();
-        queue!(
-            out,
-            SetCursorStyle::SteadyBlock,
-            MoveTo(col as u16, (top + 1) as u16),
-            Show,
-        )?;
-        return Ok(());
-    }
     if app.mode == Mode::Picker {
         if let Some(picker) = app.picker.as_ref() {
             let layout = picker_layout(app);
