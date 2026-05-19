@@ -55,6 +55,17 @@ pub struct LspConfig {
     /// fire. Default on.
     #[serde(default = "default_lsp_code_lens")]
     pub code_lens: bool,
+    /// Route code-action `WorkspaceEdit`s and server-initiated
+    /// `workspace/applyEdit` requests through the rename preview
+    /// overlay (Mode::RenamePreview). Off by default because most
+    /// such edits are single-file quick fixes ("Add import",
+    /// "Inline variable") where the friction of a confirmation
+    /// step outweighs the safety — but for larger refactors
+    /// ("Extract function", "Move to module") having the same
+    /// per-row checkbox UI rename already provides is the point.
+    /// Rename itself always uses the overlay regardless.
+    #[serde(default)]
+    pub preview_workspace_edits: bool,
 }
 
 fn default_lsp_semantic_tokens() -> bool {
@@ -73,6 +84,7 @@ impl Default for LspConfig {
             semantic_tokens: true,
             document_highlight: true,
             code_lens: true,
+            preview_workspace_edits: false,
         }
     }
 }

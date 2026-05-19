@@ -43,6 +43,23 @@ impl Task {
             format!("{} {}", self.program, self.args.join(" "))
         }
     }
+
+    /// Heuristic: this task likely runs until the user kills it
+    /// (`pnpm dev`, `cargo watch`, `make serve`, etc.) rather than
+    /// exiting on its own. Drives the `[bg]` badge in the picker
+    /// and the cautionary status-line hint on `:tasklast` so a
+    /// stray re-run doesn't spawn a second dev server. Label-based
+    /// because the discovery layer doesn't know the body
+    /// (Justfile recipes are arbitrary shell; we'd be guessing).
+    /// False positives stay annoying-but-harmless — the user can
+    /// always close the extra tab.
+    pub fn is_long_running(&self) -> bool {
+        let label = self.label.to_ascii_lowercase();
+        const HINTS: &[&str] = &[
+            "dev", "watch", "serve", "start", "preview",
+        ];
+        HINTS.iter().any(|h| label.split(|c: char| !c.is_ascii_alphanumeric()).any(|tok| tok == *h))
+    }
 }
 
 /// Which adapter discovered a task. Drives the source prefix in the

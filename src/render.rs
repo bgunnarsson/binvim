@@ -325,9 +325,8 @@ fn draw_rename_preview(out: &mut impl Write, app: &App) -> Result<()> {
 
     // ── Top border with embedded title ──────────────────────────────────
     let title = format!(
-        " Rename: {} → {}  ({} edit{} · {} file{} · {} selected) ",
-        preview.original,
-        preview.new_name,
+        " {}  ({} edit{} · {} file{} · {} selected) ",
+        preview.title_prefix(),
         preview.edits.len(),
         if preview.edits.len() == 1 { "" } else { "s" },
         preview.files_affected(),

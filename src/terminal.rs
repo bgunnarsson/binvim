@@ -132,6 +132,20 @@ impl Grid {
         }
         self.cells.resize_with(rows, || vec![Cell::blank(); cols]);
     }
+
+    /// Flatten scrollback + visible grid into one `Vec<String>`.
+    /// Trailing whitespace per row is trimmed so the result reads
+    /// like the user would see it in a regular log file. Used by the
+    /// task runner's quickfix scrape — colour info on each `Cell` is
+    /// dropped (the scraper only cares about `path:line:col:` shapes).
+    pub fn text_lines(&self) -> Vec<String> {
+        let mut out = Vec::with_capacity(self.scrollback.len() + self.cells.len());
+        for row in self.scrollback.iter().chain(self.cells.iter()) {
+            let s: String = row.iter().map(|c| c.ch).collect();
+            out.push(s.trim_end().to_string());
+        }
+        out
+    }
 }
 
 /// vte `Perform` impl. Owns the grid + cursor + current pen state.
@@ -949,6 +963,48 @@ impl Terminal {
     /// renderer reads this once per frame.
     pub fn label(&self) -> Option<String> {
         self.label.lock().ok().and_then(|l| l.clone())
+    }
+
+    /// Returns `Some(status_code)` the *first* time the child process
+    /// is observed to have exited (status defaults to 0 if the
+    /// platform doesn't expose one). Subsequent calls return `None`
+    /// even though the child is dead — `inner.exited` is the
+    /// idempotency latch. Called once per frame by the task-runner
+    /// quickfix scrape; cheap (`try_wait` is non-blocking).
+    pub fn poll_exit(&self) -> Option<i32> {
+        // Already reported on a prior frame.
+        if let Ok(inner) = self.inner.lock() {
+            if inner.exited {
+                return None;
+            }
+        }
+        let mut child_guard = match self.child.lock() {
+            Ok(g) => g,
+            Err(_) => return None,
+        };
+        let status = match child_guard.as_mut() {
+            Some(c) => match c.try_wait() {
+                // exit_code() returns u32; downcast to i32 for the
+                // standard "negative if abnormal" convention. None
+                // means the platform couldn't report — call it 0.
+                Ok(Some(s)) => s.exit_code() as i32,
+                Ok(None) | Err(_) => return None,
+            },
+            // Drop has already taken the child. Treat as silently
+            // exited so the caller's "already reported" gate trips on
+            // the next call.
+            None => 0,
+        };
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.exited = true;
+        }
+        Some(status)
+    }
+
+    /// True once `poll_exit` has observed the child exit. Lets the
+    /// renderer tag dead tabs without polling the OS itself.
+    pub fn has_exited(&self) -> bool {
+        self.inner.lock().map(|i| i.exited).unwrap_or(false)
     }
 }
 

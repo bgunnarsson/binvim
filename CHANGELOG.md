@@ -6,6 +6,45 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-19
+
+### Added
+- **Refactor preview v2 — opt-in for code-action `WorkspaceEdit`s
+  and server-initiated `workspace/applyEdit`.** New config flag
+  `[lsp] preview_workspace_edits = true` (default `false`) routes
+  both flows through the same modal overlay rename already uses.
+  Rename itself is unaffected — it always uses the overlay. The
+  preview's title bar reflects the source ("Apply: <action title>"
+  for code actions, "Apply: <client>" for server-initiated). For
+  server-initiated `workspace/applyEdit`, the LSP client is left
+  blocking on a response — accept replies `applied: true`, cancel
+  replies `applied: false`, no preview / empty-edit replies
+  `false`. A second concurrent request while a preview is already
+  open is auto-rejected so the server doesn't hang.
+- **Task runner v2 — quickfix scrape on exit + long-running
+  annotation.** When a task-spawned terminal tab's child process
+  exits, the visible grid + scrollback is scraped for compiler /
+  linter errors (`path:line:col[:end_col]: <msg>` covering
+  gcc / clang / rustc / ruff / biome / eslint, plus tsc's
+  `path(line,col):` legacy form) and the matches replace the
+  quickfix list. `]q` / `[q` then walks the errors as usual. Log
+  lines like `12:34:56 INFO: …` and rustc's `-->` decoration are
+  filtered. Long-running tasks (label containing `dev` / `watch` /
+  `serve` / `start` / `preview` as a word token) carry a `[bg]`
+  badge in the picker; `:tasklast` on one of them adds a
+  cautionary status hint about the previous instance possibly
+  still being alive.
+
+### Changed
+- `Terminal` gained `poll_exit()` (first-time-only exit detection
+  via `try_wait`) and `has_exited()`. `Grid` gained
+  `text_lines()` that flattens scrollback + visible into trimmed
+  `Vec<String>` for downstream parsers.
+- `RenamePreview`'s `original` + `new_name` fields collapsed into
+  a `PreviewKind` enum (Rename / CodeAction /
+  ApplyEditFromServer); renderer + accept handler match on the
+  variant for title + status formatting.
+
 ## [0.4.2] - 2026-05-19
 
 ### Added

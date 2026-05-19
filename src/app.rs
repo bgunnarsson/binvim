@@ -1150,6 +1150,15 @@ impl App {
             if self.terminal_drain_if_open() {
                 needs_render = true;
             }
+            // Watch labelled (task) tabs for exit — first time we
+            // notice the child is gone, scrape the visible grid +
+            // scrollback for `path:line:col` errors and feed them
+            // into the quickfix list. Cheap on quiet frames
+            // (try_wait is non-blocking, and the per-tab `exited`
+            // latch short-circuits once we've already scraped).
+            if self.task_poll_exits_and_scrape() {
+                needs_render = true;
+            }
             // Catch any pane-geometry change (bottom terminal /
             // debug pane toggle, host resize, etc.) by reconciling
             // the side terminals' PTY size with what `buffer_rows()`

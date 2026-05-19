@@ -201,13 +201,40 @@ pub struct RenamePreviewEdit {
     pub enabled: bool,
 }
 
-/// Modal LSP-rename preview state. Built from the server's
-/// `WorkspaceEdit` reply — held on the App until the user accepts
-/// (apply enabled rows) or cancels (drop the lot).
+/// What the preview is previewing. Drives the title bar + accept-time
+/// status message + (for `ApplyEditFromServer`) the deferred
+/// `workspace/applyEdit` response back to the originating LSP client.
+#[derive(Debug, Clone)]
+pub enum PreviewKind {
+    /// `<leader>r` rename flow. Title reads `Rename: old → new`.
+    Rename {
+        original: String,
+        new_name: String,
+    },
+    /// `WorkspaceEdit` arriving via a chosen code action (e.g. "Add
+    /// import", "Extract function"). Title reads `Apply: <action title>`.
+    /// No server response is owed — the action's own command lifecycle
+    /// already returned.
+    CodeAction { title: String },
+    /// Server-initiated `workspace/applyEdit` request. Title reads
+    /// `Apply: <label>`. The server is blocked waiting for our
+    /// response — accept replies `applied: true`, cancel replies
+    /// `applied: false`. `client_key` + `id` identify which client's
+    /// pending request we're acknowledging.
+    ApplyEditFromServer {
+        label: String,
+        client_key: String,
+        request_id: u64,
+    },
+}
+
+/// Modal LSP-rename / WorkspaceEdit preview state. Built either from a
+/// rename reply, an accepted code-action `WorkspaceEdit`, or a server-
+/// initiated `workspace/applyEdit` request. Held on the App until the
+/// user accepts (apply enabled rows) or cancels (drop the lot).
 #[derive(Debug, Clone)]
 pub struct RenamePreview {
-    pub original: String,
-    pub new_name: String,
+    pub kind: PreviewKind,
     /// One entry per edit, grouped by file in source order (the
     /// server's). Lookups for "which file is row N in" walk this list;
     /// it's small (~tens of entries even for big renames), so no
@@ -224,6 +251,21 @@ pub struct RenamePreview {
 }
 
 impl RenamePreview {
+    /// One-line title for the popup chrome. Renderer trims to popup
+    /// width; the trailing edit/file counters are appended by the
+    /// renderer (it already knows them).
+    pub fn title_prefix(&self) -> String {
+        match &self.kind {
+            PreviewKind::Rename { original, new_name } => {
+                format!("Rename: {} → {}", original, new_name)
+            }
+            PreviewKind::CodeAction { title } => format!("Apply: {}", title),
+            PreviewKind::ApplyEditFromServer { label, .. } => {
+                format!("Apply: {}", label)
+            }
+        }
+    }
+
     pub fn files_affected(&self) -> usize {
         let mut last: Option<&std::path::Path> = None;
         let mut count = 0;

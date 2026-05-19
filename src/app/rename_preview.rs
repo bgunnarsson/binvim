@@ -17,7 +17,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 
-use crate::app::state::{ConcreteEdit, RenamePreview, RenamePreviewEdit};
+use crate::app::state::{ConcreteEdit, PreviewKind, RenamePreview, RenamePreviewEdit};
 use crate::mode::Mode;
 
 impl super::App {
@@ -48,6 +48,61 @@ impl super::App {
             .unwrap_or_else(|| "(symbol)".to_string());
         let new_name = first_new_text(&parsed)
             .unwrap_or_else(|| "(unknown)".to_string());
+        let kind = PreviewKind::Rename { original, new_name };
+        self.show_preview_overlay(kind, parsed);
+    }
+
+    /// Open the preview overlay for a `WorkspaceEdit` returned by a
+    /// code action — same UI as rename, with the title bar adjusted to
+    /// "Apply: <action title>". Routed only when
+    /// `[lsp] preview_workspace_edits = true`; the no-preview path
+    /// stays in `run_code_action`.
+    pub(super) fn open_code_action_preview(&mut self, title: String, edit: &JsonValue) {
+        let parsed = self.parse_workspace_edit(edit);
+        if parsed.is_empty() {
+            self.status_msg = format!("'{title}' had no edits");
+            return;
+        }
+        self.show_preview_overlay(PreviewKind::CodeAction { title }, parsed);
+    }
+
+    /// Open the preview overlay for a server-initiated
+    /// `workspace/applyEdit` request. The server is blocked waiting
+    /// for a response, so we stash `(client_key, request_id)` on the
+    /// preview state; accept replies `applied: true`, cancel replies
+    /// `applied: false`. If a preview is already open we reject the
+    /// new request immediately so the server doesn't hang.
+    ///
+    /// `label` is a short human-readable description used in the
+    /// title bar — typically the client_key, since the server didn't
+    /// give us a more meaningful name for the apply.
+    pub(super) fn open_server_apply_edit_preview(
+        &mut self,
+        client_key: String,
+        request_id: u64,
+        label: String,
+        edit: &JsonValue,
+    ) -> bool {
+        if self.pending_rename_preview.is_some() {
+            return false;
+        }
+        let parsed = self.parse_workspace_edit(edit);
+        if parsed.is_empty() {
+            return false;
+        }
+        let kind = PreviewKind::ApplyEditFromServer {
+            label,
+            client_key,
+            request_id,
+        };
+        self.show_preview_overlay(kind, parsed);
+        true
+    }
+
+    /// Shared body — caches per-file line text and switches into
+    /// `Mode::RenamePreview`. Used by rename, code-action, and
+    /// server-apply preview entry points.
+    fn show_preview_overlay(&mut self, kind: PreviewKind, parsed: Vec<ConcreteEdit>) {
         // Read each file once. The active buffer is in memory; for
         // anything else we hit disk. Keep both keyed by path so an
         // edit list interleaving files doesn't re-read.
@@ -82,8 +137,7 @@ impl super::App {
             .map(|e| build_preview_row(&e, &line_cache))
             .collect();
         self.pending_rename_preview = Some(RenamePreview {
-            original,
-            new_name,
+            kind,
             edits,
             cursor: 0,
             scroll: 0,
@@ -118,9 +172,23 @@ impl super::App {
     }
 
     fn rename_preview_cancel(&mut self) {
-        self.pending_rename_preview = None;
+        let Some(preview) = self.pending_rename_preview.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
         self.mode = Mode::Normal;
-        self.status_msg = "rename cancelled".into();
+        // Server-initiated applyEdit is blocked waiting for our
+        // response — tell it the user declined so it doesn't hang.
+        if let PreviewKind::ApplyEditFromServer { client_key, request_id, .. } = &preview.kind {
+            self.lsp.send_apply_edit_response(client_key, *request_id, false);
+        }
+        self.status_msg = match &preview.kind {
+            PreviewKind::Rename { .. } => "rename cancelled".into(),
+            PreviewKind::CodeAction { title } => format!("'{title}' cancelled"),
+            PreviewKind::ApplyEditFromServer { label, .. } => {
+                format!("'{label}' workspace edit declined")
+            }
+        };
     }
 
     fn rename_preview_accept(&mut self) {
@@ -129,6 +197,7 @@ impl super::App {
             return;
         };
         self.mode = Mode::Normal;
+        let kind = preview.kind;
         let enabled: Vec<crate::app::state::ConcreteEdit> = preview
             .edits
             .into_iter()
@@ -136,20 +205,59 @@ impl super::App {
             .map(|e| e.edit)
             .collect();
         if enabled.is_empty() {
-            self.status_msg = "rename: no edits selected".into();
+            // No work to apply. Server-initiated requests still need
+            // an answer or the server hangs — `applied: false` is
+            // honest here (we didn't write anything).
+            if let PreviewKind::ApplyEditFromServer { client_key, request_id, .. } = &kind {
+                self.lsp.send_apply_edit_response(client_key, *request_id, false);
+            }
+            self.status_msg = match &kind {
+                PreviewKind::Rename { .. } => "rename: no edits selected".into(),
+                PreviewKind::CodeAction { title } => format!("'{title}': no edits selected"),
+                PreviewKind::ApplyEditFromServer { label, .. } => {
+                    format!("'{label}': no edits selected")
+                }
+            };
             return;
         }
-        match self.apply_concrete_edits(&enabled) {
+        let outcome = self.apply_concrete_edits(&enabled);
+        // Tell the server how we did *before* updating status — same
+        // reasoning as the cancel path, just reflecting the actual
+        // apply result instead of a flat false.
+        if let PreviewKind::ApplyEditFromServer { client_key, request_id, .. } = &kind {
+            let applied = matches!(outcome, Ok((n, _)) if n > 0);
+            self.lsp.send_apply_edit_response(client_key, *request_id, applied);
+        }
+        match outcome {
             Ok((edits, files)) => {
-                self.status_msg = format!(
-                    "renamed {} → {} ({edits} edit{} across {files} file{})",
-                    preview.original,
-                    preview.new_name,
-                    if edits == 1 { "" } else { "s" },
-                    if files == 1 { "" } else { "s" },
-                );
+                let summary = match &kind {
+                    PreviewKind::Rename { original, new_name } => format!(
+                        "renamed {original} → {new_name} ({edits} edit{} across {files} file{})",
+                        if edits == 1 { "" } else { "s" },
+                        if files == 1 { "" } else { "s" },
+                    ),
+                    PreviewKind::CodeAction { title } => format!(
+                        "applied '{title}' ({edits} edit{} across {files} file{})",
+                        if edits == 1 { "" } else { "s" },
+                        if files == 1 { "" } else { "s" },
+                    ),
+                    PreviewKind::ApplyEditFromServer { label, .. } => format!(
+                        "applied '{label}' ({edits} edit{} across {files} file{})",
+                        if edits == 1 { "" } else { "s" },
+                        if files == 1 { "" } else { "s" },
+                    ),
+                };
+                self.status_msg = summary;
             }
-            Err(e) => self.status_msg = format!("rename error: {e}"),
+            Err(e) => {
+                self.status_msg = match &kind {
+                    PreviewKind::Rename { .. } => format!("rename error: {e}"),
+                    PreviewKind::CodeAction { title } => format!("'{title}' error: {e}"),
+                    PreviewKind::ApplyEditFromServer { label, .. } => {
+                        format!("'{label}' error: {e}")
+                    }
+                };
+            }
         }
     }
 

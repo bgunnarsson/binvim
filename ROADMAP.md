@@ -195,12 +195,16 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       flow still apply blind — they're typically single-file quick fixes where a preview would just
       add friction. Lives on a dedicated `Mode::RenamePreview`; the test-results-style overlay-
       passthrough gates don't apply (the preview is strictly modal).
-- [ ] **Refactor preview v2 — same UI for `workspace/applyEdit` + code actions.** Open follow-up:
-      route server-initiated edits and `WorkspaceEdit`-returning code actions ("extract function",
-      "inline variable", "move to module") through the same overlay. Most of those are still
-      single-file so the friction-vs-confidence tradeoff is per-action; could gate behind an
-      opt-in setting or expose `:refactor` to invoke the preview explicitly on top of an
-      already-buffered edit. **considering**
+- [x] **Refactor preview v2 — same UI for `workspace/applyEdit` + code actions.** Shipped as
+      an opt-in via `[lsp] preview_workspace_edits = true` (default off — most code actions are
+      still single-file quick fixes where a confirmation step is friction). When on, code-action
+      `WorkspaceEdit`s and server-initiated `workspace/applyEdit` requests route through the
+      same modal overlay rename already uses. `RenamePreview` grew a `kind: PreviewKind`
+      discriminating Rename / CodeAction / ApplyEditFromServer; renderer + accept handler match
+      on the variant for the title bar + status formatting. For server-initiated apply: the
+      preview state stashes `(client_key, request_id)`; accept replies `applied: true`, cancel
+      replies `applied: false`, no-preview / empty-edit / second-while-open replies `false`
+      immediately so the server doesn't hang.
 - [x] **Workspace folders / multi-root.** Shipped — `LspClient` carries a runtime-mutable set of
       attached `workspace_folders` plus a `workspace_folders_supported` flag captured from the
       `initialize` response (object form `{"supported": true}` and the older bool shorthand both
@@ -324,11 +328,17 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       already gives — vte grid, scrollback, mouse forwarding, multi-tab.
       Deliberately **not** a dedicated streaming overlay (the test runner has one; tasks
       don't need per-event parsing — the terminal grid does it for free).
-- [ ] **Task runner v2 — quickfix scrape + long-running classification.** Open follow-ups: parse
-      `path:line:col: error` patterns from common tools (rustc, tsc, eslint, ruff) into the
-      quickfix list on a tab's child-process exit, so `]q` walks compiler errors after a `build`;
-      and a "long-running" hint (annotation in the picker, or a `<leader>mL` variant) for dev
-      servers so they don't get re-spawned by accident on `:tasklast`. **considering**
+- [x] **Task runner v2 — quickfix scrape + long-running annotation.** Shipped. On a task tab's
+      child-process exit, the visible grid + scrollback is scraped for `path:line:col[:end_col]:
+      <msg>` (gcc / clang / rustc / ruff / biome / eslint / generic POSIX) and `path(line,col):
+      <msg>` (tsc legacy); matches replace the quickfix list so `]q` / `[q` walks compiler
+      errors after a `build`. Log lines like `12:34:56 INFO: …` and rustc's `-->` decoration
+      are filtered. `Terminal::poll_exit()` (first-fire `try_wait`) drives the detection;
+      `Grid::text_lines()` extracts the post-vte-parsed text. Long-running tasks (label
+      containing `dev` / `watch` / `serve` / `start` / `preview` as a word token) carry a
+      `[bg]` badge in the picker; `:tasklast` on one of them appends a cautionary status
+      hint about the previous instance possibly still being alive (the kickoff itself still
+      proceeds — the user might genuinely want a second instance).
 
 ## Quality / Tooling
 

@@ -62,11 +62,24 @@ impl super::App {
                     self.open_rename_preview(&edit);
                 }
                 LspEvent::ApplyEditRequest { client_key, id, edit } => {
-                    let applied = match self.apply_workspace_edit(&edit) {
-                        Ok((edits, _)) => edits > 0,
-                        Err(_) => false,
-                    };
-                    self.lsp.send_apply_edit_response(&client_key, id, applied);
+                    // Preview-flag opt-in: route the server-initiated edit
+                    // through `Mode::RenamePreview` and reply when the user
+                    // accepts / cancels (or right away if there's nothing
+                    // to apply or a preview is already on screen).
+                    let routed = self.config.lsp.preview_workspace_edits
+                        && self.open_server_apply_edit_preview(
+                            client_key.clone(),
+                            id,
+                            client_key.clone(),
+                            &edit,
+                        );
+                    if !routed {
+                        let applied = match self.apply_workspace_edit(&edit) {
+                            Ok((edits, _)) => edits > 0,
+                            Err(_) => false,
+                        };
+                        self.lsp.send_apply_edit_response(&client_key, id, applied);
+                    }
                 }
                 LspEvent::DiagnosticsUpdated => {}
                 LspEvent::InlayHints { path, hints } => {
@@ -1391,6 +1404,16 @@ impl super::App {
         }
         let mut applied = false;
         if let Some(edit) = action.edit.as_ref() {
+            // Preview-flag opt-in: open the same overlay rename uses
+            // instead of writing through immediately. Skipping the
+            // edit-only command path below — the preview accept handler
+            // will report the result and we don't want to also fire the
+            // action's command (which would race with the user still
+            // looking at the overlay).
+            if self.config.lsp.preview_workspace_edits {
+                self.open_code_action_preview(action.title.clone(), edit);
+                return;
+            }
             match self.apply_workspace_edit(edit) {
                 Ok((edits, files)) if edits > 0 => {
                     self.status_msg = format!(
