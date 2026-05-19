@@ -30,9 +30,18 @@ uname_m=$(uname -m 2>/dev/null || echo unknown)
 case "$uname_s/$uname_m" in
     Linux/x86_64|Linux/amd64)   target="x86_64-unknown-linux-musl" ;;
     Linux/aarch64|Linux/arm64)  target="aarch64-unknown-linux-musl" ;;
-    Darwin/arm64|Darwin/aarch64) target="aarch64-apple-darwin" ;;
-    Darwin/x86_64|Darwin/amd64) target="x86_64-apple-darwin" ;;
-    Darwin/*)                   err "unsupported macOS architecture: $uname_m" ;;
+    # No pre-built macOS binary — cargo + brew are both first-class
+    # paths on macOS and avoid the extra GitHub-Actions matrix.
+    # Print both install paths and exit; copy-pasting either works.
+    Darwin/*)
+        printf 'binvim does not ship a pre-built macOS binary.\n\n' >&2
+        printf 'Install via Homebrew:\n' >&2
+        printf '    brew install bgunnarsson/binvim/binvim\n\n' >&2
+        printf 'Or via cargo:\n' >&2
+        printf '    cargo install --locked binvim\n\n' >&2
+        printf 'Both build from source against the version published on crates.io.\n' >&2
+        exit 1
+        ;;
     Linux/*)                    err "unsupported Linux architecture: $uname_m" ;;
     *)                          err "unsupported OS: $uname_s" ;;
 esac

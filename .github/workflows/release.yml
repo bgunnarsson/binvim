@@ -32,17 +32,11 @@ jobs:
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
             use_cross: true
-          # macOS targets build natively per arch — GitHub's macos-14
-          # runner is aarch64, macos-13 is x86_64. No cross-compile
-          # toolchain to wrangle, and the resulting binary is signed
-          # by the host's codesign so it doesn't trip Gatekeeper on
-          # first launch.
-          - target: aarch64-apple-darwin
-            runner: macos-14
-            use_cross: false
-          - target: x86_64-apple-darwin
-            runner: macos-13
-            use_cross: false
+          # No macOS targets — `brew install bgunnarsson/binvim/binvim`
+          # and `cargo install --locked binvim` both work on macOS and
+          # avoid the matrix complexity (signing, two arch runners,
+          # macos-13 queue starvation). install.sh on Darwin prints
+          # both paths instead of trying to download a tarball.
     steps:
       - uses: actions/checkout@v5
         with:
