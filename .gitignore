@@ -2,6 +2,10 @@
 /target
 playground/**/target/
 
+# Nix — `nix build` drops a `result` symlink at the repo root.
+/result
+/result-*
+
 # .NET / C# / Razor
 playground/**/bin/
 playground/**/obj/

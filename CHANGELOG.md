@@ -21,9 +21,15 @@ follows [Semantic Versioning](https://semver.org/).
   `arboard`'s X11 clipboard path; macOS uses Cocoa via the
   default rust stdenv. The BSAL v1.0 license is declared inline
   (`free = false`, `redistributable = false`) rather than the
-  predefined `unfree` tag so the actual terms stay visible.
-  README install section adds the `nix run` / `nix profile
-  install` / system-config-overlay paths.
+  predefined `unfree` tag so the actual terms stay visible. The
+  flake scopes its own `allowUnfreePredicate` to the binvim
+  package so `nix run github:bgunnarsson/binvim` works out of the
+  box without `NIXPKGS_ALLOW_UNFREE=1 --impure` on every call.
+  `flake.lock` is committed so the input set is reproducible
+  across machines; each `apps.*` carries `meta` so `nix flake
+  check` runs clean with no warnings. README install section
+  adds the `nix run` / `nix profile install` /
+  system-config-overlay paths.
 
 - **`cargo install --locked binvim` from crates.io.** Cargo.toml
   carries the crates.io metadata (repository, homepage, keywords,

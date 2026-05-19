@@ -29,7 +29,18 @@
     flake-utils.lib.eachDefaultSystem
       (system:
         let
-          pkgs = import nixpkgs { inherit system; };
+          # `allowUnfreePredicate` keeps the unfree gate scoped to this
+          # one package. Without it, `nix run github:bgunnarsson/binvim`
+          # errors out with "refusing to evaluate" because we tagged the
+          # license `free = false` above — users would have to set
+          # `NIXPKGS_ALLOW_UNFREE=1` + pass `--impure` to every command.
+          # Scoping it inside the flake means downstream consumers don't
+          # have to reconfigure nixpkgs to install one editor.
+          pkgs = import nixpkgs {
+            inherit system;
+            config.allowUnfreePredicate = pkg:
+              builtins.elem (pkgs.lib.getName pkg) [ "binvim" ];
+          };
 
           binvim = pkgs.rustPlatform.buildRustPackage {
             pname = "binvim";
@@ -88,19 +99,26 @@
           # `nix run github:bgunnarsson/binvim` → opens the editor.
           # `nix run github:bgunnarsson/binvim#binvim-install` → runs
           # the toolchain installer. Both share the same derivation;
-          # only the `program` path differs.
+          # only the `program` path differs. `meta` mirrors the package
+          # meta so `nix flake check` doesn't warn about missing fields.
           apps = {
             default = {
               type = "app";
               program = "${binvim}/bin/binvim";
+              meta = binvim.meta;
             };
             binvim = {
               type = "app";
               program = "${binvim}/bin/binvim";
+              meta = binvim.meta;
             };
             binvim-install = {
               type = "app";
               program = "${binvim}/bin/binvim-install";
+              meta = binvim.meta // {
+                description = "binvim toolchain installer (LSP servers + formatters)";
+                mainProgram = "binvim-install";
+              };
             };
           };
 
