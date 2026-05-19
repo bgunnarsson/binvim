@@ -2,10 +2,30 @@
 name = "binvim"
 version = "0.4.4"
 edition = "2024"
-description = "Vim-grammar TUI editor with batteries included"
+rust-version = "1.85"
+description = "Vim-grammar TUI editor with batteries included — tree-sitter, multi-server LSP, DAP, multi-cursor, sessions, single binary, no plugin system."
 authors = ["B. Gunnarsson (@bgunnarssonis)"]
 license-file = "LICENSE"
-publish = false
+repository = "https://github.com/bgunnarsson/binvim"
+homepage = "https://binvim.dev"
+readme = "README.md"
+keywords = ["editor", "vim", "tui", "lsp", "tree-sitter"]
+categories = ["command-line-utilities", "text-editors"]
+# Keep /playground, /themes, /scripts, /.github, proptest-regressions,
+# and the like out of the crates.io tarball — they're development
+# assets that live on github.com, not things the editor needs at
+# runtime. The leading `/` anchors each entry to the package root;
+# without it, `README.md` would match `playground/*/README.md` too
+# and Cargo would pull every node_modules license file along with it.
+include = [
+    "/src/**/*",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/rustfmt.toml",
+]
 
 [dependencies]
 ropey = "1.6"

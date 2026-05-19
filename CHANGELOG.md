@@ -6,6 +6,27 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`cargo install --locked binvim` from crates.io.** Cargo.toml
+  carries the crates.io metadata (repository, homepage, keywords,
+  `command-line-utilities` + `text-editors` categories, anchored
+  `include` whitelist) so the playground tree, themes presets,
+  scripts, and `.github/` stay out of the published tarball — the
+  crate weighs ~98 files instead of ~389 with the default git-
+  tracked behaviour. `publish = false` is gone, `rust-version =
+  "1.85"` declares the edition-2024 floor. `scripts/release.sh`
+  publishes as step 3b: bump → push to main → `cargo publish
+  --locked` → tag → GitHub Release → Homebrew → web. The publish
+  runs before the tag push, by design: a failed publish doesn't
+  leave a dangling tag, GitHub Release, or Homebrew bump pointing
+  at a non-existent crates.io version; re-running the script with
+  the same version is idempotent (the bump commit is already on
+  main, step 3 is a no-op). The pre-flight in step 1 checks for
+  either `CARGO_REGISTRY_TOKEN` or a credentials file under
+  `${CARGO_HOME:-$HOME/.cargo}/` so a missing token can't blow up
+  mid-flow. README install section adds the `cargo install`
+  invocation alongside the Homebrew / install.sh / source paths.
+
 ### Changed
 - **Install catalog now pins versions matching binvim.dev.** Every
   `npm install -g …` / `go install …` / `cargo install …` /

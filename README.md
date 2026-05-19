@@ -140,6 +140,14 @@ curl -fsSL https://binvim.dev/install.sh | sh
 
 Pulls the matching musl-static tarball (`x86_64` or `aarch64`) from the latest GitHub Release, verifies its SHA-256, and drops the binary at `~/.local/bin/binvim`. Override with `BINVIM_VERSION=v0.1.0` or `BINVIM_INSTALL_DIR=/opt/bin` if needed.
 
+### crates.io
+
+```sh
+cargo install --locked binvim
+```
+
+Builds from source against the version published on crates.io. `--locked` uses the `Cargo.lock` shipped with the crate so the dep set matches what was tested for the release. Both `binvim` and `binvim-install` land in `~/.cargo/bin/`.
+
 ### From source
 
 ```sh

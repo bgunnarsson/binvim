@@ -393,12 +393,15 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       editor is feature-complete enough to be worth the porting cost. **considering**
 - [ ] **Nix flake.** `nix run github:bgunnarsson/binvim` and a flake output for use in a system config.
       **planned**
-- [ ] **`cargo install binvim` from crates.io.** Currently install paths are Homebrew tap or `install.sh`;
-      crates.io would catch the Rust-tooling crowd. Requires the licence story to permit it (source-available
-      — verify). When this ships: remove `publish = false` from `Cargo.toml`, then wire `cargo publish
-      --locked` into `scripts/release.sh` (between the Cargo.lock refresh and the tag push — publish *before*
-      tagging so a failed publish doesn't leave a dangling tag) plus a `CARGO_REGISTRY_TOKEN` check in
-      pre-flight. ~15 lines of script. **considering**
+- [x] **`cargo install binvim` from crates.io.** `Cargo.toml` carries the crates.io metadata
+      (repository, homepage, keywords, categories, anchored `include` whitelist so the playground tree
+      stays out of the published tarball); `scripts/release.sh` runs `cargo publish --locked` as step
+      3b — after the bump commit lands on main, before the tag push — so a failed publish doesn't leave
+      a dangling tag / GitHub Release / Homebrew bump pointing at a non-existent crates.io version. The
+      pre-flight in step 1 checks for either `CARGO_REGISTRY_TOKEN` or a credentials file under
+      `${CARGO_HOME:-$HOME/.cargo}/` so the publish step never fails midway through for a missing
+      token. `cargo install --locked binvim` is the install path; both `binvim` and `binvim-install`
+      land in `~/.cargo/bin/`.
 
 ## Architecture / non-goals
 

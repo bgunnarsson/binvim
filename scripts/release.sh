@@ -11,11 +11,18 @@ set -euo pipefail
 #
 # What it does, in order:
 #   1. Pre-flight checks (clean tree, on main, CHANGELOG entry exists,
-#      tag absent, sibling repos present, gh CLI available).
+#      tag absent, sibling repos present, gh CLI available,
+#      crates.io credentials available).
 #   2. Local verification (cargo fmt --check, cargo test, cargo clippy,
 #      cargo build --release) so a broken commit never gets tagged.
 #   3. Stamp today's date on the CHANGELOG entry, bump Cargo.toml +
 #      refresh Cargo.lock, commit, push to main.
+#   3b. Publish to crates.io via `cargo publish --locked`. Runs BEFORE
+#       the tag push so a failed publish doesn't leave a dangling tag /
+#       GitHub Release / Homebrew bump that points at a non-existent
+#       crates.io version. Re-run the script with the same version to
+#       retry (the bump commit is already on main, so step 3 becomes
+#       a no-op).
 #   4. Tag v<version>, push tag → triggers .github/workflows/release.yml
 #      which builds the per-target binaries + publishes the GitHub Release.
 #   5. (Optional) Wait for the release workflow to finish, then sanity-
@@ -212,6 +219,20 @@ if ! command -v gh >/dev/null 2>&1; then
     exit 1
 fi
 
+# `cargo publish` needs a crates.io token. Accept either the
+# CARGO_REGISTRY_TOKEN env var (CI-friendly) or a previously-run
+# `cargo login` that left a token in ~/.cargo/credentials.toml.
+# Fail loudly here rather than at step 3b — we don't want to push
+# the bump commit to main and then blow up on the publish step.
+if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]] \
+    && [[ ! -f "${CARGO_HOME:-$HOME/.cargo}/credentials.toml" ]] \
+    && [[ ! -f "${CARGO_HOME:-$HOME/.cargo}/credentials" ]]; then
+    echo "No crates.io credentials found." >&2
+    echo "  Set CARGO_REGISTRY_TOKEN=<token> or run \`cargo login\` first." >&2
+    echo "  Get a token at https://crates.io/me." >&2
+    exit 1
+fi
+
 echo "  branch:       main"
 echo "  version:      ${VERSION}  (tag ${TAG})"
 echo "  tap repo:     ${TAP_DIR}"
@@ -252,6 +273,25 @@ elif ! git diff --quiet -- CHANGELOG.md; then
 else
     echo "  Already at ${VERSION}, no changes to commit."
 fi
+
+# ─── 3b. Publish to crates.io ─────────────────────────────────────
+
+step "Publish to crates.io"
+
+# `cargo publish --locked` re-resolves against Cargo.lock so the
+# published crate uses the exact dep set we tested in step 2. It
+# also runs `cargo package` + a verification build, which catches
+# include/exclude misconfiguration and missing files before the
+# tarball uploads. The `--allow-dirty` is intentionally NOT passed:
+# the bump commit is already in step 3, the working tree is clean,
+# we want the upload to be reproducible from main@HEAD.
+#
+# Re-running after a failed publish: step 3 will say "Already at
+# ${VERSION}, no changes to commit" and skip; we'll land here
+# again with a clean tree and another shot at the publish.
+cargo publish --locked
+echo "  Published binvim ${VERSION} to crates.io."
+echo "  cargo install binvim  # available within a minute or two"
 
 # ─── 4. Tag + push ────────────────────────────────────────────────
 
@@ -438,12 +478,14 @@ step "Release ${VERSION} complete"
 cat <<EOF
 
   GitHub Release:  https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}
+  crates.io:       https://crates.io/crates/${REPO}/${VERSION}
   Tap:             https://github.com/${OWNER}/homebrew-${REPO}
   install.sh:      https://binvim.dev/install.sh
 
   Try:
     brew upgrade ${REPO}                          # if already tapped
     brew install ${OWNER}/${REPO}/${REPO}         # fresh install
+    cargo install --locked ${REPO}                # from crates.io
     curl -fsSL https://binvim.dev/install.sh | sh # curl path
 
 EOF
