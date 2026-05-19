@@ -1465,12 +1465,14 @@ impl super::App {
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
+                self.cmdline_cursor = 0;
                 self.cmdline_completion_reset();
                 self.history_reset();
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
                 let line = std::mem::take(&mut self.cmdline);
+                self.cmdline_cursor = 0;
                 self.cmdline_completion_reset();
                 self.history_record(HistoryKind::Command, &line);
                 self.history_reset();
@@ -1483,9 +1485,17 @@ impl super::App {
                     self.history_reset();
                     self.mode = Mode::Normal;
                 } else {
-                    self.cmdline.pop();
+                    self.cmdline_backspace_at_cursor();
                 }
             }
+            KeyCode::Delete => {
+                self.cmdline_completion_reset();
+                self.cmdline_delete_forward_at_cursor();
+            }
+            KeyCode::Left => self.cmdline_cursor_move_back(),
+            KeyCode::Right => self.cmdline_cursor_move_forward(),
+            KeyCode::Home => self.cmdline_cursor = 0,
+            KeyCode::End => self.cmdline_cursor = self.cmdline.len(),
             KeyCode::Tab => self.cmdline_tab(false),
             KeyCode::BackTab => self.cmdline_tab(true),
             KeyCode::Up => {
@@ -1498,7 +1508,7 @@ impl super::App {
             }
             KeyCode::Char(c) => {
                 self.cmdline_completion_reset();
-                self.cmdline.push(c);
+                self.cmdline_insert_char_at_cursor(c);
             }
             _ => {}
         }
@@ -1698,6 +1708,7 @@ impl super::App {
                     _ => return,
                 };
                 let input = std::mem::take(&mut self.cmdline);
+                self.cmdline_cursor = 0;
                 match kind {
                     crate::mode::PromptKind::Rename => {
                         self.finish_rename(input);
@@ -1720,12 +1731,89 @@ impl super::App {
                 }
             }
             KeyCode::Backspace => {
-                self.cmdline.pop();
+                self.cmdline_backspace_at_cursor();
+            }
+            KeyCode::Delete => {
+                self.cmdline_delete_forward_at_cursor();
+            }
+            KeyCode::Left => {
+                self.cmdline_cursor_move_back();
+            }
+            KeyCode::Right => {
+                self.cmdline_cursor_move_forward();
+            }
+            KeyCode::Home => {
+                self.cmdline_cursor = 0;
+            }
+            KeyCode::End => {
+                self.cmdline_cursor = self.cmdline.len();
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cmdline.push(c);
+                self.cmdline_insert_char_at_cursor(c);
             }
             _ => {}
+        }
+    }
+
+    /// Insert `c` at `cmdline_cursor` and advance past it.
+    pub(super) fn cmdline_insert_char_at_cursor(&mut self, c: char) {
+        let at = self.cmdline_cursor.min(self.cmdline.len());
+        self.cmdline.insert(at, c);
+        self.cmdline_cursor = at + c.len_utf8();
+    }
+
+    /// Delete the char immediately before `cmdline_cursor`. No-op
+    /// when cursor is at start.
+    pub(super) fn cmdline_backspace_at_cursor(&mut self) {
+        if self.cmdline_cursor == 0 {
+            return;
+        }
+        let mut prev = self.cmdline_cursor;
+        // Walk back across the previous char's UTF-8 bytes.
+        prev -= 1;
+        while prev > 0 && !self.cmdline.is_char_boundary(prev) {
+            prev -= 1;
+        }
+        self.cmdline.drain(prev..self.cmdline_cursor);
+        self.cmdline_cursor = prev;
+    }
+
+    /// Delete the char at `cmdline_cursor` (forward delete). No-op
+    /// when cursor is at end.
+    pub(super) fn cmdline_delete_forward_at_cursor(&mut self) {
+        if self.cmdline_cursor >= self.cmdline.len() {
+            return;
+        }
+        let mut next = self.cmdline_cursor + 1;
+        while next < self.cmdline.len() && !self.cmdline.is_char_boundary(next) {
+            next += 1;
+        }
+        self.cmdline.drain(self.cmdline_cursor..next);
+    }
+
+    /// Move `cmdline_cursor` left by one char.
+    pub(super) fn cmdline_cursor_move_back(&mut self) {
+        if self.cmdline_cursor == 0 {
+            return;
+        }
+        self.cmdline_cursor -= 1;
+        while self.cmdline_cursor > 0
+            && !self.cmdline.is_char_boundary(self.cmdline_cursor)
+        {
+            self.cmdline_cursor -= 1;
+        }
+    }
+
+    /// Move `cmdline_cursor` right by one char.
+    pub(super) fn cmdline_cursor_move_forward(&mut self) {
+        if self.cmdline_cursor >= self.cmdline.len() {
+            return;
+        }
+        self.cmdline_cursor += 1;
+        while self.cmdline_cursor < self.cmdline.len()
+            && !self.cmdline.is_char_boundary(self.cmdline_cursor)
+        {
+            self.cmdline_cursor += 1;
         }
     }
 
@@ -1735,6 +1823,7 @@ impl super::App {
             _ => None,
         };
         self.cmdline.clear();
+        self.cmdline_cursor = 0;
         match kind {
             Some(
                 crate::mode::PromptKind::FileTreeCreate

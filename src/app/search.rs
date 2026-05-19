@@ -233,11 +233,13 @@ impl super::App {
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
+                self.cmdline_cursor = 0;
                 self.history_reset();
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
                 let query = std::mem::take(&mut self.cmdline);
+                self.cmdline_cursor = 0;
                 self.history_record(HistoryKind::Search, &query);
                 self.history_reset();
                 let backward = match self.mode {
@@ -252,13 +254,18 @@ impl super::App {
                     self.history_reset();
                     self.mode = Mode::Normal;
                 } else {
-                    self.cmdline.pop();
+                    self.cmdline_backspace_at_cursor();
                 }
             }
+            KeyCode::Delete => self.cmdline_delete_forward_at_cursor(),
+            KeyCode::Left => self.cmdline_cursor_move_back(),
+            KeyCode::Right => self.cmdline_cursor_move_forward(),
+            KeyCode::Home => self.cmdline_cursor = 0,
+            KeyCode::End => self.cmdline_cursor = self.cmdline.len(),
             KeyCode::Up => self.history_walk_back(HistoryKind::Search),
             KeyCode::Down => self.history_walk_forward(HistoryKind::Search),
             KeyCode::Char(c) => {
-                self.cmdline.push(c);
+                self.cmdline_insert_char_at_cursor(c);
             }
             _ => {}
         }

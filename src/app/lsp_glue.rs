@@ -478,6 +478,7 @@ impl super::App {
         // Pre-fill with the current word so common renames are a few-char edit.
         let current = self.word_under_cursor().unwrap_or_default();
         self.rename_anchor = Some((path, line, col, current.clone()));
+        self.cmdline_cursor = current.len();
         self.cmdline = current;
         self.mode = Mode::Prompt(crate::mode::PromptKind::Rename);
     }
@@ -532,6 +533,7 @@ impl super::App {
         // alongside the typed string.
         let placeholder = self.buffer.path.clone().unwrap_or_default();
         self.rename_anchor = Some((placeholder, 0, 0, current.clone()));
+        self.cmdline_cursor = current.len();
         self.cmdline = current;
         self.mode = Mode::Prompt(crate::mode::PromptKind::ReplaceAll);
     }

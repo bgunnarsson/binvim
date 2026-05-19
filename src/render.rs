@@ -1096,23 +1096,43 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         Print('╮'),
     )?;
 
-    // Input row. The "cursor" is painted as a highlighted cell at
-    // the end of the input rather than relying on the terminal
-    // cursor — some terminals drop visibility after a SetCursorStyle
-    // change inside a synchronized update, and the popup chrome
-    // makes the system cursor harder to spot against dark popup bg
-    // anyway. Painting an explicit cell with inverted colours
-    // guarantees a visible "your input lands here" indicator
-    // regardless of terminal cursor state.
-    let input: String = app.cmdline.chars().take(inner_w.saturating_sub(4)).collect();
-    let pad_total = inner_w
-        .saturating_sub(3)
-        .saturating_sub(input.chars().count());
-    // Reserve one cell for the cursor; pad gets the rest.
-    let cursor_w = if pad_total > 0 { 1 } else { 0 };
-    let pad = pad_total.saturating_sub(cursor_w);
+    // Input row. The cursor is painted as a highlighted cell at
+    // `cmdline_cursor` (a byte offset into `cmdline`), splitting the
+    // input into before / under / after. The under-cursor char shows
+    // in inverted colours so the cursor reads as a block regardless
+    // of terminal cursor visibility — some terminals drop visibility
+    // after a SetCursorStyle change inside a synchronized update,
+    // and a system-cursor block against the popup bg is finicky.
+    // Painting the cell explicitly sidesteps all of that.
+    let cursor_byte = app.cmdline_cursor.min(app.cmdline.len());
+    let (before, rest) = app.cmdline.split_at(cursor_byte);
+    let (under, after) = match rest.chars().next() {
+        Some(ch) => rest.split_at(ch.len_utf8()),
+        None => ("", ""),
+    };
+    // Truncate from the END so the cursor stays visible when input
+    // exceeds the popup width.
+    let avail = inner_w.saturating_sub(4); // 1 border + 3 prompt segment
+    let before_w = before.chars().count();
+    let under_w = under.chars().count();
+    let after_w = after.chars().count();
+    let mut total = before_w + under_w + after_w;
+    let mut after_trim = after.to_string();
+    while total > avail && !after_trim.is_empty() {
+        if let Some((idx, _)) = after_trim.char_indices().next_back() {
+            after_trim.truncate(idx);
+            total = total.saturating_sub(1);
+        } else {
+            break;
+        }
+    }
     let cursor_bg = app.config.theme_fg();
     let cursor_fg = app.config.chrome_bg();
+    // Cursor cell always renders: under-char if present, else a space
+    // (so end-of-input still has a visible cursor block).
+    let cursor_glyph = if under.is_empty() { " ".to_string() } else { under.to_string() };
+    let used = 3 + before_w + 1 + after_trim.chars().count(); // prompt + before + cursor + after
+    let pad = inner_w.saturating_sub(used + 1).saturating_sub(0); // -1 for the right border
     queue!(
         out,
         MoveTo(left as u16, (top + 1) as u16),
@@ -1125,20 +1145,13 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         SetAttribute(Attribute::Reset),
         SetBackgroundColor(bg),
         SetForegroundColor(text_fg),
-        Print(&input),
-    )?;
-    if cursor_w > 0 {
-        queue!(
-            out,
-            SetBackgroundColor(cursor_bg),
-            SetForegroundColor(cursor_fg),
-            Print(' '),
-            SetBackgroundColor(bg),
-        )?;
-    }
-    queue!(
-        out,
+        Print(before),
+        SetBackgroundColor(cursor_bg),
+        SetForegroundColor(cursor_fg),
+        Print(&cursor_glyph),
+        SetBackgroundColor(bg),
         SetForegroundColor(text_fg),
+        Print(&after_trim),
         Print(" ".repeat(pad)),
         SetForegroundColor(border),
         Print('│'),

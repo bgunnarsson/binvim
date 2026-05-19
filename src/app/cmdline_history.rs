@@ -75,6 +75,7 @@ impl super::App {
             Some(n) => n - 1,
         };
         self.cmdline = self.history_vec(kind)[new_cursor].clone();
+        self.cmdline_cursor = self.cmdline.len();
         self.history_cursor = Some(new_cursor);
     }
 
@@ -94,6 +95,7 @@ impl super::App {
             self.cmdline = self.history_draft.take().unwrap_or_default();
             self.history_cursor = None;
         }
+        self.cmdline_cursor = self.cmdline.len();
     }
 
     /// Drop cycling state — call when leaving Command / Search mode by

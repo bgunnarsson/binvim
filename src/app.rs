@@ -180,6 +180,14 @@ pub struct App {
     pub history: History,
     pub registers: HashMap<char, Register>,
     pub cmdline: String,
+    /// Insert position inside `cmdline`, as a byte offset (`<=
+    /// cmdline.len()`). Drives Left/Right/Home/End navigation in
+    /// the floating cmdline popup and the painted cursor cell in
+    /// `draw_floating_cmdline`. Reset to `cmdline.len()` whenever
+    /// the cmdline is pre-filled (rename / file-tree rename) so the
+    /// cursor lands at the end of the seed text; reset to 0 when
+    /// the popup opens with an empty cmdline.
+    pub cmdline_cursor: usize,
     /// Active Tab-completion cycle inside `Mode::Command`. `Some` while
     /// the user is rotating candidates with successive Tab / Shift-Tab
     /// presses; cleared on any other key so the next Tab recomputes
@@ -752,6 +760,7 @@ impl App {
             history: History::new(),
             registers: HashMap::new(),
             cmdline: String::new(),
+            cmdline_cursor: 0,
             cmdline_completion: None,
             cmd_history: Vec::new(),
             search_history: Vec::new(),

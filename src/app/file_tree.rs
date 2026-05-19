@@ -284,6 +284,7 @@ impl super::App {
             parent: parent.clone(),
         });
         self.cmdline = String::new();
+        self.cmdline_cursor = 0;
         self.mode = Mode::Prompt(crate::mode::PromptKind::FileTreeCreate);
         // Surface the parent so the user can see where the new entry
         // will land before typing.
@@ -310,6 +311,7 @@ impl super::App {
         state.pending_op = Some(FileTreePendingOp::Rename {
             from: target.clone(),
         });
+        self.cmdline_cursor = basename.len();
         self.cmdline = basename;
         self.mode = Mode::Prompt(crate::mode::PromptKind::FileTreeRename);
     }

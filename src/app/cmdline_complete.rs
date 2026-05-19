@@ -264,6 +264,7 @@ impl super::App {
                     let matches = state.matches.clone();
                     let token = matches[next].clone();
                     self.cmdline = format!("{prefix}{token}");
+                    self.cmdline_cursor = self.cmdline.len();
                     self.cmdline_completion = Some(CmdlineCompletion {
                         prefix,
                         matches,
@@ -287,6 +288,7 @@ impl super::App {
         }
         let first = matches[0].clone();
         self.cmdline = format!("{prefix}{first}");
+        self.cmdline_cursor = self.cmdline.len();
         self.cmdline_completion = Some(CmdlineCompletion {
             prefix,
             matches,
