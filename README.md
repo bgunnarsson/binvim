@@ -158,6 +158,8 @@ binvim-install
 
 It opens a checkbox list of every language binvim supports. Pick the ones you care about, and it'll detect which package managers you have on `$PATH` (`brew`, `apt-get`, `npm`, `cargo`, `rustup`, `go`, `pipx`, `pip`, `gem`, `dotnet`, `nix`, `composer`), pick the right installer per tool, dedupe shared tools across languages (`prettier`, `lldb-dap`, `vscode-langservers-extracted`, …), show you the plan, and run the installs once you confirm. Anything that can't be auto-installed (`netcoredbg`, OmniSharp) prints the manual steps instead. The full per-tool reference table still lives below under [External tools](#external-tools) for users who'd rather install by hand.
 
+The same flow is available **inside the editor** — `:install` (or `:installer`) opens a full-screen overlay with the identical three-stage UX (bundles → optional Node.js versions → plan review). `y` on the plan stage suspends binvim lazygit-style and runs the installs against the host terminal, then drops back into the editor with a status-line summary. Both entry points share the catalog + runner in `binvim::install`, so adding a language only requires touching one place.
+
 ## Run
 
 ```sh

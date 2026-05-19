@@ -38,6 +38,13 @@ pub enum Mode {
     /// at the selected edit (cancelling the preview), `<Enter>` applies
     /// only the enabled edits, `<Esc>` cancels the whole rename.
     RenamePreview,
+    /// `:install` overlay — three-stage checkbox flow that mirrors the
+    /// `binvim-install` CLI (bundles → optional Node versions → plan).
+    /// `j/k` move, Space toggles, `a`/`n` all/none, Enter advances; on
+    /// the plan stage `y` runs (with a lazygit-style suspend takeover
+    /// so install output streams to the host terminal), `n` goes back,
+    /// `q`/`Esc` cancels.
+    Installer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +93,7 @@ impl Mode {
             Mode::Terminal => "TERMINAL",
             Mode::FileTree => "FILES",
             Mode::RenamePreview => "RENAME",
+            Mode::Installer => "INSTALL",
         }
     }
 }

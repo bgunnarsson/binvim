@@ -50,7 +50,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     // Start / health pages take over the full editor area — splits stay
     // dormant while they're up so the user isn't looking at a partitioned
     // "[No Name]" placeholder.
-    if app.show_health_page {
+    if app.show_install_page {
+        draw_install_page(out, app)?;
+    } else if app.show_health_page {
         draw_health_page(out, app)?;
     } else if app.show_messages_page {
         draw_messages_page(out, app)?;
@@ -2178,6 +2180,275 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         Print(truncate(footer, total_w.saturating_sub(left))),
     )?;
     reset_to_buf_bg(out, page_bg)?;
+    Ok(())
+}
+
+// ─── :install overlay ─────────────────────────────────────────────────────
+
+const INSTALL_BANNER: &[&str] = &[
+    "██████╗ ██╗███╗   ██╗██╗   ██╗██╗███╗   ███╗",
+    "██╔══██╗██║████╗  ██║██║   ██║██║████╗ ████║",
+    "██████╔╝██║██╔██╗ ██║██║   ██║██║██╔████╔██║",
+    "██╔══██╗██║██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║",
+    "██████╔╝██║██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║",
+    "╚═════╝ ╚═╝╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝",
+];
+
+fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
+    use crate::app::installer::{
+        InstallerStage, bundle_picker_items, node_picker_items, plan_rows,
+    };
+
+    let Some(state) = app.installer.as_ref() else {
+        return Ok(());
+    };
+    let total_w = app.width as usize;
+    let rows = app.buffer_rows();
+    let top = app.buffer_top();
+    if rows == 0 || total_w < 30 {
+        return Ok(());
+    }
+    let page_bg = app.config.background_color();
+    let blank: String = " ".repeat(total_w);
+    for row in 0..rows {
+        queue!(out, MoveTo(0, (row + top) as u16))?;
+        if let Some(c) = page_bg {
+            queue!(out, SetBackgroundColor(c), Print(&blank))?;
+        } else {
+            queue!(out, Clear(ClearType::CurrentLine))?;
+        }
+    }
+
+    let p = DashboardPalette::from_config(&app.config);
+    let left = 2usize;
+    let body_w = total_w.saturating_sub(left + 2).max(40);
+
+    // ── Banner ──
+    let banner_fits = total_w >= 50 && rows > 12;
+    let mut cursor_y = top;
+    if banner_fits {
+        for line in INSTALL_BANNER {
+            queue!(out, MoveTo(left as u16, cursor_y as u16))?;
+            apply_buf_bg(out, page_bg)?;
+            queue!(
+                out,
+                SetForegroundColor(p.mauve),
+                SetAttribute(Attribute::Bold),
+                Print(line),
+                SetAttribute(Attribute::Reset),
+            )?;
+            reset_to_buf_bg(out, page_bg)?;
+            cursor_y += 1;
+        }
+        cursor_y += 1;
+    }
+
+    // ── Subtitle ──
+    queue!(out, MoveTo(left as u16, cursor_y as u16))?;
+    apply_buf_bg(out, page_bg)?;
+    queue!(
+        out,
+        SetForegroundColor(p.overlay0),
+        Print(truncate(&state.subtitle, body_w)),
+    )?;
+    reset_to_buf_bg(out, page_bg)?;
+    cursor_y += 2;
+
+    // ── Help line ──
+    let help = match state.stage {
+        InstallerStage::Bundles | InstallerStage::NodeVersions => {
+            "j/k move · Space toggle · a all · n none · Enter confirm · q quit"
+        }
+        InstallerStage::Plan => "y install · n back · q quit",
+    };
+    queue!(out, MoveTo(left as u16, cursor_y as u16))?;
+    apply_buf_bg(out, page_bg)?;
+    queue!(
+        out,
+        SetForegroundColor(p.overlay0),
+        Print(truncate(help, body_w)),
+    )?;
+    reset_to_buf_bg(out, page_bg)?;
+    cursor_y += 2;
+
+    // ── Body ──
+    let body_top = cursor_y;
+    let viewport = rows.saturating_sub(cursor_y - top + 1);
+    match state.stage {
+        InstallerStage::Bundles => {
+            let items = bundle_picker_items();
+            paint_checkbox_list(
+                out,
+                app,
+                &items,
+                state.cursor,
+                &state.checked,
+                body_top,
+                body_w,
+                viewport,
+                &p,
+                page_bg,
+            )?;
+        }
+        InstallerStage::NodeVersions => {
+            let items = node_picker_items(state);
+            paint_checkbox_list(
+                out,
+                app,
+                &items,
+                state.cursor,
+                &state.checked,
+                body_top,
+                body_w,
+                viewport,
+                &p,
+                page_bg,
+            )?;
+        }
+        InstallerStage::Plan => {
+            let rows_data = plan_rows(state);
+            paint_plan_rows(
+                out, app, &rows_data, body_top, body_w, viewport, &p, page_bg,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_checkbox_list(
+    out: &mut impl Write,
+    _app: &App,
+    items: &[(String, String)],
+    cursor: usize,
+    checked: &[bool],
+    top: usize,
+    body_w: usize,
+    viewport: usize,
+    p: &DashboardPalette,
+    page_bg: Option<Color>,
+) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let name_w = items
+        .iter()
+        .map(|(n, _)| n.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max(20);
+    // Simple scroll — keep the cursor visible.
+    let scroll = if cursor >= viewport {
+        cursor + 1 - viewport
+    } else {
+        0
+    };
+    for (offset, (i, (name, summary))) in items
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(viewport)
+        .enumerate()
+    {
+        let y = (top + offset) as u16;
+        queue!(out, MoveTo(2, y))?;
+        apply_buf_bg(out, page_bg)?;
+        let active = i == cursor;
+        if active {
+            queue!(
+                out,
+                SetForegroundColor(p.peach),
+                SetAttribute(Attribute::Bold),
+                Print("▸ "),
+            )?;
+        } else {
+            queue!(out, Print("  "))?;
+        }
+        let mark = if *checked.get(i).unwrap_or(&false) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        let mark_color = if *checked.get(i).unwrap_or(&false) {
+            p.green
+        } else {
+            p.overlay0
+        };
+        queue!(out, SetForegroundColor(mark_color), Print(mark), Print(" "),)?;
+        let name_color = if active { p.peach } else { p.text };
+        queue!(out, SetForegroundColor(name_color))?;
+        if active {
+            queue!(out, SetAttribute(Attribute::Bold))?;
+        }
+        let padded = format!("{:<width$}", name, width = name_w);
+        queue!(out, Print(truncate(&padded, body_w / 3)))?;
+        queue!(out, SetAttribute(Attribute::Reset))?;
+        queue!(
+            out,
+            SetForegroundColor(p.overlay0),
+            Print("  "),
+            Print(truncate(summary, body_w.saturating_sub(name_w + 8))),
+        )?;
+        reset_to_buf_bg(out, page_bg)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_plan_rows(
+    out: &mut impl Write,
+    _app: &App,
+    rows: &[crate::app::installer::PlanRow],
+    top: usize,
+    body_w: usize,
+    viewport: usize,
+    p: &DashboardPalette,
+    page_bg: Option<Color>,
+) -> Result<()> {
+    use crate::app::installer::PlanRowColor;
+    if rows.is_empty() {
+        return Ok(());
+    }
+    let mut y = top;
+    for (idx, row) in rows.iter().enumerate() {
+        if idx >= viewport {
+            break;
+        }
+        queue!(out, MoveTo(2, y as u16))?;
+        apply_buf_bg(out, page_bg)?;
+        let glyph_color = match row.color {
+            PlanRowColor::Green => p.green,
+            PlanRowColor::Teal => p.teal,
+            PlanRowColor::Yellow => p.yellow,
+            PlanRowColor::Red => p.red,
+        };
+        queue!(
+            out,
+            SetForegroundColor(glyph_color),
+            Print(row.glyph),
+            SetForegroundColor(p.text),
+            Print(&row.label),
+            SetForegroundColor(p.overlay0),
+            Print(format!("  [{}]  ", row.role)),
+            Print(truncate(
+                &row.detail,
+                body_w.saturating_sub(row.label.chars().count() + 12)
+            )),
+        )?;
+        reset_to_buf_bg(out, page_bg)?;
+        y += 1;
+        if !row.target.is_empty() && (y - top) < viewport {
+            queue!(out, MoveTo(8, y as u16))?;
+            apply_buf_bg(out, page_bg)?;
+            queue!(
+                out,
+                SetForegroundColor(p.overlay0),
+                Print(truncate(&row.target, body_w.saturating_sub(8))),
+            )?;
+            reset_to_buf_bg(out, page_bg)?;
+            y += 1;
+        }
+    }
     Ok(())
 }
 
@@ -5878,6 +6149,7 @@ fn mode_color(app: &App, mode: Mode) -> Color {
         Mode::Terminal => app.config.mode_terminal(),
         Mode::FileTree => app.config.mode_picker(),
         Mode::RenamePreview => app.config.mode_picker(),
+        Mode::Installer => app.config.mode_picker(),
     }
 }
 

@@ -76,6 +76,11 @@ pub enum ExCommand {
     /// every open buffer so staged / committed / checked-out changes
     /// show up immediately.
     Lazygit,
+    /// `:install` — open the in-editor toolchain installer overlay.
+    /// Three-stage flow (bundles → optional Node.js versions → plan),
+    /// then suspends the editor lazygit-style and runs the installs
+    /// against the shared `binvim::install` catalog.
+    Install,
     /// `:claude` / `:codex` / `:opencode` — open (or focus) the
     /// right-side AI-assistant terminal pane and start the named
     /// tool inside a fresh shell tab. Re-running the same command
@@ -331,6 +336,7 @@ pub fn parse(line: &str) -> ExCommand {
         "task" | "tasks" => ExCommand::TaskPicker,
         "tasklast" | "trun" => ExCommand::TaskLast,
         "lazygit" | "lg" => ExCommand::Lazygit,
+        "install" | "installer" => ExCommand::Install,
         "claude" => ExCommand::AiTool(AiTool::Claude),
         "codex" => ExCommand::AiTool(AiTool::Codex),
         "opencode" => ExCommand::AiTool(AiTool::Opencode),

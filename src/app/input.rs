@@ -399,6 +399,7 @@ impl super::App {
                     Mode::Terminal => self.handle_terminal_key(k),
                     Mode::FileTree => self.handle_file_tree_key(k),
                     Mode::RenamePreview => self.handle_rename_preview_key(k),
+                    Mode::Installer => self.handle_installer_key(k),
                 }
             }
             crossterm::event::Event::Mouse(me) => {
@@ -1674,6 +1675,7 @@ impl super::App {
             ExCommand::Workspaces => self.cmd_workspaces(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
             ExCommand::Lazygit => self.cmd_lazygit(),
+            ExCommand::Install => self.cmd_install(),
             ExCommand::TaskPicker => self.cmd_task_picker(),
             ExCommand::TaskLast => self.cmd_task_last(),
             // Ex commands open the tool without the path handoff — the

@@ -7,6 +7,23 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **`:install` — in-editor toolchain installer overlay.** Same
+  three-stage flow as the `binvim-install` CLI (bundles → optional
+  Node.js versions → plan), rendered inside the editor as a
+  full-screen overlay. The ASCII banner up top mirrors the CLI; the
+  body is a checkbox list with the standard `j/k` · `Space` · `a`/`n`
+  · `Enter` · `q`/`Esc` keys. On the Plan stage `y` suspends the
+  editor lazygit-style (pops kitty kbd protocol, disables mouse
+  capture, leaves alt screen, drops raw mode) so install output
+  streams to the host terminal, then reclaims everything on
+  completion and prints a status-line summary. `n` on the plan
+  stage walks back to the previous picker preserving prior
+  selections. To make this work the install catalog + runner moved
+  out of `src/bin/binvim-install.rs` into a new `binvim::install`
+  library module — both the CLI binary and the editor now drive
+  the same data, so adding a language only touches one place.
+
+### Added
 - **`binvim-install` — interactive toolchain installer.** New second
   binary in the same crate. Run `binvim-install` and you get a
   checkbox list (j/k navigate, Space toggle, a/n all-none, Enter

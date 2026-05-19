@@ -32,6 +32,7 @@ mod file_tree;
 mod git_glue;
 mod health;
 mod input;
+pub(crate) mod installer;
 mod lazygit_glue;
 mod lsp_glue;
 mod multi_cursor;
@@ -625,6 +626,17 @@ pub struct App {
     pub show_test_results_page: bool,
     pub test_results_scroll: usize,
     pub test_results_content_height: std::cell::Cell<usize>,
+    /// `:install` overlay toggle. When true, the buffer area is
+    /// replaced with the installer's checkbox / plan view. Dismissed
+    /// by `q` / `Esc` / `:q`, or by completing the run flow which
+    /// calls `dismiss_install`.
+    pub show_install_page: bool,
+    /// State for the active installer overlay — `None` once it's
+    /// dismissed. Holds the current stage (Bundles / NodeVersions /
+    /// Plan), cursor + per-row check state, prior picks (so the
+    /// `n`-on-Plan back-step preserves them), detected Node.js
+    /// installations, and the built plan.
+    pub installer: Option<installer::InstallerState>,
     /// Tail-follow mode for the results overlay — when true, the
     /// renderer pins the scroll position to the bottom each frame so
     /// new streaming events stay visible without the user having to
@@ -889,6 +901,8 @@ impl App {
             registers_content_height: std::cell::Cell::new(0),
             test: crate::test::TestManager::new(),
             show_test_results_page: false,
+            show_install_page: false,
+            installer: None,
             test_results_scroll: 0,
             test_results_content_height: std::cell::Cell::new(0),
             test_results_at_tail: true,

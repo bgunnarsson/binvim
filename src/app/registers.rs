@@ -150,6 +150,8 @@ impl super::App {
                     // macros mid-replay would race the user's accept
                     // decision; bail cleanly.
                     Mode::RenamePreview => break 'outer,
+                    // Same logic for the installer overlay.
+                    Mode::Installer => break 'outer,
                 }
             }
         }
