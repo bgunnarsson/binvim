@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **Install catalog now pins versions matching binvim.dev.** Every
+  `npm install -g …` / `go install …` / `cargo install …` /
+  `pipx install …` / `gem install …` / `dotnet tool install …` /
+  `composer global require …` step in the catalog now carries the
+  same version pin shown on the binvim.dev install table — bumping
+  a pin here keeps the CLI installer, the in-editor `:install`
+  overlay, and the web table in sync. Brew / nix / apt formulas
+  aren't pinned in the command (their package manager owns the
+  version). `dlv`, `debugpy`, and `lazygit` stay un-pinned because
+  binvim-web doesn't track them. The `Installer::Gem` and
+  `Installer::DotnetTool` variants gained an `Option<&'static str>`
+  version field so the `-v <v>` / `--version <v>` flags don't have
+  to be encoded into the package name.
+
 ### Added
 - **`:install` — in-editor toolchain installer overlay.** Same
   three-stage flow as the `binvim-install` CLI (bundles → optional

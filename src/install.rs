@@ -54,15 +54,32 @@ pub struct Tool {
 pub enum Installer {
     Brew(&'static str),
     Apt(&'static str),
+    /// `npm i -g pkg[@version] [pkg[@version] ...]` — version pin goes
+    /// in the package string (`@x.y.z`). Each entry in the slice is
+    /// passed as a separate `npm` argument.
     Npm(&'static [&'static str]),
+    /// `cargo install <pkg> <extra...>`. Pinning is in `extra` via
+    /// `--version X.Y.Z`.
     Cargo(&'static str, &'static [&'static str]),
     Rustup(&'static str),
+    /// `go install <module>` — append `@vX.Y.Z` to the module path
+    /// (or `@latest` when binvim-web hasn't pinned a specific
+    /// release for this tool).
     Go(&'static str),
+    /// `pipx install <pkg[==version]>` — pin syntax embedded in the
+    /// package string.
     Pipx(&'static str),
+    /// `pip install --user <pkg[==version]>` — pin syntax embedded in
+    /// the package string.
     Pip(&'static str),
-    Gem(&'static str),
-    DotnetTool(&'static str),
+    /// `gem install <pkg> [-v <version>]`. `None` skips the flag.
+    Gem(&'static str, Option<&'static str>),
+    /// `dotnet tool install --global <pkg> [--version <version>]`.
+    /// `None` skips the flag.
+    DotnetTool(&'static str, Option<&'static str>),
     Nix(&'static str),
+    /// `composer global require <pkg[:version]>` — pin syntax embedded
+    /// in the package string.
     Composer(&'static str),
     Manual(&'static str),
 }
@@ -78,8 +95,8 @@ impl Installer {
             Installer::Go(_) => "go",
             Installer::Pipx(_) => "pipx",
             Installer::Pip(_) => "pip",
-            Installer::Gem(_) => "gem",
-            Installer::DotnetTool(_) => "dotnet",
+            Installer::Gem(_, _) => "gem",
+            Installer::DotnetTool(_, _) => "dotnet",
             Installer::Nix(_) => "nix",
             Installer::Composer(_) => "composer",
             Installer::Manual(_) => "",
@@ -97,8 +114,12 @@ impl Installer {
             Installer::Go(m) => format!("go install {m}"),
             Installer::Pipx(p) => format!("pipx install {p}"),
             Installer::Pip(p) => format!("pip install --user {p}"),
-            Installer::Gem(p) => format!("gem install {p}"),
-            Installer::DotnetTool(p) => format!("dotnet tool install --global {p}"),
+            Installer::Gem(p, None) => format!("gem install {p}"),
+            Installer::Gem(p, Some(v)) => format!("gem install {p} -v {v}"),
+            Installer::DotnetTool(p, None) => format!("dotnet tool install --global {p}"),
+            Installer::DotnetTool(p, Some(v)) => {
+                format!("dotnet tool install --global {p} --version {v}")
+            }
             Installer::Nix(r) => format!("nix profile install {r}"),
             Installer::Composer(p) => format!("composer global require {p}"),
             Installer::Manual(s) => format!("manual: {s}"),
@@ -148,14 +169,20 @@ impl Installer {
                 c.args(["install", "--user", p]);
                 c
             }
-            Installer::Gem(p) => {
+            Installer::Gem(p, version) => {
                 let mut c = Command::new("gem");
                 c.args(["install", p]);
+                if let Some(v) = version {
+                    c.args(["-v", v]);
+                }
                 c
             }
-            Installer::DotnetTool(p) => {
+            Installer::DotnetTool(p, version) => {
                 let mut c = Command::new("dotnet");
                 c.args(["tool", "install", "--global", p]);
+                if let Some(v) = version {
+                    c.args(["--version", v]);
+                }
                 c
             }
             Installer::Nix(r) => {
@@ -191,13 +218,20 @@ pub const EMMET_LS: Tool = Tool {
     bin: "emmet-ls",
     label: "emmet-ls",
     role: Role::Lsp,
-    installers: &[Installer::Npm(&["emmet-ls"])],
+    installers: &[Installer::Npm(&["emmet-ls@0.4.2"])],
 };
 
 /// The catalog. Mirrors the README install table at `README.md:283+`. When a
 /// tool appears under multiple languages (prettier, lldb-dap, vscode-
 /// langservers-extracted, biome, EMMET_LS, …) it's repeated literally —
 /// `build_plan` dedupes by `bin` at plan time.
+///
+/// **Version pinning** — npm / go / cargo / pipx / gem / dotnet / composer
+/// installers carry the same pins used on binvim.dev's install table.
+/// Bumping a pin here keeps the CLI installer and the in-editor `:install`
+/// overlay in sync. Brew / nix / apt formulas aren't pinned in the command
+/// (their package manager owns the version), and `dlv` / `debugpy` /
+/// `lazygit` aren't pinned because binvim-web doesn't track them.
 #[rustfmt::skip]
 pub const BUNDLES: &[Bundle] = &[
     Bundle { name: "Rust", tools: &[
@@ -210,31 +244,32 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "TypeScript / JavaScript", tools: &[
         Tool { bin: "typescript-language-server", label: "typescript-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["typescript-language-server", "typescript"])] },
+            installers: &[Installer::Npm(&["typescript-language-server@5.1.3", "typescript@6.0.3"])] },
         Tool { bin: "biome", label: "biome", role: Role::Formatter,
-            installers: &[Installer::Npm(&["@biomejs/biome"])] },
+            installers: &[Installer::Npm(&["@biomejs/biome@2.4.10"])] },
         Tool { bin: "prettier", label: "prettier (fallback formatter)", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
         EMMET_LS,
     ]},
     Bundle { name: "Go", tools: &[
         Tool { bin: "gopls", label: "gopls", role: Role::Lsp,
-            installers: &[Installer::Go("golang.org/x/tools/gopls@latest")] },
+            installers: &[Installer::Go("golang.org/x/tools/gopls@v0.21.1")] },
         Tool { bin: "goimports", label: "goimports", role: Role::Formatter,
-            installers: &[Installer::Go("golang.org/x/tools/cmd/goimports@latest")] },
+            installers: &[Installer::Go("golang.org/x/tools/cmd/goimports@v0.45.0")] },
         Tool { bin: "dlv", label: "delve (dlv)", role: Role::Dap,
             installers: &[Installer::Go("github.com/go-delve/delve/cmd/dlv@latest")] },
     ]},
     Bundle { name: "Python", tools: &[
         Tool { bin: "pyright-langserver", label: "pyright", role: Role::Lsp,
-            installers: &[Installer::Npm(&["pyright"])] },
+            installers: &[Installer::Npm(&["pyright@1.1.409"])] },
         Tool { bin: "ruff", label: "ruff", role: Role::Formatter,
-            installers: &[Installer::Pipx("ruff")] },
+            installers: &[Installer::Pipx("ruff==0.15.13")] },
         // debugpy has no binary on PATH — we probe `python3 -m debugpy.adapter`.
         // The sentinel `python3-debugpy` ensures the PATH check fails so the
         // install runs; the installer itself drops it into the user's
         // site-packages. Re-runs reinvoke the installer; pip says "already
-        // satisfied" which is harmless.
+        // satisfied" which is harmless. Un-pinned because binvim-web doesn't
+        // track a debugpy version.
         Tool { bin: "python3-debugpy", label: "debugpy", role: Role::Dap,
             installers: &[Installer::Pipx("debugpy"), Installer::Pip("debugpy")] },
     ]},
@@ -248,12 +283,12 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "C#", tools: &[
         Tool { bin: "csharp-ls", label: "csharp-ls", role: Role::Lsp,
-            installers: &[Installer::DotnetTool("csharp-ls")] },
+            installers: &[Installer::DotnetTool("csharp-ls", Some("0.24.0"))] },
         Tool { bin: "csharpier", label: "csharpier", role: Role::Formatter,
-            installers: &[Installer::DotnetTool("csharpier")] },
+            installers: &[Installer::DotnetTool("csharpier", Some("1.2.6"))] },
         Tool { bin: "netcoredbg", label: "netcoredbg", role: Role::Dap,
             installers: &[Installer::Manual(
-                "Build from https://github.com/Samsung/netcoredbg — keep libdbgshim.dylib + ManagedPart.dll siblings next to the binary on $PATH.",
+                "Build from https://github.com/Samsung/netcoredbg (v3.1.3-1062) — keep libdbgshim.dylib + ManagedPart.dll siblings next to the binary on $PATH.",
             )] },
     ]},
     Bundle { name: "Razor / .cshtml", tools: &[
@@ -265,57 +300,60 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "Bash / Shell", tools: &[
         Tool { bin: "bash-language-server", label: "bash-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["bash-language-server"])] },
+            installers: &[Installer::Npm(&["bash-language-server@5.6.0"])] },
         Tool { bin: "shfmt", label: "shfmt", role: Role::Formatter,
             installers: &[Installer::Brew("shfmt"), Installer::Go("mvdan.cc/sh/v3/cmd/shfmt@latest")] },
     ]},
     Bundle { name: "YAML", tools: &[
         Tool { bin: "yaml-language-server", label: "yaml-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["yaml-language-server"])] },
+            installers: &[Installer::Npm(&["yaml-language-server@1.23.0"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
     ]},
     Bundle { name: "Lua", tools: &[
         Tool { bin: "lua-language-server", label: "lua-language-server", role: Role::Lsp,
             installers: &[Installer::Brew("lua-language-server")] },
         Tool { bin: "stylua", label: "stylua", role: Role::Formatter,
-            installers: &[Installer::Brew("stylua"), Installer::Cargo("stylua", &[])] },
+            installers: &[Installer::Brew("stylua"), Installer::Cargo("stylua", &["--version", "2.5.2"])] },
     ]},
     Bundle { name: "Vue", tools: &[
         Tool { bin: "vue-language-server", label: "vue-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["@vue/language-server"])] },
+            installers: &[Installer::Npm(&["@vue/language-server@3.3.0"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
         EMMET_LS,
     ]},
     Bundle { name: "Svelte", tools: &[
         Tool { bin: "svelteserver", label: "svelte-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["svelte-language-server"])] },
+            installers: &[Installer::Npm(&["svelte-language-server@0.18.0"])] },
+        // prettier-plugin-svelte stays un-pinned per binvim-web — it has to
+        // live in the svelte project's `node_modules` to be discovered by
+        // prettier, so the global install is more of a fallback.
         Tool { bin: "prettier", label: "prettier + prettier-plugin-svelte", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier", "prettier-plugin-svelte"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3", "prettier-plugin-svelte"])] },
         EMMET_LS,
     ]},
     Bundle { name: "Markdown", tools: &[
         Tool { bin: "marksman", label: "marksman", role: Role::Lsp,
             installers: &[Installer::Brew("marksman")] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
     ]},
     Bundle { name: "TOML", tools: &[
         Tool { bin: "taplo", label: "taplo (LSP + formatter)", role: Role::Lsp,
-            installers: &[Installer::Cargo("taplo-cli", &["--features", "lsp"])] },
+            installers: &[Installer::Cargo("taplo-cli", &["--version", "0.10.0", "--features", "lsp"])] },
     ]},
     Bundle { name: "Ruby", tools: &[
         Tool { bin: "ruby-lsp", label: "ruby-lsp", role: Role::Lsp,
-            installers: &[Installer::Gem("ruby-lsp")] },
+            installers: &[Installer::Gem("ruby-lsp", Some("0.26.9"))] },
         Tool { bin: "rufo", label: "rufo", role: Role::Formatter,
-            installers: &[Installer::Gem("rufo")] },
+            installers: &[Installer::Gem("rufo", Some("0.18.2"))] },
     ]},
     Bundle { name: "PHP", tools: &[
         Tool { bin: "intelephense", label: "intelephense", role: Role::Lsp,
-            installers: &[Installer::Npm(&["intelephense"])] },
+            installers: &[Installer::Npm(&["intelephense@1.18.3"])] },
         Tool { bin: "php-cs-fixer", label: "php-cs-fixer", role: Role::Formatter,
-            installers: &[Installer::Composer("friendsofphp/php-cs-fixer")] },
+            installers: &[Installer::Composer("friendsofphp/php-cs-fixer:3.95.2")] },
     ]},
     Bundle { name: "Java", tools: &[
         Tool { bin: "jdtls", label: "jdtls", role: Role::Lsp,
@@ -349,42 +387,42 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "Docker", tools: &[
         Tool { bin: "docker-langserver", label: "dockerfile-language-server-nodejs", role: Role::Lsp,
-            installers: &[Installer::Npm(&["dockerfile-language-server-nodejs"])] },
+            installers: &[Installer::Npm(&["dockerfile-language-server-nodejs@0.15.0"])] },
     ]},
     Bundle { name: "SQL", tools: &[
         Tool { bin: "sqls", label: "sqls", role: Role::Lsp,
-            installers: &[Installer::Go("github.com/sqls-server/sqls@latest")] },
+            installers: &[Installer::Go("github.com/sqls-server/sqls@v0.2.47")] },
         Tool { bin: "sql-formatter", label: "sql-formatter", role: Role::Formatter,
-            installers: &[Installer::Npm(&["sql-formatter"])] },
+            installers: &[Installer::Npm(&["sql-formatter@15.8.0"])] },
     ]},
     Bundle { name: "CSS / SCSS / Less", tools: &[
         Tool { bin: "vscode-css-language-server", label: "vscode-langservers-extracted", role: Role::Lsp,
-            installers: &[Installer::Npm(&["vscode-langservers-extracted"])] },
+            installers: &[Installer::Npm(&["vscode-langservers-extracted@4.10.0"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
         EMMET_LS,
     ]},
     Bundle { name: "HTML", tools: &[
         Tool { bin: "vscode-html-language-server", label: "vscode-langservers-extracted", role: Role::Lsp,
-            installers: &[Installer::Npm(&["vscode-langservers-extracted"])] },
+            installers: &[Installer::Npm(&["vscode-langservers-extracted@4.10.0"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
         EMMET_LS,
     ]},
     Bundle { name: "Tailwind (aux)", tools: &[
         Tool { bin: "tailwindcss-language-server", label: "tailwindcss-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["@tailwindcss/language-server"])] },
+            installers: &[Installer::Npm(&["@tailwindcss/language-server@0.14.29"])] },
     ]},
     Bundle { name: "Astro", tools: &[
         Tool { bin: "astro-ls", label: "@astrojs/language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["@astrojs/language-server"])] },
+            installers: &[Installer::Npm(&["@astrojs/language-server@2.16.9"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
-            installers: &[Installer::Npm(&["prettier"])] },
+            installers: &[Installer::Npm(&["prettier@3.8.3"])] },
         EMMET_LS,
     ]},
     Bundle { name: "GitHub Copilot", tools: &[
         Tool { bin: "copilot-language-server", label: "copilot-language-server", role: Role::Lsp,
-            installers: &[Installer::Npm(&["@github/copilot-language-server"])] },
+            installers: &[Installer::Npm(&["@github/copilot-language-server@1.487.0"])] },
     ]},
     Bundle { name: "ripgrep (live grep)", tools: &[
         Tool { bin: "rg", label: "ripgrep", role: Role::Tool,
