@@ -339,6 +339,59 @@ mod cap_tests {
         let v: Value = serde_json::from_str(r#"{}"#).unwrap();
         assert!(!extract_workspace_folders_supported(&v));
     }
+
+    use proptest::prelude::*;
+
+    // Duplicates `parse::tests::arb_json` — `#[cfg(test)] mod`
+    // visibility isn't easily plumbed across modules and the helper is
+    // small. Keep the two in sync if either grows new branches.
+    fn arb_json() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(|n| Value::from(n)),
+            any::<u64>().prop_map(|n| Value::from(n)),
+            "[a-zA-Z0-9_/.:#-]{0,16}".prop_map(Value::String),
+            "\\PC{0,16}".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(3, 32, 6, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                prop::collection::hash_map("[a-zA-Z][a-zA-Z0-9_]{0,8}", inner, 0..6)
+                    .prop_map(|m| Value::Object(m.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(96))]
+
+        // The three `initialize`-response inspectors must tolerate any
+        // shape a hostile or buggy server might emit — including absent
+        // / wrongly-typed / deeply-nested fields.
+        #[test]
+        fn extract_semantic_tokens_legend_never_panics(v in arb_json()) {
+            let _ = extract_semantic_tokens_legend(&v);
+        }
+
+        #[test]
+        fn extract_code_lens_caps_never_panics(v in arb_json()) {
+            let _ = extract_code_lens_caps(&v);
+        }
+
+        #[test]
+        fn extract_workspace_folders_supported_never_panics(v in arb_json()) {
+            let _ = extract_workspace_folders_supported(&v);
+        }
+
+        // publishDiagnostics is notification-driven so the reader has no
+        // pending request to correlate with — a malformed payload must
+        // silently drop, not unwind the reader thread.
+        #[test]
+        fn parse_publish_diagnostics_never_panics(v in arb_json()) {
+            let _ = parse_publish_diagnostics(&v);
+        }
+    }
 }
 
 fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {

@@ -1863,4 +1863,66 @@ export function Page() {
         let src = "<script></script><p>hi</p>";
         let _colors = compute_byte_colors(Lang::Html, src, &cfg).expect("html highlight");
     }
+
+    use proptest::prelude::*;
+
+    fn arb_lang() -> impl Strategy<Value = Lang> {
+        // Every grammar binvim ships. Fuzzing each one separately catches
+        // pattern_index priority bugs that only surface on a specific
+        // language's highlight query.
+        prop_oneof![
+            Just(Lang::Rust),
+            Just(Lang::TypeScript),
+            Just(Lang::Tsx),
+            Just(Lang::JavaScript),
+            Just(Lang::Json),
+            Just(Lang::Go),
+            Just(Lang::Html),
+            Just(Lang::Css),
+            Just(Lang::Markdown),
+            Just(Lang::CSharp),
+            Just(Lang::Razor),
+            Just(Lang::Bash),
+            Just(Lang::Yaml),
+            Just(Lang::Xml),
+            Just(Lang::EditorConfig),
+            Just(Lang::GitIgnore),
+            Just(Lang::Python),
+            Just(Lang::C),
+            Just(Lang::Cpp),
+            Just(Lang::Lua),
+            Just(Lang::Java),
+            Just(Lang::Ruby),
+            Just(Lang::Php),
+            Just(Lang::Toml),
+            Just(Lang::Svelte),
+            Just(Lang::Zig),
+            Just(Lang::Nix),
+            Just(Lang::Elixir),
+            Just(Lang::Kotlin),
+            Just(Lang::Dockerfile),
+            Just(Lang::Sql),
+        ]
+    }
+
+    proptest! {
+        // Coverage-light fuzz pass — proptest doesn't have libFuzzer's
+        // mutation engine, but it surfaces panics on arbitrary UTF-8
+        // input across every grammar + highlight query we ship. Mostly
+        // a guard against future tree-sitter ABI bumps or query edits
+        // that break invariants (e.g. capture range past source.len()).
+        // Bounded inputs + capped case count keep CI cost reasonable.
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        #[test]
+        fn compute_byte_colors_never_panics(lang in arb_lang(), src in "\\PC{0,400}") {
+            let cfg = Config::default();
+            if let Some(colors) = compute_byte_colors(lang, &src, &cfg) {
+                // The colour map is keyed by byte offset; if the length
+                // disagrees with the source, downstream renderer math
+                // would index out of bounds.
+                prop_assert_eq!(colors.len(), src.len());
+            }
+        }
+    }
 }

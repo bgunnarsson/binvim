@@ -818,4 +818,99 @@ mod tests {
         // No kind in input → defaults to Text (1).
         assert_eq!(out[1].kind, 1);
     }
+
+    use proptest::prelude::*;
+
+    /// Recursive arbitrary-JSON strategy. Capped depth + capped collection
+    /// sizes keep the per-case payload bounded so the fuzz pass costs
+    /// pennies in CI. Bias slightly toward objects + arrays since those
+    /// are where the parsers actually do work — booleans / strings on
+    /// their own are mostly a no-op for these extractors.
+    pub(crate) fn arb_json() -> impl Strategy<Value = Value> {
+        let leaf = prop_oneof![
+            Just(Value::Null),
+            any::<bool>().prop_map(Value::Bool),
+            any::<i64>().prop_map(|n| Value::from(n)),
+            any::<u64>().prop_map(|n| Value::from(n)),
+            // String leaves include both ASCII identifiers and arbitrary
+            // unicode so URI-shaped + label-shaped fields are both covered.
+            "[a-zA-Z0-9_/.:#-]{0,16}".prop_map(Value::String),
+            "\\PC{0,16}".prop_map(Value::String),
+        ];
+        leaf.prop_recursive(3, 32, 6, |inner| {
+            prop_oneof![
+                prop::collection::vec(inner.clone(), 0..6).prop_map(Value::Array),
+                prop::collection::hash_map("[a-zA-Z][a-zA-Z0-9_]{0,8}", inner, 0..6)
+                    .prop_map(|m| Value::Object(m.into_iter().collect())),
+            ]
+        })
+    }
+
+    proptest! {
+        // Each extractor is the part of the LSP reader that could choke
+        // on an unexpected server response shape. None of them are
+        // allowed to panic — a malformed reply should produce empty /
+        // None and let the caller move on.
+        #![proptest_config(ProptestConfig::with_cases(96))]
+
+        #[test]
+        fn parse_code_actions_never_panics(v in arb_json()) {
+            let _ = parse_code_actions_response(&v);
+        }
+
+        #[test]
+        fn parse_symbols_never_panics(v in arb_json()) {
+            let _ = parse_symbols_response(&v);
+        }
+
+        #[test]
+        fn parse_locations_never_panics(v in arb_json()) {
+            let _ = parse_locations_response(&v);
+        }
+
+        #[test]
+        fn parse_signature_help_never_panics(v in arb_json()) {
+            let _ = parse_signature_help_response(&v);
+        }
+
+        #[test]
+        fn parse_completion_never_panics(v in arb_json()) {
+            let _ = parse_completion_response(&v);
+        }
+
+        #[test]
+        fn parse_def_never_panics(v in arb_json()) {
+            let _ = parse_def_response(&v);
+        }
+
+        #[test]
+        fn parse_inlay_hints_never_panics(v in arb_json()) {
+            let _ = parse_inlay_hints_response(&v);
+        }
+
+        #[test]
+        fn parse_semantic_tokens_never_panics(v in arb_json()) {
+            let _ = parse_semantic_tokens_response(&v, &legend());
+        }
+
+        #[test]
+        fn parse_document_highlights_never_panics(v in arb_json()) {
+            let _ = parse_document_highlights_response(&v);
+        }
+
+        #[test]
+        fn parse_code_lens_never_panics(v in arb_json()) {
+            let _ = parse_code_lens_response(&v);
+        }
+
+        #[test]
+        fn parse_code_lens_resolve_never_panics(v in arb_json()) {
+            let _ = parse_code_lens_resolve_response(&v);
+        }
+
+        #[test]
+        fn parse_hover_never_panics(v in arb_json()) {
+            let _ = parse_hover_response(&v);
+        }
+    }
 }

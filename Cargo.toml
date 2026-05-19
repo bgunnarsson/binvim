@@ -1,6 +1,6 @@
 [package]
 name = "binvim"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "Vim-grammar TUI editor with batteries included"
 authors = ["B. Gunnarsson (@bgunnarssonis)"]
@@ -56,6 +56,12 @@ arboard = { version = "3", default-features = false }
 # terminal grid. No allocation per byte, no dependence on a renderer.
 portable-pty = "0.9"
 vte = "0.15"
+
+[dev-dependencies]
+# proptest drives the property-based test suite for motion / text_object
+# invariants and the panic-hardening passes over compute_byte_colors and the
+# LSP JSON shape extractors. Stays on stable, runs in `cargo test`.
+proptest = "1"
 
 [profile.release]
 lto = "thin"

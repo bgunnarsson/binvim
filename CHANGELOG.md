@@ -6,6 +6,38 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-19
+
+### Added
+- **Property tests for `motion` / `text_object` via proptest.**
+  New `[dev-dependencies] proptest = "1"`. The bottom of
+  `src/motion.rs` and `src/text_object.rs` carries a property
+  block: every motion lands in bounds (`col <= line_len` — exclusive
+  motions like `dw` legitimately sit one past the last char),
+  `left + right` round-trips when there's room, `word_forward` is
+  non-retreating in linear position and `word_backward` is
+  non-advancing, `goto_line` clamps to the last line, `find_char`
+  stays on the cursor's line. For text-objects: `compute(verb)`
+  always returns `start <= end <= total_chars`, and the around-form
+  range always contains the inner-form range for word / quotes /
+  pair. Catches off-by-one regressions that the named-case unit
+  tests miss.
+- **Panic-hardening fuzz pass for tree-sitter + LSP shape
+  extractors.** Proptest-driven rather than libFuzzer — stays on
+  stable, runs in `cargo test`, fits the existing CI gate.
+  `compute_byte_colors` is fuzzed against arbitrary UTF-8 across
+  every `Lang` variant binvim ships (catches a future ABI bump or
+  query edit that emits a capture range past `source.len()`). Every
+  `parse_*_response` in `lsp/parse.rs` plus the three `extract_*`
+  initialize-response inspectors and `parse_publish_diagnostics`
+  in `lsp/io.rs` get a recursive arbitrary-`Value` JSON generator;
+  a malformed reply must produce empty / None, never panic the
+  reader thread.
+
+### Changed
+- `Buffer` now derives `Debug` (required for proptest shrinking
+  output on failures involving buffers).
+
 ## [0.4.1] - 2026-05-19
 
 ### Added

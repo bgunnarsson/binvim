@@ -720,4 +720,126 @@ mod tests {
         let r = last_non_blank(&b, cur(0, 0));
         assert_eq!(r.target.col, 4);
     }
+
+    use proptest::prelude::*;
+
+    fn arb_text() -> impl Strategy<Value = String> {
+        // ASCII-plus-newline keeps the col/byte arithmetic simple while still
+        // covering whitespace runs, word boundaries, and empty lines. Bounded
+        // length keeps proptest's per-case cost negligible.
+        "[a-zA-Z0-9_ \t\n.,;:()\\[\\]{}\"'+\\-*/=<>!?]{0,160}".prop_map(|s| s)
+    }
+
+    fn arb_buf_and_cursor() -> impl Strategy<Value = (Buffer, Cursor)> {
+        // Generate text + two unconstrained "hints" and modulo them onto the
+        // actual dimensions inside the map. Sidesteps the Fn / move-into-inner-
+        // closure dance of nested prop_flat_map, and still uniformly covers
+        // valid (line, col) positions.
+        (arb_text(), 0usize..200, 0usize..200).prop_map(|(s, line_hint, col_hint)| {
+            let b = buf(&s);
+            let line = line_hint % b.line_count();
+            let llen = b.line_len(line);
+            let col = if llen == 0 { 0 } else { col_hint % llen };
+            (b, Cursor { line, col, want_col: col })
+        })
+    }
+
+    fn in_bounds(b: &Buffer, c: Cursor) -> bool {
+        // Motions for exclusive operators (`dw`, `cw`) are allowed to land
+        // one-past-the-last-char so the operator can delete through end of
+        // line. So `col <= line_len`, not `<`.
+        let lines = b.line_count();
+        if c.line >= lines {
+            return false;
+        }
+        c.col <= b.line_len(c.line)
+    }
+
+    fn linear(b: &Buffer, c: Cursor) -> usize {
+        b.pos_to_char(c.line, c.col)
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        // Each motion lands on a position the buffer considers valid. Catches
+        // off-by-one regressions where a motion returns col == line_len on a
+        // non-empty line (which would have the cursor sitting on the newline).
+        #[test]
+        fn motions_stay_in_bounds((b, c) in arb_buf_and_cursor(), n in 1usize..6) {
+            for r in [
+                left(&b, c, n),
+                right(&b, c, n),
+                up(&b, c, n),
+                down(&b, c, n),
+                line_start(&b, c),
+                line_end(&b, c),
+                first_line(&b, c),
+                last_line(&b, c),
+                first_non_blank(&b, c),
+                last_non_blank(&b, c),
+                word_forward(&b, c, n),
+                big_word_forward(&b, c, n),
+                word_backward(&b, c, n),
+                big_word_backward(&b, c, n),
+                end_word(&b, c, n),
+                big_end_word(&b, c, n),
+                end_word_backward(&b, c, n),
+                big_end_word_backward(&b, c, n),
+            ] {
+                prop_assert!(in_bounds(&b, r.target), "out-of-bounds target {:?}", r.target);
+            }
+        }
+
+        #[test]
+        fn goto_line_clamps_to_last((b, _c) in arb_buf_and_cursor(), n in 0usize..10_000) {
+            let r = goto_line(&b, n);
+            prop_assert!(r.target.line < b.line_count());
+        }
+
+        #[test]
+        fn left_then_right_round_trips_with_room((b, c) in arb_buf_and_cursor()) {
+            let llen = b.line_len(c.line);
+            if c.col >= 1 && llen >= 2 {
+                let after = right(&b, left(&b, c, 1).target, 1).target;
+                prop_assert_eq!(after.col, c.col);
+                prop_assert_eq!(after.line, c.line);
+            }
+        }
+
+        // `w` should never carry the cursor to an earlier linear position;
+        // `b` should never carry it forward. These are the load-bearing
+        // invariants every operator (`dw`, `cb`, `yw`) relies on.
+        #[test]
+        fn word_forward_is_non_retreating((b, c) in arb_buf_and_cursor(), n in 1usize..4) {
+            let r = word_forward(&b, c, n);
+            prop_assert!(linear(&b, r.target) >= linear(&b, c));
+        }
+
+        #[test]
+        fn word_backward_is_non_advancing((b, c) in arb_buf_and_cursor(), n in 1usize..4) {
+            let r = word_backward(&b, c, n);
+            prop_assert!(linear(&b, r.target) <= linear(&b, c));
+        }
+
+        #[test]
+        fn first_line_lands_on_zero((b, c) in arb_buf_and_cursor()) {
+            prop_assert_eq!(first_line(&b, c).target.line, 0);
+        }
+
+        #[test]
+        fn last_line_lands_on_last((b, c) in arb_buf_and_cursor()) {
+            prop_assert_eq!(last_line(&b, c).target.line, b.line_count() - 1);
+        }
+
+        // find_char never leaves the cursor's line and never advertises a
+        // column outside that line's character range.
+        #[test]
+        fn find_char_stays_on_line((b, c) in arb_buf_and_cursor(), ch in any::<char>(), fwd in any::<bool>(), before in any::<bool>(), n in 1usize..4) {
+            if let Some(r) = find_char(&b, c, ch, fwd, before, n) {
+                prop_assert_eq!(r.target.line, c.line);
+                prop_assert!(in_bounds(&b, r.target));
+            }
+        }
+    }
 }

@@ -347,11 +347,24 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       backtrace + binvim version + unix timestamp) to
       `~/.cache/binvim/crash/<ts>.log`. The path is echoed to stderr after
       the unwind so the user knows where to look.
-- [ ] **Property tests for motion / text-object.** Both modules are pure functions — good targets for
-      `proptest`. The existing unit tests cover named cases; properties would surface boundary bugs on
-      Unicode, empty buffers, multi-byte sequences. **planned**
-- [ ] **Fuzz tree-sitter + LSP message dispatch.** Dual-purpose: hardens parsers and exercises edge cases in
-      the JSON-RPC reader. **considering**
+- [x] **Property tests for motion / text-object.** `proptest` drives the new property block at the
+      bottom of `src/motion.rs` and `src/text_object.rs`: every motion lands in bounds (`col <=
+      line_len`, since exclusive-motion targets like `dw` legitimately sit one past the last char),
+      `left+right` round-trips when there's room, `word_forward` is non-retreating in linear
+      position and `word_backward` is non-advancing, `goto_line` clamps to the last line, and
+      `find_char` never crosses lines. `compute(verb)` on text-objects always returns
+      `start <= end <= total_chars`, and around-form ⊇ inner-form for word / quotes / pair.
+      Catches off-by-one bugs that the named-case unit tests miss.
+- [x] **Fuzz tree-sitter + LSP message dispatch.** Proptest-driven panic-hardening rather than
+      libFuzzer/cargo-fuzz — stays on stable, runs as part of `cargo test`, and the existing CI
+      gate covers it. `compute_byte_colors` is fuzzed against arbitrary UTF-8 across every
+      `Lang` variant binvim ships (a future tree-sitter ABI bump or query edit that makes a
+      capture range exceed `source.len()` would surface here). Every `parse_*_response` in
+      `lsp/parse.rs` plus the three `extract_*` initialize-response inspectors and
+      `parse_publish_diagnostics` in `lsp/io.rs` get a recursive arbitrary-`Value` JSON
+      generator — a malformed reply must produce empty / None, never panic the reader
+      thread. Coverage-guided libFuzzer is a separate decision if we ever want deeper
+      mutation; the surface this covers is the panic-on-weird-input one.
 
 ## Distribution
 

@@ -312,4 +312,85 @@ mod tests {
         let r = compute(&b, cur(0, 3), TextObjectVerb::Pair { open: '(', close: ')', inner: true });
         assert!(r.is_none());
     }
+
+    use proptest::prelude::*;
+
+    fn arb_text() -> impl Strategy<Value = String> {
+        // Bias toward characters that exercise the pair / quoted code paths.
+        "[a-zA-Z0-9_ \t\n.,;:()\\[\\]{}\"'<>+\\-*/]{0,160}".prop_map(|s| s)
+    }
+
+    fn arb_buf_and_cursor() -> impl Strategy<Value = (Buffer, Cursor)> {
+        (arb_text(), 0usize..200, 0usize..200).prop_map(|(s, line_hint, col_hint)| {
+            let b = buf(&s);
+            let line = line_hint % b.line_count();
+            let llen = b.line_len(line);
+            let col = if llen == 0 { 0 } else { col_hint % llen };
+            (b, Cursor { line, col, want_col: col })
+        })
+    }
+
+    fn arb_verb() -> impl Strategy<Value = TextObjectVerb> {
+        prop_oneof![
+            any::<bool>().prop_map(|inner| TextObjectVerb::Word { inner }),
+            any::<bool>().prop_map(|inner| TextObjectVerb::BigWord { inner }),
+            (prop_oneof![Just('"'), Just('\''), Just('`')], any::<bool>())
+                .prop_map(|(ch, inner)| TextObjectVerb::Quotes { ch, inner }),
+            (
+                prop_oneof![Just(('(', ')')), Just(('[', ']')), Just(('{', '}')), Just(('<', '>'))],
+                any::<bool>()
+            )
+                .prop_map(|((open, close), inner)| TextObjectVerb::Pair { open, close, inner }),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(128))]
+
+        // Range is always well-formed (start <= end), in-buffer, and never
+        // wraps. Compute may return None when the verb isn't applicable —
+        // that's fine; what we don't tolerate is a panic or a bogus range.
+        #[test]
+        fn compute_returns_well_formed_range((b, c) in arb_buf_and_cursor(), v in arb_verb()) {
+            if let Some(r) = compute(&b, c, v) {
+                prop_assert!(r.start <= r.end, "start > end: {:?}", r);
+                prop_assert!(r.end <= b.total_chars(), "end past buffer: {:?} / {}", r, b.total_chars());
+            }
+        }
+
+        // For every verb that has both an inner and around form, computing
+        // both at the same cursor must give around ⊇ inner (start no later,
+        // end no earlier). Catches off-by-one regressions where the around
+        // form forgets to widen.
+        #[test]
+        fn around_contains_inner_for_word((b, c) in arb_buf_and_cursor()) {
+            let inner = compute(&b, c, TextObjectVerb::Word { inner: true });
+            let around = compute(&b, c, TextObjectVerb::Word { inner: false });
+            if let (Some(i), Some(a)) = (inner, around) {
+                prop_assert!(a.start <= i.start, "around start {} > inner start {}", a.start, i.start);
+                prop_assert!(a.end >= i.end, "around end {} < inner end {}", a.end, i.end);
+            }
+        }
+
+        #[test]
+        fn around_contains_inner_for_quotes((b, c) in arb_buf_and_cursor(), ch in prop_oneof![Just('"'), Just('\''), Just('`')]) {
+            let inner = compute(&b, c, TextObjectVerb::Quotes { ch, inner: true });
+            let around = compute(&b, c, TextObjectVerb::Quotes { ch, inner: false });
+            if let (Some(i), Some(a)) = (inner, around) {
+                prop_assert!(a.start <= i.start);
+                prop_assert!(a.end >= i.end);
+            }
+        }
+
+        #[test]
+        fn around_contains_inner_for_pair((b, c) in arb_buf_and_cursor(), pair in prop_oneof![Just(('(', ')')), Just(('[', ']')), Just(('{', '}'))]) {
+            let (open, close) = pair;
+            let inner = compute(&b, c, TextObjectVerb::Pair { open, close, inner: true });
+            let around = compute(&b, c, TextObjectVerb::Pair { open, close, inner: false });
+            if let (Some(i), Some(a)) = (inner, around) {
+                prop_assert!(a.start <= i.start);
+                prop_assert!(a.end >= i.end);
+            }
+        }
+    }
 }

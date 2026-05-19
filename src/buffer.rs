@@ -18,7 +18,7 @@ pub const LARGE_FILE_BYTES: usize = 5 * 1024 * 1024;
 /// captures per refresh.
 pub const LARGE_FILE_LINES: usize = 50_000;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Buffer {
     pub rope: Rope,
     pub path: Option<PathBuf>,
