@@ -13,9 +13,7 @@
 //! continue to work for the editor windows above. To re-focus
 //! the terminal, `<leader>tf` (or `:term`).
 
-use crossterm::event::{
-    KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use crate::mode::Mode;
 use crate::terminal::Terminal;
@@ -373,9 +371,7 @@ impl super::App {
             None => return true,
         };
         let _ = term.write_bytes(&bytes);
-        if matches!(ev.kind, MouseEventKind::Down(_))
-            && !matches!(self.mode, Mode::Terminal)
-        {
+        if matches!(ev.kind, MouseEventKind::Down(_)) && !matches!(self.mode, Mode::Terminal) {
             self.mode = Mode::Terminal;
             self.terminal_focus = crate::app::TerminalFocus::Bottom;
         }

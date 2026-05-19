@@ -4,7 +4,7 @@
 //! arriving on the reader-thread channel; the main loop calls `drain` to
 //! pull the resulting `DapEvent`s off and react.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -127,11 +127,7 @@ impl DapManager {
     /// list to the adapter if a session is alive. Returns the number of
     /// breakpoints that were cleared so the caller can surface it.
     pub fn clear_breakpoints_in_file(&mut self, path: &Path) -> usize {
-        let removed = self
-            .breakpoints
-            .remove(path)
-            .map(|v| v.len())
-            .unwrap_or(0);
+        let removed = self.breakpoints.remove(path).map(|v| v.len()).unwrap_or(0);
         if removed > 0 {
             self.resend_breakpoints_for(path);
         }
@@ -599,9 +595,7 @@ impl DapManager {
                 message,
             } => self.handle_response(request_seq, command, success, body, message, events),
             DapIncoming::Event { event, body } => self.handle_event(event, body, events),
-            DapIncoming::Request {
-                seq, command, ..
-            } => {
+            DapIncoming::Request { seq, command, .. } => {
                 // We don't support any server-to-client requests yet; reply
                 // unsuccessfully so the adapter doesn't sit waiting.
                 if let Some(session) = self.session.as_ref() {
@@ -658,11 +652,9 @@ impl DapManager {
                 }
                 if let Some(session) = self.session.as_ref() {
                     let seq = session.client.alloc_seq();
-                    let _ = session.client.send_request(
-                        seq,
-                        "launch",
-                        session.launch_args.clone(),
-                    );
+                    let _ = session
+                        .client
+                        .send_request(seq, "launch", session.launch_args.clone());
                 }
             }
             "launch" => {
@@ -705,11 +697,8 @@ impl DapManager {
                         .map(|(l, r)| format!("line {l}: {r}"))
                         .collect::<Vec<_>>()
                         .join("; ");
-                    let summary = format!(
-                        "{} breakpoint(s) unverified — {}",
-                        unverified.len(),
-                        lines
-                    );
+                    let summary =
+                        format!("{} breakpoint(s) unverified — {}", unverified.len(), lines);
                     if let Some(s) = self.session.as_mut() {
                         s.status_line = summary.clone();
                     }
@@ -734,7 +723,10 @@ impl DapManager {
                     // when called with a stale thread id. Surface
                     // either case so the user sees something in the
                     // pane instead of an indefinite "(no frames)".
-                    let total = body.get("totalFrames").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let total = body
+                        .get("totalFrames")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     let line = OutputLine {
                         category: "console".into(),
                         output: format!(
@@ -756,11 +748,9 @@ impl DapManager {
                 // show locals without an extra command from the user.
                 if let (Some(id), Some(session)) = (top_id, self.session.as_ref()) {
                     let seq = session.client.alloc_seq();
-                    let _ = session.client.send_request(
-                        seq,
-                        "scopes",
-                        json!({ "frameId": id }),
-                    );
+                    let _ = session
+                        .client
+                        .send_request(seq, "scopes", json!({ "frameId": id }));
                 }
                 // Now that frames are populated and we have a
                 // valid top frame_id, fire watch evaluations.
@@ -842,10 +832,7 @@ impl DapManager {
                 self.send_breakpoints_and_configdone();
             }
             "stopped" => {
-                let thread_id = body
-                    .get("threadId")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let thread_id = body.get("threadId").and_then(|v| v.as_u64()).unwrap_or(0);
                 let reason = body
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -970,10 +957,7 @@ impl DapManager {
                 events.push(DapEvent::Exited { exit_code: code });
             }
             "thread" => {
-                let thread_id = body
-                    .get("threadId")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                let thread_id = body.get("threadId").and_then(|v| v.as_u64()).unwrap_or(0);
                 let reason = body
                     .get("reason")
                     .and_then(|v| v.as_str())
@@ -1006,8 +990,12 @@ impl DapManager {
                     let summary = match (reason.as_str(), verified, msg) {
                         ("changed", true, _) => format!("breakpoint bound at line {line}"),
                         ("changed", false, Some(m)) => format!("breakpoint line {line}: {m}"),
-                        ("changed", false, None) => format!("breakpoint line {line}: still pending"),
-                        ("removed", _, _) => format!("breakpoint at line {line} removed by adapter"),
+                        ("changed", false, None) => {
+                            format!("breakpoint line {line}: still pending")
+                        }
+                        ("removed", _, _) => {
+                            format!("breakpoint at line {line} removed by adapter")
+                        }
                         (r, _, _) => format!("breakpoint event ({r}) at line {line}"),
                     };
                     if let Some(s) = self.session.as_mut() {
@@ -1111,7 +1099,10 @@ fn parse_scopes(body: &Value) -> Vec<Scope> {
             .get("variablesReference")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let expensive = s.get("expensive").and_then(|v| v.as_bool()).unwrap_or(false);
+        let expensive = s
+            .get("expensive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         out.push(Scope {
             name,
             variables_reference,
@@ -1137,7 +1128,10 @@ fn parse_variables(body: &Value) -> Vec<Variable> {
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string();
-        let type_name = v.get("type").and_then(|x| x.as_str()).map(|s| s.to_string());
+        let type_name = v
+            .get("type")
+            .and_then(|x| x.as_str())
+            .map(|s| s.to_string());
         let variables_reference = v
             .get("variablesReference")
             .and_then(|x| x.as_u64())
@@ -1281,7 +1275,10 @@ mod tests {
         assert_eq!(bp.condition.as_deref(), Some("len > 0"));
         // Replace with a different expression.
         m.set_breakpoint_condition(&p, 12, Some("len > 5".into()));
-        assert_eq!(m.breakpoint_at(&p, 12).unwrap().condition.as_deref(), Some("len > 5"));
+        assert_eq!(
+            m.breakpoint_at(&p, 12).unwrap().condition.as_deref(),
+            Some("len > 5")
+        );
         // None clears the condition (but keeps the breakpoint).
         m.set_breakpoint_condition(&p, 12, None);
         let bp = m.breakpoint_at(&p, 12).unwrap();

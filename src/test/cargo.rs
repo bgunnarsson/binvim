@@ -33,8 +33,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::types::{
-    OutputStream, ResolvedCommand, TestEvent, TestLocation, TestRunRequest, TestStatus,
-    TestSummary,
+    OutputStream, ResolvedCommand, TestEvent, TestLocation, TestRunRequest, TestStatus, TestSummary,
 };
 
 /// State threaded across `parse_event_line` invocations. Holds the
@@ -414,7 +413,15 @@ mod tests {
         let events = parse_lines(&["test motion::tests::foo ... ok"]);
         let cases: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Passed, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Passed,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(cases.len(), 1);
     }
@@ -434,10 +441,28 @@ mod tests {
         ]);
         let decorated: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Failed, location: Some(_), .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Failed,
+                        location: Some(_),
+                        ..
+                    }
+                )
+            })
             .collect();
-        assert_eq!(decorated.len(), 1, "flush should re-emit failed case with location");
-        if let TestEvent::Case { location: Some(loc), message, .. } = decorated[0] {
+        assert_eq!(
+            decorated.len(),
+            1,
+            "flush should re-emit failed case with location"
+        );
+        if let TestEvent::Case {
+            location: Some(loc),
+            message,
+            ..
+        } = decorated[0]
+        {
             assert_eq!(loc.path, PathBuf::from("src/motion.rs"));
             assert_eq!(loc.line, 42);
             assert_eq!(loc.col, 5);

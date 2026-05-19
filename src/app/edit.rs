@@ -10,7 +10,7 @@ use crate::mode::{Mode, VisualKind};
 use crate::parser::InsertWhere;
 
 use super::pair::{is_paired_bracket, surround_open_close};
-use super::state::{YankHighlight, YANK_FLASH_DURATION};
+use super::state::{YANK_FLASH_DURATION, YankHighlight};
 
 impl super::App {
     /// Mirror a single-char insert at the primary cursor across all
@@ -21,9 +21,12 @@ impl super::App {
     /// insert path would have done — this routine handles all
     /// `additional_cursors` and the primary char-index together.
     pub(super) fn mirror_insert_char(&mut self, c: char) {
-        let primary_pos = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let primary_pos = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
         if self.additional_cursors.is_empty() {
-            self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+            self.buffer
+                .insert_char(self.window.cursor.line, self.window.cursor.col, c);
             self.window.cursor.col += 1;
             self.window.cursor.want_col = self.window.cursor.col;
             return;
@@ -63,7 +66,9 @@ impl super::App {
     /// across the multi-cursor set is genuinely tricky and the user can
     /// fall back to single-cursor mode for that.
     pub(super) fn mirror_backspace(&mut self) {
-        let primary_pos = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let primary_pos = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
         if self.additional_cursors.is_empty() {
             // Fall through to the caller's normal backspace path.
             return;
@@ -192,7 +197,11 @@ impl super::App {
             let line_start = self.buffer.line_start_idx(line);
             let take = match style {
                 IndentStyle::Tabs => {
-                    if matches!(self.buffer.char_at(line, 0), Some('\t')) { 1 } else { 0 }
+                    if matches!(self.buffer.char_at(line, 0), Some('\t')) {
+                        1
+                    } else {
+                        0
+                    }
                 }
                 IndentStyle::Spaces => {
                     let mut t = 0usize;
@@ -485,10 +494,8 @@ impl super::App {
                 let start_col = c1.min(line_len);
                 let end_col = (c2 + 1).min(line_len);
                 let line_start = self.buffer.line_start_idx(line);
-                self.buffer
-                    .insert_at_idx(line_start + end_col, close);
-                self.buffer
-                    .insert_at_idx(line_start + start_col, open);
+                self.buffer.insert_at_idx(line_start + end_col, close);
+                self.buffer.insert_at_idx(line_start + start_col, open);
             }
             // Land the cursor on the freshly-inserted opener of the
             // first row — same convention as charwise surround.
@@ -524,7 +531,9 @@ impl super::App {
         // can't balance, so just find the nearest enclosing pair on the
         // line by scanning out from the cursor.
         if is_paired_bracket(ch) {
-            let here = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+            let here = self
+                .buffer
+                .pos_to_char(self.window.cursor.line, self.window.cursor.col);
             let open_c = open.chars().next().unwrap();
             let close_c = close.chars().next().unwrap();
             let mut depth = 1usize;
@@ -647,7 +656,10 @@ impl super::App {
             if self.window.cursor.col >= self.buffer.line_len(self.window.cursor.line) {
                 break;
             }
-            let c = match self.buffer.char_at(self.window.cursor.line, self.window.cursor.col) {
+            let c = match self
+                .buffer
+                .char_at(self.window.cursor.line, self.window.cursor.col)
+            {
                 Some(c) => c,
                 None => break,
             };
@@ -658,9 +670,12 @@ impl super::App {
             } else {
                 c
             };
-            let idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+            let idx = self
+                .buffer
+                .pos_to_char(self.window.cursor.line, self.window.cursor.col);
             self.buffer.delete_range(idx, idx + 1);
-            self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, new_c);
+            self.buffer
+                .insert_char(self.window.cursor.line, self.window.cursor.col, new_c);
             // Advance unless we're at end of line.
             let len_now = self.buffer.line_len(self.window.cursor.line);
             if self.window.cursor.col + 1 < len_now {
@@ -676,7 +691,9 @@ impl super::App {
         if line_len == 0 {
             return;
         }
-        let start = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let start = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let max_end = self.buffer.pos_to_char(self.window.cursor.line, line_len);
         let end = (start + count).min(max_end);
         let removed = self.buffer.delete_range(start, end);
@@ -728,7 +745,8 @@ impl super::App {
             self.window.cursor.want_col = 0;
         } else {
             let target_idx = if before {
-                self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col)
+                self.buffer
+                    .pos_to_char(self.window.cursor.line, self.window.cursor.col)
             } else {
                 let line_len = self.buffer.line_len(self.window.cursor.line);
                 if line_len == 0 {
@@ -847,7 +865,11 @@ fn find_number_on_line(chars: &[char], from_col: usize) -> Option<ParsedNumber> 
         let mut start = i;
         let mut negative = false;
         if prefix_chars == 0 && start > 0 && chars[start - 1] == '-' {
-            let two_back = if start >= 2 { Some(chars[start - 2]) } else { None };
+            let two_back = if start >= 2 {
+                Some(chars[start - 2])
+            } else {
+                None
+            };
             let standalone = match two_back {
                 None => true,
                 Some(c) => !(c.is_alphanumeric() || c == '_' || c == ')' || c == ']'),
@@ -931,7 +953,11 @@ fn is_phantom_trailing_line(buffer: &crate::buffer::Buffer, line: usize) -> bool
 /// the file's last line (no trailing `\n`), the target gains one and
 /// the block (now last) loses one, preserving the "final newline" or
 /// "no final newline" property of the file as a whole.
-pub(super) fn shift_block_down_by_one(buffer: &mut crate::buffer::Buffer, start_line: usize, end_line: usize) {
+pub(super) fn shift_block_down_by_one(
+    buffer: &mut crate::buffer::Buffer,
+    start_line: usize,
+    end_line: usize,
+) {
     let total = buffer.line_count();
     if end_line + 1 >= total {
         return;
@@ -967,7 +993,11 @@ pub(super) fn shift_block_down_by_one(buffer: &mut crate::buffer::Buffer, start_
 /// Mirror of `shift_block_down_by_one` — swap the block with the line
 /// at `start_line - 1`. Handles the symmetric last-line edge case when
 /// the moving block contains the file's final line.
-pub(super) fn shift_block_up_by_one(buffer: &mut crate::buffer::Buffer, start_line: usize, end_line: usize) {
+pub(super) fn shift_block_up_by_one(
+    buffer: &mut crate::buffer::Buffer,
+    start_line: usize,
+    end_line: usize,
+) {
     if start_line == 0 {
         return;
     }

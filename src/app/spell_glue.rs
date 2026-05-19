@@ -10,7 +10,7 @@
 //! `buffer.version` advances past the cached value.
 
 use crate::picker::{PickerKind, PickerPayload, PickerState};
-use crate::spell::{check_buffer, is_known, suggestions, SpellRange};
+use crate::spell::{SpellRange, check_buffer, is_known, suggestions};
 
 impl super::App {
     /// `:spell` — flip the enable flag for the active buffer.
@@ -24,10 +24,9 @@ impl super::App {
             self.status_msg = "spell: off".into();
         } else {
             if crate::spell::wordlist().is_none() {
-                self.status_msg =
-                    "spell: no wordlist (install /usr/share/dict/words or write \
+                self.status_msg = "spell: no wordlist (install /usr/share/dict/words or write \
                      ~/.local/share/binvim/words)"
-                        .into();
+                    .into();
                 return;
             }
             self.spell_enabled.insert(path.clone());
@@ -92,9 +91,7 @@ impl super::App {
             // in the buffer (wrap).
             ranges
                 .iter()
-                .find(|r| {
-                    r.line > cur_line || (r.line == cur_line && r.col > cur_col)
-                })
+                .find(|r| r.line > cur_line || (r.line == cur_line && r.col > cur_col))
                 .cloned()
                 .or_else(|| ranges.first().cloned())
         } else {
@@ -103,9 +100,7 @@ impl super::App {
             ranges
                 .iter()
                 .rev()
-                .find(|r| {
-                    r.line < cur_line || (r.line == cur_line && r.col < cur_col)
-                })
+                .find(|r| r.line < cur_line || (r.line == cur_line && r.col < cur_col))
                 .cloned()
                 .or_else(|| ranges.last().cloned())
         };
@@ -160,10 +155,7 @@ impl super::App {
         // Find the bounds of the word containing the cursor column.
         let chars: Vec<char> = line_text.chars().collect();
         let mut start = col.min(chars.len());
-        while start > 0
-            && chars[start - 1]
-                .is_alphabetic()
-        {
+        while start > 0 && chars[start - 1].is_alphabetic() {
             start -= 1;
         }
         let mut end = start;
@@ -172,8 +164,7 @@ impl super::App {
         }
         let captured: String = chars[start..end].iter().collect();
         if captured.to_ascii_lowercase() != word.to_ascii_lowercase() {
-            self.status_msg =
-                "spell: word at cursor changed; re-run `z=`".into();
+            self.status_msg = "spell: word at cursor changed; re-run `z=`".into();
             return;
         }
         let line_start = self.buffer.rope.line_to_char(line);
@@ -214,7 +205,10 @@ impl super::App {
         if !self.spell_enabled.contains(path) {
             return 0;
         }
-        self.spell_cache.get(path).map(|(_, r)| r.len()).unwrap_or(0)
+        self.spell_cache
+            .get(path)
+            .map(|(_, r)| r.len())
+            .unwrap_or(0)
     }
 
     /// Misspelling ranges for the active buffer, if spell is on and

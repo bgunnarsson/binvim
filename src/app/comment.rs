@@ -33,12 +33,7 @@ impl super::App {
     }
 
     pub(super) fn toggle_comment_range(&mut self) {
-        let lang = match self
-            .buffer
-            .path
-            .as_deref()
-            .and_then(Lang::detect)
-        {
+        let lang = match self.buffer.path.as_deref().and_then(Lang::detect) {
             Some(l) => l,
             None => {
                 self.status_msg = "comment toggle: unknown language".into();
@@ -155,7 +150,8 @@ impl super::App {
             let close_chars = close.chars().count();
             let total_chars = last_text.chars().count();
             // Position of the closer's start, character-wise.
-            let close_start_chars = total_chars - close_chars
+            let close_start_chars = total_chars
+                - close_chars
                 - last_text
                     .chars()
                     .rev()
@@ -177,10 +173,7 @@ impl super::App {
             let leading = first_text.chars().count() - first_text.trim_start().chars().count();
             let open_chars = open.chars().count();
             let open_start = self.buffer.line_start_idx(start) + leading;
-            let after_open: String = first_text
-                .chars()
-                .skip(leading + open_chars)
-                .collect();
+            let after_open: String = first_text.chars().skip(leading + open_chars).collect();
             let trim_space = after_open.starts_with(' ');
             let total_remove = open_chars + usize::from(trim_space);
             self.buffer

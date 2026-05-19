@@ -38,9 +38,7 @@ impl super::App {
                 verification_uri: uri.clone(),
                 user_code: code.clone(),
             };
-            self.status_msg = format!(
-                "Copilot: visit {uri} and enter code {code}"
-            );
+            self.status_msg = format!("Copilot: visit {uri} and enter code {code}");
             return;
         }
         match kind.as_str() {
@@ -67,8 +65,7 @@ impl super::App {
                 self.status_msg = "Copilot: account not authorized".into();
             }
             "NoTelemetryConsent" => {
-                self.lsp.copilot_status =
-                    CopilotStatus::Error("telemetry consent required".into());
+                self.lsp.copilot_status = CopilotStatus::Error("telemetry consent required".into());
                 self.status_msg = "Copilot: telemetry consent required".into();
             }
             other => {
@@ -164,8 +161,7 @@ impl super::App {
         // Record the undo step before mutating so a single `u` undoes
         // the whole acceptance, matching how Insert-mode chunks land
         // in the history elsewhere.
-        self.history
-            .record(&self.buffer.rope, self.window.cursor);
+        self.history.record(&self.buffer.rope, self.window.cursor);
         let cursor_idx = self
             .buffer
             .pos_to_char(self.window.cursor.line, self.window.cursor.col);
@@ -179,17 +175,11 @@ impl super::App {
         // what VS Code / official Copilot plugins do.
         let cur_line = self.window.cursor.line;
         let line_end_idx = if cur_line + 1 < self.buffer.line_count() {
-            self.buffer
-                .line_start_idx(cur_line + 1)
-                .saturating_sub(1)
+            self.buffer.line_start_idx(cur_line + 1).saturating_sub(1)
         } else {
             self.buffer.total_chars()
         };
-        let post_cursor: String = self
-            .buffer
-            .rope
-            .slice(cursor_idx..line_end_idx)
-            .to_string();
+        let post_cursor: String = self.buffer.rope.slice(cursor_idx..line_end_idx).to_string();
         let trimmed = trim_trailing_overlap(&ghost.text, &post_cursor);
         if cursor_idx > start_idx {
             self.buffer.delete_range(start_idx, cursor_idx);
@@ -265,10 +255,7 @@ impl super::App {
     /// prefix (which can happen if the user typed a non-matching
     /// char while the request was in flight — the ghost gets
     /// invalidated next frame anyway).
-    pub fn copilot_ghost_visible_tail<'a>(
-        &self,
-        ghost: &'a crate::app::CopilotGhost,
-    ) -> &'a str {
+    pub fn copilot_ghost_visible_tail<'a>(&self, ghost: &'a crate::app::CopilotGhost) -> &'a str {
         if ghost.replace_start_line > self.window.cursor.line {
             return ghost.text.as_str();
         }
@@ -281,11 +268,7 @@ impl super::App {
         if cursor_idx <= start_idx {
             return ghost.text.as_str();
         }
-        let typed: String = self
-            .buffer
-            .rope
-            .slice(start_idx..cursor_idx)
-            .to_string();
+        let typed: String = self.buffer.rope.slice(start_idx..cursor_idx).to_string();
         let typed_chars = typed.chars().count();
         if ghost.text.chars().take(typed_chars).collect::<String>() == typed {
             // Ghost's prefix matches what's in the buffer — return
@@ -351,9 +334,7 @@ impl super::App {
             CopilotStatus::PendingAuth {
                 verification_uri,
                 user_code,
-            } => format!(
-                "Copilot: pending auth — visit {verification_uri} and enter {user_code}"
-            ),
+            } => format!("Copilot: pending auth — visit {verification_uri} and enter {user_code}"),
             CopilotStatus::Error(msg) => format!("Copilot: error — {msg}"),
         };
     }

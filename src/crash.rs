@@ -65,7 +65,7 @@ fn restore_terminal_best_effort() {
         cursor::{SetCursorStyle, Show},
         event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
         execute,
-        terminal::{disable_raw_mode, LeaveAlternateScreen},
+        terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
     let mut stdout = std::io::stdout();
     let _ = execute!(stdout, PopKeyboardEnhancementFlags);
@@ -105,13 +105,7 @@ fn write_crash_log(info: &std::panic::PanicHookInfo<'_>) -> Option<PathBuf> {
     let _ = writeln!(file, "panic: {payload}");
 
     if let Some(loc) = info.location() {
-        let _ = writeln!(
-            file,
-            "at: {}:{}:{}",
-            loc.file(),
-            loc.line(),
-            loc.column()
-        );
+        let _ = writeln!(file, "at: {}:{}:{}", loc.file(), loc.line(), loc.column());
     }
 
     // Capture a backtrace — RUST_BACKTRACE=1 inherited from the env
@@ -146,7 +140,9 @@ mod tests {
         let tmp = std::env::temp_dir().join("binvim_crash_test_panic");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        unsafe { std::env::set_var("HOME", &tmp); }
+        unsafe {
+            std::env::set_var("HOME", &tmp);
+        }
 
         install_panic_hook();
         let needle = "binvim_crash_test_unique_payload_marker";
@@ -169,7 +165,10 @@ mod tests {
         assert!(body.contains("at:"), "location missing from log: {body}");
         // backtrace section presence — exact frames are platform-dependent
         // and not worth pinning, but the section header should be there.
-        assert!(body.contains("backtrace:"), "backtrace section missing: {body}");
+        assert!(
+            body.contains("backtrace:"),
+            "backtrace section missing: {body}"
+        );
 
         let _ = fs::remove_dir_all(&tmp);
     }

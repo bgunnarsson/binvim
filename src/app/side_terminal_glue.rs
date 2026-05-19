@@ -90,12 +90,7 @@ impl super::App {
     /// itself with the AI tool via `exec`. The intermediate
     /// prompt + echo never reaches the user because the loading
     /// splash sits on top of the pane until the tool is settled.
-    pub(super) fn open_side_terminal(
-        &mut self,
-        label: &str,
-        command: &str,
-        with_handoff: bool,
-    ) {
+    pub(super) fn open_side_terminal(&mut self, label: &str, command: &str, with_handoff: bool) {
         // Every invocation spawns a fresh tab — `:claude` /
         // `<leader>jc` opening one tab and re-running to focus the
         // same instance was the old model. Now focus is its own
@@ -242,8 +237,7 @@ impl super::App {
     /// pane.
     pub(super) fn focus_side_terminal(&mut self) {
         if self.side_terminals.is_empty() {
-            self.status_msg =
-                "ai: no side pane (open with `<leader>jc` / `jx` / `jo`)".into();
+            self.status_msg = "ai: no side pane (open with `<leader>jc` / `jx` / `jo`)".into();
             return;
         }
         self.side_terminal_pane_open = true;
@@ -271,8 +265,7 @@ impl super::App {
             return;
         }
         if self.side_terminals.is_empty() {
-            self.status_msg =
-                "ai: no side pane (open with `<leader>jc` / `jx` / `jo`)".into();
+            self.status_msg = "ai: no side pane (open with `<leader>jc` / `jx` / `jo`)".into();
             return;
         }
         self.side_terminal_pane_open = true;

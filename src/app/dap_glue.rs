@@ -8,7 +8,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::command::DebugSubCmd;
-use crate::dap::{adapter_for_workspace, flat_locals_view, DapEvent, SessionState, StepKind};
+use crate::dap::{DapEvent, SessionState, StepKind, adapter_for_workspace, flat_locals_view};
 use crate::mode::Mode;
 
 impl super::App {
@@ -121,8 +121,7 @@ impl super::App {
         }
         self.dap_pane_cursor = 0;
         self.mode = Mode::DebugPane;
-        self.status_msg =
-            "pane: gt/gT switch tab · j/k move · Enter expand · Esc exits".into();
+        self.status_msg = "pane: gt/gT switch tab · j/k move · Enter expand · Esc exits".into();
     }
 
     /// Mouse dispatch for the debug pane. Returns `true` if the
@@ -299,9 +298,7 @@ impl super::App {
                 if !matches!(self.mode, Mode::DebugPane) {
                     self.mode = Mode::DebugPane;
                 }
-                if let Some(url) =
-                    find_url_at(&lines[line_idx].1, line_col)
-                {
+                if let Some(url) = find_url_at(&lines[line_idx].1, line_col) {
                     self.open_url_in_browser(&url);
                 }
                 true
@@ -369,7 +366,11 @@ impl super::App {
                 continue;
             };
             let chars: Vec<char> = body.chars().collect();
-            let from = if line_idx == start.0 { start.1.min(chars.len()) } else { 0 };
+            let from = if line_idx == start.0 {
+                start.1.min(chars.len())
+            } else {
+                0
+            };
             let to = if line_idx == end.0 {
                 end.1.min(chars.len())
             } else {
@@ -419,13 +420,7 @@ impl super::App {
 /// glyph. Matches what `scan_url` in render.rs accepts so click
 /// hit-testing and paint colouring agree.
 fn url_body_char(c: char) -> bool {
-    !c.is_whitespace()
-        && c != ')'
-        && c != ']'
-        && c != '"'
-        && c != '\''
-        && c != ','
-        && c != ';'
+    !c.is_whitespace() && c != ')' && c != ']' && c != '"' && c != '\'' && c != ',' && c != ';'
 }
 
 /// Find a URL token straddling `col` on `line`. Returns the
@@ -473,7 +468,10 @@ impl super::App {
     /// `gT` from Frames lands on Console.
     pub(super) fn dap_cycle_tab(&mut self, forward: bool) {
         let tabs = crate::app::DapPaneTab::all();
-        let cur_idx = tabs.iter().position(|t| *t == self.dap_pane_tab).unwrap_or(0);
+        let cur_idx = tabs
+            .iter()
+            .position(|t| *t == self.dap_pane_tab)
+            .unwrap_or(0);
         let next = if forward {
             (cur_idx + 1) % tabs.len()
         } else {
@@ -552,12 +550,20 @@ impl super::App {
             // main thing that needs this, and they appear far enough
             // from the row cursor that hijacking j/k would feel wrong.
             KeyCode::Char('h') => {
-                let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                let step = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    10
+                } else {
+                    1
+                };
                 self.dap_tab_h_scroll_by(-step);
                 true
             }
             KeyCode::Char('l') => {
-                let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 10 } else { 1 };
+                let step = if key.modifiers.contains(KeyModifiers::SHIFT) {
+                    10
+                } else {
+                    1
+                };
                 self.dap_tab_h_scroll_by(step);
                 true
             }
@@ -649,7 +655,9 @@ impl super::App {
                 .map(|v| v.len())
                 .unwrap_or(0),
             crate::app::DapPaneTab::Watches => self.dap.watches.len(),
-            crate::app::DapPaneTab::Breakpoints => self.dap.breakpoints.values().map(|v| v.len()).sum(),
+            crate::app::DapPaneTab::Breakpoints => {
+                self.dap.breakpoints.values().map(|v| v.len()).sum()
+            }
             crate::app::DapPaneTab::Console => self
                 .dap
                 .output_buffer
@@ -737,10 +745,7 @@ impl super::App {
     /// - `Shift+F11` — step out
     pub(super) fn try_handle_debug_function_key(&mut self, k: &KeyEvent) -> bool {
         let shift = k.modifiers.contains(KeyModifiers::SHIFT);
-        let modless = k
-            .modifiers
-            .difference(KeyModifiers::SHIFT)
-            .is_empty();
+        let modless = k.modifiers.difference(KeyModifiers::SHIFT).is_empty();
         if !modless {
             return false;
         }
@@ -815,8 +820,9 @@ impl super::App {
         // reproduces that pause programmatically.
         if self.dap.is_active() {
             self.status_msg = "debug: stopping previous session…".into();
-            let _ =
-                self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
+            let _ = self
+                .dap
+                .stop_session_blocking(std::time::Duration::from_millis(1500));
         }
         // Start from the active buffer's directory when it's path-backed
         // (typical Normal-mode launch), otherwise the workspace cwd.
@@ -890,10 +896,13 @@ impl super::App {
         // file they want to debug already open.
         if let Some(buf_path) = self.buffer.path.as_ref() {
             if let Some(buf_dir) = buf_path.parent() {
-                let canon_buf = buf_dir.canonicalize().unwrap_or_else(|_| buf_dir.to_path_buf());
-                if mains.iter().any(|d| {
-                    d.canonicalize().unwrap_or_else(|_| d.clone()) == canon_buf
-                }) {
+                let canon_buf = buf_dir
+                    .canonicalize()
+                    .unwrap_or_else(|_| buf_dir.to_path_buf());
+                if mains
+                    .iter()
+                    .any(|d| d.canonicalize().unwrap_or_else(|_| d.clone()) == canon_buf)
+                {
                     self.dap_launch_simple_target("go", canon_buf, None);
                     return;
                 }
@@ -966,23 +975,14 @@ impl super::App {
             }
             1 => {
                 let bin = bins.into_iter().next().unwrap();
-                self.dap_launch_simple_target(
-                    "lldb",
-                    bin.manifest_path,
-                    Some(bin.bin_name),
-                );
+                self.dap_launch_simple_target("lldb", bin.manifest_path, Some(bin.bin_name));
             }
             _ => {
                 let items: Vec<(std::path::PathBuf, Option<String>)> = bins
                     .into_iter()
                     .map(|b| (b.manifest_path, Some(b.bin_name)))
                     .collect();
-                self.open_debug_target_picker(
-                    "lldb",
-                    "Rust bin target",
-                    workspace_root,
-                    items,
-                );
+                self.open_debug_target_picker("lldb", "Rust bin target", workspace_root, items);
             }
         }
     }
@@ -1062,8 +1062,7 @@ impl super::App {
                 .unwrap_or_else(|| path.clone())
         };
         let Some((adapter, _)) = crate::dap::adapter_for_workspace(&probe) else {
-            self.status_msg =
-                format!("debug: lost adapter '{adapter_key}' after picker close");
+            self.status_msg = format!("debug: lost adapter '{adapter_key}' after picker close");
             return;
         };
         if adapter.key != adapter_key {
@@ -1100,10 +1099,7 @@ impl super::App {
         let label = match &name {
             Some(n) => format!("{} ({n})", adapter.key),
             None => {
-                let stem = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
+                let stem = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if stem.is_empty() {
                     adapter.key.to_string()
                 } else {
@@ -1151,8 +1147,7 @@ impl super::App {
                 );
             }
             other => {
-                self.status_msg =
-                    format!("debugtest: no DAP route for test adapter '{other}'");
+                self.status_msg = format!("debugtest: no DAP route for test adapter '{other}'");
             }
         }
     }
@@ -1164,19 +1159,19 @@ impl super::App {
         test_file: Option<std::path::PathBuf>,
     ) {
         if self.dap.is_active() {
-            let _ =
-                self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
+            let _ = self
+                .dap
+                .stop_session_blocking(std::time::Duration::from_millis(1500));
         }
-        let Some((adapter, _)) =
-            crate::dap::adapter_for_workspace(&root)
-                .filter(|(a, _)| a.key == "python")
-                .or_else(|| {
-                    // Fall back to scanning from the test workspace
-                    // root — the test adapter's root markers (e.g.
-                    // `conftest.py`) won't match the DAP adapter
-                    // walker, so we re-probe with the root we have.
-                    crate::dap::adapter_for_workspace(&root)
-                })
+        let Some((adapter, _)) = crate::dap::adapter_for_workspace(&root)
+            .filter(|(a, _)| a.key == "python")
+            .or_else(|| {
+                // Fall back to scanning from the test workspace
+                // root — the test adapter's root markers (e.g.
+                // `conftest.py`) won't match the DAP adapter
+                // walker, so we re-probe with the root we have.
+                crate::dap::adapter_for_workspace(&root)
+            })
         else {
             self.status_msg = "debugtest: install debugpy (`pip install debugpy`)".into();
             return;
@@ -1213,8 +1208,9 @@ impl super::App {
         test_file: Option<std::path::PathBuf>,
     ) {
         if self.dap.is_active() {
-            let _ =
-                self.dap.stop_session_blocking(std::time::Duration::from_millis(1500));
+            let _ = self
+                .dap
+                .stop_session_blocking(std::time::Duration::from_millis(1500));
         }
         // Resolve the package directory the test lives in. Prefer the
         // active buffer's parent dir; fall back to the workspace root.
@@ -1324,7 +1320,10 @@ impl super::App {
                 } else {
                     format!("  ({})", p.application_urls.join(", "))
                 };
-                (format!("{}{}", p.name, url_hint), PickerPayload::DebugProfile(i))
+                (
+                    format!("{}{}", p.name, url_hint),
+                    PickerPayload::DebugProfile(i),
+                )
             })
             .collect();
         // Stash the project + profile list so the picker accept path can

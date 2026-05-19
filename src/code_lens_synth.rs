@@ -49,8 +49,7 @@ fn synthesize_js_ts(lang: Lang, buf: &Buffer) -> Vec<CodeLensItem> {
     };
     let src = source.as_bytes();
     let mut out = Vec::new();
-    let mut seen: std::collections::HashSet<(usize, String)> =
-        std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<(usize, String)> = std::collections::HashSet::new();
     walk_for_test_calls(tree.root_node(), src, &mut out, &mut seen);
     out
 }
@@ -110,7 +109,11 @@ fn maybe_test_call(call: Node, src: &[u8]) -> Option<CodeLensItem> {
     let start = call.start_position();
     let line = start.row;
     let col = start.column;
-    let label = if kind == "describe" { "Run Suite" } else { "Run Test" };
+    let label = if kind == "describe" {
+        "Run Suite"
+    } else {
+        "Run Test"
+    };
     let command = LspCommand {
         title: format!("▶ {label}"),
         command: SYNTHETIC_RUN_COMMAND.to_string(),
@@ -310,7 +313,11 @@ describe(\"suite\", () => {
     #[test]
     fn unrelated_call_expressions_are_ignored() {
         let src = "expect(foo).toBe(bar);\nconsole.log('hi');\n";
-        assert!(synthesize_lenses(Lang::TypeScript, &buf(src)).unwrap().is_empty());
+        assert!(
+            synthesize_lenses(Lang::TypeScript, &buf(src))
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

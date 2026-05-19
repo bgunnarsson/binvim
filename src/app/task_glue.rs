@@ -35,7 +35,11 @@ impl super::App {
         // via TaskIdx. Display line: `<tag>  <label>  · <description>`.
         // The tag column is left-padded to a fixed width so the labels
         // align visually across sources without manual eyeballing.
-        let tag_width = tasks.iter().map(|t| t.source.tag().len()).max().unwrap_or(4);
+        let tag_width = tasks
+            .iter()
+            .map(|t| t.source.tag().len())
+            .max()
+            .unwrap_or(4);
         let items: Vec<(String, PickerPayload)> = tasks
             .iter()
             .enumerate()
@@ -46,7 +50,12 @@ impl super::App {
                 // `Task::is_long_running` for the heuristic.
                 let bg = if t.is_long_running() { "  [bg]" } else { "" };
                 let display = if desc.is_empty() {
-                    format!("{:width$}  {}{bg}", t.source.tag(), t.label, width = tag_width)
+                    format!(
+                        "{:width$}  {}{bg}",
+                        t.source.tag(),
+                        t.label,
+                        width = tag_width
+                    )
                 } else {
                     format!(
                         "{:width$}  {}{bg}  · {}",
@@ -60,11 +69,7 @@ impl super::App {
             })
             .collect();
         self.pending_tasks = tasks;
-        self.picker = Some(PickerState::new(
-            PickerKind::Task,
-            "Tasks".into(),
-            items,
-        ));
+        self.picker = Some(PickerState::new(PickerKind::Task, "Tasks".into(), items));
         self.mode = Mode::Picker;
     }
 
@@ -97,7 +102,10 @@ impl super::App {
         let bg = task.is_long_running();
         self.task_kickoff(task);
         if bg {
-            self.status_msg = format!("{} (long-running — previous tab may still be alive)", self.status_msg);
+            self.status_msg = format!(
+                "{} (long-running — previous tab may still be alive)",
+                self.status_msg
+            );
         }
     }
 
@@ -187,7 +195,10 @@ impl super::App {
             let n = scraped.len();
             if n > 0 {
                 new_entries.extend(scraped);
-                status_hint = Some(format!("'{label}': {n} error{} → quickfix", if n == 1 { "" } else { "s" }));
+                status_hint = Some(format!(
+                    "'{label}': {n} error{} → quickfix",
+                    if n == 1 { "" } else { "s" }
+                ));
             } else if status_hint.is_none() {
                 status_hint = Some(format!("'{label}' exited (no errors detected)"));
             }
@@ -208,8 +219,9 @@ impl super::App {
             entries: new_entries,
             current: 0,
         });
-        self.status_msg = status_hint
-            .unwrap_or_else(|| format!("quickfix: {n} task error{}", if n == 1 { "" } else { "s" }));
+        self.status_msg = status_hint.unwrap_or_else(|| {
+            format!("quickfix: {n} task error{}", if n == 1 { "" } else { "s" })
+        });
         true
     }
 }
@@ -257,10 +269,7 @@ pub(super) fn scrape_task_errors(text: &str) -> Vec<crate::app::state::QuickfixE
 /// terminates path lookup. We require both `line` and `col` to parse
 /// as digits to keep false positives down on log lines like
 /// `12:34:56 INFO: …`.
-fn parse_posix_form(
-    line: &str,
-    cwd: &std::path::Path,
-) -> Option<crate::app::state::QuickfixEntry> {
+fn parse_posix_form(line: &str, cwd: &std::path::Path) -> Option<crate::app::state::QuickfixEntry> {
     // First `:` separates path from line; second separates line from
     // col; third (optional) separates col from end_col; the remainder
     // is the message.
@@ -270,7 +279,13 @@ fn parse_posix_form(
     // though we don't claim full Windows support).
     let mut path_end = None;
     for (i, &b) in bytes.iter().enumerate() {
-        if b == b':' && i > 0 && bytes.get(i + 1).map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        if b == b':'
+            && i > 0
+            && bytes
+                .get(i + 1)
+                .map(|c| c.is_ascii_digit())
+                .unwrap_or(false)
+        {
             path_end = Some(i);
             break;
         }
@@ -312,10 +327,7 @@ fn parse_posix_form(
 }
 
 /// `path(line,col): <message>` — tsc's default formatter.
-fn parse_tsc_form(
-    line: &str,
-    cwd: &std::path::Path,
-) -> Option<crate::app::state::QuickfixEntry> {
+fn parse_tsc_form(line: &str, cwd: &std::path::Path) -> Option<crate::app::state::QuickfixEntry> {
     let open = line.find('(')?;
     let close = line[open..].find(')').map(|i| open + i)?;
     let after = line.get(close + 1..)?.strip_prefix(':')?.trim();
@@ -340,7 +352,10 @@ fn parse_tsc_form(
 }
 
 fn take_digits(s: &str) -> Option<(&str, &str)> {
-    let end = s.bytes().position(|b| !b.is_ascii_digit()).unwrap_or(s.len());
+    let end = s
+        .bytes()
+        .position(|b| !b.is_ascii_digit())
+        .unwrap_or(s.len());
     if end == 0 {
         return None;
     }
@@ -434,7 +449,11 @@ mod tests {
         // Avoid false positives on log lines like `12:34:56 INFO`.
         let txt = "12:34:56 INFO: starting up";
         let qf = scrape_task_errors(txt);
-        assert!(qf.is_empty(), "log timestamp wrongly scraped as error: {:?}", qf);
+        assert!(
+            qf.is_empty(),
+            "log timestamp wrongly scraped as error: {:?}",
+            qf
+        );
     }
 
     #[test]
@@ -495,6 +514,9 @@ src/baz.rs:1:1: error: c";
             args: vec![],
             description: None,
         };
-        assert!(!t.is_long_running(), "'developer-mode' shouldn't trip the dev heuristic");
+        assert!(
+            !t.is_long_running(),
+            "'developer-mode' shouldn't trip the dev heuristic"
+        );
     }
 }

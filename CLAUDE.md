@@ -14,7 +14,7 @@ cargo run -- path/to/file      # debug-build run; `binvim [path]` once installed
 
 The user's `binvim` shell alias points at `target/release/binvim`, so any change you want them to exercise interactively needs a fresh `cargo build --release` — debug-build behaviour will not be picked up by their alias. Mention this in the hand-off if you've only built debug.
 
-There is no `cargo fmt` / `clippy` configuration enforced in CI (no CI exists). Run them locally if you want, but they're not gating.
+CI runs `cargo test`, `cargo clippy` (warnings allowed for now), and `cargo fmt --check`. The fmt gate is configured by `rustfmt.toml` at the repo root: `max_width = 100` + `single_line_let_else_max_width = 100` to preserve compact `let Some(x) = … else { return; };` and single-line method chains. Run `cargo fmt` before pushing — anything that doesn't fit the config will fail CI.
 
 ## Architecture
 

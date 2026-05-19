@@ -116,11 +116,7 @@ impl super::App {
     /// Mirror Normal-mode `x` across primary + additional cursors —
     /// delete the character under each cursor. Cursors at end-of-line
     /// (no char under them) are skipped.
-    pub(super) fn try_multi_delete_char(
-        &mut self,
-        count: usize,
-        register: Option<char>,
-    ) -> bool {
+    pub(super) fn try_multi_delete_char(&mut self, count: usize, register: Option<char>) -> bool {
         if self.additional_cursors.is_empty() {
             return false;
         }
@@ -234,7 +230,11 @@ fn cursor_at_idx(buffer: &Buffer, idx: usize) -> Cursor {
     let line = buffer.rope.char_to_line(idx);
     let line_start = buffer.rope.line_to_char(line);
     let col = idx - line_start;
-    Cursor { line, col, want_col: col }
+    Cursor {
+        line,
+        col,
+        want_col: col,
+    }
 }
 
 /// Stateless variant of `App::run_motion` covering the motions the
@@ -280,7 +280,11 @@ fn range_from_motion_at(buffer: &Buffer, from: Cursor, m: MotionResult) -> (usiz
         let prev = to.line - 1;
         let len = buffer.line_len(prev);
         let col = if len == 0 { 0 } else { len - 1 };
-        to = Cursor { line: prev, col, want_col: col };
+        to = Cursor {
+            line: prev,
+            col,
+            want_col: col,
+        };
         kind = MotionKind::CharInclusive;
     }
     match kind {

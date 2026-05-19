@@ -367,7 +367,9 @@ fn strip_trailing_duration(s: &str) -> &str {
     if let Some(idx) = trimmed.rfind(' ') {
         let tail = &trimmed[idx + 1..];
         if tail.ends_with("ms") || tail.ends_with('s') {
-            let stem = &tail[..tail.len().saturating_sub(if tail.ends_with("ms") { 2 } else { 1 })];
+            let stem = &tail[..tail
+                .len()
+                .saturating_sub(if tail.ends_with("ms") { 2 } else { 1 })];
             if !stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit() || c == '.') {
                 return trimmed[..idx].trim_end();
             }
@@ -421,11 +423,7 @@ fn parse_summary(s: &str) -> Option<TestSummary> {
             saw_any = true;
         }
     }
-    if saw_any {
-        Some(summary)
-    } else {
-        None
-    }
+    if saw_any { Some(summary) } else { None }
 }
 
 #[cfg(test)]
@@ -448,11 +446,22 @@ mod tests {
         let events = parse_lines(&[" ✓ utils.test.ts > slugify > lowercases and dashes spaces"]);
         let cases: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Passed, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Passed,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(cases.len(), 1);
         if let TestEvent::Case { name, .. } = cases[0] {
-            assert_eq!(name, "utils.test.ts > slugify > lowercases and dashes spaces");
+            assert_eq!(
+                name,
+                "utils.test.ts > slugify > lowercases and dashes spaces"
+            );
         }
     }
 
@@ -471,10 +480,24 @@ mod tests {
         ]);
         let decorated: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Failed, location: Some(_), .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Failed,
+                        location: Some(_),
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(decorated.len(), 1);
-        if let TestEvent::Case { location: Some(loc), message, .. } = decorated[0] {
+        if let TestEvent::Case {
+            location: Some(loc),
+            message,
+            ..
+        } = decorated[0]
+        {
             assert_eq!(loc.path, PathBuf::from("utils.test.ts"));
             assert_eq!(loc.line, 14);
             assert_eq!(loc.col, 5);
@@ -603,7 +626,11 @@ utils.test.ts > slugify > strips punctuation
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();
-        let t_idx = cmd.args.iter().position(|a| a == "-t").expect("expected -t flag");
+        let t_idx = cmd
+            .args
+            .iter()
+            .position(|a| a == "-t")
+            .expect("expected -t flag");
         assert_eq!(cmd.args[t_idx + 1], "lowercases and dashes spaces");
     }
 

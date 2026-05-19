@@ -34,7 +34,6 @@ mod health;
 mod input;
 mod lazygit_glue;
 mod lsp_glue;
-mod task_glue;
 mod multi_cursor;
 mod pair;
 mod picker_glue;
@@ -46,6 +45,7 @@ mod search;
 mod side_terminal_glue;
 mod spell_glue;
 pub(crate) mod state;
+mod task_glue;
 mod terminal_glue;
 mod test_glue;
 mod view;
@@ -53,10 +53,10 @@ mod visual;
 mod windows;
 
 pub use health::{DiagnosticsCounts, HealthSnapshot};
-pub use side_terminal_glue::{side_terminal_loading, SideTerminal, TerminalFocus};
+pub use side_terminal_glue::{SideTerminal, TerminalFocus, side_terminal_loading};
 pub use state::{
-    BufferStash, CompletionState, FindRecord, FoldRange, HoverCodeBlock, HoverLine, HoverState,
-    LastEdit, Register, WhichKeyState, YankHighlight, HOVER_MAX_HEIGHT,
+    BufferStash, CompletionState, FindRecord, FoldRange, HOVER_MAX_HEIGHT, HoverCodeBlock,
+    HoverLine, HoverState, LastEdit, Register, WhichKeyState, YankHighlight,
 };
 
 use state::WHICHKEY_DELAY;
@@ -926,8 +926,7 @@ impl App {
         // open_buffer path that ordinarily surfaces this hint, so fire
         // it here before lsp_attach_active short-circuits silently.
         if self.buffer.is_large() {
-            self.status_msg =
-                "large file — tree-sitter + LSP disabled".into();
+            self.status_msg = "large file — tree-sitter + LSP disabled".into();
         }
         self.lsp_attach_active();
         self.refresh_editorconfig();
@@ -1242,11 +1241,9 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enable() -> Result<Self> {
         use crossterm::{
-            event::{
-                EnableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
-            },
+            event::{EnableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
             execute,
-            terminal::{enable_raw_mode, EnterAlternateScreen},
+            terminal::{EnterAlternateScreen, enable_raw_mode},
         };
         enable_raw_mode()?;
         let mut stdout = io::stdout();
@@ -1269,7 +1266,7 @@ impl Drop for TerminalGuard {
             cursor::{SetCursorStyle, Show},
             event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
             execute,
-            terminal::{disable_raw_mode, LeaveAlternateScreen},
+            terminal::{LeaveAlternateScreen, disable_raw_mode},
         };
         let mut stdout = io::stdout();
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);

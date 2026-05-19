@@ -150,7 +150,9 @@ pub fn hash_text(text: &str) -> u64 {
 /// target path can't be canonicalised.
 pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
     let home = std::env::var("HOME").ok()?;
-    let canon = target.canonicalize().unwrap_or_else(|_| target.to_path_buf());
+    let canon = target
+        .canonicalize()
+        .unwrap_or_else(|_| target.to_path_buf());
     let mut h = std::collections::hash_map::DefaultHasher::new();
     canon.to_string_lossy().hash(&mut h);
     let id = format!("{:016x}", h.finish());

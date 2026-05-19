@@ -75,7 +75,9 @@ impl super::App {
         match kind {
             VisualKind::Char => {
                 let a = self.buffer.pos_to_char(anchor.line, anchor.col);
-                let c = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                let c = self
+                    .buffer
+                    .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                 let (lo, hi) = if a <= c { (a, c) } else { (c, a) };
                 let total = self.buffer.total_chars();
                 (lo, (hi + 1).min(total), false)
@@ -97,7 +99,9 @@ impl super::App {
                 // anchor-to-cursor char range so it does *something* rather
                 // than crashing.
                 let a = self.buffer.pos_to_char(anchor.line, anchor.col);
-                let c = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                let c = self
+                    .buffer
+                    .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                 let (lo, hi) = if a <= c { (a, c) } else { (c, a) };
                 let total = self.buffer.total_chars();
                 (lo, (hi + 1).min(total), false)
@@ -379,7 +383,8 @@ impl super::App {
             let end = (c2 + 1).min(line_len);
             if end > start {
                 let line_start = self.buffer.line_start_idx(line);
-                self.buffer.delete_range(line_start + start, line_start + end);
+                self.buffer
+                    .delete_range(line_start + start, line_start + end);
             }
         }
         // Insert the register text once at the corner.

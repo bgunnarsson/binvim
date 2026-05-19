@@ -6,6 +6,25 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-19
+
+### Added
+- **CI: `cargo fmt --check` gate.** New `rustfmt.toml` at the
+  repo root pins the style policy — `max_width = 100` +
+  `single_line_let_else_max_width = 100` so the compact
+  `let Some(x) = … else { return; };` and single-line method
+  chains binvim leans on survive the formatter. The tree was
+  normalised once with `cargo fmt` (73 files, ~5k line edits,
+  no behaviour change); the CI job keeps it that way going
+  forward. Run `cargo fmt` before pushing or the gate fails.
+
+### Changed
+- Tree-wide `cargo fmt` pass under the new `rustfmt.toml`.
+  Mostly: rustfmt collapsing multi-line method chains that fit
+  on one line, expanding a handful of long-lined `if/else`
+  blocks into block form, and re-ordering `use {json, Value}`
+  imports alphabetically. No behaviour change.
+
 ## [0.4.3] - 2026-05-19
 
 ### Added

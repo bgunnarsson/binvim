@@ -54,8 +54,8 @@ impl Buffer {
 
     pub fn from_path(path: PathBuf) -> Result<Self> {
         if path.exists() {
-            let mut file = File::open(&path)
-                .with_context(|| format!("opening {}", path.display()))?;
+            let mut file =
+                File::open(&path).with_context(|| format!("opening {}", path.display()))?;
             let mtime = file.metadata().ok().and_then(|m| m.modified().ok());
             // Normalize CRLF → LF on load. ropey preserves bytes verbatim, so a
             // stray `\r` left in a line would reach the renderer and reset the
@@ -87,9 +87,11 @@ impl Buffer {
     }
 
     pub fn save(&mut self) -> Result<()> {
-        let path = self.path.as_ref().context("no file path set (use :w {filename})")?;
-        let file = File::create(path)
-            .with_context(|| format!("creating {}", path.display()))?;
+        let path = self
+            .path
+            .as_ref()
+            .context("no file path set (use :w {filename})")?;
+        let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
         self.rope
             .write_to(BufWriter::new(file))
             .with_context(|| format!("writing {}", path.display()))?;
@@ -193,8 +195,7 @@ impl Buffer {
     /// attach, render hot paths) bail early when this returns true so
     /// the editor stays responsive on huge files.
     pub fn is_large(&self) -> bool {
-        self.rope.len_bytes() > LARGE_FILE_BYTES
-            || self.rope.len_lines() > LARGE_FILE_LINES
+        self.rope.len_bytes() > LARGE_FILE_BYTES || self.rope.len_lines() > LARGE_FILE_LINES
     }
 }
 

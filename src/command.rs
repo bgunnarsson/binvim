@@ -9,7 +9,9 @@ pub enum ExCommand {
     Goto(usize),
     BufferNext,
     BufferPrev,
-    BufferDelete { force: bool },
+    BufferDelete {
+        force: bool,
+    },
     BufferList,
     BufferSwitch(String),
     Substitute {
@@ -30,8 +32,12 @@ pub enum ExCommand {
         global: bool,
         regex: bool,
     },
-    DeleteRange { range: ExRange },
-    YankRange { range: ExRange },
+    DeleteRange {
+        range: ExRange,
+    },
+    YankRange {
+        range: ExRange,
+    },
     NoHighlight,
     Format,
     Health,
@@ -351,9 +357,7 @@ pub fn parse(line: &str) -> ExCommand {
                 ExCommand::DebugWatch(DebugWatchCmd::Remove(None))
             } else {
                 match rest.parse::<usize>() {
-                    Ok(n) if n >= 1 => {
-                        ExCommand::DebugWatch(DebugWatchCmd::Remove(Some(n)))
-                    }
+                    Ok(n) if n >= 1 => ExCommand::DebugWatch(DebugWatchCmd::Remove(Some(n))),
                     _ => ExCommand::Unknown(format!(
                         "dapunwatch: expected positive integer or 'all', got `{rest}`"
                     )),
@@ -412,11 +416,19 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
     };
     match head {
         "if" | "cond" | "condition" => {
-            let expr = if tail.is_empty() { None } else { Some(tail.to_string()) };
+            let expr = if tail.is_empty() {
+                None
+            } else {
+                Some(tail.to_string())
+            };
             ExCommand::Debug(DebugSubCmd::BreakCondition(expr))
         }
         "hit" | "hitcount" => {
-            let expr = if tail.is_empty() { None } else { Some(tail.to_string()) };
+            let expr = if tail.is_empty() {
+                None
+            } else {
+                Some(tail.to_string())
+            };
             ExCommand::Debug(DebugSubCmd::BreakHitCondition(expr))
         }
         "plain" | "clear" => ExCommand::Debug(DebugSubCmd::BreakPlain),

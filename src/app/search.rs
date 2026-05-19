@@ -23,7 +23,9 @@ impl super::App {
         };
         self.last_search = Some((word.clone(), backward));
         self.search_hl_off = false;
-        let cur_idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let cur_idx = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let total = self.buffer.total_chars();
         let from = if backward {
             cur_idx.saturating_sub(1)
@@ -98,7 +100,9 @@ impl super::App {
                 2
             }
         };
-        let here = self.buffer.char_at(self.window.cursor.line, self.window.cursor.col)?;
+        let here = self
+            .buffer
+            .char_at(self.window.cursor.line, self.window.cursor.col)?;
         let here_class = cls(here);
         if here_class == 0 {
             return None;
@@ -174,27 +178,49 @@ impl super::App {
 
     pub(super) fn run_search_next(&self, reverse: bool, _count: usize) -> MotionResult {
         let Some((query, was_backward)) = self.last_search.clone() else {
-            return MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive };
+            return MotionResult {
+                target: self.window.cursor,
+                kind: MotionKind::CharExclusive,
+            };
         };
         // n continues original direction; N reverses it.
         let forward = if reverse { was_backward } else { !was_backward };
         let total = self.buffer.total_chars();
-        let cur_idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        let from = if forward { (cur_idx + 1).min(total) } else { cur_idx.saturating_sub(1) };
+        let cur_idx = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let from = if forward {
+            (cur_idx + 1).min(total)
+        } else {
+            cur_idx.saturating_sub(1)
+        };
         match self.search(&query, from, forward, true) {
             Some(idx) => {
                 let line = self.buffer.rope.char_to_line(idx);
                 let col = idx - self.buffer.rope.line_to_char(line);
                 MotionResult {
-                    target: Cursor { line, col, want_col: col },
+                    target: Cursor {
+                        line,
+                        col,
+                        want_col: col,
+                    },
                     kind: MotionKind::CharExclusive,
                 }
             }
-            None => MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive },
+            None => MotionResult {
+                target: self.window.cursor,
+                kind: MotionKind::CharExclusive,
+            },
         }
     }
 
-    pub(super) fn search(&self, query: &str, from_char: usize, forward: bool, wrap: bool) -> Option<usize> {
+    pub(super) fn search(
+        &self,
+        query: &str,
+        from_char: usize,
+        forward: bool,
+        wrap: bool,
+    ) -> Option<usize> {
         if query.is_empty() {
             return None;
         }
@@ -282,7 +308,9 @@ impl super::App {
         };
         self.last_search = Some((q.clone(), backward));
         self.search_hl_off = false;
-        let cur_idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        let cur_idx = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
         let forward = !backward;
         match self.search(&q, cur_idx, forward, true) {
             Some(idx) => {

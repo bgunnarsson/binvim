@@ -120,7 +120,10 @@ impl SessionKey {
             KeyCode::Up => SessionKeyCode::Up,
             _ => return None,
         };
-        Some(SessionKey { code, mods: k.modifiers.bits() })
+        Some(SessionKey {
+            code,
+            mods: k.modifiers.bits(),
+        })
     }
 
     pub fn to_event(&self) -> KeyEvent {

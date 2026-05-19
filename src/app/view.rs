@@ -19,10 +19,22 @@ impl super::App {
         let Some(h) = self.hover.as_mut() else { return false };
         let visible = HOVER_MAX_HEIGHT;
         match key.code {
-            KeyCode::Down => { h.scroll_by(1, visible); true }
-            KeyCode::Up => { h.scroll_by(-1, visible); true }
-            KeyCode::PageDown => { h.scroll_by(visible as i64, visible); true }
-            KeyCode::PageUp => { h.scroll_by(-(visible as i64), visible); true }
+            KeyCode::Down => {
+                h.scroll_by(1, visible);
+                true
+            }
+            KeyCode::Up => {
+                h.scroll_by(-1, visible);
+                true
+            }
+            KeyCode::PageDown => {
+                h.scroll_by(visible as i64, visible);
+                true
+            }
+            KeyCode::PageUp => {
+                h.scroll_by(-(visible as i64), visible);
+                true
+            }
             KeyCode::Char('j') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 h.scroll_by(1, visible);
                 true
@@ -32,10 +44,22 @@ impl super::App {
                 true
             }
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => match c {
-                'd' | 'D' => { h.scroll_by((visible / 2) as i64, visible); true }
-                'u' | 'U' => { h.scroll_by(-((visible / 2) as i64), visible); true }
-                'n' | 'N' => { h.scroll_by(1, visible); true }
-                'p' | 'P' => { h.scroll_by(-1, visible); true }
+                'd' | 'D' => {
+                    h.scroll_by((visible / 2) as i64, visible);
+                    true
+                }
+                'u' | 'U' => {
+                    h.scroll_by(-((visible / 2) as i64), visible);
+                    true
+                }
+                'n' | 'N' => {
+                    h.scroll_by(1, visible);
+                    true
+                }
+                'p' | 'P' => {
+                    h.scroll_by(-1, visible);
+                    true
+                }
                 _ => false,
             },
             _ => false,
@@ -100,7 +124,9 @@ impl super::App {
         let buffer_cols = pane_w.saturating_sub(self.gutter_width());
         match kind {
             ViewportAdjust::Top if rows > 0 => self.window.view_top = cur,
-            ViewportAdjust::Center if rows > 0 => self.window.view_top = cur.saturating_sub(rows / 2),
+            ViewportAdjust::Center if rows > 0 => {
+                self.window.view_top = cur.saturating_sub(rows / 2)
+            }
             ViewportAdjust::Bottom if rows > 0 => {
                 self.window.view_top = cur.saturating_sub(rows.saturating_sub(1))
             }
@@ -351,8 +377,7 @@ impl super::App {
         matches!(
             self.mode,
             Mode::Command | Mode::Search { .. } | Mode::Picker | Mode::Prompt(_)
-        )
-            || self.hover.is_some()
+        ) || self.hover.is_some()
             || self.picker.is_some()
             || self.whichkey.is_some()
     }
@@ -614,7 +639,9 @@ impl super::App {
                     self.closed_folds.insert(f.start_line);
                     // Snap cursor to the fold's start so it's never on a
                     // hidden row.
-                    if self.window.cursor.line > f.start_line && self.window.cursor.line <= f.end_line {
+                    if self.window.cursor.line > f.start_line
+                        && self.window.cursor.line <= f.end_line
+                    {
                         self.window.cursor.line = f.start_line;
                         self.clamp_cursor_normal();
                     }
@@ -625,7 +652,9 @@ impl super::App {
                     self.closed_folds.remove(&f.start_line);
                 } else if let Some(f) = self.innermost_open_fold_at(self.window.cursor.line) {
                     self.closed_folds.insert(f.start_line);
-                    if self.window.cursor.line > f.start_line && self.window.cursor.line <= f.end_line {
+                    if self.window.cursor.line > f.start_line
+                        && self.window.cursor.line <= f.end_line
+                    {
                         self.window.cursor.line = f.start_line;
                         self.clamp_cursor_normal();
                     }
@@ -693,7 +722,10 @@ impl super::App {
         let Some(path) = self.buffer.path.as_deref() else {
             return false;
         };
-        matches!(crate::lang::Lang::detect(path), Some(crate::lang::Lang::Markdown))
+        matches!(
+            crate::lang::Lang::detect(path),
+            Some(crate::lang::Lang::Markdown)
+        )
     }
 
     /// Read-only lookup of the cached per-line meta. Returns `None`
@@ -769,7 +801,8 @@ impl super::App {
     /// from the viewport top. Delegates to `BufferState` so inactive
     /// panes can count rows against their own buffer's folds.
     pub fn visible_rows_between(&self, from: usize, to: usize) -> usize {
-        self.buffer_state(self.active).visible_rows_between(from, to)
+        self.buffer_state(self.active)
+            .visible_rows_between(from, to)
     }
 
     /// True when the active buffer's line at `line` has at least one
@@ -779,8 +812,12 @@ impl super::App {
         if !self.config.lsp.code_lens {
             return false;
         }
-        let Some(path) = self.buffer.path.as_ref() else { return false; };
-        let Some(cache) = self.code_lens.get(path) else { return false; };
+        let Some(path) = self.buffer.path.as_ref() else {
+            return false;
+        };
+        let Some(cache) = self.code_lens.get(path) else {
+            return false;
+        };
         // Intentionally not gated on `cache.buffer_version` — see the
         // matching comment in `buffer_state`. Keeping the answer stable
         // across the LSP debounce keeps `visible_rows_between` stable
@@ -878,11 +915,7 @@ impl super::App {
             self.highlight_cache = None;
             return;
         }
-        let lang = self
-            .buffer
-            .path
-            .as_deref()
-            .and_then(lang::Lang::detect);
+        let lang = self.buffer.path.as_deref().and_then(lang::Lang::detect);
         let need_refresh = match (&self.highlight_cache, lang) {
             (None, Some(_)) => true,
             (Some(c), Some(l)) => c.lang != l || c.buffer_version != self.buffer.version,

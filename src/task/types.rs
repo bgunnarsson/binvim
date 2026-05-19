@@ -55,10 +55,12 @@ impl Task {
     /// always close the extra tab.
     pub fn is_long_running(&self) -> bool {
         let label = self.label.to_ascii_lowercase();
-        const HINTS: &[&str] = &[
-            "dev", "watch", "serve", "start", "preview",
-        ];
-        HINTS.iter().any(|h| label.split(|c: char| !c.is_ascii_alphanumeric()).any(|tok| tok == *h))
+        const HINTS: &[&str] = &["dev", "watch", "serve", "start", "preview"];
+        HINTS.iter().any(|h| {
+            label
+                .split(|c: char| !c.is_ascii_alphanumeric())
+                .any(|tok| tok == *h)
+        })
     }
 }
 

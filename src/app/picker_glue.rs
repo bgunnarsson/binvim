@@ -42,9 +42,7 @@ impl super::App {
                 }
                 PickerState::new(PickerKind::Recents, "Recents".into(), items)
             }
-            PickerLeader::Grep => {
-                PickerState::new(PickerKind::Grep, "Grep".into(), Vec::new())
-            }
+            PickerLeader::Grep => PickerState::new(PickerKind::Grep, "Grep".into(), Vec::new()),
             PickerLeader::Buffers => {
                 let mut items: Vec<(String, PickerPayload)> = Vec::new();
                 for (i, stash) in self.buffers.iter().enumerate() {
@@ -223,11 +221,15 @@ impl super::App {
             KeyCode::Down => picker.move_down(),
             KeyCode::PageUp => {
                 let page = crate::render::picker_visible_rows(self).max(1) as i64;
-                if let Some(p) = self.picker.as_mut() { p.move_by(-page); }
+                if let Some(p) = self.picker.as_mut() {
+                    p.move_by(-page);
+                }
             }
             KeyCode::PageDown => {
                 let page = crate::render::picker_visible_rows(self).max(1) as i64;
-                if let Some(p) = self.picker.as_mut() { p.move_by(page); }
+                if let Some(p) = self.picker.as_mut() {
+                    p.move_by(page);
+                }
             }
             KeyCode::Home => picker.move_by(i64::MIN / 2),
             KeyCode::End => picker.move_by(i64::MAX / 2),
@@ -236,11 +238,15 @@ impl super::App {
                 'k' => picker.move_up(),
                 'd' | 'D' => {
                     let half = (crate::render::picker_visible_rows(self) / 2).max(1) as i64;
-                    if let Some(p) = self.picker.as_mut() { p.move_by(half); }
+                    if let Some(p) = self.picker.as_mut() {
+                        p.move_by(half);
+                    }
                 }
                 'u' | 'U' => {
                     let half = (crate::render::picker_visible_rows(self) / 2).max(1) as i64;
-                    if let Some(p) = self.picker.as_mut() { p.move_by(-half); }
+                    if let Some(p) = self.picker.as_mut() {
+                        p.move_by(-half);
+                    }
                 }
                 'g' => picker.move_by(i64::MIN / 2),
                 'G' => picker.move_by(i64::MAX / 2),
@@ -255,7 +261,9 @@ impl super::App {
     }
 
     fn refilter_picker(&mut self) {
-        let Some(picker) = self.picker.as_mut() else { return; };
+        let Some(picker) = self.picker.as_mut() else {
+            return;
+        };
         match picker.kind {
             PickerKind::Files
             | PickerKind::Recents
@@ -297,7 +305,9 @@ impl super::App {
                 PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
             },
             execute,
-            terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+            terminal::{
+                EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+            },
         };
         use std::process::Command;
 
@@ -309,8 +319,7 @@ impl super::App {
             .filter(|p| p.is_dir())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        let chooser = std::env::temp_dir()
-            .join(format!("binvim-yazi-{}.txt", std::process::id()));
+        let chooser = std::env::temp_dir().join(format!("binvim-yazi-{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&chooser);
 
         let mut stdout = io::stdout();

@@ -141,10 +141,16 @@ impl super::App {
     /// health scratch slot. Used by status messages.
     fn buffer_label_for(&self, idx: usize) -> Option<String> {
         let (path, display) = if idx == self.active {
-            (self.buffer.path.as_deref(), self.buffer.display_name.as_deref())
+            (
+                self.buffer.path.as_deref(),
+                self.buffer.display_name.as_deref(),
+            )
         } else {
             let stash = self.buffers.get(idx)?;
-            (stash.buffer.path.as_deref(), stash.buffer.display_name.as_deref())
+            (
+                stash.buffer.path.as_deref(),
+                stash.buffer.display_name.as_deref(),
+            )
         };
         path.and_then(|p| p.file_name())
             .and_then(|s| s.to_str())

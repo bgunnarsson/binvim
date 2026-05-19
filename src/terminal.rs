@@ -25,9 +25,9 @@
 
 use anyhow::{Context, Result};
 use crossterm::style::Color;
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use unicode_width::UnicodeWidthChar;
@@ -474,10 +474,7 @@ impl VteHandler {
 ///     `\e[38:2:R:G:B;24m` to set an RGB fg and then turn off
 ///     underline, and the old impl swallowed the `24` looking for
 ///     a non-existent colour-spec word.
-fn parse_extended_colour(
-    param: &[u16],
-    iter: &mut vte::ParamsIter<'_>,
-) -> Option<Color> {
+fn parse_extended_colour(param: &[u16], iter: &mut vte::ParamsIter<'_>) -> Option<Color> {
     // Colon form: the sub-params are sub-values of `param`.
     // param[0] is the leading 38/48; param[1] is `kind`; the rest
     // is channel data. Detect this when the leading word came with
@@ -500,9 +497,17 @@ fn parse_extended_colour(
                 // same colour.
                 let len = param.len();
                 let (r, g, b) = if len >= 6 {
-                    (*param.get(3)? as u8, *param.get(4)? as u8, *param.get(5)? as u8)
+                    (
+                        *param.get(3)? as u8,
+                        *param.get(4)? as u8,
+                        *param.get(5)? as u8,
+                    )
                 } else {
-                    (*param.get(2)? as u8, *param.get(3)? as u8, *param.get(4)? as u8)
+                    (
+                        *param.get(2)? as u8,
+                        *param.get(3)? as u8,
+                        *param.get(4)? as u8,
+                    )
                 };
                 Some(Color::Rgb { r, g, b })
             }
@@ -720,7 +725,7 @@ impl Perform for VteHandler {
 
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
         match byte {
-            b'D' => self.line_feed(),    // IND
+            b'D' => self.line_feed(), // IND
             b'M' => {
                 // RI — Reverse Index. Move cursor up; if at top,
                 // scroll down (we don't implement scroll-down so
@@ -926,10 +931,7 @@ impl Terminal {
             .master
             .try_clone_reader()
             .context("try_clone_reader failed")?;
-        let writer = pair
-            .master
-            .take_writer()
-            .context("take_writer failed")?;
+        let writer = pair.master.take_writer().context("take_writer failed")?;
 
         let (tx, rx) = channel::<Vec<u8>>();
         spawn_reader(reader, tx);
@@ -1027,7 +1029,6 @@ impl Drop for Terminal {
 }
 
 impl Terminal {
-
     /// Forward `bytes` to the PTY master — i.e. into the child's
     /// stdin. Used to wire user keystrokes through to the shell.
     pub fn write_bytes(&self, bytes: &[u8]) -> Result<()> {
@@ -1259,11 +1260,7 @@ mod tests {
         // exactly as it was on entry. This is the contract vim,
         // htop, claude, etc. depend on — without it, every TUI
         // close would smear its last frame over the user's shell.
-        let h = parse_bytes(
-            b"hello\x1b[?1049h\x1b[2J\x1b[Halt\x1b[?1049l",
-            3,
-            10,
-        );
+        let h = parse_bytes(b"hello\x1b[?1049h\x1b[2J\x1b[Halt\x1b[?1049l", 3, 10);
         assert_eq!(line_text(&h.grid, 0), "hello");
         assert!(!h.alt_screen_active());
     }
@@ -1315,7 +1312,11 @@ mod tests {
         let h = parse_bytes(b"\x1b[38;2;255;128;0mX", 1, 3);
         assert_eq!(
             h.grid.cells[0][0].fg,
-            Some(Color::Rgb { r: 255, g: 128, b: 0 })
+            Some(Color::Rgb {
+                r: 255,
+                g: 128,
+                b: 0
+            })
         );
     }
 
@@ -1328,7 +1329,11 @@ mod tests {
         let h = parse_bytes(b"\x1b[38:2:255:128:0mX", 1, 3);
         assert_eq!(
             h.grid.cells[0][0].fg,
-            Some(Color::Rgb { r: 255, g: 128, b: 0 })
+            Some(Color::Rgb {
+                r: 255,
+                g: 128,
+                b: 0
+            })
         );
     }
 
@@ -1343,7 +1348,11 @@ mod tests {
         let h = parse_bytes(b"\x1b[4m\x1b[38:2:100:150:200;24mX", 1, 3);
         assert_eq!(
             h.grid.cells[0][0].fg,
-            Some(Color::Rgb { r: 100, g: 150, b: 200 })
+            Some(Color::Rgb {
+                r: 100,
+                g: 150,
+                b: 200
+            })
         );
         assert!(!h.grid.cells[0][0].underline);
     }
@@ -1374,8 +1383,7 @@ mod tests {
         assert_eq!(h.grid.cells[0][0].ch, 'a');
         assert_eq!(h.grid.cells[0][1].ch, '⚡');
         assert_eq!(
-            h.grid.cells[0][2].ch,
-            '\0',
+            h.grid.cells[0][2].ch, '\0',
             "wide-char continuation cell should be marked"
         );
         assert_eq!(h.grid.cells[0][3].ch, 'b');
@@ -1413,10 +1421,7 @@ mod tests {
         // modes. `CSI ? 1000 l` disables one. Bare `CSI ? 25 h`
         // (cursor visibility) is unrelated and shouldn't perturb
         // mouse state.
-        let h = parse_bytes(
-            b"\x1b[?1006h\x1b[?1000h\x1b[?25h\x1b[?1000l",
-            4, 10,
-        );
+        let h = parse_bytes(b"\x1b[?1006h\x1b[?1000h\x1b[?25h\x1b[?1000l", 4, 10);
         assert!(h.mouse_sgr, "SGR mode should still be on");
         assert!(!h.mouse_button_mode, "1000 should have been disabled");
         assert!(!h.mouse_drag_mode);

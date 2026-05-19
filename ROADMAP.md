@@ -346,10 +346,13 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       runs `cargo test --locked` and `cargo clippy --locked --all-targets`
       on every push to main and every PR. Concurrent runs cancel on rapid
       pushes to the same ref.
-- [ ] **CI: `cargo fmt --check`.** Cheap on paper, but the codebase has
-      hand-rolled formatting (compact let-else, single-line method chains)
-      that stock rustfmt rewrites in ~560 places. Needs a conscious
-      style-policy decision before turning the gate on. **considering**
+- [x] **CI: `cargo fmt --check`.** Shipped. `rustfmt.toml` at the repo root pins
+      `max_width = 100` + `single_line_let_else_max_width = 100` so the compact
+      `let Some(x) = … else { return; };` and single-line method chains the codebase
+      relies on survive the formatter. The 0.4.4 cut ran `cargo fmt` once to normalise
+      the tree (73 files, ~5k line edits, no behaviour change); the new `fmt` job in
+      `ci.yml` keeps it that way going forward. Style policy decision was: preserve
+      what the config can preserve, accept everything else as a one-shot diff.
 - [x] **Crash-handler.** `panic::set_hook` installed before any terminal-
       touching code: best-effort restores the terminal (disables raw mode,
       leaves alt screen, shows cursor, drops kitty keyboard flags) and

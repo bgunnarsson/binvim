@@ -53,10 +53,7 @@ fn dispatch(msg: Value, tx: &Sender<DapIncoming>) {
             let _ = tx.send(DapIncoming::Event { event, body });
         }
         "response" => {
-            let request_seq = msg
-                .get("request_seq")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
+            let request_seq = msg.get("request_seq").and_then(|v| v.as_u64()).unwrap_or(0);
             let command = msg
                 .get("command")
                 .and_then(|v| v.as_str())

@@ -291,7 +291,10 @@ fn strip_progress_tag(line: &str) -> &str {
     let Some(open) = trimmed.rfind('[') else { return trimmed };
     let between = &trimmed[open + 1..trimmed.len() - 1];
     if between.ends_with('%')
-        && between[..between.len() - 1].trim().chars().all(|c| c.is_ascii_digit() || c == ' ')
+        && between[..between.len() - 1]
+            .trim()
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == ' ')
     {
         trimmed[..open].trim_end()
     } else {
@@ -387,10 +390,20 @@ mod tests {
 
     #[test]
     fn pass_line_emits_case_event() {
-        let events = parse_lines(&["tests/test_foo.py::test_bar PASSED                                    [ 50%]"]);
+        let events = parse_lines(&[
+            "tests/test_foo.py::test_bar PASSED                                    [ 50%]",
+        ]);
         let cases: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Passed, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Passed,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(cases.len(), 1);
         if let TestEvent::Case { name, .. } = cases[0] {
@@ -409,10 +422,24 @@ mod tests {
         ]);
         let decorated: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Failed, location: Some(_), .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Failed,
+                        location: Some(_),
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(decorated.len(), 1);
-        if let TestEvent::Case { location: Some(loc), message, .. } = decorated[0] {
+        if let TestEvent::Case {
+            location: Some(loc),
+            message,
+            ..
+        } = decorated[0]
+        {
             assert_eq!(loc.path, PathBuf::from("tests/test_foo.py"));
             assert_eq!(loc.line, 14);
             assert!(message.as_deref().unwrap_or("").contains("AssertionError"));
@@ -423,9 +450,7 @@ mod tests {
 
     #[test]
     fn summary_line_aggregated_into_finished() {
-        let events = parse_lines(&[
-            "==== 1 failed, 15 passed, 1 skipped in 0.42s ====",
-        ]);
+        let events = parse_lines(&["==== 1 failed, 15 passed, 1 skipped in 0.42s ===="]);
         match events.last().unwrap() {
             TestEvent::Finished { summary } => {
                 assert_eq!(summary.failed, 1);
@@ -519,7 +544,11 @@ tests/test_b.py::TestClass::test_method
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();
-        let k_idx = cmd.args.iter().position(|a| a == "-k").expect("expected -k flag");
+        let k_idx = cmd
+            .args
+            .iter()
+            .position(|a| a == "-k")
+            .expect("expected -k flag");
         assert_eq!(cmd.args[k_idx + 1], "test_slugify");
     }
 

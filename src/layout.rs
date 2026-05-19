@@ -185,12 +185,7 @@ impl Layout {
     /// algorithm: find `focus`'s rect, find the candidate rect that
     /// shares the most overlap along the perpendicular axis on the
     /// requested side, and return its id.
-    pub fn focus_neighbor(
-        &self,
-        focus: WindowId,
-        dir: FocusDir,
-        rect: Rect,
-    ) -> Option<WindowId> {
+    pub fn focus_neighbor(&self, focus: WindowId, dir: FocusDir, rect: Rect) -> Option<WindowId> {
         let panes = self.partition(rect);
         let cur = panes.iter().find(|(id, _)| *id == focus)?.1;
         let mut best: Option<(WindowId, u16)> = None;
@@ -292,9 +287,7 @@ impl Layout {
     fn contains(node: &LayoutNode, focus: WindowId) -> bool {
         match node {
             LayoutNode::Leaf(id) => *id == focus,
-            LayoutNode::Split { a, b, .. } => {
-                Self::contains(a, focus) || Self::contains(b, focus)
-            }
+            LayoutNode::Split { a, b, .. } => Self::contains(a, focus) || Self::contains(b, focus),
         }
     }
 
@@ -309,8 +302,18 @@ impl Layout {
                     .min(usable as f32 - 1.0) as u16;
                 let bw = usable.saturating_sub(aw);
                 (
-                    Rect { x: rect.x, y: rect.y, w: aw, h: rect.h },
-                    Rect { x: rect.x + aw + 1, y: rect.y, w: bw, h: rect.h },
+                    Rect {
+                        x: rect.x,
+                        y: rect.y,
+                        w: aw,
+                        h: rect.h,
+                    },
+                    Rect {
+                        x: rect.x + aw + 1,
+                        y: rect.y,
+                        w: bw,
+                        h: rect.h,
+                    },
                 )
             }
             SplitDir::Horizontal => {
@@ -321,8 +324,18 @@ impl Layout {
                     .min(usable as f32 - 1.0) as u16;
                 let bh = usable.saturating_sub(ah);
                 (
-                    Rect { x: rect.x, y: rect.y, w: rect.w, h: ah },
-                    Rect { x: rect.x, y: rect.y + ah + 1, w: rect.w, h: bh },
+                    Rect {
+                        x: rect.x,
+                        y: rect.y,
+                        w: rect.w,
+                        h: ah,
+                    },
+                    Rect {
+                        x: rect.x,
+                        y: rect.y + ah + 1,
+                        w: rect.w,
+                        h: bh,
+                    },
                 )
             }
         }
@@ -542,7 +555,12 @@ mod tests {
         l.split(mid, SplitDir::Vertical, inner_right);
         let area = rect(0, 0, 101, 24);
         // Snapshot outer ratio so we can confirm it didn't move.
-        let LayoutNode::Split { ratio: outer_before, b: outer_b, .. } = &l.root else {
+        let LayoutNode::Split {
+            ratio: outer_before,
+            b: outer_b,
+            ..
+        } = &l.root
+        else {
             panic!("expected split root");
         };
         let outer_before = *outer_before;
@@ -553,7 +571,12 @@ mod tests {
             panic!("expected inner split");
         };
         assert!(l.resize(inner_right, SplitDir::Vertical, 5, area));
-        let LayoutNode::Split { ratio: outer_after, b: outer_b, .. } = &l.root else {
+        let LayoutNode::Split {
+            ratio: outer_after,
+            b: outer_b,
+            ..
+        } = &l.root
+        else {
             unreachable!();
         };
         assert!((outer_after - outer_before).abs() < 1e-6, "outer changed");

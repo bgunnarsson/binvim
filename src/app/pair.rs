@@ -75,7 +75,10 @@ pub fn surround_open_close(ch: char) -> (&'static str, &'static str) {
 }
 
 pub fn is_paired_bracket(ch: char) -> bool {
-    matches!(ch, '(' | ')' | 'b' | '[' | ']' | '{' | '}' | 'B' | '<' | '>')
+    matches!(
+        ch,
+        '(' | ')' | 'b' | '[' | ']' | '{' | '}' | 'B' | '<' | '>'
+    )
 }
 
 /// Map an opening pair character to its closing counterpart, or `None` for
@@ -103,7 +106,11 @@ pub fn is_close_char(c: char) -> bool {
 /// sides are whitespace (so `a < b` comparisons don't sprout a stray `>`).
 /// Brackets always pair.
 pub fn should_auto_pair(c: char, buffer: &Buffer, line: usize, col: usize) -> bool {
-    let prev = if col > 0 { buffer.char_at(line, col - 1) } else { None };
+    let prev = if col > 0 {
+        buffer.char_at(line, col - 1)
+    } else {
+        None
+    };
     let next = buffer.char_at(line, col);
     match c {
         '\'' | '"' | '`' => {

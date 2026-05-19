@@ -119,8 +119,8 @@ impl Lang {
                 // vbproj/props/targets), .NET config files (.config,
                 // app.manifest, *.nuspec, *.resx), and plain .xml.
                 "xml" | "csproj" | "fsproj" | "vbproj" | "props" | "targets" | "config"
-                | "manifest" | "nuspec" | "resx" | "xaml" | "xhtml" | "xsd" | "xsl"
-                | "xslt" | "plist" => return Some(Lang::Xml),
+                | "manifest" | "nuspec" | "resx" | "xaml" | "xhtml" | "xsd" | "xsl" | "xslt"
+                | "plist" => return Some(Lang::Xml),
                 _ => {}
             }
         }
@@ -129,9 +129,17 @@ impl Lang {
         let name = path.file_name().and_then(|s| s.to_str())?;
         if matches!(
             name,
-            ".zshrc" | ".zprofile" | ".zshenv" | ".zlogin" | ".zlogout"
-            | ".bashrc" | ".bash_profile" | ".bash_login" | ".bash_logout"
-            | ".profile" | ".kshrc"
+            ".zshrc"
+                | ".zprofile"
+                | ".zshenv"
+                | ".zlogin"
+                | ".zlogout"
+                | ".bashrc"
+                | ".bash_profile"
+                | ".bash_login"
+                | ".bash_logout"
+                | ".profile"
+                | ".kshrc"
         ) {
             return Some(Lang::Bash);
         }
@@ -686,7 +694,11 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<H
 /// per-byte foreground colour map. Reused by the hover popup for fenced
 /// code blocks where there's no underlying `Buffer`. See `compute_highlights`
 /// for the priority-resolution rationale that this shares.
-pub fn compute_byte_colors(lang: Lang, source: &str, config: &Config) -> Option<Vec<Option<Color>>> {
+pub fn compute_byte_colors(
+    lang: Lang,
+    source: &str,
+    config: &Config,
+) -> Option<Vec<Option<Color>>> {
     let language = lang.ts_language();
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
@@ -775,15 +787,18 @@ fn apply_html_script_style_injections(
         }
         // Identify which tag (if any) starts here.
         let after_lt = i + 1;
-        let (tag_kind, tag_len) =
-            if matches_ascii_ci(source, after_lt, b"script") && tag_terminator_after(source, after_lt + 6) {
-                (InjectionTag::Script, 6)
-            } else if matches_ascii_ci(source, after_lt, b"style") && tag_terminator_after(source, after_lt + 5) {
-                (InjectionTag::Style, 5)
-            } else {
-                i += 1;
-                continue;
-            };
+        let (tag_kind, tag_len) = if matches_ascii_ci(source, after_lt, b"script")
+            && tag_terminator_after(source, after_lt + 6)
+        {
+            (InjectionTag::Script, 6)
+        } else if matches_ascii_ci(source, after_lt, b"style")
+            && tag_terminator_after(source, after_lt + 5)
+        {
+            (InjectionTag::Style, 5)
+        } else {
+            i += 1;
+            continue;
+        };
         let opener_start = i;
         let tag_name_end = after_lt + tag_len;
         // Find end of opening tag (`>`) — also detect self-close (`/>`).
@@ -923,9 +938,7 @@ fn script_type_is_json(source: &[u8], opener_start: usize, opener_end: usize) ->
                 return false;
             }
             p += 1;
-            while p < slice.len()
-                && matches!(slice[p], b' ' | b'\t' | b'\n' | b'\r')
-            {
+            while p < slice.len() && matches!(slice[p], b' ' | b'\t' | b'\n' | b'\r') {
                 p += 1;
             }
             let (quote, body_start) = match slice.get(p) {
@@ -1039,18 +1052,14 @@ fn apply_line_oriented_overlay(
                         let key_end = content_start + eq;
                         // Strip trailing whitespace from key span.
                         let mut k_end = key_end;
-                        while k_end > content_start
-                            && matches!(source[k_end - 1], b' ' | b'\t')
-                        {
+                        while k_end > content_start && matches!(source[k_end - 1], b' ' | b'\t') {
                             k_end -= 1;
                         }
                         paint(colors, content_start..k_end, key_color);
                         paint(colors, key_end..key_end + 1, operator_color);
                         // Skip whitespace after the `=` for the value.
                         let mut val_start = key_end + 1;
-                        while val_start < eol
-                            && matches!(source[val_start], b' ' | b'\t')
-                        {
+                        while val_start < eol && matches!(source[val_start], b' ' | b'\t') {
                             val_start += 1;
                         }
                         paint(colors, val_start..eol, string_color);
@@ -1102,18 +1111,73 @@ fn apply_razor_overlay(source: &[u8], colors: &mut [Option<Color>], config: &Con
     // `static`, …) are included so an entire C# block reads consistently
     // in regions where the grammar gave up.
     const KEYWORDS: &[&[u8]] = &[
-        b"if", b"else", b"for", b"foreach", b"while", b"do",
-        b"try", b"catch", b"finally", b"switch", b"case", b"default",
-        b"return", b"break", b"continue", b"throw", b"new", b"yield",
-        b"var", b"null", b"true", b"false", b"this", b"base",
-        b"public", b"private", b"protected", b"internal",
-        b"static", b"readonly", b"const", b"async", b"await",
-        b"using", b"namespace", b"class", b"interface", b"struct", b"record",
-        b"void", b"int", b"long", b"short", b"byte", b"string",
-        b"bool", b"double", b"float", b"decimal", b"object", b"dynamic",
-        b"override", b"virtual", b"abstract", b"sealed", b"partial",
-        b"is", b"as", b"in", b"out", b"ref", b"params", b"typeof",
-        b"get", b"set", b"add", b"remove",
+        b"if",
+        b"else",
+        b"for",
+        b"foreach",
+        b"while",
+        b"do",
+        b"try",
+        b"catch",
+        b"finally",
+        b"switch",
+        b"case",
+        b"default",
+        b"return",
+        b"break",
+        b"continue",
+        b"throw",
+        b"new",
+        b"yield",
+        b"var",
+        b"null",
+        b"true",
+        b"false",
+        b"this",
+        b"base",
+        b"public",
+        b"private",
+        b"protected",
+        b"internal",
+        b"static",
+        b"readonly",
+        b"const",
+        b"async",
+        b"await",
+        b"using",
+        b"namespace",
+        b"class",
+        b"interface",
+        b"struct",
+        b"record",
+        b"void",
+        b"int",
+        b"long",
+        b"short",
+        b"byte",
+        b"string",
+        b"bool",
+        b"double",
+        b"float",
+        b"decimal",
+        b"object",
+        b"dynamic",
+        b"override",
+        b"virtual",
+        b"abstract",
+        b"sealed",
+        b"partial",
+        b"is",
+        b"as",
+        b"in",
+        b"out",
+        b"ref",
+        b"params",
+        b"typeof",
+        b"get",
+        b"set",
+        b"add",
+        b"remove",
     ];
 
     let mut i = 0;
@@ -1274,7 +1338,11 @@ mod tests {
         let colors = compute_byte_colors(Lang::Html, source, &config)
             .expect("highlight pass should succeed");
         let class_at = find_word(source, "class").expect("class attribute present");
-        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        let yellow = Color::Rgb {
+            r: 0xf9,
+            g: 0xe2,
+            b: 0xaf,
+        };
         assert_eq!(
             colors[class_at],
             Some(yellow),
@@ -1361,9 +1429,21 @@ mod tests {
         let cfg = Config::default();
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
-        let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
-        let mauve = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
+        let pink = Color::Rgb {
+            r: 0xf5,
+            g: 0xc2,
+            b: 0xe7,
+        };
+        let yellow = Color::Rgb {
+            r: 0xf9,
+            g: 0xe2,
+            b: 0xaf,
+        };
+        let mauve = Color::Rgb {
+            r: 0xcb,
+            g: 0xa6,
+            b: 0xf7,
+        };
 
         // The first broken `<div class="…px-[12px]…">` opener.
         let div_idx = source.find("<div class=\"mms-header px-").unwrap() + 1;
@@ -1413,8 +1493,16 @@ mod tests {
         let cfg = Config::default();
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
-        let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-        let yellow = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
+        let pink = Color::Rgb {
+            r: 0xf5,
+            g: 0xc2,
+            b: 0xe7,
+        };
+        let yellow = Color::Rgb {
+            r: 0xf9,
+            g: 0xe2,
+            b: 0xaf,
+        };
         let section_idx = source.find("<section").unwrap() + 1;
         assert_eq!(
             cache.byte_colors.get(section_idx).copied().flatten(),
@@ -1473,7 +1561,11 @@ mod tests {
         }
         // Closing tag names too — these come after `</`. Opening and
         // closing tags should match in colour for visual balance.
-        let pink = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
+        let pink = Color::Rgb {
+            r: 0xf5,
+            g: 0xc2,
+            b: 0xe7,
+        };
         for closer in ["</section>", "</div>", "</partial>"] {
             if let Some(idx) = src.find(closer) {
                 let name_start = idx + 2; // skip `</`
@@ -1492,9 +1584,18 @@ mod tests {
         let src = "def greet(name: str) -> str:\n    return f\"hello {name}\"\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Python, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("def").unwrap()].is_some(), "python `def` keyword should be coloured");
-        assert!(colors[src.find("greet").unwrap()].is_some(), "python function name should be coloured");
-        assert!(colors[src.find("hello").unwrap()].is_some(), "python f-string body should be coloured");
+        assert!(
+            colors[src.find("def").unwrap()].is_some(),
+            "python `def` keyword should be coloured"
+        );
+        assert!(
+            colors[src.find("greet").unwrap()].is_some(),
+            "python function name should be coloured"
+        );
+        assert!(
+            colors[src.find("hello").unwrap()].is_some(),
+            "python f-string body should be coloured"
+        );
     }
 
     #[test]
@@ -1502,19 +1603,38 @@ mod tests {
         let src = "#include <stdio.h>\nint main(void) { return 0; }\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::C, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("#include").unwrap()].is_some(), "C preprocessor should be coloured");
-        assert!(colors[src.find("int").unwrap()].is_some(), "C type `int` should be coloured");
-        assert!(colors[src.find("return").unwrap()].is_some(), "C `return` keyword should be coloured");
+        assert!(
+            colors[src.find("#include").unwrap()].is_some(),
+            "C preprocessor should be coloured"
+        );
+        assert!(
+            colors[src.find("int").unwrap()].is_some(),
+            "C type `int` should be coloured"
+        );
+        assert!(
+            colors[src.find("return").unwrap()].is_some(),
+            "C `return` keyword should be coloured"
+        );
     }
 
     #[test]
     fn cpp_highlights_namespace_and_template() {
-        let src = "#include <vector>\nnamespace ns { template<typename T> T id(T x) { return x; } }\n";
+        let src =
+            "#include <vector>\nnamespace ns { template<typename T> T id(T x) { return x; } }\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Cpp, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("namespace").unwrap()].is_some(), "C++ `namespace` should be coloured");
-        assert!(colors[src.find("template").unwrap()].is_some(), "C++ `template` should be coloured");
-        assert!(colors[src.find("typename").unwrap()].is_some(), "C++ `typename` should be coloured");
+        assert!(
+            colors[src.find("namespace").unwrap()].is_some(),
+            "C++ `namespace` should be coloured"
+        );
+        assert!(
+            colors[src.find("template").unwrap()].is_some(),
+            "C++ `template` should be coloured"
+        );
+        assert!(
+            colors[src.find("typename").unwrap()].is_some(),
+            "C++ `typename` should be coloured"
+        );
     }
 
     #[test]
@@ -1522,9 +1642,18 @@ mod tests {
         let src = "public class Foo {\n  public static int main(String[] args) { return 0; }\n}\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Java, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("public").unwrap()].is_some(), "Java `public` should be coloured");
-        assert!(colors[src.find("class").unwrap()].is_some(), "Java `class` should be coloured");
-        assert!(colors[src.find("String").unwrap()].is_some(), "Java type `String` should be coloured");
+        assert!(
+            colors[src.find("public").unwrap()].is_some(),
+            "Java `public` should be coloured"
+        );
+        assert!(
+            colors[src.find("class").unwrap()].is_some(),
+            "Java `class` should be coloured"
+        );
+        assert!(
+            colors[src.find("String").unwrap()].is_some(),
+            "Java type `String` should be coloured"
+        );
     }
 
     #[test]
@@ -1532,9 +1661,18 @@ mod tests {
         let src = "class Greeter\n  def hello(name)\n    \"Hello, #{name}!\"\n  end\nend\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Ruby, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("class").unwrap()].is_some(), "Ruby `class` should be coloured");
-        assert!(colors[src.find("def").unwrap()].is_some(), "Ruby `def` should be coloured");
-        assert!(colors[src.find("\"Hello").unwrap()].is_some(), "Ruby string should be coloured");
+        assert!(
+            colors[src.find("class").unwrap()].is_some(),
+            "Ruby `class` should be coloured"
+        );
+        assert!(
+            colors[src.find("def").unwrap()].is_some(),
+            "Ruby `def` should be coloured"
+        );
+        assert!(
+            colors[src.find("\"Hello").unwrap()].is_some(),
+            "Ruby string should be coloured"
+        );
     }
 
     #[test]
@@ -1542,9 +1680,18 @@ mod tests {
         let src = "<?php\nfunction greet($name) {\n  return \"Hello, $name\";\n}\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Php, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("function").unwrap()].is_some(), "PHP `function` should be coloured");
-        assert!(colors[src.find("return").unwrap()].is_some(), "PHP `return` should be coloured");
-        assert!(colors[src.find("$name").unwrap()].is_some(), "PHP variable should be coloured");
+        assert!(
+            colors[src.find("function").unwrap()].is_some(),
+            "PHP `function` should be coloured"
+        );
+        assert!(
+            colors[src.find("return").unwrap()].is_some(),
+            "PHP `return` should be coloured"
+        );
+        assert!(
+            colors[src.find("$name").unwrap()].is_some(),
+            "PHP variable should be coloured"
+        );
     }
 
     #[test]
@@ -1552,19 +1699,38 @@ mod tests {
         let src = "[package]\nname = \"binvim\"\nversion = \"0.1.4\"\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Toml, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("[package]").unwrap()].is_some(), "TOML table header should be coloured");
-        assert!(colors[src.find("name").unwrap()].is_some(), "TOML key should be coloured");
-        assert!(colors[src.find("\"binvim\"").unwrap()].is_some(), "TOML string should be coloured");
+        assert!(
+            colors[src.find("[package]").unwrap()].is_some(),
+            "TOML table header should be coloured"
+        );
+        assert!(
+            colors[src.find("name").unwrap()].is_some(),
+            "TOML key should be coloured"
+        );
+        assert!(
+            colors[src.find("\"binvim\"").unwrap()].is_some(),
+            "TOML string should be coloured"
+        );
     }
 
     #[test]
     fn zig_highlights_pub_and_string() {
-        let src = "const std = @import(\"std\");\npub fn main() void { std.debug.print(\"hi\", .{}); }\n";
+        let src =
+            "const std = @import(\"std\");\npub fn main() void { std.debug.print(\"hi\", .{}); }\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Zig, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("const").unwrap()].is_some(), "Zig `const` should be coloured");
-        assert!(colors[src.find("pub").unwrap()].is_some(), "Zig `pub` should be coloured");
-        assert!(colors[src.find("\"std\"").unwrap()].is_some(), "Zig string should be coloured");
+        assert!(
+            colors[src.find("const").unwrap()].is_some(),
+            "Zig `const` should be coloured"
+        );
+        assert!(
+            colors[src.find("pub").unwrap()].is_some(),
+            "Zig `pub` should be coloured"
+        );
+        assert!(
+            colors[src.find("\"std\"").unwrap()].is_some(),
+            "Zig string should be coloured"
+        );
     }
 
     #[test]
@@ -1572,8 +1738,14 @@ mod tests {
         let src = "{ pkgs ? import <nixpkgs> {} }:\nlet name = \"binvim\"; in pkgs.hello\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Nix, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("let").unwrap()].is_some(), "Nix `let` should be coloured");
-        assert!(colors[src.find("\"binvim\"").unwrap()].is_some(), "Nix string should be coloured");
+        assert!(
+            colors[src.find("let").unwrap()].is_some(),
+            "Nix `let` should be coloured"
+        );
+        assert!(
+            colors[src.find("\"binvim\"").unwrap()].is_some(),
+            "Nix string should be coloured"
+        );
     }
 
     #[test]
@@ -1581,8 +1753,14 @@ mod tests {
         let src = "defmodule Greeter do\n  def hello(name), do: \"Hello, #{name}\"\nend\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Elixir, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("defmodule").unwrap()].is_some(), "Elixir `defmodule` should be coloured");
-        assert!(colors[src.find("def ").unwrap()].is_some(), "Elixir `def` should be coloured");
+        assert!(
+            colors[src.find("defmodule").unwrap()].is_some(),
+            "Elixir `defmodule` should be coloured"
+        );
+        assert!(
+            colors[src.find("def ").unwrap()].is_some(),
+            "Elixir `def` should be coloured"
+        );
     }
 
     #[test]
@@ -1590,8 +1768,14 @@ mod tests {
         let src = "FROM rust:1.95 AS build\nWORKDIR /app\nCOPY . .\nRUN cargo build --release\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Dockerfile, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("FROM").unwrap()].is_some(), "Dockerfile `FROM` should be coloured");
-        assert!(colors[src.find("RUN").unwrap()].is_some(), "Dockerfile `RUN` should be coloured");
+        assert!(
+            colors[src.find("FROM").unwrap()].is_some(),
+            "Dockerfile `FROM` should be coloured"
+        );
+        assert!(
+            colors[src.find("RUN").unwrap()].is_some(),
+            "Dockerfile `RUN` should be coloured"
+        );
     }
 
     #[test]
@@ -1599,18 +1783,39 @@ mod tests {
         let src = "SELECT id, name FROM users WHERE active = true;\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Sql, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("SELECT").unwrap()].is_some(), "SQL `SELECT` should be coloured");
-        assert!(colors[src.find("FROM").unwrap()].is_some(), "SQL `FROM` should be coloured");
+        assert!(
+            colors[src.find("SELECT").unwrap()].is_some(),
+            "SQL `SELECT` should be coloured"
+        );
+        assert!(
+            colors[src.find("FROM").unwrap()].is_some(),
+            "SQL `FROM` should be coloured"
+        );
     }
 
     #[test]
     fn dockerfile_detects_basename_variants() {
         use std::path::Path;
-        assert_eq!(Lang::detect(Path::new("Dockerfile")), Some(Lang::Dockerfile));
-        assert_eq!(Lang::detect(Path::new("Containerfile")), Some(Lang::Dockerfile));
-        assert_eq!(Lang::detect(Path::new("Dockerfile.dev")), Some(Lang::Dockerfile));
-        assert_eq!(Lang::detect(Path::new("Dockerfile.prod-1")), Some(Lang::Dockerfile));
-        assert_eq!(Lang::detect(Path::new("app.dockerfile")), Some(Lang::Dockerfile));
+        assert_eq!(
+            Lang::detect(Path::new("Dockerfile")),
+            Some(Lang::Dockerfile)
+        );
+        assert_eq!(
+            Lang::detect(Path::new("Containerfile")),
+            Some(Lang::Dockerfile)
+        );
+        assert_eq!(
+            Lang::detect(Path::new("Dockerfile.dev")),
+            Some(Lang::Dockerfile)
+        );
+        assert_eq!(
+            Lang::detect(Path::new("Dockerfile.prod-1")),
+            Some(Lang::Dockerfile)
+        );
+        assert_eq!(
+            Lang::detect(Path::new("app.dockerfile")),
+            Some(Lang::Dockerfile)
+        );
         assert_eq!(Lang::detect(Path::new("not-a-dockerfile")), None);
     }
 
@@ -1623,7 +1828,10 @@ mod tests {
         // attribute/expression delimiters; we just confirm we got
         // *some* coverage so a future grammar change can't silently
         // wipe the cache.
-        assert!(colors.iter().any(|c| c.is_some()), "Svelte highlights produced no colour");
+        assert!(
+            colors.iter().any(|c| c.is_some()),
+            "Svelte highlights produced no colour"
+        );
     }
 
     #[test]
@@ -1631,9 +1839,18 @@ mod tests {
         let src = "local function greet(name)\n  return \"hello \" .. name\nend\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Lua, src, &cfg).expect("highlight ok");
-        assert!(colors[src.find("local").unwrap()].is_some(), "Lua `local` should be coloured");
-        assert!(colors[src.find("function").unwrap()].is_some(), "Lua `function` should be coloured");
-        assert!(colors[src.find("\"hello").unwrap()].is_some(), "Lua string literal should be coloured");
+        assert!(
+            colors[src.find("local").unwrap()].is_some(),
+            "Lua `local` should be coloured"
+        );
+        assert!(
+            colors[src.find("function").unwrap()].is_some(),
+            "Lua `function` should be coloured"
+        );
+        assert!(
+            colors[src.find("\"hello").unwrap()].is_some(),
+            "Lua string literal should be coloured"
+        );
     }
 
     #[test]
@@ -1645,7 +1862,10 @@ mod tests {
         // bundled query gets some capture). We don't pin the exact tone,
         // just check the first char is non-None.
         let name_idx = src.find("name").unwrap();
-        assert!(colors[name_idx].is_some(), "yaml key `name` should be coloured");
+        assert!(
+            colors[name_idx].is_some(),
+            "yaml key `name` should be coloured"
+        );
     }
 
     #[test]
@@ -1658,9 +1878,15 @@ mod tests {
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Xml, src, &cfg).expect("highlight ok");
         let tag_idx = src.find("Project").unwrap();
-        assert!(colors[tag_idx].is_some(), "xml `Project` tag should be coloured");
+        assert!(
+            colors[tag_idx].is_some(),
+            "xml `Project` tag should be coloured"
+        );
         let attr_idx = src.find("Sdk").unwrap();
-        assert!(colors[attr_idx].is_some(), "xml `Sdk` attribute should be coloured");
+        assert!(
+            colors[attr_idx].is_some(),
+            "xml `Sdk` attribute should be coloured"
+        );
     }
 
     #[test]
@@ -1765,7 +1991,11 @@ export function Page() {
         let src = "@theme {\n  --color-primary: #8985ff;\n  color: red;\n}\n";
         let cfg = Config::default();
         let colors = compute_byte_colors(Lang::Css, src, &cfg).expect("highlight ok");
-        let lavender = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
+        let lavender = Color::Rgb {
+            r: 0xb4,
+            g: 0xbe,
+            b: 0xfe,
+        };
         let custom_idx = src.find("--color-primary").unwrap();
         let regular_idx = src.find("color:").unwrap();
         assert_eq!(

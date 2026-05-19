@@ -32,7 +32,9 @@ impl super::App {
                 PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
             },
             execute,
-            terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+            terminal::{
+                EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+            },
         };
 
         // lazygit walks up from its own cwd to find the .git root, so

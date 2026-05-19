@@ -102,10 +102,26 @@ pub struct MarkdownLineMeta {
 }
 
 // Catppuccin Mocha
-const CODE_COLOR: Color = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };    // Green
-const LINK_COLOR: Color = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };    // Blue
-const BULLET_COLOR: Color = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };  // Peach
-const QUOTE_COLOR: Color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };   // Overlay0
+const CODE_COLOR: Color = Color::Rgb {
+    r: 0xa6,
+    g: 0xe3,
+    b: 0xa1,
+}; // Green
+const LINK_COLOR: Color = Color::Rgb {
+    r: 0x89,
+    g: 0xb4,
+    b: 0xfa,
+}; // Blue
+const BULLET_COLOR: Color = Color::Rgb {
+    r: 0xfa,
+    g: 0xb3,
+    b: 0x87,
+}; // Peach
+const QUOTE_COLOR: Color = Color::Rgb {
+    r: 0x6c,
+    g: 0x70,
+    b: 0x86,
+}; // Overlay0
 
 /// Each heading level gets its own Catppuccin accent so an outline
 /// reads as a six-tone hierarchy at a glance. Stepping warm → cool
@@ -114,12 +130,36 @@ const QUOTE_COLOR: Color = Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 };   // Overla
 /// valid markdown but we land on Mauve so it still renders.
 fn heading_color(level: usize) -> Color {
     match level {
-        1 => Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 }, // Red
-        2 => Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 }, // Peach
-        3 => Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf }, // Yellow
-        4 => Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 }, // Green
-        5 => Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb }, // Sky
-        _ => Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 }, // Mauve
+        1 => Color::Rgb {
+            r: 0xf3,
+            g: 0x8b,
+            b: 0xa8,
+        }, // Red
+        2 => Color::Rgb {
+            r: 0xfa,
+            g: 0xb3,
+            b: 0x87,
+        }, // Peach
+        3 => Color::Rgb {
+            r: 0xf9,
+            g: 0xe2,
+            b: 0xaf,
+        }, // Yellow
+        4 => Color::Rgb {
+            r: 0xa6,
+            g: 0xe3,
+            b: 0xa1,
+        }, // Green
+        5 => Color::Rgb {
+            r: 0x89,
+            g: 0xdc,
+            b: 0xeb,
+        }, // Sky
+        _ => Color::Rgb {
+            r: 0xcb,
+            g: 0xa6,
+            b: 0xf7,
+        }, // Mauve
     }
 }
 
@@ -140,10 +180,7 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
             hash_end += 1;
         }
         let level = hash_end - leading_ws;
-        if (1..=6).contains(&level)
-            && hash_end < chars.len()
-            && chars[hash_end] == ' '
-        {
+        if (1..=6).contains(&level) && hash_end < chars.len() && chars[hash_end] == ' ' {
             meta.transforms.push(MarkdownTransform {
                 start: leading_ws,
                 end: hash_end + 1,
@@ -174,7 +211,10 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
         meta.transforms.push(MarkdownTransform {
             start: leading_ws,
             end,
-            action: ConcealAction::Replace { glyph: "▎ ", color: QUOTE_COLOR },
+            action: ConcealAction::Replace {
+                glyph: "▎ ",
+                color: QUOTE_COLOR,
+            },
         });
         meta.styles.push(MarkdownStyleRange {
             start: end,
@@ -198,7 +238,10 @@ pub fn compute_line_meta(line: &str) -> MarkdownLineMeta {
         meta.transforms.push(MarkdownTransform {
             start: leading_ws,
             end: leading_ws + 1,
-            action: ConcealAction::Replace { glyph: "•", color: BULLET_COLOR },
+            action: ConcealAction::Replace {
+                glyph: "•",
+                color: BULLET_COLOR,
+            },
         });
     }
 
@@ -870,17 +913,15 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
         if (c == '*' || c == '_') && chars.get(i + 1).copied() == Some(c) {
             let after_open = chars.get(i + 2).copied();
             let before_open = if i > 0 { Some(chars[i - 1]) } else { None };
-            let opener_ok = !is_ws(after_open)
-                && !(c == '_' && is_word(before_open) && is_word(after_open));
+            let opener_ok =
+                !is_ws(after_open) && !(c == '_' && is_word(before_open) && is_word(after_open));
             if opener_ok {
                 if let Some(close) = find_double_close(chars, i + 2, c) {
                     if close > i + 2 {
                         let before_close = chars.get(close - 1).copied();
                         let after_close = chars.get(close + 2).copied();
                         let closer_ok = !is_ws(before_close)
-                            && !(c == '_'
-                                && is_word(before_close)
-                                && is_word(after_close));
+                            && !(c == '_' && is_word(before_close) && is_word(after_close));
                         if closer_ok {
                             meta.transforms.push(MarkdownTransform {
                                 start: i,
@@ -929,9 +970,7 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
                         let before_close = chars.get(close - 1).copied();
                         let after_close = chars.get(close + 1).copied();
                         let closer_ok = !is_ws(before_close)
-                            && !(c == '_'
-                                && is_word(before_close)
-                                && is_word(after_close));
+                            && !(c == '_' && is_word(before_close) && is_word(after_close));
                         if closer_ok {
                             meta.transforms.push(MarkdownTransform {
                                 start: i,
@@ -1006,9 +1045,7 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
             for (open, close, bold, italic, underline, color) in PAIRS {
                 if matches_at(chars, i, open) {
                     let open_len = open.chars().count();
-                    if let Some(close_start) =
-                        find_pattern(chars, i + open_len, close)
-                    {
+                    if let Some(close_start) = find_pattern(chars, i + open_len, close) {
                         let close_len = close.chars().count();
                         meta.transforms.push(MarkdownTransform {
                             start: i,
@@ -1044,10 +1081,7 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
         // URL, leaving just the visible link text underlined in Blue.
         if c == '[' {
             if let Some(rb) = find_close(chars, i + 1, ']') {
-                if rb + 1 < n
-                    && chars[rb + 1] == '('
-                    && rb > i + 1
-                {
+                if rb + 1 < n && chars[rb + 1] == '(' && rb > i + 1 {
                     if let Some(rp) = find_close(chars, rb + 2, ')') {
                         meta.transforms.push(MarkdownTransform {
                             start: i,
@@ -1311,7 +1345,10 @@ mod tests {
         assert_eq!(m.transforms.len(), 1);
         let t = &m.transforms[0];
         assert_eq!((t.start, t.end), (0, 1));
-        assert!(matches!(t.action, ConcealAction::Replace { glyph: "•", .. }));
+        assert!(matches!(
+            t.action,
+            ConcealAction::Replace { glyph: "•", .. }
+        ));
     }
 
     #[test]
@@ -1420,11 +1457,12 @@ mod tests {
 
     #[test]
     fn summary_strips_inline_html() {
-        let lines = vec![
-            "<summary><strong>Setup the frontend</strong></summary>".to_string(),
-        ];
+        let lines = vec!["<summary><strong>Setup the frontend</strong></summary>".to_string()];
         let metas = compute_buffer_meta(&lines);
-        assert_eq!(metas[0].replacement.as_deref(), Some("▼ Setup the frontend"));
+        assert_eq!(
+            metas[0].replacement.as_deref(),
+            Some("▼ Setup the frontend")
+        );
     }
 
     #[test]
@@ -1576,7 +1614,11 @@ mod tests {
 
     #[test]
     fn fence_open_hides_backticks_and_styles_lang() {
-        let lines = vec!["```rust".to_string(), "let x = 1;".to_string(), "```".to_string()];
+        let lines = vec![
+            "```rust".to_string(),
+            "let x = 1;".to_string(),
+            "```".to_string(),
+        ];
         let metas = compute_buffer_meta(&lines);
         assert_eq!(metas.len(), 3);
         // Opener: hide ```, style "rust" bold-Peach.
@@ -1718,10 +1760,11 @@ mod tests {
         // `- **important** thing` — bullet replaced + bold inside body
         let m = compute_line_meta("- **important** thing");
         // Bullet replace
-        assert!(m
-            .transforms
-            .iter()
-            .any(|t| t.start == 0 && matches!(t.action, ConcealAction::Replace { .. })));
+        assert!(
+            m.transforms
+                .iter()
+                .any(|t| t.start == 0 && matches!(t.action, ConcealAction::Replace { .. }))
+        );
         // Bold marker hides (cols 2,3 and 13,14)
         let hidden = cols_hidden(&m);
         for c in [2, 3, 13, 14] {

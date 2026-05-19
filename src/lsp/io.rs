@@ -2,16 +2,14 @@
 //! per spawned client; consumes framed messages off the server's stdout and
 //! either sends them up the channel or auto-replies on the spot.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::ChildStdin;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use super::client::{InitState, SemanticTokensLegend};
-use super::types::{
-    Diagnostic, DiagnosticsMessage, LspIncoming, MessageSeverity, Severity,
-};
+use super::types::{Diagnostic, DiagnosticsMessage, LspIncoming, MessageSeverity, Severity};
 
 pub(super) fn reader_loop(
     stdout: impl Read + Send + 'static,
@@ -39,7 +37,9 @@ pub(super) fn reader_loop(
                 content_length = rest.trim().parse().ok();
             }
         }
-        let Some(len) = content_length else { return; };
+        let Some(len) = content_length else {
+            return;
+        };
         let mut body = vec![0u8; len];
         if reader.read_exact(&mut body).is_err() {
             return;
@@ -71,7 +71,10 @@ fn dispatch(
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
     // doesn't stall waiting for a response we won't otherwise produce.
     let id = msg.get("id").and_then(|v| v.as_u64());
-    let method = msg.get("method").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let method = msg
+        .get("method")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
     if let (Some(id), Some(method)) = (id, method.clone()) {
         // workspace/applyEdit needs the main thread to actually mutate
         // buffers — bounce it through the channel and have the main loop
@@ -154,7 +157,9 @@ fn dispatch(
     }
 
     // Plain notification (no `id`).
-    let Some(method) = msg.get("method").and_then(|v| v.as_str()) else { return; };
+    let Some(method) = msg.get("method").and_then(|v| v.as_str()) else {
+        return;
+    };
     match method {
         "textDocument/publishDiagnostics" => {
             if let Some(params) = msg.get("params") {
@@ -196,12 +201,7 @@ fn dispatch(
 
 /// Reply to server-to-client requests with reasonable defaults so the server's
 /// initialization (and ongoing operation) isn't blocked waiting for us.
-fn auto_respond(
-    stdin: &Arc<Mutex<ChildStdin>>,
-    id: u64,
-    method: &str,
-    params: Option<&Value>,
-) {
+fn auto_respond(stdin: &Arc<Mutex<ChildStdin>>, id: u64, method: &str, params: Option<&Value>) {
     let result = match method {
         // workspace/configuration → array of nulls, sized to params.items.len().
         "workspace/configuration" => {
@@ -248,7 +248,11 @@ fn extract_semantic_tokens_legend(init_result: &Value) -> Option<SemanticTokensL
     let token_modifiers: Vec<String> = legend
         .get("tokenModifiers")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .unwrap_or_default();
     if token_types.is_empty() {
         return None;
@@ -266,7 +270,9 @@ fn extract_semantic_tokens_legend(init_result: &Value) -> Option<SemanticTokensL
 /// return lens items with empty `command` and rely on resolve for
 /// the title.
 fn extract_code_lens_caps(init_result: &Value) -> (bool, bool) {
-    let Some(caps) = init_result.get("capabilities") else { return (false, false); };
+    let Some(caps) = init_result.get("capabilities") else {
+        return (false, false);
+    };
     match caps.get("codeLensProvider") {
         Some(v) if v.is_object() => {
             let resolve = v
@@ -288,9 +294,15 @@ fn extract_code_lens_caps(init_result: &Value) -> (bool, bool) {
 /// when the server reports `workspace.workspaceFolders` as a bare
 /// `true` (older spec shape) — we honour both.
 fn extract_workspace_folders_supported(init_result: &Value) -> bool {
-    let Some(caps) = init_result.get("capabilities") else { return false; };
-    let Some(ws) = caps.get("workspace") else { return false; };
-    let Some(folders) = ws.get("workspaceFolders") else { return false; };
+    let Some(caps) = init_result.get("capabilities") else {
+        return false;
+    };
+    let Some(ws) = caps.get("workspace") else {
+        return false;
+    };
+    let Some(folders) = ws.get("workspaceFolders") else {
+        return false;
+    };
     match folders {
         Value::Bool(b) => *b,
         Value::Object(_) => folders
@@ -316,10 +328,9 @@ mod cap_tests {
 
     #[test]
     fn workspace_folders_supported_reads_bool_shorthand() {
-        let v: Value = serde_json::from_str(
-            r#"{"capabilities":{"workspace":{"workspaceFolders":true}}}"#,
-        )
-        .unwrap();
+        let v: Value =
+            serde_json::from_str(r#"{"capabilities":{"workspace":{"workspaceFolders":true}}}"#)
+                .unwrap();
         assert!(extract_workspace_folders_supported(&v));
     }
 

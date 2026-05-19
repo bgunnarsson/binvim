@@ -7,8 +7,7 @@ use std::path::PathBuf;
 use super::client::SemanticTokensLegend;
 use super::types::{
     CodeActionItem, CodeLensItem, CompletionItem, DocumentHighlightRange, InlayHint, LocationItem,
-    LspCommand, SemanticToken, SignatureHelp, SymbolItem,
-    uri_to_path,
+    LspCommand, SemanticToken, SignatureHelp, SymbolItem, uri_to_path,
 };
 
 pub(super) fn parse_code_actions_response(result: &Value) -> Vec<CodeActionItem> {
@@ -89,21 +88,27 @@ fn flatten_symbol(entry: &Value, container: &str, out: &mut Vec<SymbolItem>) {
     // uses `location.range`. WorkspaceSymbol may also use `location.uri`
     // without a range.
     let (uri, range) = if let Some(loc) = entry.get("location") {
-        let uri = loc.get("uri").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let uri = loc
+            .get("uri")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let range = loc.get("range").or_else(|| loc.get("targetRange")).cloned();
         (uri, range)
     } else {
-        (None, entry.get("selectionRange").or_else(|| entry.get("range")).cloned())
+        (
+            None,
+            entry
+                .get("selectionRange")
+                .or_else(|| entry.get("range"))
+                .cloned(),
+        )
     };
-    let start = range
-        .as_ref()
-        .and_then(|r| r.get("start"))
-        .map(|s| {
-            (
-                s.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-                s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
-            )
-        });
+    let start = range.as_ref().and_then(|r| r.get("start")).map(|s| {
+        (
+            s.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+            s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize,
+        )
+    });
     let path = uri.and_then(|u| uri_to_path(&u));
     if let (Some(path), Some((line, col))) = (path, start) {
         out.push(SymbolItem {
@@ -256,7 +261,10 @@ pub(super) fn parse_signature_help_response(result: &Value) -> Option<SignatureH
         }
         None
     })();
-    Some(SignatureHelp { label, active_param })
+    Some(SignatureHelp {
+        label,
+        active_param,
+    })
 }
 
 pub(super) fn parse_completion_response(result: &Value) -> Vec<CompletionItem> {
@@ -442,7 +450,12 @@ pub(super) fn parse_inlay_hints_response(result: &Value) -> Vec<InlayHint> {
             continue;
         }
         let kind = entry.get("kind").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
-        out.push(InlayHint { line, col, label, kind });
+        out.push(InlayHint {
+            line,
+            col,
+            label,
+            kind,
+        });
     }
     out
 }
@@ -549,7 +562,12 @@ pub(super) fn parse_code_lens_response(result: &Value) -> Vec<CodeLensItem> {
         let line = start.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let col = start.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let command = entry.get("command").and_then(parse_command);
-        out.push(CodeLensItem { line, col, command, raw: entry.clone() });
+        out.push(CodeLensItem {
+            line,
+            col,
+            command,
+            raw: entry.clone(),
+        });
     }
     out
 }
@@ -606,10 +624,11 @@ pub(super) fn parse_hover_response(result: &Value) -> Option<String> {
     if let Some(arr) = contents.as_array() {
         let mut out = String::new();
         for item in arr {
-            let s = item
-                .as_str()
-                .map(|s| s.to_string())
-                .or_else(|| item.get("value").and_then(|v| v.as_str()).map(|s| s.to_string()));
+            let s = item.as_str().map(|s| s.to_string()).or_else(|| {
+                item.get("value")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+            });
             if let Some(s) = s {
                 if !out.is_empty() {
                     out.push('\n');
@@ -637,11 +656,7 @@ mod tests {
                 "variable".into(),
                 "keyword".into(),
             ],
-            token_modifiers: vec![
-                "declaration".into(),
-                "readonly".into(),
-                "async".into(),
-            ],
+            token_modifiers: vec!["declaration".into(), "readonly".into(), "async".into()],
         }
     }
 

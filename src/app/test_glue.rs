@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use crate::app::state::{QuickfixEntry, QuickfixState};
 use crate::picker::{PickerKind, PickerPayload, PickerState};
 use crate::test::{
-    adapter_for_workspace, TestAdapterSpec, TestEvent, TestRunRequest, TestStatus, TestSummary,
+    TestAdapterSpec, TestEvent, TestRunRequest, TestStatus, TestSummary, adapter_for_workspace,
 };
 
 impl super::App {
@@ -337,7 +337,10 @@ impl super::App {
             return;
         }
         let n = entries.len();
-        self.quickfix = Some(QuickfixState { entries, current: 0 });
+        self.quickfix = Some(QuickfixState {
+            entries,
+            current: 0,
+        });
         // Don't auto-jump — the user has the overlay open, and yanking
         // them out of it on completion is jarring. They can hit `]q`
         // when ready.

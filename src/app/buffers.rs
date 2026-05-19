@@ -242,8 +242,7 @@ impl super::App {
         self.show_start_page = false;
         self.touch_recent();
         if large {
-            self.status_msg =
-                "large file — tree-sitter + LSP disabled".into();
+            self.status_msg = "large file — tree-sitter + LSP disabled".into();
         }
         // Strip the phantom `[No Name]` seed that App::new() seeds at
         // index 0 — only on the transition from "fresh launch" (one
@@ -252,10 +251,7 @@ impl super::App {
         // pane was opened deliberately (via `<C-w>v` / `<C-w>s` while
         // on the start page) and dragging it onto the freshly-opened
         // file would erase what the user explicitly split for.
-        let phantom_in_use = self
-            .windows
-            .values()
-            .any(|w| w.buffer_idx == 0);
+        let phantom_in_use = self.windows.values().any(|w| w.buffer_idx == 0);
         if self.buffers.len() > 1
             && self.active != 0
             && self.buffers[0].buffer.path.is_none()
@@ -324,9 +320,8 @@ impl super::App {
         let total = self.buffer.total_chars();
         self.buffer.delete_range(0, total);
         self.buffer.insert_at_idx(0, &text);
-        self.buffer.disk_mtime = disk_mtime.or_else(|| {
-            std::fs::metadata(path).and_then(|m| m.modified()).ok()
-        });
+        self.buffer.disk_mtime =
+            disk_mtime.or_else(|| std::fs::metadata(path).and_then(|m| m.modified()).ok());
         self.buffer.dirty = false;
         let last = self.buffer.line_count().saturating_sub(1);
         if self.window.cursor.line > last {
@@ -462,7 +457,11 @@ impl super::App {
             return Ok(());
         }
         let prev = self.active;
-        let next = if prev + 1 < self.buffers.len() { prev + 1 } else { prev - 1 };
+        let next = if prev + 1 < self.buffers.len() {
+            prev + 1
+        } else {
+            prev - 1
+        };
         // Closing a buffer drops its whole tab (and its layout) — use
         // switch_tab so the user lands on the next tab's saved layout
         // rather than getting the soon-to-be-removed tab's split
@@ -509,10 +508,7 @@ impl super::App {
                     continue;
                 }
                 if stash.buffer.dirty {
-                    anyhow::bail!(
-                        "E89: buffer {} has unsaved changes (use <leader>bA)",
-                        i + 1
-                    );
+                    anyhow::bail!("E89: buffer {} has unsaved changes (use <leader>bA)", i + 1);
                 }
             }
         }

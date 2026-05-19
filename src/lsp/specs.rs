@@ -2,7 +2,7 @@
 //! `*_spec_for_path` functions are the only place we hard-code language
 //! servers; adding a new one means editing `primary_spec_for_path`.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -99,7 +99,11 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             language_id: "rust".into(),
             cmd_candidates: vec!["rust-analyzer".into(), cargo_bin("rust-analyzer")],
             args: vec![],
-            root_markers: vec!["Cargo.toml".into(), "rust-project.json".into(), ".git".into()],
+            root_markers: vec![
+                "Cargo.toml".into(),
+                "rust-project.json".into(),
+                ".git".into(),
+            ],
             initialization_options: Value::Null,
         }),
         "ts" => Some(ServerSpec {
@@ -148,7 +152,12 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
                 language_id: "json".into(),
                 cmd_candidates: vec![biome],
                 args: vec!["lsp-proxy".into()],
-                root_markers: vec!["biome.json".into(), "biome.jsonc".into(), "package.json".into(), ".git".into()],
+                root_markers: vec![
+                    "biome.json".into(),
+                    "biome.jsonc".into(),
+                    "package.json".into(),
+                    ".git".into(),
+                ],
                 initialization_options: Value::Null,
             })
         }
@@ -225,7 +234,12 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             language_id: "astro".into(),
             cmd_candidates: vec!["astro-ls".into()],
             args: stdio(),
-            root_markers: vec!["astro.config.mjs".into(), "astro.config.ts".into(), "package.json".into(), ".git".into()],
+            root_markers: vec![
+                "astro.config.mjs".into(),
+                "astro.config.ts".into(),
+                "package.json".into(),
+                ".git".into(),
+            ],
             initialization_options: Value::Null,
         }),
         "py" | "pyi" => Some(ServerSpec {
@@ -336,10 +350,7 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             // bare invocation works too on recent versions, but pass it
             // explicitly so an older install doesn't drop into help.
             args: vec!["server".into()],
-            root_markers: vec![
-                ".marksman.toml".into(),
-                ".git".into(),
-            ],
+            root_markers: vec![".marksman.toml".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
         "toml" => Some(ServerSpec {
@@ -355,11 +366,7 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             language_id: "ruby".into(),
             cmd_candidates: vec!["ruby-lsp".into()],
             args: vec!["stdio".into()],
-            root_markers: vec![
-                "Gemfile".into(),
-                ".ruby-version".into(),
-                ".git".into(),
-            ],
+            root_markers: vec!["Gemfile".into(), ".ruby-version".into(), ".git".into()],
             initialization_options: Value::Null,
         }),
         "php" => Some(ServerSpec {
@@ -446,7 +453,9 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
                 .parent()
                 .map(|p| {
                     let mut h = DefaultHasher::new();
-                    p.canonicalize().unwrap_or_else(|_| p.to_path_buf()).hash(&mut h);
+                    p.canonicalize()
+                        .unwrap_or_else(|_| p.to_path_buf())
+                        .hash(&mut h);
                     format!("{:x}", h.finish())
                 })
                 .unwrap_or_else(|| "default".into());
@@ -475,7 +484,11 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             let dotnet_tools = format!("{}/.dotnet/tools/csharp-ls", home);
             let csharp_ls = ServerSpec {
                 key: "csharp-ls".into(),
-                language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
+                language_id: if ext == "cs" {
+                    "csharp".into()
+                } else {
+                    "vb".into()
+                },
                 cmd_candidates: vec!["csharp-ls".into(), dotnet_tools],
                 args: vec![],
                 root_markers: vec![
@@ -492,7 +505,11 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             }
             Some(ServerSpec {
                 key: "omnisharp".into(),
-                language_id: if ext == "cs" { "csharp".into() } else { "vb".into() },
+                language_id: if ext == "cs" {
+                    "csharp".into()
+                } else {
+                    "vb".into()
+                },
                 cmd_candidates: vec![
                     "OmniSharp".into(),
                     "omnisharp".into(),
@@ -528,7 +545,10 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
 /// languageId mirrors what tailwindcss-language-server expects (it has a
 /// short whitelist; using the right id is what unlocks classname completion).
 fn tailwind_spec_for_path(path: &Path) -> Option<ServerSpec> {
-    let ext = path.extension().and_then(|s| s.to_str())?.to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())?
+        .to_ascii_lowercase();
     let language_id = match ext.as_str() {
         "html" | "htm" => "html",
         "css" => "css",
@@ -601,7 +621,10 @@ fn tailwind_spec_for_path(path: &Path) -> Option<ServerSpec> {
 /// explicit razor mode, but the markup half of a Razor file is HTML, so
 /// HTML emmet completions fire wherever the cursor is in an HTML context.
 fn emmet_spec_for_path(path: &Path) -> Option<ServerSpec> {
-    let ext = path.extension().and_then(|s| s.to_str())?.to_ascii_lowercase();
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())?
+        .to_ascii_lowercase();
     let language_id = match ext.as_str() {
         "html" | "htm" | "cshtml" | "razor" => "html",
         "css" => "css",
@@ -667,7 +690,9 @@ pub fn find_tailwind_config(start: &Path) -> Option<PathBuf> {
 /// `dependencies`, `devDependencies`, or `peerDependencies`. Cheap text
 /// scan — robust enough that we don't pull a JSON parser into the hot path.
 fn package_has_tailwind(path: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else { return false; };
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
     let needles = [
         "\"tailwindcss\"",
         "\"@tailwindcss/postcss\"",

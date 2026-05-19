@@ -5,15 +5,15 @@
 //! `command` fields instead of JSON-RPC's `id` / `method`.
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, ChildStderr, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::process::{Child, ChildStderr, ChildStdin, Command, Stdio};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::io::reader_loop;
-use super::specs::{resolve_command, DapAdapterSpec};
+use super::specs::{DapAdapterSpec, resolve_command};
 use super::types::{DapIncoming, OutputLine};
 
 pub struct DapClient {

@@ -20,7 +20,11 @@ pub struct MotionResult {
 pub fn left(_buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let new_col = cur.col.saturating_sub(count);
     MotionResult {
-        target: Cursor { line: cur.line, col: new_col, want_col: new_col },
+        target: Cursor {
+            line: cur.line,
+            col: new_col,
+            want_col: new_col,
+        },
         kind: MotionKind::CharExclusive,
     }
 }
@@ -30,7 +34,11 @@ pub fn right(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let max = if len == 0 { 0 } else { len - 1 };
     let new_col = (cur.col + count).min(max);
     MotionResult {
-        target: Cursor { line: cur.line, col: new_col, want_col: new_col },
+        target: Cursor {
+            line: cur.line,
+            col: new_col,
+            want_col: new_col,
+        },
         kind: MotionKind::CharExclusive,
     }
 }
@@ -41,7 +49,11 @@ pub fn up(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let max = if len == 0 { 0 } else { len - 1 };
     let new_col = cur.want_col.min(max);
     MotionResult {
-        target: Cursor { line: new_line, col: new_col, want_col: cur.want_col },
+        target: Cursor {
+            line: new_line,
+            col: new_col,
+            want_col: cur.want_col,
+        },
         kind: MotionKind::Linewise,
     }
 }
@@ -53,14 +65,22 @@ pub fn down(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let max = if len == 0 { 0 } else { len - 1 };
     let new_col = cur.want_col.min(max);
     MotionResult {
-        target: Cursor { line: new_line, col: new_col, want_col: cur.want_col },
+        target: Cursor {
+            line: new_line,
+            col: new_col,
+            want_col: cur.want_col,
+        },
         kind: MotionKind::Linewise,
     }
 }
 
 pub fn line_start(_buf: &Buffer, cur: Cursor) -> MotionResult {
     MotionResult {
-        target: Cursor { line: cur.line, col: 0, want_col: 0 },
+        target: Cursor {
+            line: cur.line,
+            col: 0,
+            want_col: 0,
+        },
         kind: MotionKind::CharExclusive,
     }
 }
@@ -69,14 +89,22 @@ pub fn line_end(buf: &Buffer, cur: Cursor) -> MotionResult {
     let len = buf.line_len(cur.line);
     let col = if len == 0 { 0 } else { len - 1 };
     MotionResult {
-        target: Cursor { line: cur.line, col, want_col: usize::MAX },
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: usize::MAX,
+        },
         kind: MotionKind::CharInclusive,
     }
 }
 
 pub fn first_line(_buf: &Buffer, _cur: Cursor) -> MotionResult {
     MotionResult {
-        target: Cursor { line: 0, col: 0, want_col: 0 },
+        target: Cursor {
+            line: 0,
+            col: 0,
+            want_col: 0,
+        },
         kind: MotionKind::Linewise,
     }
 }
@@ -84,7 +112,11 @@ pub fn first_line(_buf: &Buffer, _cur: Cursor) -> MotionResult {
 pub fn last_line(buf: &Buffer, _cur: Cursor) -> MotionResult {
     let line = buf.line_count().saturating_sub(1);
     MotionResult {
-        target: Cursor { line, col: 0, want_col: 0 },
+        target: Cursor {
+            line,
+            col: 0,
+            want_col: 0,
+        },
         kind: MotionKind::Linewise,
     }
 }
@@ -92,7 +124,11 @@ pub fn last_line(buf: &Buffer, _cur: Cursor) -> MotionResult {
 pub fn goto_line(buf: &Buffer, n: usize) -> MotionResult {
     let line = n.saturating_sub(1).min(buf.line_count().saturating_sub(1));
     MotionResult {
-        target: Cursor { line, col: 0, want_col: 0 },
+        target: Cursor {
+            line,
+            col: 0,
+            want_col: 0,
+        },
         kind: MotionKind::Linewise,
     }
 }
@@ -107,7 +143,11 @@ pub fn first_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
         }
     }
     MotionResult {
-        target: Cursor { line: cur.line, col, want_col: col },
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: col,
+        },
         kind: MotionKind::CharExclusive,
     }
 }
@@ -133,7 +173,11 @@ pub fn last_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
         }
     }
     MotionResult {
-        target: Cursor { line: cur.line, col, want_col: col },
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: col,
+        },
         kind: MotionKind::CharInclusive,
     }
 }
@@ -190,12 +234,20 @@ pub fn find_char(
         found?
     };
     let target_col = if before {
-        if forward { found_col - 1 } else { found_col + 1 }
+        if forward {
+            found_col - 1
+        } else {
+            found_col + 1
+        }
     } else {
         found_col
     };
     Some(MotionResult {
-        target: Cursor { line, col: target_col, want_col: target_col },
+        target: Cursor {
+            line,
+            col: target_col,
+            want_col: target_col,
+        },
         kind: MotionKind::CharInclusive,
     })
 }
@@ -229,41 +281,95 @@ fn class_bigword(c: char) -> CharClass {
 
 // === word-start forward (w / W) ============================================
 pub fn word_forward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| next_word_start(b, c, class_word), MotionKind::CharExclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| next_word_start(b, c, class_word),
+        MotionKind::CharExclusive,
+    )
 }
 
 pub fn big_word_forward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| next_word_start(b, c, class_bigword), MotionKind::CharExclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| next_word_start(b, c, class_bigword),
+        MotionKind::CharExclusive,
+    )
 }
 
 // === word-start backward (b / B) ===========================================
 pub fn word_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| prev_word_start(b, c, class_word), MotionKind::CharExclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| prev_word_start(b, c, class_word),
+        MotionKind::CharExclusive,
+    )
 }
 
 pub fn big_word_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| prev_word_start(b, c, class_bigword), MotionKind::CharExclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| prev_word_start(b, c, class_bigword),
+        MotionKind::CharExclusive,
+    )
 }
 
 // === word-end forward (e / E) ==============================================
 pub fn end_word(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| next_word_end(b, c, class_word), MotionKind::CharInclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| next_word_end(b, c, class_word),
+        MotionKind::CharInclusive,
+    )
 }
 
 pub fn big_end_word(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| next_word_end(b, c, class_bigword), MotionKind::CharInclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| next_word_end(b, c, class_bigword),
+        MotionKind::CharInclusive,
+    )
 }
 
 // === word-end backward (ge / gE) ===========================================
 pub fn end_word_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| prev_word_end(b, c, class_word), MotionKind::CharInclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| prev_word_end(b, c, class_word),
+        MotionKind::CharInclusive,
+    )
 }
 
 pub fn big_end_word_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    iter_motion(buf, cur, count, |b, c| prev_word_end(b, c, class_bigword), MotionKind::CharInclusive)
+    iter_motion(
+        buf,
+        cur,
+        count,
+        |b, c| prev_word_end(b, c, class_bigword),
+        MotionKind::CharInclusive,
+    )
 }
 
-fn iter_motion<F>(buf: &Buffer, cur: Cursor, count: usize, step: F, kind: MotionKind) -> MotionResult
+fn iter_motion<F>(
+    buf: &Buffer,
+    cur: Cursor,
+    count: usize,
+    step: F,
+    kind: MotionKind,
+) -> MotionResult
 where
     F: Fn(&Buffer, Cursor) -> Cursor,
 {
@@ -302,7 +408,11 @@ fn next_word_start(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
             }
             if let Some(c) = buf.char_at(line, col) {
                 if !c.is_whitespace() {
-                    return Cursor { line, col, want_col: col };
+                    return Cursor {
+                        line,
+                        col,
+                        want_col: col,
+                    };
                 }
             }
         }
@@ -311,14 +421,22 @@ fn next_word_start(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
     // If we ended on whitespace or past-end with no further word, return past-end so
     // exclusive-motion operators delete through trailing whitespace at EOF.
     match buf.char_at(line, col) {
-        Some(c) if !c.is_whitespace() => Cursor { line, col, want_col: col },
+        Some(c) if !c.is_whitespace() => Cursor {
+            line,
+            col,
+            want_col: col,
+        },
         _ => past_end(buf, line),
     }
 }
 
 fn past_end(buf: &Buffer, line: usize) -> Cursor {
     let len = buf.line_len(line);
-    Cursor { line, col: len, want_col: len }
+    Cursor {
+        line,
+        col: len,
+        want_col: len,
+    }
 }
 
 fn next_word_end(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
@@ -337,24 +455,44 @@ fn next_word_end(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
 
     let start = match buf.char_at(line, col) {
         Some(c) => cf(c),
-        None => return Cursor { line, col, want_col: col },
+        None => {
+            return Cursor {
+                line,
+                col,
+                want_col: col,
+            };
+        }
     };
 
     // Walk forward through the run; stop one position past the last same-class char.
     loop {
         match advance_one(buf, line, col) {
-            None => return Cursor { line, col, want_col: col },
+            None => {
+                return Cursor {
+                    line,
+                    col,
+                    want_col: col,
+                };
+            }
             Some((nl, nc)) => {
                 let crossed_line = nl != line;
                 if crossed_line {
-                    return Cursor { line, col, want_col: col };
+                    return Cursor {
+                        line,
+                        col,
+                        want_col: col,
+                    };
                 }
                 let cls = buf.char_at(nl, nc).map(cf);
                 if cls == Some(start) {
                     line = nl;
                     col = nc;
                 } else {
-                    return Cursor { line, col, want_col: col };
+                    return Cursor {
+                        line,
+                        col,
+                        want_col: col,
+                    };
                 }
             }
         }
@@ -370,13 +508,25 @@ fn prev_word_start(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
             line = l;
             col = c;
         }
-        None => return Cursor { line: 0, col: 0, want_col: 0 },
+        None => {
+            return Cursor {
+                line: 0,
+                col: 0,
+                want_col: 0,
+            };
+        }
     }
     skip_whitespace_backward(buf, &mut line, &mut col);
 
     let start = match buf.char_at(line, col) {
         Some(c) => cf(c),
-        None => return Cursor { line, col, want_col: col },
+        None => {
+            return Cursor {
+                line,
+                col,
+                want_col: col,
+            };
+        }
     };
     loop {
         match retreat_one(buf, line, col) {
@@ -389,10 +539,20 @@ fn prev_word_start(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
                     break;
                 }
             }
-            None => return Cursor { line: 0, col: 0, want_col: 0 },
+            None => {
+                return Cursor {
+                    line: 0,
+                    col: 0,
+                    want_col: 0,
+                };
+            }
         }
     }
-    Cursor { line, col, want_col: col }
+    Cursor {
+        line,
+        col,
+        want_col: col,
+    }
 }
 
 fn prev_word_end(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
@@ -414,13 +574,23 @@ fn prev_word_end(buf: &Buffer, cur: Cursor, cf: ClassFn) -> Cursor {
                             break;
                         }
                     }
-                    None => return Cursor { line: 0, col: 0, want_col: 0 },
+                    None => {
+                        return Cursor {
+                            line: 0,
+                            col: 0,
+                            want_col: 0,
+                        };
+                    }
                 }
             }
         }
     }
     skip_whitespace_backward(buf, &mut line, &mut col);
-    Cursor { line, col, want_col: col }
+    Cursor {
+        line,
+        col,
+        want_col: col,
+    }
 }
 
 fn skip_whitespace_forward(buf: &Buffer, line: &mut usize, col: &mut usize) {
@@ -507,7 +677,11 @@ mod tests {
     }
 
     fn cur(line: usize, col: usize) -> Cursor {
-        Cursor { line, col, want_col: col }
+        Cursor {
+            line,
+            col,
+            want_col: col,
+        }
     }
 
     #[test]
@@ -740,7 +914,14 @@ mod tests {
             let line = line_hint % b.line_count();
             let llen = b.line_len(line);
             let col = if llen == 0 { 0 } else { col_hint % llen };
-            (b, Cursor { line, col, want_col: col })
+            (
+                b,
+                Cursor {
+                    line,
+                    col,
+                    want_col: col,
+                },
+            )
         })
     }
 

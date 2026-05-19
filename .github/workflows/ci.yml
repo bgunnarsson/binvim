@@ -53,9 +53,21 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --locked --all-targets -- -A warnings
 
-# fmt:
-#   `cargo fmt --check` is deliberately not wired up. The codebase
-#   has hand-rolled formatting in many places (compact `let-else`,
-#   intentionally single-line method chains, custom alignment) that
-#   stock rustfmt would erase across ~560 places. Decide on a style
-#   policy + run rustfmt once intentionally before turning this on.
+  fmt:
+    name: cargo fmt --check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Style policy lives in `rustfmt.toml` at the repo root:
+      # `max_width = 100` + `single_line_let_else_max_width = 100`
+      # preserve the compact let-else / single-line forms binvim
+      # leans on. The 0.4.4 cut ran `cargo fmt` once to normalise
+      # the tree; this gate keeps it that way.
+      - name: install rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: cargo fmt --check
+        run: cargo fmt --check

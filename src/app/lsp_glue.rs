@@ -61,7 +61,11 @@ impl super::App {
                 LspEvent::Rename { edit } => {
                     self.open_rename_preview(&edit);
                 }
-                LspEvent::ApplyEditRequest { client_key, id, edit } => {
+                LspEvent::ApplyEditRequest {
+                    client_key,
+                    id,
+                    edit,
+                } => {
                     // Preview-flag opt-in: route the server-initiated edit
                     // through `Mode::RenamePreview` and reply when the user
                     // accepts / cancels (or right away if there's nothing
@@ -412,10 +416,7 @@ impl super::App {
         let line = self.window.cursor.line;
         let mut col = self.window.cursor.col;
         while col > 0 {
-            let prev = self
-                .buffer
-                .char_at(line, col - 1)
-                .unwrap_or(' ');
+            let prev = self.buffer.char_at(line, col - 1).unwrap_or(' ');
             if prev.is_alphanumeric() || prev == '_' || prev == '-' {
                 col -= 1;
             } else {
@@ -521,8 +522,7 @@ impl super::App {
             // content on the line rather than line-break-anchored runs.
             let text = text.trim_end_matches('\n').to_string();
             if text.contains('\n') {
-                self.status_msg =
-                    "replace: selection spans multiple lines (not supported)".into();
+                self.status_msg = "replace: selection spans multiple lines (not supported)".into();
                 self.exit_visual();
                 return;
             }
@@ -580,10 +580,7 @@ impl super::App {
         self.status_msg = if n == 0 {
             format!("Pattern not found: {original}")
         } else {
-            format!(
-                "{n} replacement{}",
-                if n == 1 { "" } else { "s" }
-            )
+            format!("{n} replacement{}", if n == 1 { "" } else { "s" })
         };
     }
 
@@ -711,7 +708,9 @@ impl super::App {
                     return;
                 }
                 let s = self.buffer.pos_to_char(c.anchor_line, c.anchor_col);
-                let e = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                let e = self
+                    .buffer
+                    .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                 (s.min(e), s.max(e))
             }
         };
@@ -813,7 +812,9 @@ impl super::App {
         if self.buffer.is_large() {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         if !self.lsp.ensure_for_path(&path, &cwd) {
             return;
@@ -823,8 +824,7 @@ impl super::App {
         // its own didOpen — each carries its own languageId, derived from
         // the spec for this path (not the client's stored one).
         self.lsp.did_open_all(&path, &text);
-        self.last_sent_version
-            .insert(path, self.buffer.version);
+        self.last_sent_version.insert(path, self.buffer.version);
     }
 
     /// Force-flush the active buffer to every attached LSP. Used right
@@ -834,8 +834,14 @@ impl super::App {
         if self.buffer.is_large() {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
-        let last = self.last_sent_version.get(&path).copied().unwrap_or(u64::MAX);
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
+        let last = self
+            .last_sent_version
+            .get(&path)
+            .copied()
+            .unwrap_or(u64::MAX);
         if last == self.buffer.version {
             return;
         }
@@ -849,8 +855,7 @@ impl super::App {
         } else {
             self.lsp.did_change_all(&path, self.buffer.version, &text);
         }
-        self.last_sent_version
-            .insert(path, self.buffer.version);
+        self.last_sent_version.insert(path, self.buffer.version);
         self.last_lsp_sync_at = Instant::now();
     }
 
@@ -862,8 +867,14 @@ impl super::App {
         if self.buffer.is_large() {
             return;
         }
-        let Some(path) = self.buffer.path.as_ref() else { return; };
-        let last = self.last_sent_version.get(path).copied().unwrap_or(u64::MAX);
+        let Some(path) = self.buffer.path.as_ref() else {
+            return;
+        };
+        let last = self
+            .last_sent_version
+            .get(path)
+            .copied()
+            .unwrap_or(u64::MAX);
         if last == self.buffer.version {
             return;
         }
@@ -880,7 +891,11 @@ impl super::App {
     /// arrived first. `None` when the buffer is already fully shipped.
     pub(super) fn lsp_sync_due_at(&self) -> Option<Instant> {
         let path = self.buffer.path.as_ref()?;
-        let last = self.last_sent_version.get(path).copied().unwrap_or(u64::MAX);
+        let last = self
+            .last_sent_version
+            .get(path)
+            .copied()
+            .unwrap_or(u64::MAX);
         if last == self.buffer.version {
             return None;
         }
@@ -906,7 +921,9 @@ impl super::App {
     /// (so rapid typing across many versions can't queue up against
     /// a slow / indexing server).
     pub(super) fn lsp_request_inlay_hints_if_due(&mut self) {
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         let version = self.buffer.version;
         let last = self
             .last_inlay_request_version
@@ -921,7 +938,8 @@ impl super::App {
         }
         let end_line = self.buffer.line_count();
         if self.lsp.request_inlay_hints(&path, end_line) {
-            self.last_inlay_request_version.insert(path.clone(), version);
+            self.last_inlay_request_version
+                .insert(path.clone(), version);
             self.inlay_hints_in_flight.insert(path);
         }
     }
@@ -936,7 +954,9 @@ impl super::App {
         if !self.config.lsp.code_lens {
             return false;
         }
-        let Some(path) = self.buffer.path.as_ref() else { return false; };
+        let Some(path) = self.buffer.path.as_ref() else {
+            return false;
+        };
         if self.code_lens_in_flight.contains(path) {
             return false;
         }
@@ -973,7 +993,9 @@ impl super::App {
         if !self.config.lsp.code_lens {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         let version = self.buffer.version;
         if self.last_synth_lens_version.get(&path) == Some(&version) {
             return;
@@ -994,7 +1016,8 @@ impl super::App {
             return;
         };
         self.last_synth_lens_version.insert(path.clone(), version);
-        self.synth_only_code_lens.insert(path.clone(), (version, synth));
+        self.synth_only_code_lens
+            .insert(path.clone(), (version, synth));
         self.refresh_merged_code_lens(&path);
     }
 
@@ -1079,7 +1102,9 @@ impl super::App {
         if !self.config.lsp.code_lens {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         // Razor opts out — see the matching guard in
         // `synth_code_lens_if_due` for why. Skipping the request keeps
         // `code_lens[path]` empty so the renderer never reserves a
@@ -1120,8 +1145,10 @@ impl super::App {
             }
         }
         if self.lsp.request_code_lens(&path, version) {
-            self.last_code_lens_request_version.insert(path.clone(), version);
-            self.last_code_lens_request_at.insert(path.clone(), Instant::now());
+            self.last_code_lens_request_version
+                .insert(path.clone(), version);
+            self.last_code_lens_request_at
+                .insert(path.clone(), Instant::now());
             self.code_lens_in_flight.insert(path);
         }
     }
@@ -1134,7 +1161,9 @@ impl super::App {
         if !self.config.lsp.semantic_tokens {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         let version = self.buffer.version;
         let last = self
             .last_semantic_tokens_request_version
@@ -1148,7 +1177,8 @@ impl super::App {
             return;
         }
         if self.lsp.request_semantic_tokens_full(&path, version) {
-            self.last_semantic_tokens_request_version.insert(path.clone(), version);
+            self.last_semantic_tokens_request_version
+                .insert(path.clone(), version);
             self.semantic_tokens_in_flight.insert(path);
         }
     }
@@ -1171,13 +1201,18 @@ impl super::App {
         // suspend the cursor's editing meaning) or in Insert mode
         // (we'd be requesting on every keystroke and the user can't
         // see the highlights through the typing flow anyway).
-        if !matches!(self.mode, crate::mode::Mode::Normal | crate::mode::Mode::Visual(_)) {
+        if !matches!(
+            self.mode,
+            crate::mode::Mode::Normal | crate::mode::Mode::Visual(_)
+        ) {
             return;
         }
         if self.picker.is_some() || self.completion.is_some() {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         let line = self.window.cursor.line;
         let col = self.window.cursor.col;
         let version = self.buffer.version;
@@ -1204,7 +1239,10 @@ impl super::App {
         if self.document_highlight_in_flight.contains(&path) {
             return;
         }
-        if self.lsp.request_document_highlight(&path, line, col, version) {
+        if self
+            .lsp
+            .request_document_highlight(&path, line, col, version)
+        {
             self.document_highlight_in_flight.insert(path);
         }
     }
@@ -1219,7 +1257,11 @@ impl super::App {
     /// exactly: a single edit invalidates the column indices the
     /// server returned, and re-anchoring them blind would smear
     /// highlights onto unrelated tokens.
-    pub fn line_document_highlights(&self, path: &std::path::Path, line: usize) -> Vec<(usize, usize)> {
+    pub fn line_document_highlights(
+        &self,
+        path: &std::path::Path,
+        line: usize,
+    ) -> Vec<(usize, usize)> {
         let active_path = match self.buffer.path.as_deref() {
             Some(p) => p,
             None => return Vec::new(),
@@ -1259,7 +1301,11 @@ impl super::App {
                 // single-line ranges) but the spec allows them.
                 let buffer_len = self.buffer.line_len(line);
                 let start = if r.start_line == line { r.start_col } else { 0 };
-                let end = if r.end_line == line { r.end_col } else { buffer_len };
+                let end = if r.end_line == line {
+                    r.end_col
+                } else {
+                    buffer_len
+                };
                 if end > start {
                     out.push((start, end));
                 }
@@ -1284,7 +1330,9 @@ impl super::App {
     /// callers that only ever want the focused buffer's reports;
     /// inactive panes call `line_diagnostics_for` with their own path.
     pub fn line_diagnostics(&self, line: usize) -> Vec<&Diagnostic> {
-        let Some(path) = self.buffer.path.as_ref() else { return Vec::new(); };
+        let Some(path) = self.buffer.path.as_ref() else {
+            return Vec::new();
+        };
         self.line_diagnostics_for(path, line)
     }
 
@@ -1300,15 +1348,13 @@ impl super::App {
     }
 
     pub fn worst_diagnostic(&self, line: usize) -> Option<Severity> {
-        let Some(path) = self.buffer.path.as_ref() else { return None; };
+        let Some(path) = self.buffer.path.as_ref() else {
+            return None;
+        };
         self.worst_diagnostic_for(path, line)
     }
 
-    pub fn worst_diagnostic_for(
-        &self,
-        path: &std::path::Path,
-        line: usize,
-    ) -> Option<Severity> {
+    pub fn worst_diagnostic_for(&self, path: &std::path::Path, line: usize) -> Option<Severity> {
         let mut worst: Option<Severity> = None;
         for d in self.line_diagnostics_for(path, line) {
             worst = match (worst, d.severity) {
@@ -1327,8 +1373,12 @@ impl super::App {
     /// JSON shape so we can pass them straight to `textDocument/codeAction`'s
     /// `context.diagnostics` field. Empty when nothing's there.
     pub(super) fn diagnostics_at_cursor_for_lsp(&self) -> Vec<JsonValue> {
-        let Some(path) = self.buffer.path.as_deref() else { return Vec::new(); };
-        let Some(diags) = self.lsp.diagnostics_for(path) else { return Vec::new(); };
+        let Some(path) = self.buffer.path.as_deref() else {
+            return Vec::new();
+        };
+        let Some(diags) = self.lsp.diagnostics_for(path) else {
+            return Vec::new();
+        };
         let line = self.window.cursor.line;
         let col = self.window.cursor.col;
         diags
@@ -1383,11 +1433,7 @@ impl super::App {
             })
             .collect();
         self.pending_code_actions = items;
-        let mut state = PickerState::new(
-            PickerKind::CodeActions,
-            "Code actions".into(),
-            entries,
-        );
+        let mut state = PickerState::new(PickerKind::CodeActions, "Code actions".into(), entries);
         state.refilter();
         self.picker = Some(state);
         self.mode = Mode::Picker;
@@ -1397,7 +1443,9 @@ impl super::App {
     /// any) then surfaces a status note. Multi-file edits are supported by
     /// switching buffers, applying, saving, and restoring.
     pub(super) fn run_code_action(&mut self, idx: usize) {
-        let Some(action) = self.pending_code_actions.get(idx).cloned() else { return; };
+        let Some(action) = self.pending_code_actions.get(idx).cloned() else {
+            return;
+        };
         if let Some(reason) = action.disabled_reason {
             self.status_msg = format!("disabled: {reason}");
             return;
@@ -1470,7 +1518,11 @@ impl super::App {
                 let start_col = s.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let end_line = n.get("line").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                 let end_col = n.get("character").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                let new_text = e.get("newText").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let new_text = e
+                    .get("newText")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 out.push(crate::app::state::ConcreteEdit {
                     path: path.clone(),
                     start_line,
@@ -1487,7 +1539,9 @@ impl super::App {
                     .get("textDocument")
                     .and_then(|d| d.get("uri"))
                     .and_then(|v| v.as_str())
-                else { continue };
+                else {
+                    continue;
+                };
                 let Some(path) = crate::lsp::uri_to_path(uri) else { continue };
                 let Some(edits) = ch.get("edits").and_then(|v| v.as_array()) else { continue };
                 push(&path, edits);
@@ -1599,11 +1653,8 @@ impl super::App {
                 )
             })
             .collect();
-        let mut state = PickerState::new(
-            PickerKind::DocumentSymbols,
-            "Doc symbols".into(),
-            entries,
-        );
+        let mut state =
+            PickerState::new(PickerKind::DocumentSymbols, "Doc symbols".into(), entries);
         state.refilter();
         self.picker = Some(state);
         self.mode = Mode::Picker;
@@ -1612,7 +1663,9 @@ impl super::App {
     /// Replace the current workspace-symbols picker's items with fresh
     /// server-side results. No-op if the user already closed it.
     fn update_workspace_symbols_picker(&mut self, items: Vec<SymbolItem>) {
-        let Some(picker) = self.picker.as_mut() else { return; };
+        let Some(picker) = self.picker.as_mut() else {
+            return;
+        };
         if !matches!(picker.kind, PickerKind::WorkspaceSymbols) {
             return;
         }
@@ -1620,13 +1673,7 @@ impl super::App {
             .into_iter()
             .map(|s| {
                 let display = if s.container.is_empty() {
-                    format!(
-                        "{} {} :{} {}",
-                        s.kind,
-                        s.name,
-                        s.line + 1,
-                        s.path.display()
-                    )
+                    format!("{} {} :{} {}", s.kind, s.name, s.line + 1, s.path.display())
                 } else {
                     format!(
                         "{} {} › {} :{} {}",
@@ -1708,9 +1755,7 @@ impl super::App {
 
     pub(super) fn messages_max_scroll(&self) -> usize {
         let total = self.messages_content_height.get();
-        let body_rows = self
-            .height
-            .saturating_sub(2) as usize;
+        let body_rows = self.height.saturating_sub(2) as usize;
         total.saturating_sub(body_rows)
     }
 
@@ -1760,8 +1805,7 @@ impl super::App {
 
     pub(super) fn cmd_code_lens_status(&mut self) {
         if !self.config.lsp.code_lens {
-            self.status_msg =
-                "codelens: disabled in config ([lsp] code_lens = false)".into();
+            self.status_msg = "codelens: disabled in config ([lsp] code_lens = false)".into();
             return;
         }
         let Some(path) = self.buffer.path.clone() else {
@@ -1852,7 +1896,9 @@ impl super::App {
         if !self.config.lsp.code_lens {
             return;
         }
-        let Some(path) = self.buffer.path.clone() else { return; };
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
         let commands = self.lens_commands_on_line(&path, line);
         if commands.is_empty() || col < gutter {
             return;
@@ -1884,7 +1930,9 @@ impl super::App {
         path: &std::path::Path,
         line: usize,
     ) -> Vec<crate::lsp::LspCommand> {
-        let Some(cache) = self.code_lens.get(path) else { return Vec::new(); };
+        let Some(cache) = self.code_lens.get(path) else {
+            return Vec::new();
+        };
         if cache.buffer_version != self.buffer.version {
             return Vec::new();
         }
@@ -1900,7 +1948,9 @@ impl super::App {
     /// Number of resolved lens commands anchored on `line` in the active
     /// buffer. Used by `h`/`l` along the phantom row to clamp index.
     pub(super) fn lens_count_on_line(&self, line: usize) -> usize {
-        let Some(path) = self.buffer.path.as_ref() else { return 0; };
+        let Some(path) = self.buffer.path.as_ref() else {
+            return 0;
+        };
         self.lens_commands_on_line(path, line).len()
     }
 
@@ -1911,7 +1961,12 @@ impl super::App {
         let items: Vec<(String, crate::picker::PickerPayload)> = commands
             .iter()
             .enumerate()
-            .map(|(i, c)| (c.title.clone(), crate::picker::PickerPayload::CodeLensIdx(i)))
+            .map(|(i, c)| {
+                (
+                    c.title.clone(),
+                    crate::picker::PickerPayload::CodeLensIdx(i),
+                )
+            })
             .collect();
         self.pending_code_lens_commands = commands;
         self.picker = Some(crate::picker::PickerState::new(
@@ -2109,9 +2164,7 @@ fn extract_show_references_locations(
 /// turn up across servers that bind a method-name as a lens
 /// command. Returns `None` when no position is recoverable so the
 /// caller can fall back to the cursor.
-fn extract_text_document_position(
-    arguments: &[serde_json::Value],
-) -> Option<(usize, usize)> {
+fn extract_text_document_position(arguments: &[serde_json::Value]) -> Option<(usize, usize)> {
     let position = arguments
         .iter()
         .find_map(|v| v.get("position"))
@@ -2182,7 +2235,9 @@ pub(super) fn expand_snippet(template: &str) -> (String, Vec<usize>) {
                 let mut j = i + 1;
                 let mut idx: u32 = 0;
                 while j < chars.len() && chars[j].is_ascii_digit() {
-                    idx = idx.saturating_mul(10).saturating_add(chars[j] as u32 - '0' as u32);
+                    idx = idx
+                        .saturating_mul(10)
+                        .saturating_add(chars[j] as u32 - '0' as u32);
                     j += 1;
                 }
                 let here = out.chars().count();
@@ -2197,7 +2252,9 @@ pub(super) fn expand_snippet(template: &str) -> (String, Vec<usize>) {
                 let mut j = i + 2;
                 let mut idx: u32 = 0;
                 while j < chars.len() && chars[j].is_ascii_digit() {
-                    idx = idx.saturating_mul(10).saturating_add(chars[j] as u32 - '0' as u32);
+                    idx = idx
+                        .saturating_mul(10)
+                        .saturating_add(chars[j] as u32 - '0' as u32);
                     j += 1;
                 }
                 let here = out.chars().count();
@@ -2389,11 +2446,7 @@ mod tests {
         // The continuation indent should make the closer line up with
         // the opener.
         let mut stops = vec![13]; // position of the `$1` inside <li>
-        let out = super::indent_continuation_lines(
-            "<ul>\n\t<li>x</li>\n</ul>",
-            &mut stops,
-            "\t",
-        );
+        let out = super::indent_continuation_lines("<ul>\n\t<li>x</li>\n</ul>", &mut stops, "\t");
         assert_eq!(out, "<ul>\n\t\t<li>x</li>\n\t</ul>");
         // The stop at original char 13 (the 'x') is after the first
         // newline, so it shifts by one (the inserted tab).
@@ -2450,7 +2503,10 @@ fn filter_completion_items(items: Vec<CompletionItem>, prefix: &str) -> Vec<Comp
             Some((tier, item))
         })
         .collect();
-    tiered.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.sort_text.cmp(&b.1.sort_text)));
+    tiered.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| a.1.sort_text.cmp(&b.1.sort_text))
+    });
     tiered.truncate(VISIBLE_CAP);
     tiered.into_iter().map(|(_, item)| item).collect()
 }

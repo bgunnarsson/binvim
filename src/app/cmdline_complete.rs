@@ -178,7 +178,9 @@ fn split_for_completion(cmdline: &str) -> Option<(String, String, CompletionKind
     // Skip any extra whitespace between head and the token start so
     // `:e   foo` still anchors the token at `foo`.
     let rest = &cmdline[after_head_idx..];
-    let token_offset = rest.find(|c: char| !c.is_whitespace()).unwrap_or(rest.len());
+    let token_offset = rest
+        .find(|c: char| !c.is_whitespace())
+        .unwrap_or(rest.len());
     let prefix = cmdline[..after_head_idx + token_offset].to_string();
     let token = cmdline[after_head_idx + token_offset..].to_string();
     let kind = match head {

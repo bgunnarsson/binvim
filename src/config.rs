@@ -185,7 +185,6 @@ pub struct FileExplorerConfig {
     pub tree: bool,
 }
 
-
 fn default_schema() -> u32 {
     1
 }
@@ -242,9 +241,29 @@ impl Config {
             return c;
         }
         match self.background_color() {
-            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.15),
-            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.05),
-            None => Color::Rgb { r: 0x18, g: 0x18, b: 0x25 },
+            Some(bg) if is_dark(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0x00,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                0.15,
+            ),
+            Some(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0x00,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                0.05,
+            ),
+            None => Color::Rgb {
+                r: 0x18,
+                g: 0x18,
+                b: 0x25,
+            },
         }
     }
 
@@ -278,9 +297,21 @@ impl Config {
             return c;
         }
         match self.background_color() {
-            Some(bg) if is_dark(bg) => Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
-            Some(_) => Color::Rgb { r: 0x4c, g: 0x4f, b: 0x69 },
-            None => Color::Rgb { r: 0xcd, g: 0xd6, b: 0xf4 },
+            Some(bg) if is_dark(bg) => Color::Rgb {
+                r: 0xcd,
+                g: 0xd6,
+                b: 0xf4,
+            },
+            Some(_) => Color::Rgb {
+                r: 0x4c,
+                g: 0x4f,
+                b: 0x69,
+            },
+            None => Color::Rgb {
+                r: 0xcd,
+                g: 0xd6,
+                b: 0xf4,
+            },
         }
     }
 
@@ -292,9 +323,29 @@ impl Config {
             return c;
         }
         match self.background_color() {
-            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0xff, g: 0xff, b: 0xff }, 0.45),
-            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.45),
-            None => Color::Rgb { r: 0x6c, g: 0x70, b: 0x86 },
+            Some(bg) if is_dark(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                },
+                0.45,
+            ),
+            Some(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0x00,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                0.45,
+            ),
+            None => Color::Rgb {
+                r: 0x6c,
+                g: 0x70,
+                b: 0x86,
+            },
         }
     }
 
@@ -302,7 +353,14 @@ impl Config {
     /// title, hover heading, whichkey title. Stays a vivid accent regardless
     /// of background so it always reads as "this is highlighted."
     pub fn theme_emphasis(&self) -> Color {
-        self.theme_color("emphasis", Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe })
+        self.theme_color(
+            "emphasis",
+            Color::Rgb {
+                r: 0xb4,
+                g: 0xbe,
+                b: 0xfe,
+            },
+        )
     }
 
     /// Layered chrome surface — sits above the chrome bg and is used for
@@ -315,9 +373,29 @@ impl Config {
             return c;
         }
         match self.background_color() {
-            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0xff, g: 0xff, b: 0xff }, 0.12),
-            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.10),
-            None => Color::Rgb { r: 0x45, g: 0x47, b: 0x5a },
+            Some(bg) if is_dark(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                },
+                0.12,
+            ),
+            Some(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0x00,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                0.10,
+            ),
+            None => Color::Rgb {
+                r: 0x45,
+                g: 0x47,
+                b: 0x5a,
+            },
         }
     }
 
@@ -330,49 +408,118 @@ impl Config {
             return c;
         }
         match self.background_color() {
-            Some(bg) if is_dark(bg) => mix(bg, Color::Rgb { r: 0xff, g: 0xff, b: 0xff }, 0.22),
-            Some(bg) => mix(bg, Color::Rgb { r: 0x00, g: 0x00, b: 0x00 }, 0.18),
-            None => Color::Rgb { r: 0x58, g: 0x5b, b: 0x70 },
+            Some(bg) if is_dark(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                },
+                0.22,
+            ),
+            Some(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0x00,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                0.18,
+            ),
+            None => Color::Rgb {
+                r: 0x58,
+                g: 0x5b,
+                b: 0x70,
+            },
         }
     }
 
     /// Primary chrome accent — debug-pane chip bg, breakpoint marker,
     /// active-terminal-tab bg, dirty-buffer dot in the tab bar.
     pub fn theme_accent(&self) -> Color {
-        self.theme_color("accent", Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 })
+        self.theme_color(
+            "accent",
+            Color::Rgb {
+                r: 0xfa,
+                g: 0xb3,
+                b: 0x87,
+            },
+        )
     }
 
     /// Secondary chrome accent — terminal-pane chip bg, active sub-tab in
     /// the debug pane.
     pub fn theme_accent_secondary(&self) -> Color {
-        self.theme_color("accent_secondary", Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 })
+        self.theme_color(
+            "accent_secondary",
+            Color::Rgb {
+                r: 0xa6,
+                g: 0xe3,
+                b: 0xa1,
+            },
+        )
     }
 
     /// Text colour on top of brightly-coloured chips (terminal / debug
     /// chips, active tab in terminal pane). Should contrast with all the
     /// accent colours.
     pub fn theme_chip_fg(&self) -> Color {
-        self.theme_color("chip_fg", Color::Rgb { r: 0x1e, g: 0x1e, b: 0x2e })
+        self.theme_color(
+            "chip_fg",
+            Color::Rgb {
+                r: 0x1e,
+                g: 0x1e,
+                b: 0x2e,
+            },
+        )
     }
 
     /// Error severity — diagnostics, deleted hunks, breakpoint dots.
     pub fn theme_error(&self) -> Color {
-        self.theme_color("error", Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 })
+        self.theme_color(
+            "error",
+            Color::Rgb {
+                r: 0xf3,
+                g: 0x8b,
+                b: 0xa8,
+            },
+        )
     }
 
     /// Warning severity — diagnostics, modified hunks, search highlight bg.
     pub fn theme_warning(&self) -> Color {
-        self.theme_color("warning", Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf })
+        self.theme_color(
+            "warning",
+            Color::Rgb {
+                r: 0xf9,
+                g: 0xe2,
+                b: 0xaf,
+            },
+        )
     }
 
     /// Info severity — diagnostics, statusline mode chip default tint.
     pub fn theme_info(&self) -> Color {
-        self.theme_color("info", Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa })
+        self.theme_color(
+            "info",
+            Color::Rgb {
+                r: 0x89,
+                g: 0xb4,
+                b: 0xfa,
+            },
+        )
     }
 
     /// Hint severity — diagnostics.
     pub fn theme_hint(&self) -> Color {
-        self.theme_color("hint", Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb })
+        self.theme_color(
+            "hint",
+            Color::Rgb {
+                r: 0x89,
+                g: 0xdc,
+                b: 0xeb,
+            },
+        )
     }
 
     /// Helper that returns the user's override for a specific dotted-namespace
@@ -388,77 +535,98 @@ impl Config {
 
     // ── Notifications ────────────────────────────────────────────────────
     pub fn notification_info(&self) -> Color {
-        self.theme_override("notification.info").unwrap_or_else(|| self.theme_info())
+        self.theme_override("notification.info")
+            .unwrap_or_else(|| self.theme_info())
     }
     pub fn notification_warning(&self) -> Color {
-        self.theme_override("notification.warning").unwrap_or_else(|| self.theme_warning())
+        self.theme_override("notification.warning")
+            .unwrap_or_else(|| self.theme_warning())
     }
     pub fn notification_success(&self) -> Color {
-        self.theme_override("notification.success").unwrap_or_else(|| self.theme_accent_secondary())
+        self.theme_override("notification.success")
+            .unwrap_or_else(|| self.theme_accent_secondary())
     }
     pub fn notification_error(&self) -> Color {
-        self.theme_override("notification.error").unwrap_or_else(|| self.theme_error())
+        self.theme_override("notification.error")
+            .unwrap_or_else(|| self.theme_error())
     }
 
     // ── Git stripe ───────────────────────────────────────────────────────
     pub fn git_added(&self) -> Color {
-        self.theme_override("git.added").unwrap_or_else(|| self.theme_accent_secondary())
+        self.theme_override("git.added")
+            .unwrap_or_else(|| self.theme_accent_secondary())
     }
     pub fn git_modified(&self) -> Color {
-        self.theme_override("git.modified").unwrap_or_else(|| self.theme_warning())
+        self.theme_override("git.modified")
+            .unwrap_or_else(|| self.theme_warning())
     }
     pub fn git_deleted(&self) -> Color {
-        self.theme_override("git.deleted").unwrap_or_else(|| self.theme_error())
+        self.theme_override("git.deleted")
+            .unwrap_or_else(|| self.theme_error())
     }
 
     // ── Diagnostics (LSP) ────────────────────────────────────────────────
     pub fn diagnostic_error(&self) -> Color {
-        self.theme_override("diagnostic.error").unwrap_or_else(|| self.theme_error())
+        self.theme_override("diagnostic.error")
+            .unwrap_or_else(|| self.theme_error())
     }
     pub fn diagnostic_warning(&self) -> Color {
-        self.theme_override("diagnostic.warning").unwrap_or_else(|| self.theme_warning())
+        self.theme_override("diagnostic.warning")
+            .unwrap_or_else(|| self.theme_warning())
     }
     pub fn diagnostic_info(&self) -> Color {
-        self.theme_override("diagnostic.info").unwrap_or_else(|| self.theme_info())
+        self.theme_override("diagnostic.info")
+            .unwrap_or_else(|| self.theme_info())
     }
     pub fn diagnostic_hint(&self) -> Color {
-        self.theme_override("diagnostic.hint").unwrap_or_else(|| self.theme_hint())
+        self.theme_override("diagnostic.hint")
+            .unwrap_or_else(|| self.theme_hint())
     }
 
     // ── Tab bar ──────────────────────────────────────────────────────────
     pub fn tab_active_bg(&self) -> Color {
-        self.theme_override("tab.active_bg").unwrap_or_else(|| self.theme_surface())
+        self.theme_override("tab.active_bg")
+            .unwrap_or_else(|| self.theme_surface())
     }
     pub fn tab_active_fg(&self) -> Color {
-        self.theme_override("tab.active_fg").unwrap_or_else(|| self.theme_emphasis())
+        self.theme_override("tab.active_fg")
+            .unwrap_or_else(|| self.theme_emphasis())
     }
     pub fn tab_inactive_fg(&self) -> Color {
-        self.theme_override("tab.inactive_fg").unwrap_or_else(|| self.theme_dim())
+        self.theme_override("tab.inactive_fg")
+            .unwrap_or_else(|| self.theme_dim())
     }
     pub fn tab_dirty(&self) -> Color {
-        self.theme_override("tab.dirty").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("tab.dirty")
+            .unwrap_or_else(|| self.theme_accent())
     }
     pub fn tab_close(&self) -> Color {
-        self.theme_override("tab.close").unwrap_or_else(|| self.theme_dim())
+        self.theme_override("tab.close")
+            .unwrap_or_else(|| self.theme_dim())
     }
 
     // ── Terminal pane ────────────────────────────────────────────────────
     pub fn terminal_chip_bg(&self) -> Color {
-        self.theme_override("terminal.chip_bg").unwrap_or_else(|| self.theme_accent_secondary())
+        self.theme_override("terminal.chip_bg")
+            .unwrap_or_else(|| self.theme_accent_secondary())
     }
     pub fn terminal_chip_fg(&self) -> Color {
-        self.theme_override("terminal.chip_fg").unwrap_or_else(|| self.theme_chip_fg())
+        self.theme_override("terminal.chip_fg")
+            .unwrap_or_else(|| self.theme_chip_fg())
     }
     pub fn terminal_active_tab_bg(&self) -> Color {
-        self.theme_override("terminal.active_tab_bg").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("terminal.active_tab_bg")
+            .unwrap_or_else(|| self.theme_accent())
     }
 
     // ── Debug pane ───────────────────────────────────────────────────────
     pub fn debug_chip_bg(&self) -> Color {
-        self.theme_override("debug.chip_bg").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("debug.chip_bg")
+            .unwrap_or_else(|| self.theme_accent())
     }
     pub fn debug_active_tab_bg(&self) -> Color {
-        self.theme_override("debug.active_tab_bg").unwrap_or_else(|| self.theme_accent_secondary())
+        self.theme_override("debug.active_tab_bg")
+            .unwrap_or_else(|| self.theme_accent_secondary())
     }
 
     // ── File tree ────────────────────────────────────────────────────────
@@ -473,59 +641,76 @@ impl Config {
 
     // ── Gutter signs ─────────────────────────────────────────────────────
     pub fn gutter_breakpoint(&self) -> Color {
-        self.theme_override("gutter.breakpoint").unwrap_or_else(|| self.theme_error())
+        self.theme_override("gutter.breakpoint")
+            .unwrap_or_else(|| self.theme_error())
     }
     pub fn gutter_pc_marker(&self) -> Color {
-        self.theme_override("gutter.pc_marker").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("gutter.pc_marker")
+            .unwrap_or_else(|| self.theme_accent())
     }
 
     // ── Buffer overlays ──────────────────────────────────────────────────
     pub fn search_highlight_bg(&self) -> Color {
-        self.theme_override("search.highlight_bg").unwrap_or_else(|| self.theme_warning())
+        self.theme_override("search.highlight_bg")
+            .unwrap_or_else(|| self.theme_warning())
     }
     pub fn yank_flash_bg(&self) -> Color {
-        self.theme_override("yank.flash_bg").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("yank.flash_bg")
+            .unwrap_or_else(|| self.theme_accent())
     }
     pub fn multi_cursor_bg(&self) -> Color {
-        self.theme_override("multi_cursor.bg").unwrap_or_else(|| self.theme_emphasis())
+        self.theme_override("multi_cursor.bg")
+            .unwrap_or_else(|| self.theme_emphasis())
     }
     pub fn match_pair_bg(&self) -> Color {
-        self.theme_override("match_pair.bg").unwrap_or_else(|| self.theme_border())
+        self.theme_override("match_pair.bg")
+            .unwrap_or_else(|| self.theme_border())
     }
     pub fn doc_highlight_bg(&self) -> Color {
-        self.theme_override("doc_highlight.bg").unwrap_or_else(|| self.theme_border())
+        self.theme_override("doc_highlight.bg")
+            .unwrap_or_else(|| self.theme_border())
     }
 
     // ── Status-line mode chips ───────────────────────────────────────────
     pub fn mode_normal(&self) -> Color {
-        self.theme_override("mode.normal").unwrap_or_else(|| self.theme_emphasis())
+        self.theme_override("mode.normal")
+            .unwrap_or_else(|| self.theme_emphasis())
     }
     pub fn mode_insert(&self) -> Color {
-        self.theme_override("mode.insert").unwrap_or_else(|| self.theme_accent_secondary())
+        self.theme_override("mode.insert")
+            .unwrap_or_else(|| self.theme_accent_secondary())
     }
     pub fn mode_visual(&self) -> Color {
-        let mauve = self
-            .color_for_capture("keyword")
-            .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+        let mauve = self.color_for_capture("keyword").unwrap_or(Color::Rgb {
+            r: 0xcb,
+            g: 0xa6,
+            b: 0xf7,
+        });
         self.theme_override("mode.visual").unwrap_or(mauve)
     }
     pub fn mode_command(&self) -> Color {
-        self.theme_override("mode.command").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("mode.command")
+            .unwrap_or_else(|| self.theme_accent())
     }
     pub fn mode_search(&self) -> Color {
-        self.theme_override("mode.search").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("mode.search")
+            .unwrap_or_else(|| self.theme_accent())
     }
     pub fn mode_picker(&self) -> Color {
-        self.theme_override("mode.picker").unwrap_or_else(|| self.theme_hint())
+        self.theme_override("mode.picker")
+            .unwrap_or_else(|| self.theme_hint())
     }
     pub fn mode_prompt(&self) -> Color {
-        self.theme_override("mode.prompt").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("mode.prompt")
+            .unwrap_or_else(|| self.theme_accent())
     }
     pub fn mode_terminal(&self) -> Color {
-        self.theme_override("mode.terminal").unwrap_or_else(|| self.theme_accent_secondary())
+        self.theme_override("mode.terminal")
+            .unwrap_or_else(|| self.theme_accent_secondary())
     }
     pub fn mode_debug(&self) -> Color {
-        self.theme_override("mode.debug").unwrap_or_else(|| self.theme_accent())
+        self.theme_override("mode.debug")
+            .unwrap_or_else(|| self.theme_accent())
     }
 
     /// Resolve a colour for a tree-sitter capture name. User values from `[colors]`
@@ -605,11 +790,27 @@ fn is_dark(c: Color) -> bool {
 /// returns `b`. Non-Rgb variants pass through `a` unchanged — palette
 /// derivation is only ever invoked on hex-parsed Rgb colours.
 fn mix(a: Color, b: Color, t: f32) -> Color {
-    let (Color::Rgb { r: ar, g: ag, b: ab }, Color::Rgb { r: br, g: bg, b: bb }) = (a, b) else {
+    let (
+        Color::Rgb {
+            r: ar,
+            g: ag,
+            b: ab,
+        },
+        Color::Rgb {
+            r: br,
+            g: bg,
+            b: bb,
+        },
+    ) = (a, b)
+    else {
         return a;
     };
     let t = t.clamp(0.0, 1.0);
-    let blend = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round().clamp(0.0, 255.0) as u8;
+    let blend = |x: u8, y: u8| {
+        (x as f32 * (1.0 - t) + y as f32 * t)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
     Color::Rgb {
         r: blend(ar, br),
         g: blend(ag, bg),
@@ -629,21 +830,77 @@ fn parse_hex(s: &str) -> Option<Color> {
 
 // Catppuccin Mocha palette helpers — used as the baked-in defaults so a fresh
 // install renders sensibly on first launch.
-const CATP_MAUVE: Color = Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 };
-const CATP_GREEN: Color = Color::Rgb { r: 0xa6, g: 0xe3, b: 0xa1 };
-const CATP_BLUE: Color = Color::Rgb { r: 0x89, g: 0xb4, b: 0xfa };
-const CATP_YELLOW: Color = Color::Rgb { r: 0xf9, g: 0xe2, b: 0xaf };
-const CATP_PEACH: Color = Color::Rgb { r: 0xfa, g: 0xb3, b: 0x87 };
+const CATP_MAUVE: Color = Color::Rgb {
+    r: 0xcb,
+    g: 0xa6,
+    b: 0xf7,
+};
+const CATP_GREEN: Color = Color::Rgb {
+    r: 0xa6,
+    g: 0xe3,
+    b: 0xa1,
+};
+const CATP_BLUE: Color = Color::Rgb {
+    r: 0x89,
+    g: 0xb4,
+    b: 0xfa,
+};
+const CATP_YELLOW: Color = Color::Rgb {
+    r: 0xf9,
+    g: 0xe2,
+    b: 0xaf,
+};
+const CATP_PEACH: Color = Color::Rgb {
+    r: 0xfa,
+    g: 0xb3,
+    b: 0x87,
+};
 #[allow(dead_code)]
-const CATP_RED: Color = Color::Rgb { r: 0xf3, g: 0x8b, b: 0xa8 };
-const CATP_MAROON: Color = Color::Rgb { r: 0xeb, g: 0xa0, b: 0xac };
-const CATP_PINK: Color = Color::Rgb { r: 0xf5, g: 0xc2, b: 0xe7 };
-const CATP_SKY: Color = Color::Rgb { r: 0x89, g: 0xdc, b: 0xeb };
-const CATP_SAPPHIRE: Color = Color::Rgb { r: 0x74, g: 0xc7, b: 0xec };
-const CATP_TEAL: Color = Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 };
-const CATP_LAVENDER: Color = Color::Rgb { r: 0xb4, g: 0xbe, b: 0xfe };
-const CATP_OVERLAY1: Color = Color::Rgb { r: 0x7f, g: 0x84, b: 0x9c };
-const CATP_OVERLAY2: Color = Color::Rgb { r: 0x93, g: 0x99, b: 0xb2 };
+const CATP_RED: Color = Color::Rgb {
+    r: 0xf3,
+    g: 0x8b,
+    b: 0xa8,
+};
+const CATP_MAROON: Color = Color::Rgb {
+    r: 0xeb,
+    g: 0xa0,
+    b: 0xac,
+};
+const CATP_PINK: Color = Color::Rgb {
+    r: 0xf5,
+    g: 0xc2,
+    b: 0xe7,
+};
+const CATP_SKY: Color = Color::Rgb {
+    r: 0x89,
+    g: 0xdc,
+    b: 0xeb,
+};
+const CATP_SAPPHIRE: Color = Color::Rgb {
+    r: 0x74,
+    g: 0xc7,
+    b: 0xec,
+};
+const CATP_TEAL: Color = Color::Rgb {
+    r: 0x94,
+    g: 0xe2,
+    b: 0xd5,
+};
+const CATP_LAVENDER: Color = Color::Rgb {
+    r: 0xb4,
+    g: 0xbe,
+    b: 0xfe,
+};
+const CATP_OVERLAY1: Color = Color::Rgb {
+    r: 0x7f,
+    g: 0x84,
+    b: 0x9c,
+};
+const CATP_OVERLAY2: Color = Color::Rgb {
+    r: 0x93,
+    g: 0x99,
+    b: 0xb2,
+};
 
 fn default_capture_color(head: &str) -> Option<Color> {
     match head {
@@ -698,11 +955,7 @@ fn default_capture_color(head: &str) -> Option<Color> {
         // `deriveHelper` / `toolModule` are rust-analyzer extensions).
         // All routed to the same colour so the line paints uniformly
         // whether tree-sitter or the LSP wins the priority race.
-        "decorator"
-        | "attributeBracket"
-        | "derive"
-        | "builtinAttribute"
-        | "deriveHelper"
+        "decorator" | "attributeBracket" | "derive" | "builtinAttribute" | "deriveHelper"
         | "toolModule" => Some(CATP_PEACH),
         "tag" => Some(CATP_PINK),
         "label" => Some(CATP_SAPPHIRE),
@@ -717,4 +970,3 @@ fn default_capture_color(head: &str) -> Option<Color> {
         _ => None,
     }
 }
-

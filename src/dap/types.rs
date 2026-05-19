@@ -63,7 +63,10 @@ pub enum DapEvent {
     Thread { reason: String, thread_id: u64 },
     /// One breakpoint's verified state changed (set / cleared / moved
     /// after symbol load).
-    Breakpoint { reason: String, breakpoint: Breakpoint },
+    Breakpoint {
+        reason: String,
+        breakpoint: Breakpoint,
+    },
     /// Debuggee exited normally.
     Exited { exit_code: i64 },
     /// Session torn down (adapter exit, user-initiated, or error).

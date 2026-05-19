@@ -6,7 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::mode::{Mode, Operator};
 use crate::parser::{Action, ParseCtx};
 
-use super::state::{LastEdit, RecordingState, Register, MACRO_REPLAY_DEPTH_LIMIT};
+use super::state::{LastEdit, MACRO_REPLAY_DEPTH_LIMIT, RecordingState, Register};
 
 impl super::App {
     pub(super) fn write_register(&mut self, target: Option<char>, text: String, linewise: bool) {
@@ -28,7 +28,12 @@ impl super::App {
         }
     }
 
-    pub(super) fn write_yank_register(&mut self, target: Option<char>, text: String, linewise: bool) {
+    pub(super) fn write_yank_register(
+        &mut self,
+        target: Option<char>,
+        text: String,
+        linewise: bool,
+    ) {
         if matches!(target, Some('_')) {
             return;
         }
@@ -114,8 +119,10 @@ impl super::App {
         if self.macro_replay_depth > MACRO_REPLAY_DEPTH_LIMIT {
             self.macro_replay_depth = self.macro_replay_depth.saturating_sub(1);
             self.replaying_macro = false;
-            self.status_msg =
-                format!("macro recursion limit ({}) reached", MACRO_REPLAY_DEPTH_LIMIT);
+            self.status_msg = format!(
+                "macro recursion limit ({}) reached",
+                MACRO_REPLAY_DEPTH_LIMIT
+            );
             return;
         }
         'outer: for _ in 0..count {
@@ -179,12 +186,24 @@ impl super::App {
         let enters_insert = matches!(
             action,
             Action::EnterInsert(_)
-                | Action::Operate { op: Operator::Change, .. }
-                | Action::OperateLine { op: Operator::Change, .. }
-                | Action::OperateTextObject { op: Operator::Change, .. }
+                | Action::Operate {
+                    op: Operator::Change,
+                    ..
+                }
+                | Action::OperateLine {
+                    op: Operator::Change,
+                    ..
+                }
+                | Action::OperateTextObject {
+                    op: Operator::Change,
+                    ..
+                }
         );
         if enters_insert {
-            self.recording = Some(RecordingState { prelude: action.clone(), keys: Vec::new() });
+            self.recording = Some(RecordingState {
+                prelude: action.clone(),
+                keys: Vec::new(),
+            });
             return;
         }
         let plain_recordable = match action {

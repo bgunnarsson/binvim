@@ -32,13 +32,22 @@ pub struct DiagnosticsMessage {
 #[derive(Debug)]
 pub enum LspIncoming {
     Diagnostics(DiagnosticsMessage),
-    Response { id: u64, result: Value },
+    Response {
+        id: u64,
+        result: Value,
+    },
     /// Request that the editor needs to react to (e.g. goto-def jump, hover popup).
     #[allow(dead_code)]
-    ErrorReply { id: u64, message: String },
+    ErrorReply {
+        id: u64,
+        message: String,
+    },
     /// Server-to-client `workspace/applyEdit` — the main thread applies the
     /// edit and replies with `{ applied: true }` (or false on failure).
-    ApplyEditRequest { id: u64, edit: Value },
+    ApplyEditRequest {
+        id: u64,
+        edit: Value,
+    },
     /// `window/showMessage` (popup-style notification) or
     /// `window/logMessage` (debug log entry). Both share the same shape
     /// — a severity + a string — and only differ in how the editor
@@ -143,16 +152,33 @@ pub struct InlayHint {
 
 #[derive(Debug, Clone)]
 pub enum LspEvent {
-    GotoDef { path: PathBuf, line: usize, col: usize },
-    Hover { text: String },
-    Completion { items: Vec<CompletionItem> },
+    GotoDef {
+        path: PathBuf,
+        line: usize,
+        col: usize,
+    },
+    Hover {
+        text: String,
+    },
+    Completion {
+        items: Vec<CompletionItem>,
+    },
     SignatureHelp(SignatureHelp),
-    References { items: Vec<LocationItem> },
-    Symbols { items: Vec<SymbolItem>, workspace: bool },
-    CodeActions { items: Vec<CodeActionItem> },
+    References {
+        items: Vec<LocationItem>,
+    },
+    Symbols {
+        items: Vec<SymbolItem>,
+        workspace: bool,
+    },
+    CodeActions {
+        items: Vec<CodeActionItem>,
+    },
     /// `WorkspaceEdit` returned from `textDocument/rename`. The applier in
     /// app.rs consumes this directly via `apply_workspace_edit`.
-    Rename { edit: Value },
+    Rename {
+        edit: Value,
+    },
     /// Server asked us to apply a `WorkspaceEdit`. App applies it then
     /// uses `LspManager::send_apply_edit_response` to ack the originating
     /// request.
@@ -164,7 +190,10 @@ pub enum LspEvent {
     DiagnosticsUpdated,
     /// `textDocument/inlayHint` results for `path` — the App stores them
     /// per-buffer and the renderer pulls them on draw.
-    InlayHints { path: PathBuf, hints: Vec<InlayHint> },
+    InlayHints {
+        path: PathBuf,
+        hints: Vec<InlayHint>,
+    },
     /// `textDocument/documentHighlight` reply — every range matching
     /// the symbol the cursor was on when the request fired. Anchor
     /// (line/col/version) lets the App drop stale replies that arrived
@@ -209,7 +238,10 @@ pub enum LspEvent {
     /// + the status-line indicator. `kind` is the raw protocol string
     /// (`"OK"`, `"NotSignedIn"`, `"NotAuthorized"`, `"NoTelemetryConsent"`,
     /// …); the App normalises it into a `CopilotStatus`.
-    CopilotStatus { kind: String, user: Option<String> },
+    CopilotStatus {
+        kind: String,
+        user: Option<String>,
+    },
     /// Server emitted a `window/showMessage` or `window/logMessage`.
     /// `client_key` lets the app tag the message with which server it
     /// came from so the log isn't a mystery soup of unattributed lines.
@@ -359,9 +391,7 @@ pub struct ActiveBufferLspStatus {
 }
 
 pub fn path_to_uri(path: &Path) -> String {
-    let abs = path
-        .canonicalize()
-        .unwrap_or_else(|_| path.to_path_buf());
+    let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let s = abs.to_string_lossy().to_string();
     if s.starts_with('/') {
         format!("file://{}", s)

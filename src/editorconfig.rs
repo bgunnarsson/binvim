@@ -226,7 +226,11 @@ fn section_matches(section: &str, root_dir: &Path, file: &Path) -> bool {
 
     for pattern in expand_braces(section) {
         let anchored = pattern.starts_with('/');
-        let pat = if anchored { &pattern[1..] } else { pattern.as_str() };
+        let pat = if anchored {
+            &pattern[1..]
+        } else {
+            pattern.as_str()
+        };
         if anchored {
             if glob_match(pat, &rel) {
                 return true;

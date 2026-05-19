@@ -6,7 +6,10 @@ use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, MoveToColumn, SetCursorStyle, Show},
     queue,
-    style::{Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor, SetUnderlineColor},
+    style::{
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+        SetUnderlineColor,
+    },
     terminal::{BeginSynchronizedUpdate, Clear, ClearType, EndSynchronizedUpdate},
 };
 use std::io::Write;
@@ -34,7 +37,13 @@ fn apply_buf_bg(out: &mut impl Write, buf_bg: Option<Color>) -> Result<()> {
 }
 
 pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
-    queue!(out, BeginSynchronizedUpdate, Hide, MoveTo(0, 0), Clear(ClearType::All))?;
+    queue!(
+        out,
+        BeginSynchronizedUpdate,
+        Hide,
+        MoveTo(0, 0),
+        Clear(ClearType::All)
+    )?;
     if app.show_tabs() {
         draw_tab_bar(out, app)?;
     }
@@ -74,7 +83,10 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     draw_debug_pane(out, app)?;
     draw_status_line(out, app)?;
     draw_notification(out, app)?;
-    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
+    if matches!(
+        app.mode,
+        Mode::Command | Mode::Search { .. } | Mode::Prompt(_)
+    ) {
         draw_floating_cmdline(out, app)?;
     }
     // File-tree delete confirm — same popup chrome as the create /
@@ -108,7 +120,9 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
 }
 
 fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
-    let Some(wk) = app.whichkey.as_ref() else { return Ok(()); };
+    let Some(wk) = app.whichkey.as_ref() else {
+        return Ok(());
+    };
     if wk.entries.is_empty() {
         return Ok(());
     }
@@ -120,8 +134,18 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     //   bottom = '╰' + '─'... + '╯'
     // Define `content_w = popup_w - 2` — chars strictly between the side borders.
     // The body row needs at least: 1 (left pad) + key_w + 3 (" → ") + label_w + 0 trail = key_w + label_w + 4.
-    let key_w = wk.entries.iter().map(|(k, _)| k.chars().count()).max().unwrap_or(1);
-    let label_w = wk.entries.iter().map(|(_, l)| l.chars().count()).max().unwrap_or(1);
+    let key_w = wk
+        .entries
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(1);
+    let label_w = wk
+        .entries
+        .iter()
+        .map(|(_, l)| l.chars().count())
+        .max()
+        .unwrap_or(1);
     let entry_min = key_w + label_w + 4;
     let title_min = wk.title.chars().count() + 4; // some breathing space around the title
     let footer_min = " ESC close ".chars().count();
@@ -143,7 +167,14 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     let bg = app.config.chrome_bg();
     let border = app.config.theme_border();
     let title_fg = app.config.theme_emphasis();
-    let key_fg = app.config.color_for_capture("keyword").unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+    let key_fg = app
+        .config
+        .color_for_capture("keyword")
+        .unwrap_or(Color::Rgb {
+            r: 0xcb,
+            g: 0xa6,
+            b: 0xf7,
+        });
     let label_fg = app.config.theme_fg();
     let arrow_fg = app.config.theme_dim();
     let hint_fg = app.config.theme_dim();
@@ -269,7 +300,11 @@ fn draw_rename_preview(out: &mut impl Write, app: &App) -> Result<()> {
     for (i, e) in preview.edits.iter().enumerate() {
         if last != Some(&e.edit.path) {
             // Count edits in this file for the header tally.
-            let n = preview.edits.iter().filter(|x| x.edit.path == e.edit.path).count();
+            let n = preview
+                .edits
+                .iter()
+                .filter(|x| x.edit.path == e.edit.path)
+                .count();
             rows.push(RowKind::Header(e.edit.path.clone(), n));
             last = Some(&e.edit.path);
         }
@@ -330,7 +365,11 @@ fn draw_rename_preview(out: &mut impl Write, app: &App) -> Result<()> {
         preview.edits.len(),
         if preview.edits.len() == 1 { "" } else { "s" },
         preview.files_affected(),
-        if preview.files_affected() == 1 { "" } else { "s" },
+        if preview.files_affected() == 1 {
+            ""
+        } else {
+            "s"
+        },
         preview.enabled_count(),
     );
     let title_chars: String = title.chars().take(content_w.saturating_sub(4)).collect();
@@ -530,7 +569,9 @@ fn collapse_tabs(s: &str) -> String {
 }
 
 fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
-    let Some(sig) = app.signature_help.as_ref() else { return Ok(()); };
+    let Some(sig) = app.signature_help.as_ref() else {
+        return Ok(());
+    };
     if sig.label.is_empty() {
         return Ok(());
     }
@@ -622,7 +663,9 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
 fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
     use crate::app::{HoverCodeBlock, HoverLine};
 
-    let Some(hover) = app.hover.as_ref() else { return Ok(()); };
+    let Some(hover) = app.hover.as_ref() else {
+        return Ok(());
+    };
     if hover.lines.is_empty() {
         return Ok(());
     }
@@ -633,8 +676,7 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
 
     // Height: cap at HOVER_MAX_HEIGHT, also cap at half the screen.
     let total_h = app.height as usize;
-    let max_visible = crate::app::HOVER_MAX_HEIGHT
-        .min(total_h.saturating_sub(4).max(4));
+    let max_visible = crate::app::HOVER_MAX_HEIGHT.min(total_h.saturating_sub(4).max(4));
     let visible = hover.lines.len().min(max_visible);
     let popup_h = visible + 2;
 
@@ -755,7 +797,11 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
                 queue!(out, SetForegroundColor(border), Print(&line))?;
                 content_w
             }
-            Some(HoverLine::Code { block_idx, byte_offset, byte_len }) => {
+            Some(HoverLine::Code {
+                block_idx,
+                byte_offset,
+                byte_len,
+            }) => {
                 let block = &hover.code_blocks[*block_idx];
                 let slice = &block.source[*byte_offset..*byte_offset + *byte_len];
                 let colors = block_colors.get(block_idx);
@@ -838,8 +884,12 @@ fn paint_code_lens_row(
     avail: usize,
     buf_bg: Option<Color>,
 ) -> Result<()> {
-    let Some(path) = app.buffer.path.as_ref() else { return Ok(()); };
-    let Some(cache) = app.code_lens.get(path) else { return Ok(()); };
+    let Some(path) = app.buffer.path.as_ref() else {
+        return Ok(());
+    };
+    let Some(cache) = app.code_lens.get(path) else {
+        return Ok(());
+    };
     // Not gated on `cache.buffer_version` — `refresh_merged_code_lens`
     // keeps stale LSP entries in the merge across edits to stop the
     // viewport from reflowing on every keystroke. The titles match
@@ -924,7 +974,10 @@ const NOTIFICATION_MAX_ROWS: usize = 6;
 
 fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     // Cmdline and search modes get the centred box; their floating widget covers any notification.
-    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
+    if matches!(
+        app.mode,
+        Mode::Command | Mode::Search { .. } | Mode::Prompt(_)
+    ) {
         return Ok(());
     }
     if app.status_msg.is_empty() {
@@ -952,12 +1005,7 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
         s.push('…');
         *last = s;
     }
-    let inner_w = wrapped
-        .iter()
-        .map(|l| l.chars().count())
-        .max()
-        .unwrap_or(0)
-        + 2; // padding inside borders
+    let inner_w = wrapped.iter().map(|l| l.chars().count()).max().unwrap_or(0) + 2; // padding inside borders
     let box_w = inner_w + 2;
     let left = total_w.saturating_sub(box_w + 1);
     // Sit immediately below the tab bar when it's visible so the
@@ -1129,7 +1177,11 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
     let cursor_fg = app.config.chrome_bg();
     // Cursor cell always renders: under-char if present, else a space
     // (so end-of-input still has a visible cursor block).
-    let cursor_glyph = if under.is_empty() { " ".to_string() } else { under.to_string() };
+    let cursor_glyph = if under.is_empty() {
+        " ".to_string()
+    } else {
+        under.to_string()
+    };
     let used = 3 + before_w + 1 + after_trim.chars().count(); // prompt + before + cursor + after
     let pad = inner_w.saturating_sub(used + 1).saturating_sub(0); // -1 for the right border
     queue!(
@@ -1217,11 +1269,7 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
     // with the prompt glyph in the accent error colour so it reads
     // as "destructive". The hint is dim and right-aligned.
     let prompt_str = " ! ";
-    let display_name = if is_dir {
-        format!("{name}/")
-    } else {
-        name
-    };
+    let display_name = if is_dir { format!("{name}/") } else { name };
     let hint = "  y to delete · N / Esc to cancel";
     let prompt_w = prompt_str.chars().count();
     // Truncate the displayed name if the row is tight. Keep the hint
@@ -1229,14 +1277,15 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
     // popups so the name doesn't get squashed.
     let body_budget = inner_w.saturating_sub(prompt_w + 1);
     let hint_w = hint.chars().count();
-    let (name_str, hint_str): (String, String) = if body_budget >= display_name.chars().count() + hint_w {
-        (display_name.clone(), hint.to_string())
-    } else if body_budget >= display_name.chars().count() {
-        (display_name.clone(), String::new())
-    } else {
-        let trimmed: String = display_name.chars().take(body_budget).collect();
-        (trimmed, String::new())
-    };
+    let (name_str, hint_str): (String, String) =
+        if body_budget >= display_name.chars().count() + hint_w {
+            (display_name.clone(), hint.to_string())
+        } else if body_budget >= display_name.chars().count() {
+            (display_name.clone(), String::new())
+        } else {
+            let trimmed: String = display_name.chars().take(body_budget).collect();
+            (trimmed, String::new())
+        };
     // Same explicit-cursor trick as the cmdline popup: paint a
     // highlighted cell as the "your y/N keystroke lands here"
     // indicator rather than relying on the terminal cursor.
@@ -1285,7 +1334,9 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
 }
 
 fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
-    let Some(c) = app.completion.as_ref() else { return Ok(()); };
+    let Some(c) = app.completion.as_ref() else {
+        return Ok(());
+    };
     if c.items.is_empty() {
         return Ok(());
     }
@@ -1372,11 +1423,7 @@ fn draw_completion_popup(out: &mut impl Write, app: &App) -> Result<()> {
         let (chip_text, chip_color) = completion_kind_chip(app, item.kind.as_deref());
         let chip_pad = CHIP_W.saturating_sub(chip_text.chars().count());
 
-        let label: String = item
-            .label
-            .chars()
-            .take(final_label_w)
-            .collect();
+        let label: String = item.label.chars().take(final_label_w).collect();
         let label_pad = final_label_w.saturating_sub(label.chars().count());
         let detail_raw = item.detail.as_deref().unwrap_or("");
         let detail: String = if final_detail_w == 0 {
@@ -1419,11 +1466,19 @@ fn completion_kind_chip(app: &App, kind: Option<&str>) -> (&'static str, Color) 
     let mauve = app
         .config
         .color_for_capture("keyword")
-        .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
+        .unwrap_or(Color::Rgb {
+            r: 0xcb,
+            g: 0xa6,
+            b: 0xf7,
+        });
     let teal = app
         .config
         .color_for_capture("character")
-        .unwrap_or(Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 });
+        .unwrap_or(Color::Rgb {
+            r: 0x94,
+            g: 0xe2,
+            b: 0xd5,
+        });
     let peach = app.config.theme_accent();
     let green = app.config.theme_accent_secondary();
     let sky = app.config.theme_hint();
@@ -1487,7 +1542,9 @@ fn picker_layout(app: &App) -> PickerLayout {
     let total_h = app.height as usize;
     // Box dimensions — generous side margins so the popup floats clearly
     // above the dimmed buffer rather than touching the screen edges.
-    let box_w = ((total_w * 4) / 5).clamp(50, 100).min(total_w.saturating_sub(4));
+    let box_w = ((total_w * 4) / 5)
+        .clamp(50, 100)
+        .min(total_w.saturating_sub(4));
     // 7 rows of chrome: top border, top pad, prompt, separator, …, bottom
     // pad, footer, bottom border. Min 12 keeps at least 5 list rows visible.
     let box_h = ((total_h * 3) / 5)
@@ -1520,7 +1577,9 @@ fn picker_layout(app: &App) -> PickerLayout {
 }
 
 fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
-    let Some(picker) = app.picker.as_ref() else { return Ok(()); };
+    let Some(picker) = app.picker.as_ref() else {
+        return Ok(());
+    };
     let layout = picker_layout(app);
 
     let bg = app.config.chrome_bg();
@@ -1652,7 +1711,11 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
             );
             // Matched-char positions are stored per-filtered-row alongside
             // the indices into items — empty when the picker has no query.
-            let positions = picker.match_positions.get(pos).map(|v| v.as_slice()).unwrap_or(&[]);
+            let positions = picker
+                .match_positions
+                .get(pos)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
             written = paint_picker_row(
                 out,
                 display,
@@ -1710,13 +1773,15 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
         ("  ", false),
         ("esc", true),
     ];
-    let seg_width = |segs: &[(&str, bool)]| -> usize {
-        segs.iter().map(|(s, _)| s.chars().count()).sum()
+    let seg_width =
+        |segs: &[(&str, bool)]| -> usize { segs.iter().map(|(s, _)| s.chars().count()).sum() };
+    let hint_segments: &[(&str, bool)] = if seg_width(full_hint) <= layout.inner_w {
+        full_hint
+    } else if seg_width(short_hint) <= layout.inner_w {
+        short_hint
+    } else {
+        &[]
     };
-    let hint_segments: &[(&str, bool)] =
-        if seg_width(full_hint) <= layout.inner_w { full_hint }
-        else if seg_width(short_hint) <= layout.inner_w { short_hint }
-        else { &[] };
     let hint_w = seg_width(hint_segments);
     let footer_pad = layout.inner_w.saturating_sub(hint_w);
     queue!(
@@ -1881,7 +1946,14 @@ fn paint_picker_row(
             &suffix_chars[..room]
         };
         let suffix_offset = display_path.chars().count();
-        paint_chars(out, suffix_slice, path_fg, highlight, matched, suffix_offset)?;
+        paint_chars(
+            out,
+            suffix_slice,
+            path_fg,
+            highlight,
+            matched,
+            suffix_offset,
+        )?;
         written += suffix_slice.len();
     }
     Ok(written)
@@ -1910,7 +1982,11 @@ fn paint_chars(
         if highlighted != prev_highlighted {
             queue!(
                 out,
-                SetForegroundColor(if highlighted { highlight_color } else { base_color }),
+                SetForegroundColor(if highlighted {
+                    highlight_color
+                } else {
+                    base_color
+                }),
             )?;
             if highlighted {
                 queue!(out, SetAttribute(Attribute::Bold))?;
@@ -2009,7 +2085,10 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     for (i, line) in lines.iter().enumerate() {
         let line_w = line.chars().count();
         let left = (total_w.saturating_sub(line_w)) / 2;
-        queue!(out, MoveTo(left as u16, (top + i + app.buffer_top()) as u16))?;
+        queue!(
+            out,
+            MoveTo(left as u16, (top + i + app.buffer_top()) as u16)
+        )?;
         apply_buf_bg(out, page_bg)?;
         queue!(out, SetForegroundColor(blue), Print(line))?;
         reset_to_buf_bg(out, page_bg)?;
@@ -2077,12 +2156,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         .health_scroll
         .min(rows_buf.len().saturating_sub(viewport_rows));
 
-    for (i, row) in rows_buf
-        .iter()
-        .enumerate()
-        .skip(scroll)
-        .take(viewport_rows)
-    {
+    for (i, row) in rows_buf.iter().enumerate().skip(scroll).take(viewport_rows) {
         let screen_y = (top + (i - scroll)) as u16;
         row.paint(out, screen_y, &p, page_bg)?;
     }
@@ -2221,7 +2295,11 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         used += hint.chars().count();
     }
     if total_w > used {
-        queue!(out, SetBackgroundColor(pane_bg), Print(" ".repeat(total_w - used)))?;
+        queue!(
+            out,
+            SetBackgroundColor(pane_bg),
+            Print(" ".repeat(total_w - used))
+        )?;
     }
     queue!(out, ResetColor)?;
     app.terminal_tab_hitboxes.set(hitboxes);
@@ -2285,10 +2363,7 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 /// `man` pages, prompts, etc.) but the trade-off favours the
 /// pane-style UX. SGR 4 is still tracked in the cell so the call
 /// can be flipped back on with one line if the policy changes.
-fn paint_terminal_cell(
-    out: &mut impl Write,
-    cell: crate::terminal::Cell,
-) -> std::io::Result<()> {
+fn paint_terminal_cell(out: &mut impl Write, cell: crate::terminal::Cell) -> std::io::Result<()> {
     let mut fg = cell.fg.unwrap_or(Color::Reset);
     let mut bg = cell.bg.unwrap_or(Color::Reset);
     if cell.reverse {
@@ -2413,11 +2488,7 @@ fn draw_file_tree_pane(out: &mut impl Write, app: &App) -> Result<()> {
     for row in 0..body_rows {
         let entry_idx = scroll + row;
         let y = body_top + row as u16;
-        queue!(
-            out,
-            MoveTo(0, y),
-            SetBackgroundColor(pane_bg),
-        )?;
+        queue!(out, MoveTo(0, y), SetBackgroundColor(pane_bg),)?;
         if entry_idx >= tree.entries.len() {
             queue!(out, Print(" ".repeat(content_cols)))?;
             continue;
@@ -2713,11 +2784,7 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 /// "an assistant is booting up" without the editor identity claim
 /// a "binvim" wordmark would carry in a surface that's about to
 /// host Claude / Codex / opencode.
-const SIDE_LOADING_LOGO: &[&str] = &[
-    "╔═══════╗",
-    "║ ◉ ─ ◉ ║",
-    "╚═══════╝",
-];
+const SIDE_LOADING_LOGO: &[&str] = &["╔═══════╗", "║ ◉ ─ ◉ ║", "╚═══════╝"];
 
 /// Braille spinner frames — 10 frames at ~80ms each rotates once
 /// per second. Matches the conventional dotted-spinner pattern
@@ -2909,7 +2976,11 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
                 reset_to_buf_bg(out, page_bg)?;
             }
             MessageRow::Blank => {}
-            MessageRow::Entry { prefix, prefix_colour, body } => {
+            MessageRow::Entry {
+                prefix,
+                prefix_colour,
+                body,
+            } => {
                 queue!(out, MoveTo(left as u16, screen_y))?;
                 apply_buf_bg(out, page_bg)?;
                 queue!(
@@ -2917,7 +2988,10 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
                     SetForegroundColor(*prefix_colour),
                     Print(prefix),
                     SetForegroundColor(p.text),
-                    Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
+                    Print(truncate(
+                        body,
+                        body_w.saturating_sub(prefix.chars().count())
+                    )),
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
@@ -2929,7 +3003,10 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
                     SetForegroundColor(p.overlay1),
                     Print(indent),
                     SetForegroundColor(p.subtext1),
-                    Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
+                    Print(truncate(
+                        body,
+                        body_w.saturating_sub(indent.chars().count())
+                    )),
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
@@ -3047,7 +3124,11 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
         match row {
             MessageRow::Header => {}
             MessageRow::Blank => {}
-            MessageRow::Entry { prefix, prefix_colour, body } => {
+            MessageRow::Entry {
+                prefix,
+                prefix_colour,
+                body,
+            } => {
                 queue!(out, MoveTo(left as u16, screen_y))?;
                 apply_buf_bg(out, page_bg)?;
                 queue!(
@@ -3055,7 +3136,10 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
                     SetForegroundColor(*prefix_colour),
                     Print(prefix),
                     SetForegroundColor(p.text),
-                    Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
+                    Print(truncate(
+                        body,
+                        body_w.saturating_sub(prefix.chars().count())
+                    )),
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
@@ -3067,7 +3151,10 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
                     SetForegroundColor(p.overlay1),
                     Print(indent),
                     SetForegroundColor(p.subtext1),
-                    Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
+                    Print(truncate(
+                        body,
+                        body_w.saturating_sub(indent.chars().count())
+                    )),
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
@@ -3359,7 +3446,11 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
         match row {
             MessageRow::Header => {}
             MessageRow::Blank => {}
-            MessageRow::Entry { prefix, prefix_colour, body } => {
+            MessageRow::Entry {
+                prefix,
+                prefix_colour,
+                body,
+            } => {
                 queue!(out, MoveTo(left as u16, screen_y))?;
                 apply_buf_bg(out, page_bg)?;
                 queue!(
@@ -3367,7 +3458,10 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
                     SetForegroundColor(*prefix_colour),
                     Print(prefix),
                     SetForegroundColor(p.text),
-                    Print(truncate(body, body_w.saturating_sub(prefix.chars().count()))),
+                    Print(truncate(
+                        body,
+                        body_w.saturating_sub(prefix.chars().count())
+                    )),
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
@@ -3379,7 +3473,10 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
                     SetForegroundColor(p.overlay1),
                     Print(indent),
                     SetForegroundColor(p.subtext1),
-                    Print(truncate(body, body_w.saturating_sub(indent.chars().count()))),
+                    Print(truncate(
+                        body,
+                        body_w.saturating_sub(indent.chars().count())
+                    )),
                 )?;
                 reset_to_buf_bg(out, page_bg)?;
             }
@@ -3509,7 +3606,13 @@ fn build_health_rows(
     push_two_section_boxes(
         rows,
         (left, left_w, "PROCESS", p.mauve, &process_lines),
-        (left + left_w + gap, right_w, "RESOURCES", p.blue, &resource_lines),
+        (
+            left + left_w + gap,
+            right_w,
+            "RESOURCES",
+            p.blue,
+            &resource_lines,
+        ),
     );
     rows.push(DashRow::Blank);
 
@@ -3617,7 +3720,11 @@ fn build_health_rows(
     } else {
         for h in &snap.lsps {
             let root = display_lsp_root(&h.root_uri, 40);
-            let pending_colour = if h.pending_requests > 0 { p.peach } else { p.overlay1 };
+            let pending_colour = if h.pending_requests > 0 {
+                p.peach
+            } else {
+                p.overlay1
+            };
             // A server stuck in the init buffer is the "looks alive
             // but isn't" failure mode — surface it as a loud Red
             // marker on the main row so the user can't miss it.
@@ -3712,8 +3819,10 @@ fn build_health_rows(
         buf_lines.push(SectionLine::plain("(none)", p.overlay1));
     } else {
         for (i, b) in snap.buffers.iter().enumerate() {
-            let mut parts: Vec<(String, Color)> =
-                vec![(format!("{:>3}  ", i + 1), p.overlay0), (b.label.clone(), p.text)];
+            let mut parts: Vec<(String, Color)> = vec![
+                (format!("{:>3}  ", i + 1), p.overlay0),
+                (b.label.clone(), p.text),
+            ];
             if b.active {
                 parts.push((" ".into(), p.text));
                 parts.push(("[active]".into(), p.green));
@@ -3743,10 +3852,7 @@ fn build_health_rows(
             ]
         }
         None => vec![
-            SectionLine::plain(
-                "(not detected — Tailwind LSP will not attach)",
-                p.overlay1,
-            ),
+            SectionLine::plain("(not detected — Tailwind LSP will not attach)", p.overlay1),
             SectionLine::plain(
                 "add tailwind.config.* or list `tailwindcss` in package.json",
                 p.overlay0,
@@ -3764,7 +3870,10 @@ fn build_health_rows(
                 None => ('✗', p.red),
             };
             let bin_part = match (&f.binary, f.via_node_modules) {
-                (Some(b), true) => format!("{} (node_modules)", home_relative_path(&b.display().to_string())),
+                (Some(b), true) => format!(
+                    "{} (node_modules)",
+                    home_relative_path(&b.display().to_string())
+                ),
                 (Some(b), false) => home_relative_path(&b.display().to_string()),
                 (None, _) => "NOT INSTALLED".into(),
             };
@@ -3810,12 +3919,20 @@ fn build_health_rows(
             ("trim trailing ws   ".into(), p.subtext1),
             (
                 if ec.trim_trailing { "yes" } else { "no" }.into(),
-                if ec.trim_trailing { p.green } else { p.overlay1 },
+                if ec.trim_trailing {
+                    p.green
+                } else {
+                    p.overlay1
+                },
             ),
             ("   final newline ".into(), p.subtext1),
             (
                 if ec.final_newline { "yes" } else { "no" }.into(),
-                if ec.final_newline { p.green } else { p.overlay1 },
+                if ec.final_newline {
+                    p.green
+                } else {
+                    p.overlay1
+                },
             ),
         ],
     });
@@ -3826,7 +3943,11 @@ fn build_health_rows(
         ));
     } else {
         for (i, src) in ec.sources.iter().enumerate() {
-            let label = if i == 0 { "sources            " } else { "                   " };
+            let label = if i == 0 {
+                "sources            "
+            } else {
+                "                   "
+            };
             ec_lines.push(SectionLine::Custom {
                 parts: vec![
                     (label.into(), p.subtext1),
@@ -3887,7 +4008,11 @@ fn build_health_rows(
     let (glyph, glyph_colour, label) = if s.restored {
         ('✓', p.green, "restored on launch")
     } else if s.session_file_exists {
-        ('—', p.overlay1, "saved (will restore on next launch with no path arg)")
+        (
+            '—',
+            p.overlay1,
+            "saved (will restore on next launch with no path arg)",
+        )
     } else {
         ('—', p.overlay1, "no session for this cwd yet")
     };
@@ -3978,7 +4103,11 @@ enum DashRow {
     /// Empty row used for vertical breathing space between sections.
     Blank,
     /// A line of ASCII-art banner text.
-    Banner { x: usize, text: String, colour: Color },
+    Banner {
+        x: usize,
+        text: String,
+        colour: Color,
+    },
     /// Top border of a single boxed section (with inline title).
     BoxTop {
         x: usize,
@@ -4007,7 +4136,10 @@ enum DashRow {
         b: Option<(usize, usize, SectionLine)>,
     },
     /// Bottom borders of two side-by-side boxes painted on the same row.
-    BoxBottomPair { a: (usize, usize), b: (usize, usize) },
+    BoxBottomPair {
+        a: (usize, usize),
+        b: (usize, usize),
+    },
 }
 
 impl DashRow {
@@ -4027,9 +4159,12 @@ impl DashRow {
                 reset_to_buf_bg(out, page_bg)?;
                 Ok(())
             }
-            DashRow::BoxTop { x, width, title, title_colour } => {
-                paint_box_top(out, *x, y, *width, title, *title_colour, palette, page_bg)
-            }
+            DashRow::BoxTop {
+                x,
+                width,
+                title,
+                title_colour,
+            } => paint_box_top(out, *x, y, *width, title, *title_colour, palette, page_bg),
             DashRow::BoxContent { x, width, line } => {
                 paint_box_content(out, *x, y, *width, line, palette, page_bg)
             }
@@ -4217,7 +4352,10 @@ fn push_two_section_boxes(
         let row_b = bl.get(i).map(|l| (bx, bw, clone_section_line(l)));
         rows.push(DashRow::BoxContentPair { a: row_a, b: row_b });
     }
-    rows.push(DashRow::BoxBottomPair { a: (ax, aw), b: (bx, bw) });
+    rows.push(DashRow::BoxBottomPair {
+        a: (ax, aw),
+        b: (bx, bw),
+    });
 }
 
 fn clone_section_line(line: &SectionLine) -> SectionLine {
@@ -4273,12 +4411,16 @@ struct DashboardPalette {
 
 impl DashboardPalette {
     fn from_config(config: &crate::config::Config) -> Self {
-        let mauve = config
-            .color_for_capture("keyword")
-            .unwrap_or(Color::Rgb { r: 0xcb, g: 0xa6, b: 0xf7 });
-        let teal = config
-            .color_for_capture("character")
-            .unwrap_or(Color::Rgb { r: 0x94, g: 0xe2, b: 0xd5 });
+        let mauve = config.color_for_capture("keyword").unwrap_or(Color::Rgb {
+            r: 0xcb,
+            g: 0xa6,
+            b: 0xf7,
+        });
+        let teal = config.color_for_capture("character").unwrap_or(Color::Rgb {
+            r: 0x94,
+            g: 0xe2,
+            b: 0xd5,
+        });
         Self {
             text: config.theme_fg(),
             subtext1: config.theme_fg(),
@@ -4324,10 +4466,7 @@ fn display_lsp_root(uri: &str, width: usize) -> String {
         return home_relative;
     }
     // Take the trailing components, prepending `…/` to signal the trim.
-    let segments: Vec<&str> = home_relative
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = home_relative.split('/').filter(|s| !s.is_empty()).collect();
     for take in (1..=segments.len().min(2)).rev() {
         let tail: String = segments[segments.len() - take..].join("/");
         let candidate = if take < segments.len() {
@@ -4375,7 +4514,7 @@ fn home_relative_with(path: &str, home: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        display_lsp_root, home_relative_with, tokenize_console_line, truncate, DebugPalette,
+        DebugPalette, display_lsp_root, home_relative_with, tokenize_console_line, truncate,
     };
 
     #[test]
@@ -4429,10 +4568,7 @@ mod tests {
 
     #[test]
     fn home_relative_passthrough_when_no_match() {
-        assert_eq!(
-            home_relative_with("/opt/cache", "/Users/bg"),
-            "/opt/cache"
-        );
+        assert_eq!(home_relative_with("/opt/cache", "/Users/bg"), "/opt/cache");
     }
 
     #[test]
@@ -4447,11 +4583,16 @@ mod tests {
     fn display_lsp_root_trims_to_tail_segments_when_too_wide() {
         // 60-char input, 25-char budget — keeps the last two segments
         // behind a `…/` so the project context survives the trim.
-        let long =
-            "file:///Users/bg/Development/bgunnarsson/comp/packages/ui-apps/src";
+        let long = "file:///Users/bg/Development/bgunnarsson/comp/packages/ui-apps/src";
         let out = display_lsp_root(long, 25);
-        assert!(out.starts_with("…/"), "expected leading ellipsis, got {out:?}");
-        assert!(out.ends_with("ui-apps/src"), "expected ui-apps/src tail, got {out:?}");
+        assert!(
+            out.starts_with("…/"),
+            "expected leading ellipsis, got {out:?}"
+        );
+        assert!(
+            out.ends_with("ui-apps/src"),
+            "expected ui-apps/src tail, got {out:?}"
+        );
         assert!(out.chars().count() <= 25, "exceeded budget: {out:?}");
     }
 
@@ -4741,8 +4882,7 @@ fn draw_buffer(
     // markdown concealed-render pass (HTML chrome, setext
     // underlines) — from the start of the viewport so the first
     // visible row isn't on a row that has no visible body.
-    while line_idx < total_lines
-        && (bs.line_is_folded(line_idx) || bs.line_is_md_hidden(line_idx))
+    while line_idx < total_lines && (bs.line_is_folded(line_idx) || bs.line_is_md_hidden(line_idx))
     {
         line_idx += 1;
     }
@@ -4758,7 +4898,9 @@ fn draw_buffer(
     // 1-based line number of the currently-stopped top frame, if the
     // session is paused inside this buffer.
     let pc_line: Option<usize> = match (&canon_buf_path, app.dap.session.as_ref()) {
-        (Some(bp), Some(session)) if matches!(session.state, crate::dap::SessionState::Stopped { .. }) => {
+        (Some(bp), Some(session))
+            if matches!(session.state, crate::dap::SessionState::Stopped { .. }) =>
+        {
             session.frames.first().and_then(|f| {
                 let fs = f.source.as_ref()?;
                 let fs_canon = fs.canonicalize().unwrap_or_else(|_| fs.clone());
@@ -4829,12 +4971,13 @@ fn draw_buffer(
                 let glyph = if bp.is_conditional() { '◆' } else { '●' };
                 Some((glyph, app.config.gutter_breakpoint()))
             } else if let Some(diag_path) = bs.buffer.path.as_deref() {
-                app.worst_diagnostic_for(diag_path, line_idx).map(|s| match s {
-                    Severity::Error => ('!', app.config.diagnostic_error()),
-                    Severity::Warning => ('?', app.config.diagnostic_warning()),
-                    Severity::Info => ('i', app.config.diagnostic_info()),
-                    Severity::Hint => ('h', app.config.diagnostic_hint()),
-                })
+                app.worst_diagnostic_for(diag_path, line_idx)
+                    .map(|s| match s {
+                        Severity::Error => ('!', app.config.diagnostic_error()),
+                        Severity::Warning => ('?', app.config.diagnostic_warning()),
+                        Severity::Info => ('i', app.config.diagnostic_info()),
+                        Severity::Hint => ('h', app.config.diagnostic_hint()),
+                    })
             } else {
                 None
             };
@@ -4850,27 +4993,30 @@ fn draw_buffer(
             // count-prefixed motions like `5j` / `12k` / `3dd`. The
             // cursor row gets a brighter Subtext1 tone so the eye can
             // anchor on it; other rows stay the muted Overlay0.
-            let (label, label_color) = if app.config.line_numbers.relative
-                && line_idx != win.cursor.line
-            {
-                let dist = if line_idx > win.cursor.line {
-                    line_idx - win.cursor.line
+            let (label, label_color) =
+                if app.config.line_numbers.relative && line_idx != win.cursor.line {
+                    let dist = if line_idx > win.cursor.line {
+                        line_idx - win.cursor.line
+                    } else {
+                        win.cursor.line - line_idx
+                    };
+                    (
+                        format!("{:>width$} ", dist, width = gutter - 3),
+                        app.config.theme_dim(),
+                    )
                 } else {
-                    win.cursor.line - line_idx
+                    // Cursor row in relative mode, or every row in absolute
+                    // mode → 1-indexed absolute line number.
+                    let bright = app.config.line_numbers.relative;
+                    (
+                        format!("{:>width$} ", line_idx + 1, width = gutter - 3),
+                        if bright {
+                            app.config.theme_fg()
+                        } else {
+                            app.config.theme_dim()
+                        },
+                    )
                 };
-                (
-                    format!("{:>width$} ", dist, width = gutter - 3),
-                    app.config.theme_dim(),
-                )
-            } else {
-                // Cursor row in relative mode, or every row in absolute
-                // mode → 1-indexed absolute line number.
-                let bright = app.config.line_numbers.relative;
-                (
-                    format!("{:>width$} ", line_idx + 1, width = gutter - 3),
-                    if bright { app.config.theme_fg() } else { app.config.theme_dim() },
-                )
-            };
             queue!(out, SetForegroundColor(label_color), Print(label))?;
             reset_to_buf_bg(out, buf_bg)?;
             draw_line_with_selection(out, app, bs, win, line_idx, avail, is_active, buf_bg)?;
@@ -4879,7 +5025,11 @@ fn draw_buffer(
             if bs.line_is_fold_start(line_idx) {
                 let span = bs.folded_line_span(line_idx);
                 let folded = format!("  ⏷ {} lines", span);
-                queue!(out, SetForegroundColor(app.config.theme_dim()), Print(folded))?;
+                queue!(
+                    out,
+                    SetForegroundColor(app.config.theme_dim()),
+                    Print(folded)
+                )?;
                 reset_to_buf_bg(out, buf_bg)?;
             }
             // Advance to the next visible line — past the fold's hidden
@@ -4897,7 +5047,11 @@ fn draw_buffer(
             // line we just advanced to has any lenses anchored on it.
             pending_lens = line_idx < total_lines && bs.line_has_code_lens(line_idx);
         } else {
-            queue!(out, SetForegroundColor(app.config.theme_surface()), Print("~"))?;
+            queue!(
+                out,
+                SetForegroundColor(app.config.theme_surface()),
+                Print("~")
+            )?;
             reset_to_buf_bg(out, buf_bg)?;
         }
     }
@@ -4929,7 +5083,11 @@ fn draw_line_with_selection(
     // yank flash) are tied to the active cursor — Vim shows them only
     // in the focused pane. Inactive panes still paint the buffer + git
     // stripe + diagnostics, just without the active-cursor decoration.
-    let sel = if is_active { app.line_selection(line_idx) } else { None };
+    let sel = if is_active {
+        app.line_selection(line_idx)
+    } else {
+        None
+    };
     let extra_sels = if is_active {
         app.line_extra_selections(line_idx)
     } else {
@@ -5052,7 +5210,11 @@ fn draw_line_with_selection(
         };
         // Empty ranges (start == end) come from LSPs as a hint that the error
         // sits at one position; mark a single column so the undercurl shows.
-        let span = if end > start { end } else { (start + 1).min(chars.len()) };
+        let span = if end > start {
+            end
+        } else {
+            (start + 1).min(chars.len())
+        };
         for slot in &mut diag_at[start..span] {
             *slot = Some(merge_severity(*slot, d.severity));
         }
@@ -5067,8 +5229,7 @@ fn draw_line_with_selection(
     // pass. Whole-line `kind` short-circuits the per-char loop for
     // horizontal rules and hidden rows (setext underlines, fence
     // closers).
-    let md_meta: Option<&crate::markdown_render::MarkdownLineMeta> = if bs.markdown_render_active
-    {
+    let md_meta: Option<&crate::markdown_render::MarkdownLineMeta> = if bs.markdown_render_active {
         bs.markdown_line_meta(line_idx)
     } else {
         None
@@ -5147,7 +5308,11 @@ fn draw_line_with_selection(
     // the chars run out.
     let code_block_bg: Option<Color> = md_meta.and_then(|m| {
         if m.kind == crate::markdown_render::MarkdownLineKind::CodeBlock {
-            Some(Color::Rgb { r: 0x18, g: 0x18, b: 0x25 }) // Mantle
+            Some(Color::Rgb {
+                r: 0x18,
+                g: 0x18,
+                b: 0x25,
+            }) // Mantle
         } else {
             None
         }
@@ -5181,8 +5346,7 @@ fn draw_line_with_selection(
                             // surrounding bytes' state advancement.
                             if line_visual_pos + w > view_left {
                                 let visible_left = line_visual_pos.max(view_left);
-                                let visible_right =
-                                    (line_visual_pos + w).min(view_left + avail);
+                                let visible_right = (line_visual_pos + w).min(view_left + avail);
                                 if visible_right > visible_left {
                                     let visible = visible_right - visible_left;
                                     if visual_used + visible > avail {
@@ -5192,11 +5356,7 @@ fn draw_line_with_selection(
                                     let skip = visible_left - line_visual_pos;
                                     let printable: String =
                                         glyph.chars().skip(skip).take(visible).collect();
-                                    queue!(
-                                        out,
-                                        SetForegroundColor(*color),
-                                        Print(printable),
-                                    )?;
+                                    queue!(out, SetForegroundColor(*color), Print(printable),)?;
                                     reset_to_buf_bg(out, buf_bg)?;
                                     visual_used += visible;
                                 }
@@ -5278,7 +5438,9 @@ fn draw_line_with_selection(
         let in_search = !in_sel && search_matches.iter().any(|(s, e)| col >= *s && col < *e);
         let in_yank_flash = !in_sel
             && !in_search
-            && yank_flash.map(|(s, e)| col >= s && col < e).unwrap_or(false);
+            && yank_flash
+                .map(|(s, e)| col >= s && col < e)
+                .unwrap_or(false);
         let in_match_pair = !in_sel
             && !in_search
             && !in_yank_flash
@@ -5297,15 +5459,11 @@ fn draw_line_with_selection(
         // (mutable / immutable / async / parameter / etc.) is strictly
         // richer than any static query. Falls back to tree-sitter when
         // the LSP didn't tag this column.
-        let syntax_color = sem_col_color
-            .get(col)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                bs.highlight_cache
-                    .and_then(|cache| cache.byte_colors.get(byte_off).copied())
-                    .flatten()
-            });
+        let syntax_color = sem_col_color.get(col).copied().flatten().or_else(|| {
+            bs.highlight_cache
+                .and_then(|cache| cache.byte_colors.get(byte_off).copied())
+                .flatten()
+        });
         let diag_severity = if !in_sel && !in_search && !dim {
             diag_at.get(col).copied().flatten()
         } else {
@@ -5536,11 +5694,7 @@ fn draw_line_with_selection(
     // edge, and the marker wouldn't be at the line's actual end anyway.
     // Suppressed inside code-fence rows so the dark slab isn't broken by
     // a chrome glyph rendered with the terminal-default bg.
-    if show_hidden
-        && !clipped_right
-        && visual_used + 1 <= avail
-        && code_block_bg.is_none()
-    {
+    if show_hidden && !clipped_right && visual_used + 1 <= avail && code_block_bg.is_none() {
         queue!(out, SetForegroundColor(dim_color), Print('¬'))?;
         reset_to_buf_bg(out, buf_bg)?;
     }
@@ -5971,7 +6125,15 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, MoveTo(0, screen_y), SetBackgroundColor(body_bg))?;
         let idx = visible_start + r;
         if let Some(row) = rows_buf.get(idx) {
-            paint_dap_row(out, row, width, h_skip, body_bg, app.config.theme_border(), muted)?;
+            paint_dap_row(
+                out,
+                row,
+                width,
+                h_skip,
+                body_bg,
+                app.config.theme_border(),
+                muted,
+            )?;
         } else {
             queue!(out, Print(" ".repeat(width)))?;
         }
@@ -6040,11 +6202,7 @@ fn paint_dap_row(
     selection_bg: Color,
     muted: Color,
 ) -> Result<()> {
-    let row_bg = if row.selected {
-        selection_bg
-    } else {
-        pane_bg
-    };
+    let row_bg = if row.selected { selection_bg } else { pane_bg };
     let sel_bg = selection_bg;
     let sel_range = row.selection_range;
     if width == 0 {
@@ -6198,13 +6356,12 @@ fn build_frames_rows(app: &App) -> Vec<DapTabRow> {
         rows.push(note_row(empty_frames_note(session), &palette));
         return rows;
     }
-    let selected = if app.mode == Mode::DebugPane
-        && app.dap_pane_tab == crate::app::DapPaneTab::Frames
-    {
-        Some(app.dap_pane_cursor.min(session.frames.len() - 1))
-    } else {
-        None
-    };
+    let selected =
+        if app.mode == Mode::DebugPane && app.dap_pane_tab == crate::app::DapPaneTab::Frames {
+            Some(app.dap_pane_cursor.min(session.frames.len() - 1))
+        } else {
+            None
+        };
     for (i, f) in session.frames.iter().enumerate() {
         let loc = f
             .source
@@ -6237,7 +6394,10 @@ fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
     };
     let flat = crate::dap::flat_locals_view(session);
     if flat.is_empty() {
-        rows.push(note_row("(no locals — frame may not have any in scope)", &palette));
+        rows.push(note_row(
+            "(no locals — frame may not have any in scope)",
+            &palette,
+        ));
         return rows;
     }
     let selected = if pane_focused && app.dap_pane_tab == crate::app::DapPaneTab::Locals {
@@ -6281,13 +6441,12 @@ fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
         ));
         return rows;
     }
-    let selected = if app.mode == Mode::DebugPane
-        && app.dap_pane_tab == crate::app::DapPaneTab::Watches
-    {
-        Some(app.dap_pane_cursor.min(app.dap.watches.len() - 1))
-    } else {
-        None
-    };
+    let selected =
+        if app.mode == Mode::DebugPane && app.dap_pane_tab == crate::app::DapPaneTab::Watches {
+            Some(app.dap_pane_cursor.min(app.dap.watches.len() - 1))
+        } else {
+            None
+        };
     for (i, w) in app.dap.watches.iter().enumerate() {
         let mut parts = vec![
             DapTabPart::plain(format!("{:>3}  ", i + 1), palette.muted),
@@ -6321,7 +6480,10 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
     let mut rows: Vec<DapTabRow> = Vec::new();
     let palette = DebugPalette::from_config(&app.config);
     if app.dap.breakpoints.is_empty() {
-        rows.push(note_row("(no breakpoints — F9 to toggle on the cursor's line)", &palette));
+        rows.push(note_row(
+            "(no breakpoints — F9 to toggle on the cursor's line)",
+            &palette,
+        ));
         return rows;
     }
     let mut entries: Vec<(String, usize, &Vec<crate::dap::SourceBreakpoint>)> = app
@@ -6338,8 +6500,8 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
         })
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
-    let pane_focused_on_bp = app.mode == Mode::DebugPane
-        && app.dap_pane_tab == crate::app::DapPaneTab::Breakpoints;
+    let pane_focused_on_bp =
+        app.mode == Mode::DebugPane && app.dap_pane_tab == crate::app::DapPaneTab::Breakpoints;
     let mut idx = 0usize;
     let total_bp: usize = entries.iter().map(|(_, n, _)| *n).sum();
     let selected = if pane_focused_on_bp && total_bp > 0 {
@@ -6352,7 +6514,11 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
             // `◆` for conditional / hit-count, `●` for plain — same
             // glyph convention as the editor gutter so the user can
             // tell them apart at a glance in the pane.
-            let glyph = if bp.is_conditional() { "◆  " } else { "●  " };
+            let glyph = if bp.is_conditional() {
+                "◆  "
+            } else {
+                "●  "
+            };
             let mut parts = vec![
                 DapTabPart::plain(glyph, palette.red),
                 DapTabPart::plain(display.clone(), palette.peach),
@@ -6395,9 +6561,7 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
     // mouse handler stores anchor + head as
     // `(flat_line_idx, char_col)`, so we walk the same flat order
     // here to assign per-row ranges.
-    let selection = app
-        .dap_console_selection
-        .map(|s| s.ordered());
+    let selection = app.dap_console_selection.map(|s| s.ordered());
     let mut flat_idx = 0usize;
     for line in app.dap.output_buffer.iter() {
         for one in line.output.lines() {
@@ -6413,13 +6577,13 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
                 }
                 let from = if flat_idx == start.0 { start.1 } else { 0 };
                 let to = if flat_idx == end.0 { end.1 } else { line_len };
-                if to > from {
-                    Some((from, to))
-                } else {
-                    None
-                }
+                if to > from { Some((from, to)) } else { None }
             });
-            rows.push(DapTabRow { parts, selected: false, selection_range });
+            rows.push(DapTabRow {
+                parts,
+                selected: false,
+                selection_range,
+            });
             flat_idx += 1;
         }
     }
@@ -6451,7 +6615,10 @@ fn tokenize_console_line(line: &str, p: &DebugPalette) -> Vec<DapTabPart> {
         parts.push(DapTabPart::plain(time_part, p.subtle));
         if !level_part.is_empty() {
             parts.push(DapTabPart::plain(" ".to_string(), p.muted));
-            parts.push(DapTabPart::bold(level_part.clone(), severity_colour(&level_part, p)));
+            parts.push(DapTabPart::bold(
+                level_part.clone(),
+                severity_colour(&level_part, p),
+            ));
         }
         parts.push(DapTabPart::plain("] ".to_string(), p.muted));
         i = prefix_end;
@@ -6593,7 +6760,14 @@ fn scan_url(chars: &[char], i: usize) -> usize {
     let mut j = i;
     while j < chars.len() {
         let c = chars[j];
-        if c.is_whitespace() || c == ')' || c == ']' || c == '"' || c == '\'' || c == ',' || c == ';' {
+        if c.is_whitespace()
+            || c == ')'
+            || c == ']'
+            || c == '"'
+            || c == '\''
+            || c == ','
+            || c == ';'
+        {
             break;
         }
         j += 1;
@@ -6683,10 +6857,9 @@ fn value_part(value: &str, p: &DebugPalette) -> DapTabPart {
     ) {
         return DapTabPart::italic(value.to_string(), p.muted);
     }
-    if trim
-        .chars()
-        .all(|c| c.is_ascii_digit() || c == '-' || c == '.' || c == 'x' || c == 'X' || c.is_ascii_hexdigit())
-        && !trim.is_empty()
+    if trim.chars().all(|c| {
+        c.is_ascii_digit() || c == '-' || c == '.' || c == 'x' || c == 'X' || c.is_ascii_hexdigit()
+    }) && !trim.is_empty()
     {
         return DapTabPart::plain(value.to_string(), p.peach);
     }
@@ -6836,8 +7009,7 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let right_w = right_text.chars().count();
     let right_arrow_w = if right_text.is_empty() { 0 } else { 1 };
 
-    let path_used =
-        mode_w + mode_arrow_w + branch_w + branch_arrow_w + right_arrow_w + right_w;
+    let path_used = mode_w + mode_arrow_w + branch_w + branch_arrow_w + right_arrow_w + right_w;
     let path_room = total
         .saturating_sub(path_used)
         .saturating_sub(2 + dirty.chars().count()); // surrounding spaces + dirty marker
@@ -6898,16 +7070,16 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     // Fill the middle with the path background.
     let drawn = mode_w
         + mode_arrow_w
-        + (if branch_text.is_empty() { 0 } else { branch_w + branch_arrow_w })
+        + (if branch_text.is_empty() {
+            0
+        } else {
+            branch_w + branch_arrow_w
+        })
         + 2
         + path_str.chars().count()
         + dirty.chars().count();
     let fill = total.saturating_sub(drawn + right_arrow_w + right_w);
-    queue!(
-        out,
-        SetBackgroundColor(path_bg),
-        Print(" ".repeat(fill)),
-    )?;
+    queue!(out, SetBackgroundColor(path_bg), Print(" ".repeat(fill)),)?;
 
     // === Right segment (language) ===
     // PL_LEFT (`\u{e0b2}`) is a triangle that fills the *right* half
@@ -6932,7 +7104,6 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, ResetColor)?;
     Ok(())
 }
-
 
 fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // On the start page, no buffer cursor — only the cmdline/picker overlays
@@ -6962,10 +7133,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
                 // whatever stale position the PTY's first frame put
                 // it. Once the splash drops, the real PTY cursor
                 // resumes positioning.
-                if let Some(side) = app
-                    .side_terminals
-                    .get(app.active_side_terminal_idx)
-                {
+                if let Some(side) = app.side_terminals.get(app.active_side_terminal_idx) {
                     if crate::app::side_terminal_loading(side) {
                         queue!(out, Hide)?;
                         return Ok(());
@@ -7020,7 +7188,10 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // against terminals that drop the system cursor inside
     // synchronized updates. Keep the system cursor hidden so we don't
     // get a duplicate.
-    if matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Prompt(_)) {
+    if matches!(
+        app.mode,
+        Mode::Command | Mode::Search { .. } | Mode::Prompt(_)
+    ) {
         queue!(out, Hide)?;
         return Ok(());
     }
@@ -7052,8 +7223,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // so the cursor's on-screen row needs to count *visible* rows
     // between view_top and the cursor's source line — not the raw
     // line-index delta.
-    let content_row = app
-        .visible_rows_between(app.window.view_top, app.window.cursor.line) as u16;
+    let content_row = app.visible_rows_between(app.window.view_top, app.window.cursor.line) as u16;
     // Phantom hop: park the visual cursor on the lens row above the
     // content line. `cursor.line` is unchanged so edits / ENTER target
     // the right line. Self-heals if the lens vanished between the
@@ -7061,7 +7231,12 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     let phantom_idx = app
         .phantom_lens_idx
         .filter(|_| app.line_has_code_lens(app.window.cursor.line) && content_row > 0);
-    let row = pane.y + if phantom_idx.is_some() { content_row - 1 } else { content_row };
+    let row = pane.y
+        + if phantom_idx.is_some() {
+            content_row - 1
+        } else {
+            content_row
+        };
     if let Some(idx) = phantom_idx {
         // Phantom row paints `gutter` blanks, then lens titles joined by
         // " │ ". Replay the join widths so the visual cursor lands on the
@@ -7103,10 +7278,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // cells right of where the user sees their position.
     if app.markdown_render_active() {
         if let Some(meta) = app.markdown_line_meta(app.window.cursor.line) {
-            let line_chars: Vec<char> = line
-                .chars()
-                .filter(|c| *c != '\n' && *c != '\r')
-                .collect();
+            let line_chars: Vec<char> = line.chars().filter(|c| *c != '\n' && *c != '\r').collect();
             let visual = crate::markdown_render::visual_col_for_buffer_col(
                 &line_chars,
                 meta,

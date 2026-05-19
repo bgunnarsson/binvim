@@ -4,17 +4,17 @@
 //! that lives in `manager.rs`.
 
 use anyhow::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver};
+use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::io::reader_loop;
-use super::specs::{resolve_command, ServerSpec};
-use super::types::{path_to_uri, LspIncoming, MessageSeverity};
+use super::specs::{ServerSpec, resolve_command};
+use super::types::{LspIncoming, MessageSeverity, path_to_uri};
 
 /// State of a client's outgoing pipe. Until the server has answered the
 /// `initialize` request we buffer frames; the reader thread flushes them in

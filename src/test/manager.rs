@@ -7,7 +7,7 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
@@ -138,7 +138,10 @@ impl TestManager {
                         .any(|e| matches!(e, TestEvent::Aborted { .. }));
                     if !has_finished && !has_aborted && !status.success() {
                         events.push(TestEvent::Aborted {
-                            message: format!("adapter exited with code {}", status.code().unwrap_or(-1)),
+                            message: format!(
+                                "adapter exited with code {}",
+                                status.code().unwrap_or(-1)
+                            ),
                         });
                     }
                     session_dead = true;
@@ -272,4 +275,3 @@ fn spawn_runner(
     });
     Ok(Arc::new(Mutex::new(child)))
 }
-

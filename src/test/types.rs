@@ -65,10 +65,7 @@ pub enum TestEvent {
     /// Raw output line from the adapter (stdout or stderr) — surfaced
     /// in the overlay so the user can see `println!` debug prints and
     /// adapter chatter (`Compiling …`, `Finished …`).
-    Output {
-        stream: OutputStream,
-        text: String,
-    },
+    Output { stream: OutputStream, text: String },
     /// Adapter has finished. `summary` is best-effort — adapters that
     /// don't emit a tally just leave the counts at zero.
     Finished { summary: TestSummary },
@@ -136,10 +133,7 @@ pub enum TestOutputRow {
         message: Option<String>,
     },
     /// Raw adapter output.
-    Output {
-        stream: OutputStream,
-        text: String,
-    },
+    Output { stream: OutputStream, text: String },
     /// End-of-run tally line.
     Summary(TestSummary),
     /// Adapter failed to run — compile error, command not found, etc.

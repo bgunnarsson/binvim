@@ -343,14 +343,15 @@ pub fn apply_patch(root: &Path, patch: &str, args: &[&str]) -> Result<(), String
         .spawn()
         .map_err(|e| e.to_string())?;
     {
-        let stdin = child.stdin.as_mut().ok_or_else(|| "git apply: stdin missing".to_string())?;
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "git apply: stdin missing".to_string())?;
         stdin
             .write_all(patch.as_bytes())
             .map_err(|e| e.to_string())?;
     }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| e.to_string())?;
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
     if output.status.success() {
         Ok(())
     } else {

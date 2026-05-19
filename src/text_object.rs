@@ -3,10 +3,21 @@ use crate::cursor::Cursor;
 
 #[derive(Debug, Clone, Copy)]
 pub enum TextObjectVerb {
-    Word { inner: bool },
-    BigWord { inner: bool },
-    Quotes { ch: char, inner: bool },
-    Pair { open: char, close: char, inner: bool },
+    Word {
+        inner: bool,
+    },
+    BigWord {
+        inner: bool,
+    },
+    Quotes {
+        ch: char,
+        inner: bool,
+    },
+    Pair {
+        open: char,
+        close: char,
+        inner: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -117,7 +128,11 @@ fn word(buf: &Buffer, cur: Cursor, inner: bool, big: bool) -> Option<TextRange> 
             }
         }
     }
-    Some(TextRange { start, end, linewise: false })
+    Some(TextRange {
+        start,
+        end,
+        linewise: false,
+    })
 }
 
 /// `i"` / `a"` (and ', `).
@@ -167,13 +182,7 @@ fn quoted(buf: &Buffer, cur: Cursor, ch: char, inner: bool) -> Option<TextRange>
 }
 
 /// `i(` / `a(` etc. Searches the buffer (not just the line) for a balanced pair containing the cursor.
-fn pair(
-    buf: &Buffer,
-    cur: Cursor,
-    open: char,
-    close: char,
-    inner: bool,
-) -> Option<TextRange> {
+fn pair(buf: &Buffer, cur: Cursor, open: char, close: char, inner: bool) -> Option<TextRange> {
     let total = buf.total_chars();
     let line_start = buf.line_start_idx(cur.line);
     let here = line_start + cur.col;
@@ -224,7 +233,11 @@ fn pair(
     } else {
         (o_idx, c_idx + 1)
     };
-    Some(TextRange { start, end, linewise: false })
+    Some(TextRange {
+        start,
+        end,
+        linewise: false,
+    })
 }
 
 #[cfg(test)]
@@ -235,10 +248,21 @@ mod tests {
     use ropey::Rope;
 
     fn buf(s: &str) -> Buffer {
-        Buffer { rope: Rope::from_str(s), path: None, dirty: false, version: 0, disk_mtime: None, display_name: None }
+        Buffer {
+            rope: Rope::from_str(s),
+            path: None,
+            dirty: false,
+            version: 0,
+            disk_mtime: None,
+            display_name: None,
+        }
     }
     fn cur(l: usize, c: usize) -> Cursor {
-        Cursor { line: l, col: c, want_col: c }
+        Cursor {
+            line: l,
+            col: c,
+            want_col: c,
+        }
     }
 
     #[test]
@@ -268,7 +292,15 @@ mod tests {
     #[test]
     fn iquot_inner() {
         let b = buf("a \"hello\" b\n");
-        let r = compute(&b, cur(0, 5), TextObjectVerb::Quotes { ch: '"', inner: true }).unwrap();
+        let r = compute(
+            &b,
+            cur(0, 5),
+            TextObjectVerb::Quotes {
+                ch: '"',
+                inner: true,
+            },
+        )
+        .unwrap();
         assert_eq!(r.start, 3);
         assert_eq!(r.end, 8);
     }
@@ -276,7 +308,15 @@ mod tests {
     #[test]
     fn aquot_around() {
         let b = buf("a \"hello\" b\n");
-        let r = compute(&b, cur(0, 5), TextObjectVerb::Quotes { ch: '"', inner: false }).unwrap();
+        let r = compute(
+            &b,
+            cur(0, 5),
+            TextObjectVerb::Quotes {
+                ch: '"',
+                inner: false,
+            },
+        )
+        .unwrap();
         assert_eq!(r.start, 2);
         assert_eq!(r.end, 9);
     }
@@ -284,7 +324,16 @@ mod tests {
     #[test]
     fn paren_pair_inner() {
         let b = buf("foo(bar baz) end\n");
-        let r = compute(&b, cur(0, 5), TextObjectVerb::Pair { open: '(', close: ')', inner: true }).unwrap();
+        let r = compute(
+            &b,
+            cur(0, 5),
+            TextObjectVerb::Pair {
+                open: '(',
+                close: ')',
+                inner: true,
+            },
+        )
+        .unwrap();
         assert_eq!(r.start, 4);
         assert_eq!(r.end, 11);
     }
@@ -292,7 +341,16 @@ mod tests {
     #[test]
     fn paren_pair_around() {
         let b = buf("foo(bar baz) end\n");
-        let r = compute(&b, cur(0, 5), TextObjectVerb::Pair { open: '(', close: ')', inner: false }).unwrap();
+        let r = compute(
+            &b,
+            cur(0, 5),
+            TextObjectVerb::Pair {
+                open: '(',
+                close: ')',
+                inner: false,
+            },
+        )
+        .unwrap();
         assert_eq!(r.start, 3);
         assert_eq!(r.end, 12);
     }
@@ -301,7 +359,16 @@ mod tests {
     fn paren_pair_balances_nested() {
         let b = buf("a(b(c)d)e\n");
         // cursor on 'c' (col 4) — innermost pair is (c)
-        let r = compute(&b, cur(0, 4), TextObjectVerb::Pair { open: '(', close: ')', inner: true }).unwrap();
+        let r = compute(
+            &b,
+            cur(0, 4),
+            TextObjectVerb::Pair {
+                open: '(',
+                close: ')',
+                inner: true,
+            },
+        )
+        .unwrap();
         assert_eq!(r.start, 4);
         assert_eq!(r.end, 5);
     }
@@ -309,7 +376,15 @@ mod tests {
     #[test]
     fn paren_pair_returns_none_if_no_pair() {
         let b = buf("no parens here\n");
-        let r = compute(&b, cur(0, 3), TextObjectVerb::Pair { open: '(', close: ')', inner: true });
+        let r = compute(
+            &b,
+            cur(0, 3),
+            TextObjectVerb::Pair {
+                open: '(',
+                close: ')',
+                inner: true,
+            },
+        );
         assert!(r.is_none());
     }
 
@@ -326,7 +401,14 @@ mod tests {
             let line = line_hint % b.line_count();
             let llen = b.line_len(line);
             let col = if llen == 0 { 0 } else { col_hint % llen };
-            (b, Cursor { line, col, want_col: col })
+            (
+                b,
+                Cursor {
+                    line,
+                    col,
+                    want_col: col,
+                },
+            )
         })
     }
 
@@ -337,10 +419,19 @@ mod tests {
             (prop_oneof![Just('"'), Just('\''), Just('`')], any::<bool>())
                 .prop_map(|(ch, inner)| TextObjectVerb::Quotes { ch, inner }),
             (
-                prop_oneof![Just(('(', ')')), Just(('[', ']')), Just(('{', '}')), Just(('<', '>'))],
+                prop_oneof![
+                    Just(('(', ')')),
+                    Just(('[', ']')),
+                    Just(('{', '}')),
+                    Just(('<', '>'))
+                ],
                 any::<bool>()
             )
-                .prop_map(|((open, close), inner)| TextObjectVerb::Pair { open, close, inner }),
+                .prop_map(|((open, close), inner)| TextObjectVerb::Pair {
+                    open,
+                    close,
+                    inner
+                }),
         ]
     }
 

@@ -119,19 +119,12 @@ impl FileTreeState {
         if len == 0 {
             return;
         }
-        let new = (self.cursor as i64 + delta)
-            .max(0)
-            .min(len as i64 - 1) as usize;
+        let new = (self.cursor as i64 + delta).max(0).min(len as i64 - 1) as usize;
         self.cursor = new;
     }
 }
 
-fn push_children(
-    dir: &Path,
-    depth: usize,
-    expanded: &HashSet<PathBuf>,
-    out: &mut Vec<TreeEntry>,
-) {
+fn push_children(dir: &Path, depth: usize, expanded: &HashSet<PathBuf>, out: &mut Vec<TreeEntry>) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
@@ -351,10 +344,7 @@ impl super::App {
             .get(state.cursor)
             .map(|e| e.is_dir)
             .unwrap_or(false);
-        state.pending_op = Some(FileTreePendingOp::DeleteConfirm {
-            target,
-            is_dir,
-        });
+        state.pending_op = Some(FileTreePendingOp::DeleteConfirm { target, is_dir });
     }
 
     /// Commit a Create prompt. Trailing `/` selects directory; an
@@ -417,9 +407,7 @@ impl super::App {
                     // Land the cursor on the freshly-created entry so
                     // a follow-up `r` / `d` targets it without
                     // re-navigating.
-                    if let Some(idx) =
-                        state.entries.iter().position(|e| e.path == target)
-                    {
+                    if let Some(idx) = state.entries.iter().position(|e| e.path == target) {
                         state.cursor = idx;
                     }
                 }
@@ -482,9 +470,7 @@ impl super::App {
                         state.expanded.insert(to.clone());
                     }
                     state.rebuild();
-                    if let Some(idx) =
-                        state.entries.iter().position(|e| e.path == to)
-                    {
+                    if let Some(idx) = state.entries.iter().position(|e| e.path == to) {
                         state.cursor = idx;
                     }
                 }

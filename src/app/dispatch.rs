@@ -8,7 +8,7 @@ use crate::motion::{self, MotionKind, MotionResult};
 use crate::parser::{Action, MotionVerb};
 use crate::text_object::{self, TextObjectVerb, TextRange};
 
-use super::state::{is_jump_motion, FindRecord};
+use super::state::{FindRecord, is_jump_motion};
 
 impl super::App {
     pub(super) fn apply_action(&mut self, action: Action) {
@@ -17,9 +17,7 @@ impl super::App {
         // the index and now (server response cleared the cache), drop
         // the index so the next vertical motion behaves as if the
         // cursor was already on the content row.
-        if self.phantom_lens_idx.is_some()
-            && !self.line_has_code_lens(self.window.cursor.line)
-        {
+        if self.phantom_lens_idx.is_some() && !self.line_has_code_lens(self.window.cursor.line) {
             self.phantom_lens_idx = None;
         }
         // Phantom is preserved only across single-step h/j/k/l (and arrow
@@ -28,10 +26,7 @@ impl super::App {
         let preserve_phantom = matches!(
             action,
             Action::Move {
-                motion: MotionVerb::Up
-                    | MotionVerb::Down
-                    | MotionVerb::Left
-                    | MotionVerb::Right,
+                motion: MotionVerb::Up | MotionVerb::Down | MotionVerb::Left | MotionVerb::Right,
                 count: 1,
             }
         );
@@ -88,20 +83,34 @@ impl super::App {
                 self.window.cursor = m.target;
                 self.clamp_cursor_normal();
             }
-            Action::Operate { op, motion, count, register } => {
+            Action::Operate {
+                op,
+                motion,
+                count,
+                register,
+            } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 if !self.try_multi_op_motion(op, motion, count, register) {
                     let m = self.run_motion(motion, count);
                     self.apply_op_with_motion(op, m, register);
                 }
             }
-            Action::OperateLine { op, count, register } => {
+            Action::OperateLine {
+                op,
+                count,
+                register,
+            } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 if !self.try_multi_op_linewise(op, count, register) {
                     self.apply_op_linewise(op, count, register);
                 }
             }
-            Action::OperateTextObject { op, obj, count, register } => {
+            Action::OperateTextObject {
+                op,
+                obj,
+                count,
+                register,
+            } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 if !self.try_multi_op_textobj(op, obj, register) {
                     self.apply_text_object(op, obj, count, register);
@@ -133,7 +142,11 @@ impl super::App {
             }
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
-            Action::Put { before, count, register } => {
+            Action::Put {
+                before,
+                count,
+                register,
+            } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.put(before, count, register);
             }
@@ -151,7 +164,8 @@ impl super::App {
             Action::PageScroll(kind) => self.page_scroll(kind),
             Action::AdjustViewport(kind) => self.adjust_viewport_to(kind),
             Action::SetMark { name } => {
-                self.marks.insert(name, (self.window.cursor.line, self.window.cursor.col));
+                self.marks
+                    .insert(name, (self.window.cursor.line, self.window.cursor.col));
             }
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
             Action::StartMacro { name } => self.start_macro_recording(name),
@@ -199,8 +213,7 @@ impl super::App {
                     self.terminal_focus = crate::app::TerminalFocus::Bottom;
                     self.adjust_viewport();
                 } else {
-                    self.status_msg =
-                        "terminal: no pane (open with `<leader>tt`)".into();
+                    self.status_msg = "terminal: no pane (open with `<leader>tt`)".into();
                 }
             }
             Action::TerminalToggle => self.toggle_terminal_pane(),
@@ -376,7 +389,10 @@ impl super::App {
         if matches!(op, Operator::Indent | Operator::Outdent) {
             let l1 = self.buffer.rope.char_to_line(range.start);
             let l2_idx = range.end.saturating_sub(1);
-            let l2 = self.buffer.rope.char_to_line(l2_idx.min(self.buffer.total_chars()));
+            let l2 = self
+                .buffer
+                .rope
+                .char_to_line(l2_idx.min(self.buffer.total_chars()));
             if matches!(op, Operator::Indent) {
                 self.indent_lines(l1, l2);
             } else {
@@ -426,14 +442,26 @@ impl super::App {
             }
             MotionVerb::LineStart => motion::line_start(&self.buffer, self.window.cursor),
             MotionVerb::LineEnd => motion::line_end(&self.buffer, self.window.cursor),
-            MotionVerb::WordForward => motion::word_forward(&self.buffer, self.window.cursor, count),
-            MotionVerb::WordBackward => motion::word_backward(&self.buffer, self.window.cursor, count),
-            MotionVerb::BigWordForward => motion::big_word_forward(&self.buffer, self.window.cursor, count),
-            MotionVerb::BigWordBackward => motion::big_word_backward(&self.buffer, self.window.cursor, count),
+            MotionVerb::WordForward => {
+                motion::word_forward(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::WordBackward => {
+                motion::word_backward(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::BigWordForward => {
+                motion::big_word_forward(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::BigWordBackward => {
+                motion::big_word_backward(&self.buffer, self.window.cursor, count)
+            }
             MotionVerb::EndWord => motion::end_word(&self.buffer, self.window.cursor, count),
             MotionVerb::BigEndWord => motion::big_end_word(&self.buffer, self.window.cursor, count),
-            MotionVerb::EndWordBackward => motion::end_word_backward(&self.buffer, self.window.cursor, count),
-            MotionVerb::BigEndWordBackward => motion::big_end_word_backward(&self.buffer, self.window.cursor, count),
+            MotionVerb::EndWordBackward => {
+                motion::end_word_backward(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::BigEndWordBackward => {
+                motion::big_end_word_backward(&self.buffer, self.window.cursor, count)
+            }
             MotionVerb::FirstLine => motion::first_line(&self.buffer, self.window.cursor),
             MotionVerb::LastLine => motion::last_line(&self.buffer, self.window.cursor),
             MotionVerb::GotoLine(n) => motion::goto_line(&self.buffer, n),
@@ -441,20 +469,46 @@ impl super::App {
             MotionVerb::LastNonBlank => motion::last_non_blank(&self.buffer, self.window.cursor),
             MotionVerb::ViewportTop => self.viewport_motion(0),
             MotionVerb::ViewportMiddle => self.viewport_motion(self.buffer_rows() / 2),
-            MotionVerb::ViewportBottom => self.viewport_motion(self.buffer_rows().saturating_sub(1)),
+            MotionVerb::ViewportBottom => {
+                self.viewport_motion(self.buffer_rows().saturating_sub(1))
+            }
             MotionVerb::Mark { name, exact } => self.mark_motion(name, exact),
-            MotionVerb::FindChar { ch, forward, before } => {
-                self.last_find = Some(FindRecord { ch, forward, before });
+            MotionVerb::FindChar {
+                ch,
+                forward,
+                before,
+            } => {
+                self.last_find = Some(FindRecord {
+                    ch,
+                    forward,
+                    before,
+                });
                 motion::find_char(&self.buffer, self.window.cursor, ch, forward, before, count)
-                    .unwrap_or(MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive })
+                    .unwrap_or(MotionResult {
+                        target: self.window.cursor,
+                        kind: MotionKind::CharExclusive,
+                    })
             }
             MotionVerb::RepeatFind { reverse } => match self.last_find {
                 Some(rec) => {
                     let forward = if reverse { !rec.forward } else { rec.forward };
-                    motion::find_char(&self.buffer, self.window.cursor, rec.ch, forward, rec.before, count)
-                        .unwrap_or(MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive })
+                    motion::find_char(
+                        &self.buffer,
+                        self.window.cursor,
+                        rec.ch,
+                        forward,
+                        rec.before,
+                        count,
+                    )
+                    .unwrap_or(MotionResult {
+                        target: self.window.cursor,
+                        kind: MotionKind::CharExclusive,
+                    })
                 }
-                None => MotionResult { target: self.window.cursor, kind: MotionKind::CharExclusive },
+                None => MotionResult {
+                    target: self.window.cursor,
+                    kind: MotionKind::CharExclusive,
+                },
             },
             MotionVerb::SearchNext { reverse } => self.run_search_next(reverse, count),
         }
@@ -462,9 +516,19 @@ impl super::App {
 
     fn viewport_motion(&self, offset: usize) -> MotionResult {
         let line = (self.window.view_top + offset).min(self.buffer.line_count().saturating_sub(1));
-        let r = motion::first_non_blank(&self.buffer, Cursor { line, col: 0, want_col: 0 });
+        let r = motion::first_non_blank(
+            &self.buffer,
+            Cursor {
+                line,
+                col: 0,
+                want_col: 0,
+            },
+        );
         // Treat as linewise so operators like dH delete whole lines.
-        MotionResult { target: r.target, kind: MotionKind::Linewise }
+        MotionResult {
+            target: r.target,
+            kind: MotionKind::Linewise,
+        }
     }
 
     fn mark_motion(&self, name: char, exact: bool) -> MotionResult {
@@ -480,13 +544,27 @@ impl super::App {
             let len = self.buffer.line_len(line);
             let col = if len == 0 { 0 } else { mcol.min(len - 1) };
             MotionResult {
-                target: Cursor { line, col, want_col: col },
+                target: Cursor {
+                    line,
+                    col,
+                    want_col: col,
+                },
                 kind: MotionKind::CharExclusive,
             }
         } else {
             // ' jumps to first non-blank, linewise.
-            let r = motion::first_non_blank(&self.buffer, Cursor { line, col: 0, want_col: 0 });
-            MotionResult { target: r.target, kind: MotionKind::Linewise }
+            let r = motion::first_non_blank(
+                &self.buffer,
+                Cursor {
+                    line,
+                    col: 0,
+                    want_col: 0,
+                },
+            );
+            MotionResult {
+                target: r.target,
+                kind: MotionKind::Linewise,
+            }
         }
     }
 
@@ -609,7 +687,11 @@ impl super::App {
             let prev = to.line - 1;
             let len = self.buffer.line_len(prev);
             let col = if len == 0 { 0 } else { len - 1 };
-            to = Cursor { line: prev, col, want_col: col };
+            to = Cursor {
+                line: prev,
+                col,
+                want_col: col,
+            };
             kind = MotionKind::CharInclusive;
         }
         match kind {

@@ -46,8 +46,7 @@ impl super::App {
             .as_ref()
             .map(|(_, _, _, term)| term.clone())
             .unwrap_or_else(|| "(symbol)".to_string());
-        let new_name = first_new_text(&parsed)
-            .unwrap_or_else(|| "(unknown)".to_string());
+        let new_name = first_new_text(&parsed).unwrap_or_else(|| "(unknown)".to_string());
         let kind = PreviewKind::Rename { original, new_name };
         self.show_preview_overlay(kind, parsed);
     }
@@ -179,8 +178,14 @@ impl super::App {
         self.mode = Mode::Normal;
         // Server-initiated applyEdit is blocked waiting for our
         // response — tell it the user declined so it doesn't hang.
-        if let PreviewKind::ApplyEditFromServer { client_key, request_id, .. } = &preview.kind {
-            self.lsp.send_apply_edit_response(client_key, *request_id, false);
+        if let PreviewKind::ApplyEditFromServer {
+            client_key,
+            request_id,
+            ..
+        } = &preview.kind
+        {
+            self.lsp
+                .send_apply_edit_response(client_key, *request_id, false);
         }
         self.status_msg = match &preview.kind {
             PreviewKind::Rename { .. } => "rename cancelled".into(),
@@ -208,8 +213,14 @@ impl super::App {
             // No work to apply. Server-initiated requests still need
             // an answer or the server hangs — `applied: false` is
             // honest here (we didn't write anything).
-            if let PreviewKind::ApplyEditFromServer { client_key, request_id, .. } = &kind {
-                self.lsp.send_apply_edit_response(client_key, *request_id, false);
+            if let PreviewKind::ApplyEditFromServer {
+                client_key,
+                request_id,
+                ..
+            } = &kind
+            {
+                self.lsp
+                    .send_apply_edit_response(client_key, *request_id, false);
             }
             self.status_msg = match &kind {
                 PreviewKind::Rename { .. } => "rename: no edits selected".into(),
@@ -224,9 +235,15 @@ impl super::App {
         // Tell the server how we did *before* updating status — same
         // reasoning as the cancel path, just reflecting the actual
         // apply result instead of a flat false.
-        if let PreviewKind::ApplyEditFromServer { client_key, request_id, .. } = &kind {
+        if let PreviewKind::ApplyEditFromServer {
+            client_key,
+            request_id,
+            ..
+        } = &kind
+        {
             let applied = matches!(outcome, Ok((n, _)) if n > 0);
-            self.lsp.send_apply_edit_response(client_key, *request_id, applied);
+            self.lsp
+                .send_apply_edit_response(client_key, *request_id, applied);
         }
         match outcome {
             Ok((edits, files)) => {
@@ -262,21 +279,27 @@ impl super::App {
     }
 
     fn rename_preview_toggle_current(&mut self) {
-        let Some(p) = self.pending_rename_preview.as_mut() else { return; };
+        let Some(p) = self.pending_rename_preview.as_mut() else {
+            return;
+        };
         if let Some(row) = p.edits.get_mut(p.cursor) {
             row.enabled = !row.enabled;
         }
     }
 
     fn rename_preview_set_all(&mut self, enabled: bool) {
-        let Some(p) = self.pending_rename_preview.as_mut() else { return; };
+        let Some(p) = self.pending_rename_preview.as_mut() else {
+            return;
+        };
         for row in p.edits.iter_mut() {
             row.enabled = enabled;
         }
     }
 
     fn rename_preview_move(&mut self, delta: isize) {
-        let Some(p) = self.pending_rename_preview.as_mut() else { return; };
+        let Some(p) = self.pending_rename_preview.as_mut() else {
+            return;
+        };
         if p.edits.is_empty() {
             return;
         }
@@ -288,19 +311,29 @@ impl super::App {
     }
 
     fn rename_preview_jump(&mut self, to: isize) {
-        let Some(p) = self.pending_rename_preview.as_mut() else { return; };
+        let Some(p) = self.pending_rename_preview.as_mut() else {
+            return;
+        };
         if p.edits.is_empty() {
             return;
         }
         let n = p.edits.len() as isize;
-        let target = if to == isize::MAX { n - 1 } else { to.clamp(0, n - 1) };
+        let target = if to == isize::MAX {
+            n - 1
+        } else {
+            to.clamp(0, n - 1)
+        };
         p.cursor = target as usize;
         clamp_scroll(p);
     }
 
     fn rename_preview_open_file(&mut self) {
-        let Some(p) = self.pending_rename_preview.as_ref() else { return; };
-        let Some(row) = p.edits.get(p.cursor).cloned() else { return; };
+        let Some(p) = self.pending_rename_preview.as_ref() else {
+            return;
+        };
+        let Some(row) = p.edits.get(p.cursor).cloned() else {
+            return;
+        };
         self.pending_rename_preview = None;
         self.mode = Mode::Normal;
         if let Err(e) = self.open_buffer(row.edit.path.clone()) {
@@ -339,11 +372,7 @@ fn build_preview_row(
     }
 }
 
-fn compose_after(
-    line_text: &str,
-    e: &ConcreteEdit,
-    lines: Option<&Vec<String>>,
-) -> String {
+fn compose_after(line_text: &str, e: &ConcreteEdit, lines: Option<&Vec<String>>) -> String {
     if e.start_line != e.end_line {
         // Cross-line replacement — splice with the end line's tail.
         let mut after = line_text

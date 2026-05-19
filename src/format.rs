@@ -14,14 +14,9 @@ use crate::lsp::find_node_modules_bin;
 /// Returns the formatted text on success, or a short message describing the
 /// failure (suitable for the status line).
 pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     match ext {
-        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc" => {
-            run_biome(path, source)
-        }
+        "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc" => run_biome(path, source),
         // csharpier handles .cs cleanly. For .cshtml / .razor csharpier 1.x
         // says "Is an unsupported file type" and exits 0 — try it anyway
         // (a future csharpier may add Razor support), then fall back to the
@@ -46,8 +41,8 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         // formats plain CSS), YAML, GraphQL. Project-local
         // `node_modules/.bin/prettier` wins over the global install
         // when present.
-        "md" | "markdown" | "mdx" | "vue" | "svelte" | "html" | "htm" | "css" | "scss"
-        | "less" | "yaml" | "yml" | "graphql" | "gql" => run_prettier(path, source),
+        "md" | "markdown" | "mdx" | "vue" | "svelte" | "html" | "htm" | "css" | "scss" | "less"
+        | "yaml" | "yml" | "graphql" | "gql" => run_prettier(path, source),
         "toml" => run_taplo(path, source),
         "rb" | "rake" | "gemspec" => run_rufo(source),
         "php" => run_php_cs_fixer(path, source),
@@ -66,12 +61,7 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
 /// stdout" tools where there's no project-specific resolution to do.
 /// Errors carry a few lines of stderr so the status line shows what
 /// the tool actually complained about.
-fn run_stdin_pipe(
-    bin: &Path,
-    args: &[&str],
-    source: &str,
-    label: &str,
-) -> Result<String, String> {
+fn run_stdin_pipe(bin: &Path, args: &[&str], source: &str, label: &str) -> Result<String, String> {
     let mut child = Command::new(bin)
         .args(args)
         .stdin(Stdio::piped())
@@ -160,8 +150,10 @@ fn run_shfmt(path: &Path, source: &str) -> Result<String, String> {
 /// `stylua.toml` walking up from the source file, the same way the LSP
 /// resolves project config.
 fn run_stylua(path: &Path, source: &str) -> Result<String, String> {
-    let stylua = find_on_path("stylua")
-        .ok_or_else(|| "stylua not found — install with `cargo install stylua` or `brew install stylua`".to_string())?;
+    let stylua = find_on_path("stylua").ok_or_else(|| {
+        "stylua not found — install with `cargo install stylua` or `brew install stylua`"
+            .to_string()
+    })?;
     let stdin_filepath = format!("--stdin-filepath={}", path.to_string_lossy());
     run_stdin_pipe(
         &stylua,
@@ -262,10 +254,14 @@ fn run_mix_format(source: &str) -> Result<String, String> {
 /// alongside the source, so ktfmt's narrower scope is the cleaner fit.
 fn run_ktfmt(path: &Path, source: &str) -> Result<String, String> {
     let ktfmt = find_on_path("ktfmt").ok_or_else(|| {
-        "ktfmt not found — install with `brew install ktfmt` or grab the jar from GitHub".to_string()
+        "ktfmt not found — install with `brew install ktfmt` or grab the jar from GitHub"
+            .to_string()
     })?;
     let parent = path.parent().unwrap_or(Path::new("."));
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("buffer");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("buffer");
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("kt");
     let temp = parent.join(format!(
         ".{stem}.binvim-format.{pid}.{ext}",
@@ -279,8 +275,9 @@ fn run_ktfmt(path: &Path, source: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .output();
     let outcome = match result {
-        Ok(o) if o.status.success() => std::fs::read_to_string(&temp)
-            .map_err(|e| format!("read temp: {e}")),
+        Ok(o) if o.status.success() => {
+            std::fs::read_to_string(&temp).map_err(|e| format!("read temp: {e}"))
+        }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             let cleaned: Vec<String> = stderr
@@ -294,7 +291,11 @@ fn run_ktfmt(path: &Path, source: &str) -> Result<String, String> {
             } else {
                 cleaned.join(" / ")
             };
-            let code = o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+            let code = o
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into());
             Err(format!("ktfmt exit {code}: {msg}"))
         }
         Err(e) => Err(format!("failed to spawn ktfmt: {e}")),
@@ -324,7 +325,10 @@ fn run_php_cs_fixer(path: &Path, source: &str) -> Result<String, String> {
     let bin = find_on_path("php-cs-fixer")
         .ok_or_else(|| "php-cs-fixer not found — install with `composer global require friendsofphp/php-cs-fixer`".to_string())?;
     let parent = path.parent().unwrap_or(Path::new("."));
-    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("buffer");
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("buffer");
     let temp = parent.join(format!(
         ".{stem}.binvim-format.{pid}.php",
         pid = std::process::id(),
@@ -340,8 +344,9 @@ fn run_php_cs_fixer(path: &Path, source: &str) -> Result<String, String> {
         .stderr(Stdio::piped())
         .output();
     let outcome = match result {
-        Ok(o) if o.status.success() => std::fs::read_to_string(&temp)
-            .map_err(|e| format!("read temp: {e}")),
+        Ok(o) if o.status.success() => {
+            std::fs::read_to_string(&temp).map_err(|e| format!("read temp: {e}"))
+        }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
             let cleaned: Vec<String> = stderr
@@ -355,7 +360,11 @@ fn run_php_cs_fixer(path: &Path, source: &str) -> Result<String, String> {
             } else {
                 cleaned.join(" / ")
             };
-            let code = o.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+            let code = o
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into());
             Err(format!("php-cs-fixer exit {code}: {msg}"))
         }
         Err(e) => Err(format!("failed to spawn php-cs-fixer: {e}")),
@@ -419,7 +428,11 @@ fn run_biome(path: &Path, source: &str) -> Result<String, String> {
         } else {
             cleaned.join(" / ")
         };
-        let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into());
         return Err(format!("biome exit {code}: {msg}"));
     }
 
@@ -611,7 +624,11 @@ fn run_gofmt(source: &str) -> Result<String, String> {
         } else {
             cleaned.join(" / ")
         };
-        let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into());
         return Err(format!("{label} exit {code}: {msg}"));
     }
     String::from_utf8(output.stdout).map_err(|e| format!("{label} stdout not utf-8: {e}"))
@@ -637,10 +654,7 @@ pub struct FormatterStatus {
 /// save time (project-local `node_modules/.bin` first for biome /
 /// prettier, fallback chains preserved for Python and Nix).
 pub fn primary_formatter_for_path(path: &Path) -> Option<FormatterStatus> {
-    let ext = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("");
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
     let start = path.parent().unwrap_or(Path::new("."));
     let on_path = |name: &str| FormatterStatus {
         label: name.to_string(),
@@ -685,11 +699,13 @@ pub fn primary_formatter_for_path(path: &Path) -> Option<FormatterStatus> {
                 }
             }
         }
-        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => on_path("clang-format"),
+        "c" | "h" | "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => {
+            on_path("clang-format")
+        }
         "sh" | "bash" | "zsh" | "ksh" => on_path("shfmt"),
         "lua" => on_path("stylua"),
-        "md" | "markdown" | "mdx" | "vue" | "svelte" | "html" | "htm" | "css" | "scss"
-        | "less" | "yaml" | "yml" | "graphql" | "gql" => node_or_path("prettier"),
+        "md" | "markdown" | "mdx" | "vue" | "svelte" | "html" | "htm" | "css" | "scss" | "less"
+        | "yaml" | "yml" | "graphql" | "gql" => node_or_path("prettier"),
         "toml" => on_path("taplo"),
         "rb" | "rake" | "gemspec" => on_path("rufo"),
         "php" => on_path("php-cs-fixer"),
@@ -764,7 +780,10 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOu
         } else {
             cleaned.join(" / ")
         };
-        let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+        let code = status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "?".into());
         return Err(format!("csharpier exit {code}: {msg}"));
     }
     // csharpier 1.x prints `Warning <path> - Is an unsupported file type.`
@@ -807,7 +826,8 @@ mod tests {
     fn cshtml_tabs_become_spaces_per_editorconfig() {
         let ec = "root = true\n[*.{cshtml,html}]\nindent_style = space\nindent_size = 4\n";
         let target = scratch(ec, "view.cshtml", "");
-        let src = "@{\n\tLayout = \"Master.cshtml\";\n\tvar x = 1;\n}\n<div>\n\t<a>hi</a>\n</div>\n";
+        let src =
+            "@{\n\tLayout = \"Master.cshtml\";\n\tvar x = 1;\n}\n<div>\n\t<a>hi</a>\n</div>\n";
         let out = apply_editorconfig_indent(&target, src).expect("ok");
         let expected = "@{\n    Layout = \"Master.cshtml\";\n    var x = 1;\n}\n<div>\n    <a>hi</a>\n</div>\n";
         assert_eq!(out, expected);

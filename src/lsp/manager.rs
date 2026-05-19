@@ -2,7 +2,7 @@
 //! across the clients attached to a path, and routes responses back to the
 //! main thread as `LspEvent`s.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,7 @@ use super::parse::{
 };
 use super::specs::{find_workspace_root, resolve_command, specs_for_path};
 use super::types::{
-    path_to_uri, uri_to_path, ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming,
+    ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming, path_to_uri, uri_to_path,
 };
 
 #[derive(Debug, Clone)]
@@ -31,7 +31,9 @@ pub(super) enum PendingRequest {
     /// Carries the requesting path so the response — which the LSP spec
     /// returns without echoing the URI — can be routed back to the right
     /// buffer in the editor.
-    InlayHints { path: PathBuf },
+    InlayHints {
+        path: PathBuf,
+    },
     /// `textDocument/documentHighlight` — the response handler verifies
     /// the cursor + version anchor before storing the ranges so a stale
     /// reply that arrives after the cursor moved off the symbol gets
@@ -235,7 +237,9 @@ impl LspManager {
     /// Send Copilot's custom `checkStatus` request. Optional `options`
     /// payload is omitted (server defaults are fine for us).
     pub fn request_copilot_check_status(&mut self) -> bool {
-        let Some(client) = self.clients.get("copilot") else { return false; };
+        let Some(client) = self.clients.get("copilot") else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(id, "checkStatus", json!({}));
         self.pending
@@ -247,7 +251,9 @@ impl LspManager {
     /// auth. The response carries `verificationUri` + `userCode` which we
     /// display in the status line.
     pub fn request_copilot_sign_in(&mut self) -> bool {
-        let Some(client) = self.clients.get("copilot") else { return false; };
+        let Some(client) = self.clients.get("copilot") else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(id, "signIn", json!({}));
         self.pending
@@ -260,7 +266,9 @@ impl LspManager {
     /// side rather than waiting for the response, since the user
     /// already knows they signed out.
     pub fn request_copilot_sign_out(&mut self) -> bool {
-        let Some(client) = self.clients.get("copilot") else { return false; };
+        let Some(client) = self.clients.get("copilot") else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(id, "signOut", json!({}));
         // No PendingRequest variant — we don't surface the response.
@@ -281,7 +289,9 @@ impl LspManager {
         if !matches!(self.copilot_status, CopilotStatus::SignedIn { .. }) {
             return false;
         }
-        let Some(client) = self.clients.get("copilot") else { return false; };
+        let Some(client) = self.clients.get("copilot") else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -436,7 +446,11 @@ impl LspManager {
                             edit,
                         });
                     }
-                    LspIncoming::ServerMessage { severity, text, is_show } => {
+                    LspIncoming::ServerMessage {
+                        severity,
+                        text,
+                        is_show,
+                    } => {
                         events.push(LspEvent::ServerMessage {
                             client_key: client_key.clone(),
                             severity,
@@ -501,7 +515,9 @@ impl LspManager {
     /// servers respond null and instead push their effect through a
     /// follow-up `workspace/applyEdit` request.
     pub fn execute_command(&mut self, path: &Path, command_obj: &Value) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let cmd = command_obj
             .get("command")
@@ -521,7 +537,9 @@ impl LspManager {
     }
 
     pub fn request_definition(&mut self, path: &Path, line: usize, col: usize) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -531,12 +549,15 @@ impl LspManager {
                 "position": { "line": line, "character": col }
             }),
         );
-        self.pending.insert((client.name.clone(), id), PendingRequest::GotoDef);
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::GotoDef);
         true
     }
 
     pub fn request_hover(&mut self, path: &Path, line: usize, col: usize) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -546,7 +567,8 @@ impl LspManager {
                 "position": { "line": line, "character": col }
             }),
         );
-        self.pending.insert((client.name.clone(), id), PendingRequest::Hover);
+        self.pending
+            .insert((client.name.clone(), id), PendingRequest::Hover);
         true
     }
 
@@ -589,14 +611,10 @@ impl LspManager {
     }
 
     /// Request `textDocument/rename` with the user's chosen new name.
-    pub fn request_rename(
-        &mut self,
-        path: &Path,
-        line: usize,
-        col: usize,
-        new_name: &str,
-    ) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+    pub fn request_rename(&mut self, path: &Path, line: usize, col: usize, new_name: &str) -> bool {
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -622,7 +640,9 @@ impl LspManager {
         col: usize,
         diagnostics: Vec<Value>,
     ) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -646,7 +666,9 @@ impl LspManager {
 
     /// Request `textDocument/documentSymbol` to populate the outline picker.
     pub fn request_document_symbols(&mut self, path: &Path) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -661,7 +683,9 @@ impl LspManager {
     /// Request `workspace/symbol`. The server-side fuzzy matcher does the
     /// ranking; we just relay results to the picker. `query` may be empty.
     pub fn request_workspace_symbols(&mut self, path: &Path, query: &str) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(id, "workspace/symbol", json!({ "query": query }));
         self.pending
@@ -672,7 +696,9 @@ impl LspManager {
     /// Request `textDocument/references` from the primary server with
     /// `includeDeclaration: true` so the user sees the definition site too.
     pub fn request_references(&mut self, path: &Path, line: usize, col: usize) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -699,7 +725,9 @@ impl LspManager {
         col: usize,
         version: u64,
     ) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -725,7 +753,9 @@ impl LspManager {
     /// server didn't advertise the capability (no legend captured) so
     /// we don't burn a request that's guaranteed to come back empty.
     pub fn request_semantic_tokens_full(&mut self, path: &Path, buffer_version: u64) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         if client.semantic_tokens_legend.lock().unwrap().is_none() {
             return false;
         }
@@ -762,7 +792,9 @@ impl LspManager {
     /// replies that arrive after a later edit so stale line indices
     /// don't smear lenses onto unrelated rows.
     pub fn request_code_lens(&mut self, path: &Path, buffer_version: u64) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         if !*client.code_lens_provider.lock().unwrap() {
             return false;
         }
@@ -788,7 +820,9 @@ impl LspManager {
     /// `codeLens/resolve` — pointless to ask if the server won't
     /// answer.
     pub fn code_lens_resolve_capability(&self, path: &Path) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         *client.code_lens_resolve_provider.lock().unwrap()
     }
 
@@ -804,7 +838,9 @@ impl LspManager {
         buffer_version: u64,
         lens_index: usize,
     ) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         if !*client.code_lens_resolve_provider.lock().unwrap() {
             return false;
         }
@@ -825,7 +861,9 @@ impl LspManager {
     /// exclusive (LSP `Range.end`). Skipped silently when the primary
     /// server is missing.
     pub fn request_inlay_hints(&mut self, path: &Path, end_line: usize) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -840,7 +878,9 @@ impl LspManager {
         );
         self.pending.insert(
             (client.name.clone(), id),
-            PendingRequest::InlayHints { path: path.to_path_buf() },
+            PendingRequest::InlayHints {
+                path: path.to_path_buf(),
+            },
         );
         true
     }
@@ -849,7 +889,9 @@ impl LspManager {
     /// to one server only — multi-server fan-out wouldn't help here, the
     /// primary is the source of truth for the language's call syntax.
     pub fn request_signature_help(&mut self, path: &Path, line: usize, col: usize) -> bool {
-        let Some(client) = self.client_for_path(path) else { return false; };
+        let Some(client) = self.client_for_path(path) else {
+            return false;
+        };
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -961,14 +1003,20 @@ fn handle_response(
             if items.is_empty() {
                 Some(LspEvent::NotFound("symbols"))
             } else {
-                Some(LspEvent::Symbols { items, workspace: false })
+                Some(LspEvent::Symbols {
+                    items,
+                    workspace: false,
+                })
             }
         }
         PendingRequest::WorkspaceSymbols => {
             let items = parse_symbols_response(result);
             // Empty results during live filtering shouldn't toast — the
             // caller distinguishes by the `workspace: true` flag.
-            Some(LspEvent::Symbols { items, workspace: true })
+            Some(LspEvent::Symbols {
+                items,
+                workspace: true,
+            })
         }
         PendingRequest::CodeActions => {
             let items = parse_code_actions_response(result);
@@ -982,7 +1030,9 @@ fn handle_response(
             if result.is_null() {
                 Some(LspEvent::NotFound("rename target"))
             } else {
-                Some(LspEvent::Rename { edit: result.clone() })
+                Some(LspEvent::Rename {
+                    edit: result.clone(),
+                })
             }
         }
         PendingRequest::InlayHints { path } => {
@@ -1004,7 +1054,10 @@ fn handle_response(
                 ranges,
             })
         }
-        PendingRequest::SemanticTokens { path, buffer_version } => {
+        PendingRequest::SemanticTokens {
+            path,
+            buffer_version,
+        } => {
             let tokens = match legend {
                 Some(l) => super::parse::parse_semantic_tokens_response(result, l),
                 // Server returned tokens but we never captured a legend
@@ -1020,7 +1073,10 @@ fn handle_response(
                 tokens,
             })
         }
-        PendingRequest::CodeLens { path, buffer_version } => {
+        PendingRequest::CodeLens {
+            path,
+            buffer_version,
+        } => {
             let lenses = super::parse::parse_code_lens_response(result);
             Some(LspEvent::CodeLens {
                 path,
@@ -1028,7 +1084,11 @@ fn handle_response(
                 lenses,
             })
         }
-        PendingRequest::CodeLensResolve { path, buffer_version, lens_index } => {
+        PendingRequest::CodeLensResolve {
+            path,
+            buffer_version,
+            lens_index,
+        } => {
             let command = super::parse::parse_code_lens_resolve_response(result);
             Some(LspEvent::CodeLensResolved {
                 path,
@@ -1046,10 +1106,13 @@ fn handle_response(
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
                 .or_else(|| {
-                    result
-                        .get("signedIn")
-                        .and_then(|v| v.as_bool())
-                        .map(|b| if b { "OK".to_string() } else { "NotSignedIn".to_string() })
+                    result.get("signedIn").and_then(|v| v.as_bool()).map(|b| {
+                        if b {
+                            "OK".to_string()
+                        } else {
+                            "NotSignedIn".to_string()
+                        }
+                    })
                 })
                 .unwrap_or_else(|| "Unknown".to_string());
             let user = result
@@ -1082,7 +1145,10 @@ fn handle_response(
             } else {
                 kind
             };
-            Some(LspEvent::CopilotStatus { kind: event_kind, user })
+            Some(LspEvent::CopilotStatus {
+                kind: event_kind,
+                user,
+            })
         }
         PendingRequest::CopilotInline {
             path,

@@ -23,15 +23,26 @@ pub enum MotionVerb {
     FirstLine,
     LastLine,
     GotoLine(usize),
-    FindChar { ch: char, forward: bool, before: bool },
-    RepeatFind { reverse: bool },
-    SearchNext { reverse: bool },
+    FindChar {
+        ch: char,
+        forward: bool,
+        before: bool,
+    },
+    RepeatFind {
+        reverse: bool,
+    },
+    SearchNext {
+        reverse: bool,
+    },
     #[allow(dead_code)]
     ViewportTop,
     ViewportMiddle,
     #[allow(dead_code)]
     ViewportBottom,
-    Mark { name: char, exact: bool },
+    Mark {
+        name: char,
+        exact: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -128,37 +139,82 @@ pub enum InsertWhere {
 
 #[derive(Debug, Clone)]
 pub enum Action {
-    Move { motion: MotionVerb, count: usize },
-    Operate { op: Operator, motion: MotionVerb, count: usize, register: Option<char> },
-    OperateLine { op: Operator, count: usize, register: Option<char> },
-    OperateTextObject { op: Operator, obj: TextObjectVerb, count: usize, register: Option<char> },
+    Move {
+        motion: MotionVerb,
+        count: usize,
+    },
+    Operate {
+        op: Operator,
+        motion: MotionVerb,
+        count: usize,
+        register: Option<char>,
+    },
+    OperateLine {
+        op: Operator,
+        count: usize,
+        register: Option<char>,
+    },
+    OperateTextObject {
+        op: Operator,
+        obj: TextObjectVerb,
+        count: usize,
+        register: Option<char>,
+    },
     EnterInsert(InsertWhere),
-    DeleteCharForward { count: usize, register: Option<char> },
-    ReplaceChar { ch: char, count: usize },
-    JoinLines { count: usize },
-    ToggleCase { count: usize },
+    DeleteCharForward {
+        count: usize,
+        register: Option<char>,
+    },
+    ReplaceChar {
+        ch: char,
+        count: usize,
+    },
+    JoinLines {
+        count: usize,
+    },
+    ToggleCase {
+        count: usize,
+    },
     Undo,
     Redo,
-    Put { before: bool, count: usize, register: Option<char> },
+    Put {
+        before: bool,
+        count: usize,
+        register: Option<char>,
+    },
     EnterCommand,
-    EnterSearch { backward: bool },
+    EnterSearch {
+        backward: bool,
+    },
     EnterVisual(VisualKind),
     Repeat,
     PageScroll(PageScrollKind),
     AdjustViewport(ViewportAdjust),
-    SetMark { name: char },
-    SearchWord { backward: bool },
+    SetMark {
+        name: char,
+    },
+    SearchWord {
+        backward: bool,
+    },
     JumpBack,
     JumpForward,
     /// `Ctrl-A` (delta = +1) / `Ctrl-X` (delta = -1) — adjust the next number
     /// at or after the cursor on the current line. Multiplied by `count`.
-    AdjustNumber { delta: i64, count: usize },
+    AdjustNumber {
+        delta: i64,
+        count: usize,
+    },
     /// `Ctrl-J` (down = true) / `Ctrl-K` (down = false) — move the current
     /// line (Normal mode) or the selected line range (Visual mode) up or
     /// down by `count` positions. Cursor and visual anchor follow the
     /// block; the selection stays attached to the moving lines.
-    MoveLine { down: bool, count: usize },
-    OpenPicker { kind: PickerLeader },
+    MoveLine {
+        down: bool,
+        count: usize,
+    },
+    OpenPicker {
+        kind: PickerLeader,
+    },
     OpenYazi,
     LspGotoDefinition,
     LspFindReferences,
@@ -186,25 +242,48 @@ pub enum Action {
     /// Insert mode with mirrored cursors at each former selection start.
     AddNextOccurrenceSelection,
     /// `ds{char}` — strip the surrounding pair around the cursor.
-    SurroundDelete { ch: char },
+    SurroundDelete {
+        ch: char,
+    },
     /// `cs{old}{new}` — swap the surrounding pair from `old` to `new`.
-    SurroundChange { from: char, to: char },
+    SurroundChange {
+        from: char,
+        to: char,
+    },
     /// Visual `S{char}` — wrap the visual selection in the pair for `char`.
-    SurroundVisual { ch: char },
+    SurroundVisual {
+        ch: char,
+    },
     Fold(FoldOp),
     LspHover,
-    VisualOperate { op: Operator, register: Option<char> },
+    VisualOperate {
+        op: Operator,
+        register: Option<char>,
+    },
     /// Visual `p` / `P` — replace the selection with the register's contents.
     /// `before` is unused (both keys behave the same in visual mode) but kept
     /// for symmetry with `Action::Put`.
-    VisualPut { register: Option<char> },
-    VisualSelectTextObject { obj: TextObjectVerb },
+    VisualPut {
+        register: Option<char>,
+    },
+    VisualSelectTextObject {
+        obj: TextObjectVerb,
+    },
     VisualSwap,
     VisualSwitch(VisualKind),
-    StartMacro { name: char },
-    ReplayMacro { name: char, count: usize },
-    BufferDelete { force: bool },
-    BufferDeleteAll { force: bool },
+    StartMacro {
+        name: char,
+    },
+    ReplayMacro {
+        name: char,
+        count: usize,
+    },
+    BufferDelete {
+        force: bool,
+    },
+    BufferDeleteAll {
+        force: bool,
+    },
     BufferOnly,
     BufferNext,
     BufferPrev,
@@ -313,7 +392,9 @@ pub enum Action {
     /// `<C-w>s` — split horizontally, then open the file picker.
     WindowSplitHorizontalPick,
     /// `<C-w>h/j/k/l` — focus the spatially-nearest neighbouring window.
-    WindowFocus { dir: crate::layout::FocusDir },
+    WindowFocus {
+        dir: crate::layout::FocusDir,
+    },
     /// `<C-w>q` / `<C-w>c` — close the active window. Refuses if it's the last one.
     WindowClose,
     /// `<C-w>o` — close every window except the active one.
@@ -325,7 +406,10 @@ pub enum Action {
     /// count between `<C-w>` and the resize key defaults to 1.
     /// `axis = Vertical` ↔ widen/narrow (`<` / `>`),
     /// `axis = Horizontal` ↔ taller/shorter (`+` / `-`).
-    WindowResize { axis: crate::layout::SplitDir, delta: i32 },
+    WindowResize {
+        axis: crate::layout::SplitDir,
+        delta: i32,
+    },
     /// `<C-w>T` — promote the focused pane's buffer to a tab in the
     /// tabline. Non-destructive: the split stays intact, the buffer
     /// just gains its own tab slot so it's reachable via `H`/`L`.
@@ -471,7 +555,9 @@ impl PendingCmd {
     }
 
     fn total_count(&self) -> usize {
-        self.count1.unwrap_or(1).saturating_mul(self.count2.unwrap_or(1))
+        self.count1
+            .unwrap_or(1)
+            .saturating_mul(self.count2.unwrap_or(1))
     }
 
     fn slot_in_progress(&self) -> bool {
@@ -526,7 +612,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if let Some(op) = state.operator.take() {
             let register = state.take_register();
             state.reset();
-            return ParseResult::Action(Action::Operate { op, motion, count, register });
+            return ParseResult::Action(Action::Operate {
+                op,
+                motion,
+                count,
+                register,
+            });
         }
         state.reset();
         return ParseResult::Action(Action::Move { motion, count });
@@ -600,9 +691,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                     ParseCtx::Visual => {
                         ParseResult::Action(Action::VisualSwitch(VisualKind::Block))
                     }
-                    ParseCtx::Normal => {
-                        ParseResult::Action(Action::EnterVisual(VisualKind::Block))
-                    }
+                    ParseCtx::Normal => ParseResult::Action(Action::EnterVisual(VisualKind::Block)),
                 }
             }
             'n' | 'N' if matches!(ctx, ParseCtx::Visual) => {
@@ -684,11 +773,17 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Action(match act {
             MarkAction::Set => Action::SetMark { name: ch },
             MarkAction::JumpLine => Action::Move {
-                motion: MotionVerb::Mark { name: ch, exact: false },
+                motion: MotionVerb::Mark {
+                    name: ch,
+                    exact: false,
+                },
                 count: 1,
             },
             MarkAction::JumpExact => Action::Move {
-                motion: MotionVerb::Mark { name: ch, exact: true },
+                motion: MotionVerb::Mark {
+                    name: ch,
+                    exact: true,
+                },
                 count: 1,
             },
         });
@@ -759,11 +854,20 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // Resolve a pending f/F/t/T — the next key is the literal target char.
     if let Some(spec) = state.awaiting_find.take() {
         let count = state.total_count();
-        let motion = MotionVerb::FindChar { ch, forward: spec.forward, before: spec.before };
+        let motion = MotionVerb::FindChar {
+            ch,
+            forward: spec.forward,
+            before: spec.before,
+        };
         if let Some(op) = state.operator.take() {
             let register = state.take_register();
             state.reset();
-            return ParseResult::Action(Action::Operate { op, motion, count, register });
+            return ParseResult::Action(Action::Operate {
+                op,
+                motion,
+                count,
+                register,
+            });
         }
         state.reset();
         return ParseResult::Action(Action::Move { motion, count });
@@ -775,10 +879,26 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'w' => Some(TextObjectVerb::Word { inner }),
             'W' => Some(TextObjectVerb::BigWord { inner }),
             '"' | '\'' | '`' => Some(TextObjectVerb::Quotes { ch, inner }),
-            '(' | ')' | 'b' => Some(TextObjectVerb::Pair { open: '(', close: ')', inner }),
-            '[' | ']' => Some(TextObjectVerb::Pair { open: '[', close: ']', inner }),
-            '{' | '}' | 'B' => Some(TextObjectVerb::Pair { open: '{', close: '}', inner }),
-            '<' | '>' => Some(TextObjectVerb::Pair { open: '<', close: '>', inner }),
+            '(' | ')' | 'b' => Some(TextObjectVerb::Pair {
+                open: '(',
+                close: ')',
+                inner,
+            }),
+            '[' | ']' => Some(TextObjectVerb::Pair {
+                open: '[',
+                close: ']',
+                inner,
+            }),
+            '{' | '}' | 'B' => Some(TextObjectVerb::Pair {
+                open: '{',
+                close: '}',
+                inner,
+            }),
+            '<' | '>' => Some(TextObjectVerb::Pair {
+                open: '<',
+                close: '>',
+                inner,
+            }),
             _ => None,
         };
         let count = state.total_count();
@@ -786,8 +906,15 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let register = state.take_register();
         state.reset();
         return match (obj, op, ctx) {
-            (Some(o), Some(op), _) => ParseResult::Action(Action::OperateTextObject { op, obj: o, count, register }),
-            (Some(o), None, ParseCtx::Visual) => ParseResult::Action(Action::VisualSelectTextObject { obj: o }),
+            (Some(o), Some(op), _) => ParseResult::Action(Action::OperateTextObject {
+                op,
+                obj: o,
+                count,
+                register,
+            }),
+            (Some(o), None, ParseCtx::Visual) => {
+                ParseResult::Action(Action::VisualSelectTextObject { obj: o })
+            }
             _ => ParseResult::Cancelled,
         };
     }
@@ -853,19 +980,27 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             return ParseResult::Pending;
         }
         let action = match ch {
-            ' ' => Some(Action::OpenPicker { kind: PickerLeader::Files }),
-            '?' => Some(Action::OpenPicker { kind: PickerLeader::Recents }),
+            ' ' => Some(Action::OpenPicker {
+                kind: PickerLeader::Files,
+            }),
+            '?' => Some(Action::OpenPicker {
+                kind: PickerLeader::Recents,
+            }),
             // Grep promoted to capital `G`. The lowercase `g` is now
             // the git sub-leader (handled above) so `<leader>gg` can
             // land on lazygit.
-            'G' => Some(Action::OpenPicker { kind: PickerLeader::Grep }),
+            'G' => Some(Action::OpenPicker {
+                kind: PickerLeader::Grep,
+            }),
             'e' => Some(Action::OpenYazi),
             // Doc-symbol / workspace-symbol pickers moved under
             // `<leader>d` so the debug sub-menu collects every
             // "navigate around code while debugging" action in one
             // place; Code actions stays at top level since it's used
             // independently of any debug flow.
-            'a' => Some(Action::OpenPicker { kind: PickerLeader::CodeActions }),
+            'a' => Some(Action::OpenPicker {
+                kind: PickerLeader::CodeActions,
+            }),
             'r' => Some(Action::LspRename),
             'R' => Some(Action::ReplaceAllInBuffer),
             'f' => Some(Action::Format),
@@ -928,10 +1063,18 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             's' => Some(Action::WindowSplitHorizontalPick),
             'V' => Some(Action::WindowSplitVertical),
             'S' => Some(Action::WindowSplitHorizontal),
-            'h' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Left }),
-            'j' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Down }),
-            'k' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Up }),
-            'l' => Some(Action::WindowFocus { dir: crate::layout::FocusDir::Right }),
+            'h' => Some(Action::WindowFocus {
+                dir: crate::layout::FocusDir::Left,
+            }),
+            'j' => Some(Action::WindowFocus {
+                dir: crate::layout::FocusDir::Down,
+            }),
+            'k' => Some(Action::WindowFocus {
+                dir: crate::layout::FocusDir::Up,
+            }),
+            'l' => Some(Action::WindowFocus {
+                dir: crate::layout::FocusDir::Right,
+            }),
             'q' | 'c' => Some(Action::WindowClose),
             'o' => Some(Action::WindowOnly),
             '=' => Some(Action::WindowEqualize),
@@ -1091,8 +1234,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'O' => Some(Action::Debug(DebugAction::StepOut)),
             'p' => Some(Action::Debug(DebugAction::PaneToggle)),
             'f' => Some(Action::Debug(DebugAction::FocusPane)),
-            'o' => Some(Action::OpenPicker { kind: PickerLeader::DocumentSymbols }),
-            'S' => Some(Action::OpenPicker { kind: PickerLeader::WorkspaceSymbols }),
+            'o' => Some(Action::OpenPicker {
+                kind: PickerLeader::DocumentSymbols,
+            }),
+            'S' => Some(Action::OpenPicker {
+                kind: PickerLeader::WorkspaceSymbols,
+            }),
             _ => None,
         };
         state.reset();
@@ -1136,7 +1283,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             if let Some(op) = state.operator.take() {
                 let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::Operate { op, motion, count, register });
+                return ParseResult::Action(Action::Operate {
+                    op,
+                    motion,
+                    count,
+                    register,
+                });
             }
             state.reset();
             return ParseResult::Action(Action::Move { motion, count });
@@ -1170,17 +1322,26 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'd' | 'D' | 'x' => {
                 let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Delete, register });
+                return ParseResult::Action(Action::VisualOperate {
+                    op: Operator::Delete,
+                    register,
+                });
             }
             'y' => {
                 let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Yank, register });
+                return ParseResult::Action(Action::VisualOperate {
+                    op: Operator::Yank,
+                    register,
+                });
             }
             'c' | 'C' | 's' => {
                 let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Change, register });
+                return ParseResult::Action(Action::VisualOperate {
+                    op: Operator::Change,
+                    register,
+                });
             }
             'p' | 'P' => {
                 let register = state.take_register();
@@ -1193,11 +1354,17 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }
             '>' => {
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Indent, register: None });
+                return ParseResult::Action(Action::VisualOperate {
+                    op: Operator::Indent,
+                    register: None,
+                });
             }
             '<' => {
                 state.reset();
-                return ParseResult::Action(Action::VisualOperate { op: Operator::Outdent, register: None });
+                return ParseResult::Action(Action::VisualOperate {
+                    op: Operator::Outdent,
+                    register: None,
+                });
             }
             'i' | 'a' => {
                 state.awaiting_textobj = Some(ch == 'i');
@@ -1277,7 +1444,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 let count = state.count1.unwrap_or(1);
                 let register = state.take_register();
                 state.reset();
-                return ParseResult::Action(Action::OperateLine { op, count, register });
+                return ParseResult::Action(Action::OperateLine {
+                    op,
+                    count,
+                    register,
+                });
             }
             state.reset();
             return ParseResult::Cancelled;
@@ -1316,9 +1487,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Pending;
     }
 
-    if ch == ' '
-        && (ctx == ParseCtx::Normal || ctx == ParseCtx::Visual)
-        && state.operator.is_none()
+    if ch == ' ' && (ctx == ParseCtx::Normal || ctx == ParseCtx::Visual) && state.operator.is_none()
     {
         state.awaiting_leader = true;
         return ParseResult::Pending;
@@ -1338,10 +1507,22 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 
     // f / F / t / T set awaiting_find — next key is the literal target.
     let find_spec = match ch {
-        'f' => Some(FindSpec { forward: true, before: false }),
-        'F' => Some(FindSpec { forward: false, before: false }),
-        't' => Some(FindSpec { forward: true, before: true }),
-        'T' => Some(FindSpec { forward: false, before: true }),
+        'f' => Some(FindSpec {
+            forward: true,
+            before: false,
+        }),
+        'F' => Some(FindSpec {
+            forward: false,
+            before: false,
+        }),
+        't' => Some(FindSpec {
+            forward: true,
+            before: true,
+        }),
+        'T' => Some(FindSpec {
+            forward: false,
+            before: true,
+        }),
         _ => None,
     };
     if let Some(spec) = find_spec {
@@ -1352,7 +1533,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // / and ? enter search mode.
     if ch == '/' || ch == '?' {
         state.reset();
-        return ParseResult::Action(Action::EnterSearch { backward: ch == '?' });
+        return ParseResult::Action(Action::EnterSearch {
+            backward: ch == '?',
+        });
     }
 
     let motion = match ch {
@@ -1393,7 +1576,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if let Some(op) = state.operator.take() {
             let register = state.take_register();
             state.reset();
-            return ParseResult::Action(Action::Operate { op, motion: m, count, register });
+            return ParseResult::Action(Action::Operate {
+                op,
+                motion: m,
+                count,
+                register,
+            });
         }
         state.reset();
         return ParseResult::Action(Action::Move { motion: m, count });
@@ -1408,11 +1596,22 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'O' => Some(Action::EnterInsert(InsertWhere::LineAbove)),
             'I' => Some(Action::EnterInsert(InsertWhere::LineFirstNonBlank)),
             'A' => Some(Action::EnterInsert(InsertWhere::LineEnd)),
-            'x' => Some(Action::DeleteCharForward { count: state.total_count(), register: state.register }),
+            'x' => Some(Action::DeleteCharForward {
+                count: state.total_count(),
+                register: state.register,
+            }),
             'u' => Some(Action::Undo),
             'U' => Some(Action::Redo),
-            'p' => Some(Action::Put { before: false, count: state.total_count(), register: state.register }),
-            'P' => Some(Action::Put { before: true, count: state.total_count(), register: state.register }),
+            'p' => Some(Action::Put {
+                before: false,
+                count: state.total_count(),
+                register: state.register,
+            }),
+            'P' => Some(Action::Put {
+                before: true,
+                count: state.total_count(),
+                register: state.register,
+            }),
             ':' => Some(Action::EnterCommand),
             '.' => Some(Action::Repeat),
             // Buffer cycling — replaces the H/L viewport motions.
@@ -1442,15 +1641,22 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 count: state.total_count(),
                 register: state.register,
             }),
-            'J' => Some(Action::JoinLines { count: state.total_count() }),
-            '~' => Some(Action::ToggleCase { count: state.total_count() }),
+            'J' => Some(Action::JoinLines {
+                count: state.total_count(),
+            }),
+            '~' => Some(Action::ToggleCase {
+                count: state.total_count(),
+            }),
             '*' => Some(Action::SearchWord { backward: false }),
             '#' => Some(Action::SearchWord { backward: true }),
             'K' => Some(Action::LspHover),
             // `Q` re-runs the most recently replayed macro — same effect as
             // `@@`, but one keystroke. Vim's legacy Ex-mode `Q` isn't
             // implemented (binvim has no Ex mode), so the key is free.
-            'Q' => Some(Action::ReplayMacro { name: '@', count: state.total_count() }),
+            'Q' => Some(Action::ReplayMacro {
+                name: '@',
+                count: state.total_count(),
+            }),
             _ => None,
         };
         if let Some(a) = act {
@@ -1503,7 +1709,11 @@ mod tests {
             other => panic!("first y produced {:?}", std::mem::discriminant(&other)),
         }
         match parse(&mut state, key('y'), ParseCtx::Normal) {
-            ParseResult::Action(Action::OperateLine { op: Operator::Yank, count, register }) => {
+            ParseResult::Action(Action::OperateLine {
+                op: Operator::Yank,
+                count,
+                register,
+            }) => {
                 assert_eq!(count, 1);
                 assert_eq!(register, None);
             }
@@ -1598,7 +1808,10 @@ mod tests {
                 assert_eq!(axis, crate::layout::SplitDir::Vertical);
                 assert_eq!(delta, 1);
             }
-            other => panic!("expected WindowResize, got {:?}", std::mem::discriminant(&other)),
+            other => panic!(
+                "expected WindowResize, got {:?}",
+                std::mem::discriminant(&other)
+            ),
         }
     }
 

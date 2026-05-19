@@ -101,10 +101,16 @@ mod tests {
         let tasks = discover_all(&tmp);
         // Should include npm "dev", just "build", and cargo built-ins.
         assert!(tasks.iter().any(|t| t.label == "dev"));
-        assert!(tasks.iter().any(|t| t.label == "build" && t.program == "just"));
-        assert!(tasks
-            .iter()
-            .any(|t| t.label == "build" && t.program == "cargo"));
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.label == "build" && t.program == "just")
+        );
+        assert!(
+            tasks
+                .iter()
+                .any(|t| t.label == "build" && t.program == "cargo")
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 }

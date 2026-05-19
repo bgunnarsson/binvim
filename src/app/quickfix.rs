@@ -143,8 +143,12 @@ impl super::App {
     }
 
     fn qf_jump_current(&mut self) {
-        let Some(qf) = self.quickfix.as_ref() else { return; };
-        let Some(entry) = qf.entries.get(qf.current).cloned() else { return; };
+        let Some(qf) = self.quickfix.as_ref() else {
+            return;
+        };
+        let Some(entry) = qf.entries.get(qf.current).cloned() else {
+            return;
+        };
         let total = qf.entries.len();
         let pos = qf.current + 1;
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -164,7 +168,10 @@ impl super::App {
         self.window.cursor.col = entry.col.saturating_sub(1);
         self.window.cursor.want_col = self.window.cursor.col;
         self.clamp_cursor_normal();
-        self.status_msg = format!("({pos}/{total}) {display_path}:{}:{}", entry.line, entry.col);
+        self.status_msg = format!(
+            "({pos}/{total}) {display_path}:{}:{}",
+            entry.line, entry.col
+        );
     }
 }
 

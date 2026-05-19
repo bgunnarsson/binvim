@@ -116,9 +116,7 @@ pub fn build_run_command(req: &TestRunRequest) -> Result<ResolvedCommand, String
             // Otherwise wrap as `FullyQualifiedName~<filter>` for a
             // substring match, which is what `:testnearest` /
             // `:testfile` produce.
-            if filter
-                .contains(|c: char| c == '=' || c == '!' || c == '~' || c == '|' || c == '&')
-            {
+            if filter.contains(|c: char| c == '=' || c == '!' || c == '~' || c == '|' || c == '&') {
                 args.push(filter.clone());
             } else {
                 args.push(format!("FullyQualifiedName~{filter}"));
@@ -310,7 +308,12 @@ fn parse_method_decl(line: &str) -> Option<String> {
     if name.is_empty() {
         return None;
     }
-    if !name.chars().next().map(|c| c.is_ascii_alphabetic() || c == '_').unwrap_or(false) {
+    if !name
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_alphabetic() || c == '_')
+        .unwrap_or(false)
+    {
         return None;
     }
     Some(name.to_string())
@@ -406,7 +409,15 @@ mod tests {
         let events = parse_lines(&["Passed Foo.BarTests.Method1 [12 ms]"]);
         let cases: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Passed, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Passed,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(cases.len(), 1);
         if let TestEvent::Case { name, .. } = cases[0] {
@@ -427,17 +438,34 @@ mod tests {
         ]);
         let decorated: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Failed, location: Some(_), .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Failed,
+                        location: Some(_),
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(decorated.len(), 1);
-        if let TestEvent::Case { name, location: Some(loc), message, .. } = decorated[0] {
+        if let TestEvent::Case {
+            name,
+            location: Some(loc),
+            message,
+            ..
+        } = decorated[0]
+        {
             assert_eq!(name, "Foo.BarTests.Method2");
             assert_eq!(loc.path, PathBuf::from("/path/foo.cs"));
             assert_eq!(loc.line, 14);
-            assert!(message
-                .as_deref()
-                .unwrap_or("")
-                .contains("Assert.Equal() Failure"));
+            assert!(
+                message
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("Assert.Equal() Failure")
+            );
         } else {
             panic!("expected decorated failure with location");
         }
@@ -510,10 +538,7 @@ public void Parametrised(int x) {}
 
     #[test]
     fn filter_for_file_wraps_classname_filter() {
-        let got = filter_for_file(
-            &PathBuf::from("/proj/BarTests.cs"),
-            &PathBuf::from("/proj"),
-        );
+        let got = filter_for_file(&PathBuf::from("/proj/BarTests.cs"), &PathBuf::from("/proj"));
         assert_eq!(got.as_deref(), Some("ClassName~BarTests"));
         let got = filter_for_file(
             &PathBuf::from("/proj/RegularClass.cs"),
@@ -530,7 +555,11 @@ public void Parametrised(int x) {}
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();
-        let f_idx = cmd.args.iter().position(|a| a == "--filter").expect("expected --filter");
+        let f_idx = cmd
+            .args
+            .iter()
+            .position(|a| a == "--filter")
+            .expect("expected --filter");
         assert_eq!(cmd.args[f_idx + 1], "FullyQualifiedName~MyTest");
     }
 
@@ -542,7 +571,11 @@ public void Parametrised(int x) {}
             label: "file".into(),
         };
         let cmd = build_run_command(&req).unwrap();
-        let f_idx = cmd.args.iter().position(|a| a == "--filter").expect("expected --filter");
+        let f_idx = cmd
+            .args
+            .iter()
+            .position(|a| a == "--filter")
+            .expect("expected --filter");
         assert_eq!(cmd.args[f_idx + 1], "ClassName=BarTests&Category!=Slow");
     }
 }

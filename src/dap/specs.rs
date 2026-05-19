@@ -7,7 +7,7 @@
 //! `lsp::specs` rather than re-exported — the DAP layer is conceptually
 //! independent of the LSP layer and shouldn't cross-import.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -84,7 +84,6 @@ pub struct LaunchContext {
     /// in a test-debug run.
     pub test_file: Option<PathBuf>,
 }
-
 
 /// A shell command to run before the adapter session starts. The runner
 /// uses the workspace root or chosen project directory as cwd.
@@ -246,10 +245,7 @@ const GO: DapAdapterSpec = DapAdapterSpec {
 /// `program` and runs it under the debugger. `program` should be a
 /// directory containing `package main` (or a single `.go` file).
 fn go_launch_args(ctx: &LaunchContext) -> Result<Value, String> {
-    let program = ctx
-        .project_path
-        .clone()
-        .unwrap_or_else(|| ctx.root.clone());
+    let program = ctx.project_path.clone().unwrap_or_else(|| ctx.root.clone());
     let cwd = if program.is_dir() {
         program.clone()
     } else {
@@ -532,16 +528,14 @@ fn rust_launch_args(ctx: &LaunchContext) -> Result<Value, String> {
             // dir's `Cargo.toml`. We only consult `[package].name` —
             // workspace virtual manifests are picked at the member level
             // by the discovery step before this is called.
-            ctx.project_path
-                .as_ref()
-                .and_then(|m| {
-                    let text = std::fs::read_to_string(m).ok()?;
-                    let val: toml::Value = text.parse().ok()?;
-                    val.get("package")
-                        .and_then(|p| p.get("name"))
-                        .and_then(|n| n.as_str())
-                        .map(|s| s.to_string())
-                })
+            ctx.project_path.as_ref().and_then(|m| {
+                let text = std::fs::read_to_string(m).ok()?;
+                let val: toml::Value = text.parse().ok()?;
+                val.get("package")
+                    .and_then(|p| p.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
         })
         .ok_or_else(|| "rust: cannot determine target bin name".to_string())?;
     let program = target_dir.join("debug").join(&bin_name);
@@ -643,7 +637,10 @@ pub fn find_rust_bin_targets(workspace_root: &Path) -> Vec<RustBinTarget> {
     for manifest in member_manifests {
         let Ok(text) = std::fs::read_to_string(&manifest) else { continue };
         let Ok(val): Result<toml::Value, _> = text.parse() else { continue };
-        let manifest_dir = manifest.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let manifest_dir = manifest
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
         let pkg_name = val
             .get("package")
             .and_then(|p| p.get("name"))
@@ -832,20 +829,27 @@ pub fn load_launch_profiles(project_dir: &Path) -> Vec<LaunchProfile> {
         let application_urls = profile
             .get("applicationUrl")
             .and_then(|v| v.as_str())
-            .map(|s| s.split(';').map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).collect())
+            .map(|s| {
+                s.split(';')
+                    .map(|u| u.trim().to_string())
+                    .filter(|u| !u.is_empty())
+                    .collect()
+            })
             .unwrap_or_default();
         let env = profile
             .get("environmentVariables")
             .and_then(|v| v.as_object())
             .map(|obj| {
                 obj.iter()
-                    .filter_map(|(k, v)| {
-                        v.as_str().map(|s| (k.clone(), s.to_string()))
-                    })
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                     .collect::<BTreeMap<_, _>>()
             })
             .unwrap_or_default();
-        out.push(LaunchProfile { name: name.clone(), application_urls, env });
+        out.push(LaunchProfile {
+            name: name.clone(),
+            application_urls,
+            env,
+        });
     }
     out
 }
@@ -1004,7 +1008,11 @@ mod tests {
         let tmp = std::env::temp_dir().join("binvim_dap_test_cargo");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
-        fs::write(tmp.join("Cargo.toml"), "[package]\nname = 'x'\nversion = '0.1.0'\n").unwrap();
+        fs::write(
+            tmp.join("Cargo.toml"),
+            "[package]\nname = 'x'\nversion = '0.1.0'\n",
+        )
+        .unwrap();
         let found = adapter_for_workspace(&tmp).expect("should find rust adapter");
         assert_eq!(found.0.key, "lldb");
         let _ = fs::remove_dir_all(&tmp);
@@ -1037,7 +1045,11 @@ mod tests {
             "[package]\nname = \"libcrate\"\nversion = \"0.1.0\"\n",
         )
         .unwrap();
-        fs::write(tmp.join("src").join("bin").join("alpha.rs"), "fn main(){}\n").unwrap();
+        fs::write(
+            tmp.join("src").join("bin").join("alpha.rs"),
+            "fn main(){}\n",
+        )
+        .unwrap();
         fs::write(tmp.join("src").join("bin").join("beta.rs"), "fn main(){}\n").unwrap();
         let bins = find_rust_bin_targets(&tmp);
         let names: Vec<_> = bins.iter().map(|b| b.bin_name.clone()).collect();
@@ -1058,11 +1070,7 @@ mod tests {
             "package main\nfunc main(){}\n",
         )
         .unwrap();
-        fs::write(
-            tmp.join("internal").join("util.go"),
-            "package internal\n",
-        )
-        .unwrap();
+        fs::write(tmp.join("internal").join("util.go"), "package internal\n").unwrap();
         let dirs = find_go_main_dirs(&tmp);
         assert_eq!(dirs.len(), 1);
         assert!(dirs[0].ends_with("cmd/server"));
@@ -1080,7 +1088,11 @@ mod tests {
         let scripts = find_python_entry_scripts(&tmp);
         let names: Vec<_> = scripts
             .iter()
-            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(|s| s.to_string()))
+            .filter_map(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s.to_string())
+            })
             .collect();
         assert!(names.contains(&"main.py".to_string()));
         assert!(names.contains(&"manage.py".to_string()));
@@ -1093,6 +1105,9 @@ mod tests {
         let found = resolve_command(&["definitely_not_a_real_binary_xyz", "sh"]);
         assert!(found.is_some());
         let s = found.unwrap();
-        assert!(s.ends_with("/sh"), "expected absolute path ending in /sh, got {s}");
+        assert!(
+            s.ends_with("/sh"),
+            "expected absolute path ending in /sh, got {s}"
+        );
     }
 }

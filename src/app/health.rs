@@ -143,9 +143,7 @@ impl super::App {
         // The footer row is reserved at the bottom; content scrolls
         // within everything above it.
         let viewport = rows.saturating_sub(1);
-        self.health_content_height
-            .get()
-            .saturating_sub(viewport)
+        self.health_content_height.get().saturating_sub(viewport)
     }
 
     /// Move the dashboard viewport by `delta` rows, clamping to
@@ -167,8 +165,7 @@ impl super::App {
         let config_path = std::env::var("HOME")
             .map(|h| format!("{h}/.config/binvim/config.toml"))
             .unwrap_or_default();
-        let config_loaded = !config_path.is_empty()
-            && std::path::Path::new(&config_path).is_file();
+        let config_loaded = !config_path.is_empty() && std::path::Path::new(&config_path).is_file();
 
         let buffers: Vec<HealthBuffer> = (0..self.buffers.len())
             .map(|i| {
@@ -180,7 +177,11 @@ impl super::App {
                 let label = buf
                     .path
                     .as_ref()
-                    .and_then(|p| p.strip_prefix(&cwd_path).ok().map(|p| p.display().to_string()))
+                    .and_then(|p| {
+                        p.strip_prefix(&cwd_path)
+                            .ok()
+                            .map(|p| p.display().to_string())
+                    })
                     .or_else(|| buf.path.as_ref().map(|p| p.display().to_string()))
                     .or_else(|| buf.display_name.clone())
                     .unwrap_or_else(|| "[No Name]".into());
@@ -310,10 +311,7 @@ impl super::App {
         };
 
         let session_path = crate::session::session_path(&cwd_path);
-        let session_file_exists = session_path
-            .as_ref()
-            .map(|p| p.is_file())
-            .unwrap_or(false);
+        let session_file_exists = session_path.as_ref().map(|p| p.is_file()).unwrap_or(false);
         let session = HealthSession {
             restored: self.session_restored,
             session_path,

@@ -48,12 +48,7 @@ pub struct GoTestParseState {
 /// the workspace root. Output is per-package, with `ok <pkg>` /
 /// `FAIL <pkg>` summary rows interleaved; the parser filters those.
 pub fn build_list_command(root: &Path) -> Option<ResolvedCommand> {
-    let args: Vec<String> = vec![
-        "test".into(),
-        "-list".into(),
-        ".*".into(),
-        "./...".into(),
-    ];
+    let args: Vec<String> = vec!["test".into(), "-list".into(), ".*".into(), "./...".into()];
     let display = format!("go {}", args.join(" "));
     Some(ResolvedCommand {
         program: "go".into(),
@@ -139,8 +134,7 @@ fn regex_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 4);
     for c in s.chars() {
         match c {
-            '.' | '+' | '*' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$'
-            | '\\' => {
+            '.' | '+' | '*' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' | '\\' => {
                 out.push('\\');
                 out.push(c);
             }
@@ -219,8 +213,7 @@ pub fn parse_event_line(line: &str, state: &mut super::specs::LineParseState) ->
     //    location per test is captured (later lines often print
     //    follow-up assertion detail).
     if let Some(stripped) = trimmed.strip_prefix("    ") {
-        if let (Some(name), Some(loc)) =
-            (s.current_test.clone(), parse_indented_location(stripped))
+        if let (Some(name), Some(loc)) = (s.current_test.clone(), parse_indented_location(stripped))
         {
             s.failure_locations.entry(name.clone()).or_insert(loc);
             if let Some(msg) = indented_message(stripped) {
@@ -320,11 +313,7 @@ fn parse_verdict_name(rest: &str) -> Option<String> {
         Some(idx) => trimmed[..idx].trim().to_string(),
         None => trimmed.to_string(),
     };
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 fn parse_indented_location(line: &str) -> Option<TestLocation> {
@@ -376,13 +365,18 @@ mod tests {
 
     #[test]
     fn pass_emits_case() {
-        let events = parse_lines(&[
-            "=== RUN   TestSlugify",
-            "--- PASS: TestSlugify (0.00s)",
-        ]);
+        let events = parse_lines(&["=== RUN   TestSlugify", "--- PASS: TestSlugify (0.00s)"]);
         let cases: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Passed, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Passed,
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(cases.len(), 1);
         if let TestEvent::Case { name, .. } = cases[0] {
@@ -402,10 +396,24 @@ mod tests {
         ]);
         let decorated: Vec<&TestEvent> = events
             .iter()
-            .filter(|e| matches!(e, TestEvent::Case { status: TestStatus::Failed, location: Some(_), .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    TestEvent::Case {
+                        status: TestStatus::Failed,
+                        location: Some(_),
+                        ..
+                    }
+                )
+            })
             .collect();
         assert_eq!(decorated.len(), 1);
-        if let TestEvent::Case { location: Some(loc), message, .. } = decorated[0] {
+        if let TestEvent::Case {
+            location: Some(loc),
+            message,
+            ..
+        } = decorated[0]
+        {
             assert_eq!(loc.path, PathBuf::from("utils_test.go"));
             assert_eq!(loc.line, 14);
             assert!(message.as_deref().unwrap_or("").contains("expected"));
@@ -489,7 +497,11 @@ ok      example.com/foo  0.123s
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();
-        let r_idx = cmd.args.iter().position(|a| a == "-run").expect("expected -run flag");
+        let r_idx = cmd
+            .args
+            .iter()
+            .position(|a| a == "-run")
+            .expect("expected -run flag");
         assert_eq!(cmd.args[r_idx + 1], "^TestSlugify$");
     }
 

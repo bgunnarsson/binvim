@@ -141,7 +141,9 @@ fn parse_object_entries(body: &str, out: &mut Vec<(String, String)>) {
     let mut i = 0;
     while i < bytes.len() {
         // Skip whitespace + commas.
-        while i < bytes.len() && (bytes[i] as char).is_whitespace() || (i < bytes.len() && bytes[i] == b',') {
+        while i < bytes.len() && (bytes[i] as char).is_whitespace()
+            || (i < bytes.len() && bytes[i] == b',')
+        {
             i += 1;
         }
         if i >= bytes.len() {

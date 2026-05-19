@@ -62,7 +62,11 @@ pub struct PickerState {
 pub enum PickerPayload {
     Path(PathBuf),
     BufferIdx(usize),
-    Location { path: PathBuf, line: usize, col: usize },
+    Location {
+        path: PathBuf,
+        line: usize,
+        col: usize,
+    },
     /// Index into a separately-stored vector of pending code actions on the
     /// app — the actual `WorkspaceEdit` is too heavy to carry around.
     CodeActionIdx(usize),
@@ -136,9 +140,7 @@ impl PickerState {
                 .items
                 .iter()
                 .enumerate()
-                .filter_map(|(i, item)| {
-                    fuzzy_match(&self.input, item).map(|(s, p)| (i, s, p))
-                })
+                .filter_map(|(i, item)| fuzzy_match(&self.input, item).map(|(s, p)| (i, s, p)))
                 .collect();
             scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
             self.match_positions = scored.iter().map(|(_, _, p)| p.clone()).collect();
@@ -174,7 +176,6 @@ impl PickerState {
         let item_idx = *self.filtered.get(self.selected)?;
         self.payloads.get(item_idx)
     }
-
 }
 
 /// Subsequence fuzzy match. Bonuses for consecutive runs and word-boundary hits.
@@ -248,7 +249,9 @@ pub fn run_ripgrep(query: &str, cwd: &Path, max: usize) -> Vec<(String, PickerPa
         .arg(".")
         .current_dir(cwd)
         .output();
-    let Ok(out) = output else { return Vec::new(); };
+    let Ok(out) = output else {
+        return Vec::new();
+    };
     let stdout = String::from_utf8_lossy(&out.stdout);
     let mut results = Vec::new();
     for line in stdout.lines() {
@@ -274,7 +277,11 @@ pub fn run_ripgrep(query: &str, cwd: &Path, max: usize) -> Vec<(String, PickerPa
         let path = cwd.join(rel);
         results.push((
             display,
-            PickerPayload::Location { path, line: line_no, col: col_no },
+            PickerPayload::Location {
+                path,
+                line: line_no,
+                col: col_no,
+            },
         ));
     }
     results

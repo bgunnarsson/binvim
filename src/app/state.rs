@@ -207,10 +207,7 @@ pub struct RenamePreviewEdit {
 #[derive(Debug, Clone)]
 pub enum PreviewKind {
     /// `<leader>r` rename flow. Title reads `Rename: old → new`.
-    Rename {
-        original: String,
-        new_name: String,
-    },
+    Rename { original: String, new_name: String },
     /// `WorkspaceEdit` arriving via a chosen code action (e.g. "Add
     /// import", "Extract function"). Title reads `Apply: <action title>`.
     /// No server response is owed — the action's own command lifecycle
@@ -442,8 +439,7 @@ impl<'a> BufferState<'a> {
     }
 
     pub fn line_is_fold_start(&self, line: usize) -> bool {
-        self.closed_folds.contains(&line)
-            && self.folds.iter().any(|f| f.start_line == line)
+        self.closed_folds.contains(&line) && self.folds.iter().any(|f| f.start_line == line)
     }
 
     pub fn folded_line_span(&self, line: usize) -> usize {
@@ -508,10 +504,7 @@ impl<'a> BufferState<'a> {
         // editing happens on the line whose phantom you appear to be
         // standing on — the user reports it as "cursor on the Run|Debug
         // row, edits on `#[test]` below."
-        if self.line_has_code_lens(to)
-            && !self.line_is_folded(to)
-            && !self.line_is_md_hidden(to)
-        {
+        if self.line_has_code_lens(to) && !self.line_is_folded(to) && !self.line_is_md_hidden(to) {
             count += 1;
         }
         count
@@ -675,17 +668,12 @@ impl HoverState {
                     // Closing fence — flush the block.
                     let source = collected.join("\n");
                     let block_idx = code_blocks.len();
-                    emit_code_lines(
-                        &mut lines, block_idx, &collected, wrap_code, wrap_width,
-                    );
+                    emit_code_lines(&mut lines, block_idx, &collected, wrap_code, wrap_width);
                     code_blocks.push(HoverCodeBlock { lang, source });
                 } else {
                     // Opening fence — record the lang tag (first run of
                     // non-whitespace after the backticks).
-                    let tag: String = rest
-                        .chars()
-                        .take_while(|c| !c.is_whitespace())
-                        .collect();
+                    let tag: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
                     let lang = if tag.is_empty() {
                         None
                     } else {
@@ -712,9 +700,7 @@ impl HoverState {
             // Horizontal rule — `---` / `***` / `___` (≥3, only those chars).
             if trimmed_full.len() >= 3 {
                 let marker = trimmed_full.chars().next().unwrap();
-                if matches!(marker, '-' | '*' | '_')
-                    && trimmed_full.chars().all(|c| c == marker)
-                {
+                if matches!(marker, '-' | '*' | '_') && trimmed_full.chars().all(|c| c == marker) {
                     lines.push(HoverLine::Rule);
                     continue;
                 }
@@ -756,16 +742,17 @@ impl HoverState {
             return None;
         }
         let keep = lines.len() - leading_blanks - trailing_blanks;
-        let lines: Vec<HoverLine> = lines
-            .into_iter()
-            .skip(leading_blanks)
-            .take(keep)
-            .collect();
+        let lines: Vec<HoverLine> = lines.into_iter().skip(leading_blanks).take(keep).collect();
 
         if lines.is_empty() {
             return None;
         }
-        Some(HoverState { lines, code_blocks, scroll: 0, wrap_width })
+        Some(HoverState {
+            lines,
+            code_blocks,
+            scroll: 0,
+            wrap_width,
+        })
     }
 
     pub fn max_scroll(&self, visible: usize) -> usize {
@@ -789,7 +776,11 @@ impl HoverState {
                 HoverLine::Rule => 0,
                 HoverLine::Prose(s) => s.chars().count(),
                 HoverLine::Heading { text, .. } => text.chars().count(),
-                HoverLine::Code { block_idx, byte_offset, byte_len } => {
+                HoverLine::Code {
+                    block_idx,
+                    byte_offset,
+                    byte_len,
+                } => {
                     let block = &self.code_blocks[*block_idx];
                     let slice = &block.source[*byte_offset..*byte_offset + *byte_len];
                     visual_width(slice)
@@ -900,7 +891,10 @@ fn wrap_prose(line: &str, width: usize) -> Vec<String> {
     if width == 0 {
         return vec![line.to_string()];
     }
-    let lead: String = line.chars().take_while(|c| matches!(c, ' ' | '\t')).collect();
+    let lead: String = line
+        .chars()
+        .take_while(|c| matches!(c, ' ' | '\t'))
+        .collect();
     let lead_w = lead.chars().count();
     let body: String = line.chars().skip(lead_w).collect();
     let body_w = width.saturating_sub(lead_w).max(1);
@@ -989,8 +983,8 @@ pub fn is_jump_motion(m: MotionVerb) -> bool {
 /// (`:`) and the leader (`<space>`) are the only routes off the start page,
 /// plus the usual cancel/interrupt no-ops.
 pub fn is_start_page_passthrough(k: &KeyEvent) -> bool {
-    let no_mods = !k.modifiers.contains(KeyModifiers::CONTROL)
-        && !k.modifiers.contains(KeyModifiers::ALT);
+    let no_mods =
+        !k.modifiers.contains(KeyModifiers::CONTROL) && !k.modifiers.contains(KeyModifiers::ALT);
     match k.code {
         KeyCode::Char(':') if no_mods => true,
         KeyCode::Char(' ') if no_mods => true,
@@ -1020,7 +1014,11 @@ mod tests {
             .iter()
             .filter(|l| matches!(l, HoverLine::Code { .. }))
             .collect();
-        assert_eq!(code_rows.len(), 1, "wrap_code=false → one Code row per source line");
+        assert_eq!(
+            code_rows.len(),
+            1,
+            "wrap_code=false → one Code row per source line"
+        );
     }
 
     #[test]
@@ -1048,7 +1046,11 @@ mod tests {
                 _ => 0,
             })
             .sum();
-        assert_eq!(total, long.len(), "chunks together cover the whole source line");
+        assert_eq!(
+            total,
+            long.len(),
+            "chunks together cover the whole source line"
+        );
     }
 
     #[test]

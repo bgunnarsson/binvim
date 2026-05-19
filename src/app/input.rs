@@ -13,7 +13,9 @@ use crate::mode::{Mode, VisualKind};
 use crate::motion;
 use crate::parser::{self, ParseCtx, ParseResult};
 
-use super::pair::{detect_open_tag_to_close, is_close_char, is_html_like_buffer, open_pair_for, should_auto_pair};
+use super::pair::{
+    detect_open_tag_to_close, is_close_char, is_html_like_buffer, open_pair_for, should_auto_pair,
+};
 use super::state::LastEdit;
 
 /// Characters that should re-fire `textDocument/completion` after being inserted.
@@ -115,7 +117,11 @@ fn visual_col_to_char_col_with_hints(
             }
             visual += hw;
         }
-        let w = if c == '\t' { crate::render::TAB_WIDTH } else { 1 };
+        let w = if c == '\t' {
+            crate::render::TAB_WIDTH
+        } else {
+            1
+        };
         if visual >= visual_col {
             break;
         }
@@ -465,9 +471,7 @@ impl super::App {
                 }
                 self.side_terminal_tab_hitboxes.set(hits);
                 if let Some(idx) = clicked {
-                    if idx < self.side_terminals.len()
-                        && idx != self.active_side_terminal_idx
-                    {
+                    if idx < self.side_terminals.len() && idx != self.active_side_terminal_idx {
                         self.active_side_terminal_idx = idx;
                     }
                 }
@@ -537,18 +541,13 @@ impl super::App {
                 let mut clicked_entry: Option<usize> = None;
                 if row >= body_start {
                     let body_row = (row - body_start) as usize;
-                    let body_rows = self
-                        .buffer_rows()
-                        .saturating_sub(2);
+                    let body_rows = self.buffer_rows().saturating_sub(2);
                     if let Some(state) = self.file_tree.as_mut() {
-                        let scroll = if body_rows == 0
-                            || state.entries.len() <= body_rows
-                        {
+                        let scroll = if body_rows == 0 || state.entries.len() <= body_rows {
                             0
                         } else {
                             let half = body_rows / 2;
-                            let max_scroll =
-                                state.entries.len().saturating_sub(body_rows);
+                            let max_scroll = state.entries.len().saturating_sub(body_rows);
                             state.cursor.saturating_sub(half).min(max_scroll)
                         };
                         let target = scroll + body_row;
@@ -567,9 +566,7 @@ impl super::App {
                     let is_double = self
                         .last_tree_click
                         .filter(|(t, i)| {
-                            now.duration_since(*t)
-                                <= crate::app::DOUBLE_CLICK_WINDOW
-                                && *i == idx
+                            now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW && *i == idx
                         })
                         .is_some();
                     if is_double {
@@ -722,10 +719,8 @@ impl super::App {
                 for slot in &slots {
                     if col >= slot.start_col && col < slot.end_col {
                         self.show_start_page = false;
-                        let is_middle = matches!(
-                            ev.kind,
-                            MouseEventKind::Down(MouseButton::Middle)
-                        );
+                        let is_middle =
+                            matches!(ev.kind, MouseEventKind::Down(MouseButton::Middle));
                         let on_close = slot.close_col == Some(col);
                         if is_middle || on_close {
                             // Match :bd behaviour: refuse to drop a
@@ -840,12 +835,13 @@ impl super::App {
                 // and Backspace mirror at every position.
                 // In any other mode the modifier falls through to the
                 // normal click handler.
-                if matches!(self.mode, Mode::Normal)
-                    && ev.modifiers.contains(KeyModifiers::CONTROL)
+                if matches!(self.mode, Mode::Normal) && ev.modifiers.contains(KeyModifiers::CONTROL)
                 {
                     let line_start = self.buffer.line_start_idx(buf_line);
                     let pos = line_start + buf_col;
-                    let primary = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                    let primary = self
+                        .buffer
+                        .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     if pos != primary && !self.additional_cursors.contains(&pos) {
                         self.additional_cursors.push(pos);
                         self.additional_cursors.sort();
@@ -881,9 +877,9 @@ impl super::App {
                 if is_double {
                     // Expand to the inner word under the cursor and enter
                     // Visual-char mode with that span selected.
-                    self.apply_visual_select_textobj(
-                        crate::text_object::TextObjectVerb::Word { inner: true },
-                    );
+                    self.apply_visual_select_textobj(crate::text_object::TextObjectVerb::Word {
+                        inner: true,
+                    });
                     if let Some(anchor) = self.window.visual_anchor {
                         self.mode = Mode::Visual(VisualKind::Char);
                         // Remember the (start, end-exclusive) char range
@@ -1112,7 +1108,10 @@ impl super::App {
                 if !self.additional_cursors.is_empty() {
                     self.mirror_insert_char(c);
                 } else if is_close_char(c)
-                    && self.buffer.char_at(self.window.cursor.line, self.window.cursor.col) == Some(c)
+                    && self
+                        .buffer
+                        .char_at(self.window.cursor.line, self.window.cursor.col)
+                        == Some(c)
                 {
                     // If the cursor sits on the same closing char the user is typing,
                     // step past it instead of inserting a duplicate. Lets `}`/`)`/`"`
@@ -1120,18 +1119,30 @@ impl super::App {
                     self.window.cursor.col += 1;
                     self.window.cursor.want_col = self.window.cursor.col;
                 } else if let Some(close) = open_pair_for(c) {
-                    if should_auto_pair(c, &self.buffer, self.window.cursor.line, self.window.cursor.col) {
-                        self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
-                        self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col + 1, close);
+                    if should_auto_pair(
+                        c,
+                        &self.buffer,
+                        self.window.cursor.line,
+                        self.window.cursor.col,
+                    ) {
+                        self.buffer
+                            .insert_char(self.window.cursor.line, self.window.cursor.col, c);
+                        self.buffer.insert_char(
+                            self.window.cursor.line,
+                            self.window.cursor.col + 1,
+                            close,
+                        );
                         self.window.cursor.col += 1;
                         self.window.cursor.want_col = self.window.cursor.col;
                     } else {
-                        self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+                        self.buffer
+                            .insert_char(self.window.cursor.line, self.window.cursor.col, c);
                         self.window.cursor.col += 1;
                         self.window.cursor.want_col = self.window.cursor.col;
                     }
                 } else {
-                    self.buffer.insert_char(self.window.cursor.line, self.window.cursor.col, c);
+                    self.buffer
+                        .insert_char(self.window.cursor.line, self.window.cursor.col, c);
                     self.window.cursor.col += 1;
                     self.window.cursor.want_col = self.window.cursor.col;
                 }
@@ -1146,8 +1157,11 @@ impl super::App {
                         self.window.cursor.col,
                     ) {
                         let closer = format!("</{tag}>");
-                        self.buffer
-                            .insert_str(self.window.cursor.line, self.window.cursor.col, &closer);
+                        self.buffer.insert_str(
+                            self.window.cursor.line,
+                            self.window.cursor.col,
+                            &closer,
+                        );
                     }
                 }
                 // Signature help: opening `(` starts the popup, `,` advances
@@ -1197,21 +1211,26 @@ impl super::App {
                 // for v1; per-cursor word/line semantics would need more
                 // careful indexing and isn't urgent.
                 let mods = key.modifiers;
-                let word_back = mods.contains(KeyModifiers::ALT)
-                    || mods.contains(KeyModifiers::CONTROL);
-                let line_back = mods.contains(KeyModifiers::SUPER)
-                    || mods.contains(KeyModifiers::META);
+                let word_back =
+                    mods.contains(KeyModifiers::ALT) || mods.contains(KeyModifiers::CONTROL);
+                let line_back =
+                    mods.contains(KeyModifiers::SUPER) || mods.contains(KeyModifiers::META);
                 if !self.additional_cursors.is_empty() {
                     self.mirror_backspace();
                 } else if line_back && self.window.cursor.col > 0 {
                     let line_start = self.buffer.line_start_idx(self.window.cursor.line);
-                    let cursor_idx =
-                        self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                    let cursor_idx = self
+                        .buffer
+                        .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     self.buffer.delete_range(line_start, cursor_idx);
                     self.window.cursor.col = 0;
                     self.window.cursor.want_col = 0;
                 } else if word_back && self.window.cursor.col > 0 {
-                    let new_col = previous_word_boundary(&self.buffer, self.window.cursor.line, self.window.cursor.col);
+                    let new_col = previous_word_boundary(
+                        &self.buffer,
+                        self.window.cursor.line,
+                        self.window.cursor.col,
+                    );
                     let line_start = self.buffer.line_start_idx(self.window.cursor.line);
                     let cursor_idx = line_start + self.window.cursor.col;
                     let to_idx = line_start + new_col;
@@ -1221,18 +1240,26 @@ impl super::App {
                 } else if self.window.cursor.col > 0 {
                     // If the cursor sits between an auto-inserted pair like {|},
                     // wipe out both characters in one stroke.
-                    let prev = self.buffer.char_at(self.window.cursor.line, self.window.cursor.col - 1);
-                    let next = self.buffer.char_at(self.window.cursor.line, self.window.cursor.col);
+                    let prev = self
+                        .buffer
+                        .char_at(self.window.cursor.line, self.window.cursor.col - 1);
+                    let next = self
+                        .buffer
+                        .char_at(self.window.cursor.line, self.window.cursor.col);
                     if let (Some(p), Some(n)) = (prev, next) {
                         if open_pair_for(p) == Some(n) {
-                            let idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                            let idx = self
+                                .buffer
+                                .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                             self.buffer.delete_range(idx - 1, idx + 1);
                             self.window.cursor.col -= 1;
                             self.window.cursor.want_col = self.window.cursor.col;
                             return;
                         }
                     }
-                    let idx = self.buffer.pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                    let idx = self
+                        .buffer
+                        .pos_to_char(self.window.cursor.line, self.window.cursor.col);
                     self.buffer.delete_range(idx - 1, idx);
                     self.window.cursor.col -= 1;
                     self.window.cursor.want_col = self.window.cursor.col;
@@ -1266,7 +1293,8 @@ impl super::App {
                 }
                 let s = self.editorconfig.indent_string();
                 let inserted = s.chars().count();
-                self.buffer.insert_str(self.window.cursor.line, self.window.cursor.col, &s);
+                self.buffer
+                    .insert_str(self.window.cursor.line, self.window.cursor.col, &s);
                 self.window.cursor.col += inserted;
                 self.window.cursor.want_col = self.window.cursor.col;
             }
@@ -1360,16 +1388,11 @@ impl super::App {
             .collect();
         // What's the first non-whitespace char at/after the cursor?
         let next_non_ws = chars.get(col).copied();
-        let opener_after = matches!(
-            prev_non_ws,
-            Some('{') | Some('[') | Some('(') | Some(':')
-        ) || prev_two.ends_with("=>")
+        let opener_after = matches!(prev_non_ws, Some('{') | Some('[') | Some('(') | Some(':'))
+            || prev_two.ends_with("=>")
             || prev_two.ends_with("->");
-        let split_pair = should_split_pair_on_enter(
-            prev_non_ws,
-            next_non_ws,
-            chars.get(col + 1).copied(),
-        );
+        let split_pair =
+            should_split_pair_on_enter(prev_non_ws, next_non_ws, chars.get(col + 1).copied());
 
         if split_pair {
             // `{|}` → three lines, cursor double-indented in the middle.
@@ -1446,8 +1469,7 @@ impl super::App {
             // Typing an identifier/trigger char: keep popup open; the main handler
             // inserts the char and the auto-trigger refreshes the completion list.
             KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
-                    && is_completion_trigger(c) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL) && is_completion_trigger(c) =>
             {
                 false
             }
@@ -1609,20 +1631,29 @@ impl super::App {
                     self.status_msg = format!("error: {e}");
                 }
             }
-            ExCommand::Substitute { range, pattern, replacement, global, regex } => {
+            ExCommand::Substitute {
+                range,
+                pattern,
+                replacement,
+                global,
+                regex,
+            } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 match self.substitute(range, &pattern, &replacement, global, regex) {
                     Ok(0) => self.status_msg = format!("Pattern not found: {pattern}"),
                     Ok(n) => {
-                        self.status_msg = format!(
-                            "{n} substitution{}",
-                            if n == 1 { "" } else { "s" }
-                        );
+                        self.status_msg =
+                            format!("{n} substitution{}", if n == 1 { "" } else { "s" });
                     }
                     Err(e) => self.status_msg = format!("s: {e}"),
                 }
             }
-            ExCommand::ProjectSubstitute { pattern, replacement, global, regex } => {
+            ExCommand::ProjectSubstitute {
+                pattern,
+                replacement,
+                global,
+                regex,
+            } => {
                 self.project_substitute(&pattern, &replacement, global, regex);
             }
             ExCommand::DeleteRange { range } => {
@@ -1797,9 +1828,7 @@ impl super::App {
             return;
         }
         self.cmdline_cursor -= 1;
-        while self.cmdline_cursor > 0
-            && !self.cmdline.is_char_boundary(self.cmdline_cursor)
-        {
+        while self.cmdline_cursor > 0 && !self.cmdline.is_char_boundary(self.cmdline_cursor) {
             self.cmdline_cursor -= 1;
         }
     }
@@ -1826,8 +1855,7 @@ impl super::App {
         self.cmdline_cursor = 0;
         match kind {
             Some(
-                crate::mode::PromptKind::FileTreeCreate
-                | crate::mode::PromptKind::FileTreeRename,
+                crate::mode::PromptKind::FileTreeCreate | crate::mode::PromptKind::FileTreeRename,
             ) => {
                 if let Some(state) = self.file_tree.as_mut() {
                     state.pending_op = None;
@@ -1936,11 +1964,7 @@ impl super::App {
         let total = self.buffer.total_chars();
         let extend_back = end == total && l1 > 0;
         let effective_start = if extend_back { start - 1 } else { start };
-        let raw = self
-            .buffer
-            .rope
-            .slice(effective_start..end)
-            .to_string();
+        let raw = self.buffer.rope.slice(effective_start..end).to_string();
         let reg_text = if extend_back {
             let mut s = raw[1..].to_string();
             if !s.ends_with('\n') {
@@ -2095,11 +2119,23 @@ mod tests {
     fn visual_col_to_char_col_no_tabs() {
         // `hello world` — visual col == char col on plain ASCII.
         let b = buf("hello world\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 11, &[], false), 0);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], false), 6);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 10, 11, &[], false), 10);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 0, 11, &[], false),
+            0
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], false),
+            6
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 10, 11, &[], false),
+            10
+        );
         // Click past EOL in Normal mode clamps to the last char.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[], false), 10);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[], false),
+            10
+        );
     }
 
     #[test]
@@ -2107,10 +2143,19 @@ mod tests {
         // Same line, Insert-mode behaviour: a click past the last char
         // parks the cursor at `line_len` so the user can append.
         let b = buf("hello world\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 11, 11, &[], true), 11);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[], true), 11);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 11, 11, &[], true),
+            11
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 30, 11, &[], true),
+            11
+        );
         // Inside the line, both modes agree.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], true), 6);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], true),
+            6
+        );
     }
 
     #[test]
@@ -2119,14 +2164,32 @@ mod tests {
         //   0 = first tab, 1 = second tab, 2 = 'x'. Visual positions:
         //   0..4 = first tab, 4..8 = second tab, 8 = 'x'.
         let b = buf("\t\tx\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 3, &[], false), 0);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 2, 3, &[], false), 0); // mid first tab
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 3, &[], false), 1); // start of second tab
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 6, 3, &[], false), 1); // mid second tab
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 3, &[], false), 2); // on `x`
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 0, 3, &[], false),
+            0
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 2, 3, &[], false),
+            0
+        ); // mid first tab
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 4, 3, &[], false),
+            1
+        ); // start of second tab
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 6, 3, &[], false),
+            1
+        ); // mid second tab
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 8, 3, &[], false),
+            2
+        ); // on `x`
         // The original bug: clicking at visual col 8 used to land at char 8
         // (past EOL). Now it clamps to the last char (`x`).
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 30, 3, &[], false), 2);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 30, 3, &[], false),
+            2
+        );
     }
 
     #[test]
@@ -2136,16 +2199,28 @@ mod tests {
         let line = "\t\t<partial";
         let b = buf(&format!("{}\n", line));
         let line_len = line.chars().count();
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, line_len, &[], false), 2);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 8, line_len, &[], false),
+            2
+        );
         // Click 3 cells in (between the two tabs visually) clamps to char 0.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, line_len, &[], false), 0);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 3, line_len, &[], false),
+            0
+        );
     }
 
     #[test]
     fn visual_col_to_char_col_empty_line() {
         let b = buf("\n");
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 0, &[], false), 0);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 99, 0, &[], false), 0);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 0, 0, &[], false),
+            0
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 99, 0, &[], false),
+            0
+        );
     }
 
     #[test]
@@ -2160,19 +2235,40 @@ mod tests {
         let mut hints = vec![0usize; 8]; // line_len + 1 = 7 + 1
         hints[4] = 10;
         // Click on `f` (visual col 0) → buffer col 0.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 0, 7, &hints, false), 0);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 0, 7, &hints, false),
+            0
+        );
         // Click on the space (visual col 3) → buffer col 3.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 3, 7, &hints, false), 3);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 3, 7, &hints, false),
+            3
+        );
         // Click anywhere inside the hint (visual cols 4..13) → snap to
         // buffer col 4 (the `b` immediately after the hint), NOT col 5+
         // which would land inside `bar`.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 4, 7, &hints, false), 4);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 8, 7, &hints, false), 4);
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 13, 7, &hints, false), 4);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 4, 7, &hints, false),
+            4
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 8, 7, &hints, false),
+            4
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 13, 7, &hints, false),
+            4
+        );
         // Click on `b` (visual col 14) → buffer col 4.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 14, 7, &hints, false), 4);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 14, 7, &hints, false),
+            4
+        );
         // Click on `r` (visual col 16) → buffer col 6.
-        assert_eq!(visual_col_to_char_col_with_hints(&b, 0, 16, 7, &hints, false), 6);
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 16, 7, &hints, false),
+            6
+        );
     }
 
     #[test]

@@ -21,10 +21,8 @@ pub mod types;
 pub mod vitest;
 
 pub use manager::TestManager;
-pub use specs::{adapter_for_workspace, TestAdapterSpec};
-pub use types::{
-    OutputStream, TestEvent, TestOutputRow, TestRunRequest, TestStatus, TestSummary,
-};
+pub use specs::{TestAdapterSpec, adapter_for_workspace};
+pub use types::{OutputStream, TestEvent, TestOutputRow, TestRunRequest, TestStatus, TestSummary};
 // Re-exports kept for crate-internal consumers of the test module — referenced
 // from `app/test_glue.rs` and `render.rs` via fully-qualified paths.
 #[allow(unused_imports)]

@@ -47,10 +47,9 @@ impl super::App {
             return;
         };
         let line_one_based = self.window.cursor.line + 1;
-        let in_hunk = self
-            .git_hunks
-            .iter()
-            .any(|h| self.window.cursor.line >= h.start_line && self.window.cursor.line <= h.end_line);
+        let in_hunk = self.git_hunks.iter().any(|h| {
+            self.window.cursor.line >= h.start_line && self.window.cursor.line <= h.end_line
+        });
         if !in_hunk {
             self.status_msg = "no hunk under cursor".into();
             return;
@@ -116,7 +115,12 @@ impl super::App {
                 match crate::git::apply_patch(
                     &root,
                     &patch,
-                    &["--cached", "--unidiff-zero", "--reverse", "--whitespace=nowarn"],
+                    &[
+                        "--cached",
+                        "--unidiff-zero",
+                        "--reverse",
+                        "--whitespace=nowarn",
+                    ],
                 ) {
                     Ok(()) => {
                         self.refresh_git_hunks();

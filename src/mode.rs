@@ -4,7 +4,9 @@ pub enum Mode {
     Insert,
     Command,
     Visual(VisualKind),
-    Search { backward: bool },
+    Search {
+        backward: bool,
+    },
     Picker,
     /// Free-form prompt — used by LSP rename and any future single-string
     /// input flow. The associated kind tells the dispatcher what to do

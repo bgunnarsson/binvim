@@ -1,0 +1,15 @@
+# Tuned to preserve as much of binvim's hand-rolled style as possible
+# while keeping the codebase formattable on stable. The goal is a CI
+# `cargo fmt --check` gate that doesn't fight the codebase on every
+# commit, not a maximally-spec-compliant rustfmt config.
+#
+# - `max_width = 110` gives compact let-else, single-line method
+#   chains, and long match arms enough room without spilling.
+# - `use_small_heuristics = "Max"` lets rustfmt keep more single-line
+#   forms (struct literals, fn calls, control flow) when they fit.
+# - `single_line_let_else_max_width = 110` is what makes the
+#   `let Some(x) = … else { return; };` one-liners survive — without
+#   it stock rustfmt would break each into four lines.
+
+max_width = 100
+single_line_let_else_max_width = 100
