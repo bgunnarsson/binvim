@@ -85,8 +85,9 @@ jobs:
           NAME="binvim-${TAG}-${{ matrix.target }}"
           STAGE=$(mktemp -d)
           cp "target/${{ matrix.target }}/release/binvim" "$STAGE/binvim"
+          cp "target/${{ matrix.target }}/release/binvim-install" "$STAGE/binvim-install"
           cp README.md LICENSE "$STAGE/"
-          tar -C "$STAGE" -czf "${NAME}.tar.gz" binvim README.md LICENSE
+          tar -C "$STAGE" -czf "${NAME}.tar.gz" binvim binvim-install README.md LICENSE
           # macOS runners don't ship coreutils' `sha256sum`; fall
           # back to `shasum -a 256`, which is BSD-standard and
           # produces the same `<digest>  <filename>` format.

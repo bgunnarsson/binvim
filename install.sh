@@ -75,7 +75,16 @@ mv "$tmp/binvim" "$INSTALL_DIR/binvim"
 chmod +x "$INSTALL_DIR/binvim"
 ln -sf "$INSTALL_DIR/binvim" "$INSTALL_DIR/bim"
 
-info "installed binvim ${BINVIM_VERSION} → $INSTALL_DIR/binvim (also as 'bim')"
+# `binvim-install` ships alongside binvim from v0.4.5 onward. Older
+# tarballs don't contain it — extract conditionally so this script keeps
+# working when BINVIM_VERSION is pinned to an older release.
+if [ -f "$tmp/binvim-install" ]; then
+    mv "$tmp/binvim-install" "$INSTALL_DIR/binvim-install"
+    chmod +x "$INSTALL_DIR/binvim-install"
+    info "installed binvim ${BINVIM_VERSION} → $INSTALL_DIR/binvim (also as 'bim') + $INSTALL_DIR/binvim-install"
+else
+    info "installed binvim ${BINVIM_VERSION} → $INSTALL_DIR/binvim (also as 'bim')"
+fi
 
 case ":$PATH:" in
     *":$INSTALL_DIR:"*) ;;
