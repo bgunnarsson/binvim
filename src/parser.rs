@@ -273,6 +273,15 @@ pub enum Action {
     /// If it was the last side tab, hides the pane and snaps focus
     /// back to the bottom pane.
     AiClose,
+    /// `<leader>jf` — focus the right-side AI terminal pane (drop
+    /// into `Mode::Terminal` with `TerminalFocus::Side`). Mirrors
+    /// `<leader>tf` for the bottom pane. No-op (with a hint) when
+    /// no side tab exists.
+    AiFocus,
+    /// `<leader>jp` — toggle the right-side AI terminal pane. Same
+    /// model as `<leader>tp` for the bottom pane: visible → hide
+    /// (PTYs keep draining in the background); hidden → show + focus.
+    AiToggle,
     /// `<leader>ss` — open the integrated test runner's picker.
     /// Same effect as `:test`.
     TestPicker,
@@ -1057,6 +1066,8 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'X' => Some(Action::AiCodexHandoff),
             'o' => Some(Action::AiOpencode),
             'O' => Some(Action::AiOpencodeHandoff),
+            'f' => Some(Action::AiFocus),
+            'p' => Some(Action::AiToggle),
             'q' => Some(Action::AiClose),
             _ => None,
         };

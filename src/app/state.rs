@@ -521,17 +521,18 @@ pub fn leader_entries() -> Vec<(String, String)> {
 }
 
 pub fn ai_prefix_entries() -> Vec<(String, String)> {
-    // Lowercase pairs first (the "just open" variants), then the
-    // uppercase handoff variants grouped together. Reads as "pick
-    // your tool, then optionally add file context" rather than
-    // interleaving the two modes per tool.
+    // Lowercase "open new tab" variants first, then their uppercase
+    // handoff siblings, then the pane controls (focus / toggle /
+    // close) — same shape as `<leader>t` for the bottom pane.
     vec![
-        ("c".into(), "Claude".into()),
-        ("x".into(), "Codex".into()),
-        ("o".into(), "opencode".into()),
+        ("c".into(), "Claude (new tab)".into()),
+        ("x".into(), "Codex (new tab)".into()),
+        ("o".into(), "opencode (new tab)".into()),
         ("C".into(), "Claude + @path handoff".into()),
         ("X".into(), "Codex + @path handoff".into()),
         ("O".into(), "opencode + @path handoff".into()),
+        ("f".into(), "Focus side pane".into()),
+        ("p".into(), "Toggle side pane".into()),
         ("q".into(), "Close tab".into()),
     ]
 }

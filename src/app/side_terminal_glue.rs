@@ -96,16 +96,13 @@ impl super::App {
         command: &str,
         with_handoff: bool,
     ) {
-        // Re-focus an existing tab with the same label.
-        if let Some(idx) = self.side_terminals.iter().position(|t| t.label == label) {
-            self.side_terminal_pane_open = true;
-            self.active_side_terminal_idx = idx;
-            self.terminal_focus = TerminalFocus::Side;
-            self.mode = Mode::Terminal;
-            self.resize_all_side_terminals();
-            self.adjust_viewport();
-            return;
-        }
+        // Every invocation spawns a fresh tab — `:claude` /
+        // `<leader>jc` opening one tab and re-running to focus the
+        // same instance was the old model. Now focus is its own
+        // explicit binding (`<leader>jf`); the open bindings always
+        // give you a clean session. Multiple tabs may share the
+        // same label (`claude`, `claude`, `claude`); the user
+        // disambiguates by tab position.
         // Flip the open flag first so side_pane_cols() returns the
         // right value when we read dimensions. Toggle back off if
         // the spawn fails AND no other side tab exists.
@@ -237,6 +234,52 @@ impl super::App {
                 let _ = s.terminal.write_bytes(prefix.as_bytes());
             }
         }
+    }
+
+    /// `<leader>jf` — drop focus into the side-pane and start
+    /// routing keystrokes there. No-op (with a hint) when no side
+    /// tab exists; mirrors `Action::TerminalFocus` for the bottom
+    /// pane.
+    pub(super) fn focus_side_terminal(&mut self) {
+        if self.side_terminals.is_empty() {
+            self.status_msg =
+                "ai: no side pane (open with `<leader>jc` / `jx` / `jo`)".into();
+            return;
+        }
+        self.side_terminal_pane_open = true;
+        self.terminal_focus = TerminalFocus::Side;
+        self.mode = Mode::Terminal;
+        self.resize_all_side_terminals();
+        self.adjust_viewport();
+    }
+
+    /// `<leader>jp` — hide / show the side pane without killing
+    /// the PTYs. Mirrors `<leader>tp` for the bottom pane:
+    /// - Visible → hide, drop focus to Normal. PTYs keep draining.
+    /// - Hidden + tabs alive → show, refocus into `Mode::Terminal`.
+    /// - No tabs → status hint (use `<leader>j{c,x,o}` to open).
+    pub(super) fn toggle_side_terminal_pane(&mut self) {
+        if self.side_terminal_pane_open {
+            self.side_terminal_pane_open = false;
+            if matches!(self.mode, Mode::Terminal)
+                && matches!(self.terminal_focus, TerminalFocus::Side)
+            {
+                self.mode = Mode::Normal;
+                self.terminal_focus = TerminalFocus::Bottom;
+            }
+            self.adjust_viewport();
+            return;
+        }
+        if self.side_terminals.is_empty() {
+            self.status_msg =
+                "ai: no side pane (open with `<leader>jc` / `jx` / `jo`)".into();
+            return;
+        }
+        self.side_terminal_pane_open = true;
+        self.terminal_focus = TerminalFocus::Side;
+        self.mode = Mode::Terminal;
+        self.resize_all_side_terminals();
+        self.adjust_viewport();
     }
 
     /// Active side-terminal handle, if any.

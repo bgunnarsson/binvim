@@ -241,6 +241,8 @@ impl super::App {
                     self.close_side_terminal();
                 }
             }
+            Action::AiFocus => self.focus_side_terminal(),
+            Action::AiToggle => self.toggle_side_terminal_pane(),
             Action::TestPicker => self.cmd_test_picker(),
             Action::TestNearest => self.cmd_test_nearest(),
             Action::TestFile => self.cmd_test_file(),

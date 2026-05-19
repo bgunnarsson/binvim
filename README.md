@@ -201,7 +201,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>sl` | Re-run the most recent test (same as `:testlast`) |
 | `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
 | `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
-| `<space>jc` / `<space>jC` | Open (or focus) Claude in the right-side pane — uppercase variant additionally pre-types `@<active-buffer cwd-relative path>` into the input once the tool is ready. Same shift-pair pattern for `<space>jx` / `<space>jX` (Codex) and `<space>jo` / `<space>jO` (opencode). `<space>jq` closes the active side tab. |
+| `<space>jc` / `<space>jC` | Spawn a new Claude tab in the right-side pane — uppercase variant additionally pre-types `@<active-buffer cwd-relative path>` into the input once the tool is ready. Same shift-pair pattern for `<space>jx` / `<space>jX` (Codex) and `<space>jo` / `<space>jO` (opencode). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. |
 
 Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
