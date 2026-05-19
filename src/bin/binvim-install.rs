@@ -74,6 +74,9 @@ enum Role {
     Lsp,
     Formatter,
     Dap,
+    /// Editor-wide utility that isn't tied to a single language —
+    /// `rg` (live grep), `lazygit` (git UI takeover), `yazi` (file picker).
+    Tool,
 }
 
 impl Role {
@@ -82,6 +85,7 @@ impl Role {
             Role::Lsp => "LSP",
             Role::Formatter => "FMT",
             Role::Dap => "DAP",
+            Role::Tool => "TOOL",
         }
     }
 }
@@ -233,10 +237,22 @@ struct Bundle {
     tools: &'static [Tool],
 }
 
+/// `emmet-ls` attaches to every markup-flavoured buffer binvim recognises
+/// (HTML, CSS, JSX/TSX, Vue, Svelte, Astro, Razor — see `README.md:75`).
+/// Declared once and folded into each of those bundles so picking any one
+/// of them installs Emmet, and the dedupe in `build_plan` collapses the
+/// install to a single npm run no matter how many you picked.
+const EMMET_LS: Tool = Tool {
+    bin: "emmet-ls",
+    label: "emmet-ls",
+    role: Role::Lsp,
+    installers: &[Installer::Npm(&["emmet-ls"])],
+};
+
 /// The catalog. Mirrors the README install table at `README.md:283+`. When a
 /// tool appears under multiple languages (prettier, lldb-dap, vscode-
-/// langservers-extracted, biome, …) it's repeated literally — `unique_tools`
-/// dedupes by `bin` at plan time.
+/// langservers-extracted, biome, EMMET_LS, …) it's repeated literally —
+/// `unique_tools` dedupes by `bin` at plan time.
 #[rustfmt::skip]
 const BUNDLES: &[Bundle] = &[
     Bundle { name: "Rust", tools: &[
@@ -254,6 +270,7 @@ const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Npm(&["@biomejs/biome"])] },
         Tool { bin: "prettier", label: "prettier (fallback formatter)", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier"])] },
+        EMMET_LS,
     ]},
     Bundle { name: "Go", tools: &[
         Tool { bin: "gopls", label: "gopls", role: Role::Lsp,
@@ -299,6 +316,7 @@ const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Manual(
                 "Download the official OmniSharp tarball and unpack to ~/.local/bin/omnisharp/ (binvim probes that path plus $PATH).",
             )] },
+        EMMET_LS,
     ]},
     Bundle { name: "Bash / Shell", tools: &[
         Tool { bin: "bash-language-server", label: "bash-language-server", role: Role::Lsp,
@@ -323,12 +341,14 @@ const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Npm(&["@vue/language-server"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier"])] },
+        EMMET_LS,
     ]},
     Bundle { name: "Svelte", tools: &[
         Tool { bin: "svelteserver", label: "svelte-language-server", role: Role::Lsp,
             installers: &[Installer::Npm(&["svelte-language-server"])] },
         Tool { bin: "prettier", label: "prettier + prettier-plugin-svelte", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier", "prettier-plugin-svelte"])] },
+        EMMET_LS,
     ]},
     Bundle { name: "Markdown", tools: &[
         Tool { bin: "marksman", label: "marksman", role: Role::Lsp,
@@ -397,26 +417,50 @@ const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Npm(&["vscode-langservers-extracted"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier"])] },
+        EMMET_LS,
     ]},
     Bundle { name: "HTML", tools: &[
         Tool { bin: "vscode-html-language-server", label: "vscode-langservers-extracted", role: Role::Lsp,
             installers: &[Installer::Npm(&["vscode-langservers-extracted"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier"])] },
+        EMMET_LS,
     ]},
     Bundle { name: "Tailwind (aux)", tools: &[
         Tool { bin: "tailwindcss-language-server", label: "tailwindcss-language-server", role: Role::Lsp,
             installers: &[Installer::Npm(&["@tailwindcss/language-server"])] },
-    ]},
-    Bundle { name: "Emmet (aux)", tools: &[
-        Tool { bin: "emmet-ls", label: "emmet-ls", role: Role::Lsp,
-            installers: &[Installer::Npm(&["emmet-ls"])] },
     ]},
     Bundle { name: "Astro", tools: &[
         Tool { bin: "astro-ls", label: "@astrojs/language-server", role: Role::Lsp,
             installers: &[Installer::Npm(&["@astrojs/language-server"])] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier"])] },
+        EMMET_LS,
+    ]},
+    // GitHub Copilot is an LSP that attaches universally (not language-
+    // specific). Opt-in via `[copilot] enabled = true` in
+    // ~/.config/binvim/config.toml — see `README.md` §Configuration.
+    Bundle { name: "GitHub Copilot", tools: &[
+        Tool { bin: "copilot-language-server", label: "copilot-language-server", role: Role::Lsp,
+            installers: &[Installer::Npm(&["@github/copilot-language-server"])] },
+    ]},
+    // Editor-wide utilities that aren't tied to a language. `rg` powers
+    // live grep (`<space>G`); `lazygit` is the suspend-takeover for
+    // `<leader>gg`; `yazi` is the `<space>e` file picker (the built-in
+    // sidebar tree is the alternative — see `[file_explorer] tree`).
+    Bundle { name: "ripgrep (live grep)", tools: &[
+        Tool { bin: "rg", label: "ripgrep", role: Role::Tool,
+            installers: &[Installer::Brew("ripgrep"), Installer::Apt("ripgrep"),
+                          Installer::Cargo("ripgrep", &[])] },
+    ]},
+    Bundle { name: "lazygit (git UI)", tools: &[
+        Tool { bin: "lazygit", label: "lazygit", role: Role::Tool,
+            installers: &[Installer::Brew("lazygit"),
+                          Installer::Go("github.com/jesseduffield/lazygit@latest")] },
+    ]},
+    Bundle { name: "yazi (file picker)", tools: &[
+        Tool { bin: "yazi", label: "yazi", role: Role::Tool,
+            installers: &[Installer::Brew("yazi"), Installer::Cargo("yazi-fm", &[])] },
     ]},
 ];
 
@@ -669,13 +713,14 @@ fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<Plan
             chosen,
         });
     }
-    // Stable display order: by role (LSP first, then formatter, then DAP),
-    // then by label.
+    // Stable display order: by role (LSP first, then formatter, then DAP,
+    // then editor-wide tools), then by label.
     plan.sort_by_key(|p| {
         let role_rank = match p.tool.role {
             Role::Lsp => 0,
             Role::Formatter => 1,
             Role::Dap => 2,
+            Role::Tool => 3,
         };
         (role_rank, p.tool.label)
     });

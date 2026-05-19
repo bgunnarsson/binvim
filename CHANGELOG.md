@@ -7,22 +7,30 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- **`binvim-install` — interactive language-toolchain installer.** New
-  second binary in the same crate. Run `binvim-install` and you get a
+- **`binvim-install` — interactive toolchain installer.** New second
+  binary in the same crate. Run `binvim-install` and you get a
   checkbox list (j/k navigate, Space toggle, a/n all-none, Enter
-  confirm) of every language binvim supports. The tool detects which
-  package managers are on `$PATH` (`brew`, `apt-get`, `npm`, `cargo`,
-  `rustup`, `go`, `pipx`, `pip`, `gem`, `dotnet`, `nix`, `composer`),
-  dedupes shared tools across the selection (`prettier`, `lldb-dap`,
-  `vscode-langservers-extracted`, …), picks the first runnable
-  installer per tool from a candidate list, shows the plan with the
-  bundles each tool is needed by, and shells out only after a `[y/N]`
+  confirm) of every external thing binvim can drive: one bundle per
+  language (LSP + formatter + DAP), plus a GitHub Copilot bundle
+  (`copilot-language-server`), a Tailwind aux LSP bundle, and three
+  editor-tool bundles for `ripgrep` (live grep), `lazygit` (git
+  takeover), and `yazi` (file picker). `emmet-ls` is folded into
+  every markup-flavoured language bundle (HTML, CSS, TS/JS, Vue,
+  Svelte, Astro, Razor) so picking any of them installs Emmet once
+  via the dedupe step — there's no separate "Emmet" checkbox to
+  remember. The tool detects which package managers are on `$PATH`
+  (`brew`, `apt-get`, `npm`, `cargo`, `rustup`, `go`, `pipx`, `pip`,
+  `gem`, `dotnet`, `nix`, `composer`), dedupes shared tools across
+  the selection (`prettier`, `lldb-dap`, `vscode-langservers-
+  extracted`, `emmet-ls`, …), picks the first runnable installer
+  per tool from a candidate list, shows the plan with the bundles
+  each tool is needed by, and shells out only after a `[y/N]`
   confirmation. Already-present binaries are skipped; tools that
   can't be auto-installed (`netcoredbg`, OmniSharp) print manual
-  instructions. Catppuccin Mocha palette + the same ASCII banner the
-  editor's start page uses. Ships in the release tarball from this
-  version on — `install.sh` extracts it next to `binvim`, Homebrew
-  picks it up automatically via `cargo install`'s default
+  instructions. Catppuccin Mocha palette + the same ASCII banner
+  the editor's start page uses. Ships in the release tarball from
+  this version on — `install.sh` extracts it next to `binvim`,
+  Homebrew picks it up automatically via `cargo install`'s default
   all-binaries behaviour.
 
 ## [0.4.4] - 2026-05-19
