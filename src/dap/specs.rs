@@ -921,17 +921,21 @@ fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
 
 /// Resolve the first command candidate to an absolute path. Bare names go
 /// through `$PATH`; absolute / relative paths must exist on disk. `~/` is
-/// expanded against `$HOME`. Returns `None` if nothing resolves.
+/// expanded against the user's home dir. Returns `None` if nothing resolves.
 #[allow(dead_code)]
 pub fn resolve_command(candidates: &[&str]) -> Option<String> {
     for c in candidates {
         let path = if let Some(rest) = c.strip_prefix("~/") {
-            let home = std::env::var("HOME").ok()?;
-            format!("{}/{}", home, rest)
+            crate::paths::home_join(rest)?
+                .to_string_lossy()
+                .into_owned()
         } else {
             (*c).to_string()
         };
-        if path.contains('/') {
+        if Path::new(&path).is_absolute()
+            || path.contains('/')
+            || path.contains(std::path::MAIN_SEPARATOR)
+        {
             if Path::new(&path).is_file() {
                 return Some(path);
             }
@@ -945,14 +949,7 @@ pub fn resolve_command(candidates: &[&str]) -> Option<String> {
 }
 
 fn which_in_path(name: &str) -> Option<String> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let full = Path::new(dir).join(name);
-        if full.is_file() {
-            return Some(full.to_string_lossy().to_string());
-        }
-    }
-    None
+    crate::paths::find_on_path(name).map(|p| p.to_string_lossy().to_string())
 }
 
 #[cfg(test)]

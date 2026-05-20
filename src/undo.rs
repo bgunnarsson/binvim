@@ -146,18 +146,17 @@ pub fn hash_text(text: &str) -> u64 {
 }
 
 /// Resolve the on-disk persisted-undo file for `target` under
-/// `~/.cache/binvim/undo/`. Returns `None` if `$HOME` is unset or the
-/// target path can't be canonicalised.
+/// `<cache>/binvim/undo/`. Returns `None` if the cache dir can't be
+/// resolved.
 pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
     let canon = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
     let mut h = std::collections::hash_map::DefaultHasher::new();
     canon.to_string_lossy().hash(&mut h);
     let id = format!("{:016x}", h.finish());
-    let mut p = PathBuf::from(home);
-    p.push(".cache/binvim/undo");
+    let mut p = crate::paths::cache_dir()?;
+    p.push("undo");
     p.push(format!("{id}.json"));
     Some(p)
 }

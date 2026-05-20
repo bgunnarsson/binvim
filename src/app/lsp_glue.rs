@@ -1782,11 +1782,11 @@ impl super::App {
             self.status_msg = "workspaces: no LSP clients running".into();
             return;
         }
-        let home = std::env::var("HOME").ok().map(PathBuf::from);
+        let home = crate::paths::home_dir();
         let pretty = |p: &Path| -> String {
             if let Some(h) = home.as_ref() {
                 if let Ok(rest) = p.strip_prefix(h) {
-                    return format!("~/{}", rest.display());
+                    return format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display());
                 }
             }
             p.display().to_string()

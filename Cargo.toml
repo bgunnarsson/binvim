@@ -70,6 +70,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 arboard = { version = "3", default-features = false }
+# `dirs` surfaces the platform conventions for home / config / cache /
+# data directories — `~/.config` on Linux, `~/Library/...` on macOS,
+# `%APPDATA%` and `%LOCALAPPDATA%` on Windows. Centralising on it lets
+# every callsite stay platform-agnostic.
+dirs = "5"
 # `portable-pty` provides forkpty + ConPTY behind a unified API so
 # the same `:terminal` code works on macOS / Linux / (eventually)
 # Windows. `vte` is the WezTerm-derived VT100/xterm escape parser —

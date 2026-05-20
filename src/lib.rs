@@ -4,3 +4,4 @@
 //! library, by design.
 
 pub mod install;
+pub mod paths;

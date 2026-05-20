@@ -50,10 +50,16 @@ pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
 /// We only special-case `~/.cargo/bin` for rust-analyzer because that's the Rust toolchain
 /// convention (and not tied to any other tool's package manager).
 fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| String::from("/"));
-    let cargo_bin = |bin: &str| format!("{}/.cargo/bin/{}", home, bin);
-    let go_bin = |bin: &str| format!("{}/go/bin/{}", home, bin);
-    let local_bin = |sub: &str, bin: &str| format!("{}/.local/bin/{}/{}", home, sub, bin);
+    let home = crate::paths::home_dir();
+    let join_home = |rel: &str| -> String {
+        match home.as_ref() {
+            Some(h) => h.join(rel).to_string_lossy().into_owned(),
+            None => rel.to_string(),
+        }
+    };
+    let cargo_bin = |bin: &str| join_home(&format!(".cargo/bin/{bin}"));
+    let go_bin = |bin: &str| join_home(&format!("go/bin/{bin}"));
+    let local_bin = |sub: &str, bin: &str| join_home(&format!(".local/bin/{sub}/{bin}"));
     let stdio = || vec!["--stdio".to_string()];
 
     // Filename-based detection (no extension). Dockerfile is the
@@ -404,9 +410,14 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
         "ex" | "exs" => Some(ServerSpec {
             key: "elixir-ls".into(),
             language_id: "elixir".into(),
-            // elixir-ls ships a `language_server.sh` launcher; some
+            // elixir-ls ships a `language_server.sh` launcher on
+            // Unix and `language_server.bat` on Windows; some
             // packages expose it as `elixir-ls` directly.
-            cmd_candidates: vec!["elixir-ls".into(), "language_server.sh".into()],
+            cmd_candidates: vec![
+                "elixir-ls".into(),
+                "language_server.sh".into(),
+                "language_server.bat".into(),
+            ],
             args: vec![],
             root_markers: vec!["mix.exs".into(), ".git".into()],
             initialization_options: Value::Null,
@@ -459,7 +470,14 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
                     format!("{:x}", h.finish())
                 })
                 .unwrap_or_else(|| "default".into());
-            let workspace = format!("{}/.cache/binvim/jdtls/{}", home, project_key);
+            let workspace = match crate::paths::cache_dir() {
+                Some(d) => d
+                    .join("jdtls")
+                    .join(&project_key)
+                    .to_string_lossy()
+                    .into_owned(),
+                None => format!(".cache/binvim/jdtls/{project_key}"),
+            };
             Some(ServerSpec {
                 key: "jdtls".into(),
                 language_id: "java".into(),
@@ -481,7 +499,7 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             // workspace finishes loading (often 30-60s on real solutions).
             // OmniSharp stays as a fallback for environments without
             // csharp-ls installed.
-            let dotnet_tools = format!("{}/.dotnet/tools/csharp-ls", home);
+            let dotnet_tools = join_home(".dotnet/tools/csharp-ls");
             let csharp_ls = ServerSpec {
                 key: "csharp-ls".into(),
                 language_id: if ext == "cs" {
@@ -855,13 +873,14 @@ pub fn copilot_spec_for_path(path: &Path) -> Option<ServerSpec> {
 
 pub(crate) fn resolve_command(candidates: &[String]) -> Option<(String, Vec<String>)> {
     for c in candidates {
-        let path = if c.starts_with("~/") {
-            let home = std::env::var("HOME").ok()?;
-            format!("{}/{}", home, &c[2..])
+        let path = if let Some(rest) = c.strip_prefix("~/") {
+            crate::paths::home_join(rest)?
+                .to_string_lossy()
+                .into_owned()
         } else {
             c.clone()
         };
-        if path.contains('/') {
+        if looks_like_path(&path) {
             if std::path::Path::new(&path).is_file() {
                 return Some((path, vec![]));
             }
@@ -874,13 +893,17 @@ pub(crate) fn resolve_command(candidates: &[String]) -> Option<(String, Vec<Stri
     None
 }
 
+/// True when `s` should be treated as an explicit path (so we open it
+/// directly with `Path::is_file`) rather than a bare name to look up
+/// on `$PATH`. `/` works everywhere — both Unix and Windows accept it
+/// as a path separator. Windows additionally uses `\`. An absolute
+/// path is always a path.
+fn looks_like_path(s: &str) -> bool {
+    std::path::Path::new(s).is_absolute()
+        || s.contains('/')
+        || s.contains(std::path::MAIN_SEPARATOR)
+}
+
 fn which_in_path(name: &str) -> Option<String> {
-    let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let full = std::path::Path::new(dir).join(name);
-        if full.is_file() {
-            return Some(full.to_string_lossy().to_string());
-        }
-    }
-    None
+    crate::paths::find_on_path(name).map(|p| p.to_string_lossy().to_string())
 }

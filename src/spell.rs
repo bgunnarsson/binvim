@@ -1,8 +1,10 @@
 //! Spell check. Toggleable per-buffer via `:spell`; navigation with
 //! `]s` / `[s`; suggestions with `z=`. The wordlist comes from
-//! `/usr/share/dict/words` (shipped with macOS and most Linux
-//! distributions); a user-local override at
-//! `~/.local/share/binvim/words` is consulted first.
+//! `/usr/share/dict/words` on Unix (shipped with macOS and most
+//! Linux distributions); a user-local override under the data dir
+//! (e.g. `~/.local/share/binvim/words` on Linux) is consulted first.
+//! Windows has no system wordlist, so spell-check there relies on
+//! the user-local override.
 //!
 //! No external library dependency. The check itself is a HashSet
 //! membership test on a lowercased token; suggestions are computed
@@ -38,10 +40,15 @@ pub fn wordlist() -> Option<&'static HashSet<String>> {
     WORDLIST
         .get_or_init(|| {
             let user_path = dirs_local_words();
-            for candidate in [user_path, Some(PathBuf::from("/usr/share/dict/words"))]
-                .into_iter()
-                .flatten()
-            {
+            // `/usr/share/dict/words` only exists on Unix — on Windows
+            // there is no system wordlist, so we skip the fallback
+            // and rely entirely on the user-local override.
+            let system_path = if cfg!(unix) {
+                Some(PathBuf::from("/usr/share/dict/words"))
+            } else {
+                None
+            };
+            for candidate in [user_path, system_path].into_iter().flatten() {
                 if let Ok(text) = std::fs::read_to_string(&candidate) {
                     let mut set: HashSet<String> = HashSet::with_capacity(250_000);
                     for line in text.lines() {
@@ -62,8 +69,7 @@ pub fn wordlist() -> Option<&'static HashSet<String>> {
 }
 
 fn dirs_local_words() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    Some(PathBuf::from(home).join(".local/share/binvim/words"))
+    crate::paths::data_dir().map(|d| d.join("words"))
 }
 
 /// Walk the buffer, extracting word-shaped tokens, and return the

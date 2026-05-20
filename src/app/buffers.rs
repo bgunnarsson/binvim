@@ -749,10 +749,7 @@ impl super::App {
 }
 
 fn recents_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let mut p = PathBuf::from(home);
-    p.push(".cache/binvim/recents");
-    Some(p)
+    crate::paths::cache_dir().map(|d| d.join("recents"))
 }
 
 pub(super) fn load_recents() -> Vec<PathBuf> {

@@ -20,6 +20,7 @@ mod markdown_render;
 mod mode;
 mod motion;
 mod parser;
+mod paths;
 mod picker;
 mod render;
 mod session;

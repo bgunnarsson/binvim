@@ -4767,19 +4767,20 @@ fn display_lsp_root(uri: &str, width: usize) -> String {
     truncate(basename, width)
 }
 
-/// Replace a leading `$HOME` prefix with `~` so the dashboard's
-/// long paths read cleanly. `$HOME` resolution best-effort — falls
-/// back to the input unchanged when the env var is missing.
+/// Replace a leading home-directory prefix with `~` so the dashboard's
+/// long paths read cleanly. Resolution is best-effort — falls back to
+/// the input unchanged when the home dir can't be resolved.
 fn home_relative_path(path: &str) -> String {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some(home) = crate::paths::home_dir() else {
         return path.to_string();
     };
-    let home_str = home.to_string_lossy();
-    home_relative_with(path, &home_str)
+    home_relative_with(path, &home.to_string_lossy())
 }
 
 /// Pure variant of `home_relative_path` — caller supplies the home
 /// dir explicitly, so tests don't depend on the process environment.
+/// Accepts both `/` and `\` separators so Windows paths display as
+/// `~\foo\bar` while Unix paths stay `~/foo/bar`.
 fn home_relative_with(path: &str, home: &str) -> String {
     if home.is_empty() {
         return path.to_string();
@@ -4790,6 +4791,9 @@ fn home_relative_with(path: &str, home: &str) -> String {
         }
         if let Some(rest) = rest.strip_prefix('/') {
             return format!("~/{rest}");
+        }
+        if let Some(rest) = rest.strip_prefix('\\') {
+            return format!("~\\{rest}");
         }
     }
     path.to_string()

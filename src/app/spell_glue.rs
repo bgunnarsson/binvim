@@ -24,9 +24,12 @@ impl super::App {
             self.status_msg = "spell: off".into();
         } else {
             if crate::spell::wordlist().is_none() {
-                self.status_msg = "spell: no wordlist (install /usr/share/dict/words or write \
-                     ~/.local/share/binvim/words)"
-                    .into();
+                let user_path = crate::paths::data_dir()
+                    .map(|d| d.join("words").display().to_string())
+                    .unwrap_or_else(|| "<data-dir>/words".into());
+                self.status_msg = format!(
+                    "spell: no wordlist (install /usr/share/dict/words or write {user_path})"
+                );
                 return;
             }
             self.spell_enabled.insert(path.clone());

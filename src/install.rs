@@ -451,24 +451,11 @@ pub fn bundle_summary(b: &Bundle) -> String {
 // ─── PATH / package-manager detection ──────────────────────────────────────
 
 pub fn on_path(name: &str) -> bool {
-    let Some(paths) = std::env::var_os("PATH") else {
-        return false;
-    };
-    for dir in std::env::split_paths(&paths) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return true;
-        }
-    }
-    false
+    crate::paths::on_path(name)
 }
 
 pub fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|dir| {
-        let p = dir.join(name);
-        p.is_file().then_some(p)
-    })
+    crate::paths::find_on_path(name)
 }
 
 pub fn detect_managers() -> BTreeSet<&'static str> {
@@ -509,7 +496,7 @@ pub struct NodeVersion {
 
 pub fn discover_node_versions() -> Vec<NodeVersion> {
     let mut out: Vec<NodeVersion> = Vec::new();
-    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let home = crate::paths::home_dir();
 
     if let Some(h) = home.as_ref() {
         scan_node_root(
@@ -556,6 +543,9 @@ pub fn discover_node_versions() -> Vec<NodeVersion> {
             &mut out,
         );
     }
+    // `n` always installs under `/usr/local/n/...`; there's no Windows
+    // equivalent and the path doesn't make sense there, so skip it.
+    #[cfg(unix)]
     scan_node_root(
         Path::new("/usr/local/n/versions/node"),
         Path::new("bin/npm"),

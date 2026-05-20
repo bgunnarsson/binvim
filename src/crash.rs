@@ -119,8 +119,7 @@ fn write_crash_log(info: &std::panic::PanicHookInfo<'_>) -> Option<PathBuf> {
 }
 
 fn crash_dir() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    Some(PathBuf::from(home).join(".cache/binvim/crash"))
+    crate::paths::cache_dir().map(|d| d.join("crash"))
 }
 
 #[cfg(test)]
@@ -134,9 +133,12 @@ mod tests {
     #[test]
     fn panic_hook_writes_log_with_payload() {
         // Point HOME at a scratch dir so we don't trash the real
-        // ~/.cache/binvim/crash. set_var is unsafe under the new
-        // edition rules; the unsafety is the cross-thread race
-        // window which we ignore in a single-threaded test.
+        // cache dir. set_var is unsafe under the new edition rules;
+        // the unsafety is the cross-thread race window which we
+        // ignore in a single-threaded test. The exact subdirectory
+        // under HOME is platform-dependent (`~/.cache` on Linux,
+        // `~/Library/Caches` on macOS, `%LOCALAPPDATA%` on Windows)
+        // so we route through `crash_dir()` instead of hard-coding.
         let tmp = std::env::temp_dir().join("binvim_crash_test_panic");
         let _ = fs::remove_dir_all(&tmp);
         fs::create_dir_all(&tmp).unwrap();
@@ -151,7 +153,7 @@ mod tests {
         });
         assert!(result.is_err());
 
-        let dir = tmp.join(".cache/binvim/crash");
+        let dir = crash_dir().expect("crash_dir resolves under tmp HOME");
         let mut entries: Vec<PathBuf> = fs::read_dir(&dir)
             .expect("crash dir should exist")
             .flatten()

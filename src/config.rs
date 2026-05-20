@@ -742,9 +742,7 @@ impl Config {
 }
 
 fn config_path() -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
-    let path = PathBuf::from(home).join(".config/binvim/config.toml");
-    Some(path)
+    crate::paths::config_dir().map(|d| d.join("config.toml"))
 }
 
 fn parse_color(name: &str) -> Option<Color> {

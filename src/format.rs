@@ -444,16 +444,10 @@ fn run_biome(path: &Path, source: &str) -> Result<String, String> {
 /// location at `~/.dotnet/tools/csharpier` (where `dotnet tool install -g
 /// csharpier` lands by default).
 fn find_csharpier() -> Option<PathBuf> {
-    if let Ok(path_var) = std::env::var("PATH") {
-        for dir in std::env::split_paths(&path_var) {
-            let candidate = dir.join("csharpier");
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
+    if let Some(p) = find_on_path("csharpier") {
+        return Some(p);
     }
-    let home = std::env::var("HOME").ok()?;
-    let dotnet_tools = PathBuf::from(home).join(".dotnet/tools/csharpier");
+    let dotnet_tools = crate::paths::home_join(".dotnet/tools/csharpier")?;
     if dotnet_tools.is_file() {
         return Some(dotnet_tools);
     }
@@ -736,16 +730,11 @@ pub fn primary_formatter_for_path(path: &Path) -> Option<FormatterStatus> {
     Some(status)
 }
 
-/// Resolve a binary by name on `$PATH`. Returns the first match.
+/// Resolve a binary by name on `$PATH`. Delegates to the shared helper
+/// in `paths` — same cross-platform PATH splitting and `.exe`/`.cmd`/
+/// `.bat` fallback on Windows.
 fn find_on_path(name: &str) -> Option<PathBuf> {
-    let path_var = std::env::var("PATH").ok()?;
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
+    crate::paths::find_on_path(name)
 }
 
 fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOutcome, String> {

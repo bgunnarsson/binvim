@@ -162,8 +162,8 @@ impl super::App {
         let (cpu, ram_pct, ram_mb) = read_process_stats(pid);
         let cwd_path = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let cwd = cwd_path.display().to_string();
-        let config_path = std::env::var("HOME")
-            .map(|h| format!("{h}/.config/binvim/config.toml"))
+        let config_path = crate::paths::config_dir()
+            .map(|d| d.join("config.toml").display().to_string())
             .unwrap_or_default();
         let config_loaded = !config_path.is_empty() && std::path::Path::new(&config_path).is_file();
 

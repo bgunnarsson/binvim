@@ -150,14 +150,13 @@ impl SessionKey {
     }
 }
 
-/// `~/.cache/binvim/sessions/<hash>.json` for the given cwd. Returns `None`
-/// if we can't resolve `HOME` or canonicalise `cwd`.
+/// `<cache>/binvim/sessions/<hash>.json` for the given cwd. Returns `None`
+/// if the cache dir can't be resolved.
 pub fn session_path(cwd: &Path) -> Option<PathBuf> {
-    let home = std::env::var("HOME").ok()?;
     let canon = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let key = hash_path(&canon);
-    let mut p = PathBuf::from(home);
-    p.push(".cache/binvim/sessions");
+    let mut p = crate::paths::cache_dir()?;
+    p.push("sessions");
     p.push(format!("{key}.json"));
     Some(p)
 }
