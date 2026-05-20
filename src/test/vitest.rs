@@ -265,7 +265,10 @@ pub fn filter_for_file(file: &Path, root: &Path) -> Option<String> {
     let abs = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let root_abs = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let rel = abs.strip_prefix(&root_abs).unwrap_or(&abs);
-    Some(rel.to_string_lossy().to_string())
+    // Normalise to `/` on Windows — vitest accepts either, and the
+    // forward-slash form matches how the user would type the path
+    // themselves and reads cleanly in the status line.
+    Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// `:testnearest` — walk upward from `cursor_line` for the closest

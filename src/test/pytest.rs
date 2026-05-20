@@ -210,7 +210,11 @@ pub fn flush_parser(state: &mut super::specs::LineParseState) -> Vec<TestEvent> 
 }
 
 /// `:testfile` — pass the file path verbatim. Pytest accepts any
-/// collection root positionally, so a single file is fine.
+/// collection root positionally, so a single file is fine. The
+/// separator is always `/` even on Windows — pytest accepts both
+/// but `/` is the form that lands cleanly in the status line and
+/// in copy-pasted output, and it matches how the user would type
+/// `tests/test_foo.py` themselves.
 pub fn filter_for_file(file: &Path, root: &Path) -> Option<String> {
     let name = file.file_name().and_then(|s| s.to_str())?;
     if !is_test_filename(name) {
@@ -219,7 +223,7 @@ pub fn filter_for_file(file: &Path, root: &Path) -> Option<String> {
     let abs = file.canonicalize().unwrap_or_else(|_| file.to_path_buf());
     let root_abs = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let rel = abs.strip_prefix(&root_abs).unwrap_or(&abs);
-    Some(rel.to_string_lossy().to_string())
+    Some(rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// `:testnearest` — walk upward for the closest `def test_<name>` (or

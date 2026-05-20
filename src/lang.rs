@@ -2157,6 +2157,10 @@ export function Page() {
     /// file came out half-coloured at best. With tree-sitter-scss
     /// wired up for `Lang::Scss`, every SCSS-only construct should
     /// produce coloured bytes.
+    ///
+    /// The SCSS grammar isn't linked on Windows-MSVC (see `Cargo.toml`),
+    /// so this regression check only runs where the grammar exists.
+    #[cfg(not(target_env = "msvc"))]
     #[test]
     fn scss_specific_constructs_get_coloured() {
         let cfg = Config::default();

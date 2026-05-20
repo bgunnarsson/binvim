@@ -1098,13 +1098,21 @@ mod tests {
 
     #[test]
     fn resolve_command_picks_first_existing() {
-        // /bin/sh exists on macOS and Linux; this is a stable target.
+        // Pick a binary that exists on every CI runner. On Unix, `sh`
+        // lives at `/bin/sh`. On Windows runners, Git Bash ships
+        // `sh.exe` somewhere on PATH (often `C:\Program Files\Git\bin`).
+        // The assertion checks that resolve_command walks past the
+        // first (non-existent) candidate to the second.
         let found = resolve_command(&["definitely_not_a_real_binary_xyz", "sh"]);
-        assert!(found.is_some());
+        assert!(found.is_some(), "resolve_command should find `sh`");
         let s = found.unwrap();
-        assert!(
-            s.ends_with("/sh"),
-            "expected absolute path ending in /sh, got {s}"
+        let stem = std::path::Path::new(&s)
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        assert_eq!(
+            stem, "sh",
+            "expected resolved path whose file stem is `sh`, got {s}"
         );
     }
 }
