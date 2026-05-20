@@ -150,6 +150,15 @@ Pulls the `x86_64-pc-windows-msvc` zip from the latest GitHub Release and drops 
 
 `:terminal` on Windows requires Windows 10 1809+ (ConPTY). Older versions will fail to open a PTY.
 
+### Windows — Scoop
+
+```powershell
+scoop bucket add binvim https://github.com/bgunnarsson/binvim
+scoop install binvim
+```
+
+Uses the manifest at [`scoop/binvim.json`](scoop/binvim.json) in this repo. `scoop update binvim` picks up new releases automatically — the manifest's `autoupdate` block rewrites the URL + hash from each new tag.
+
 ### crates.io
 
 ```sh
