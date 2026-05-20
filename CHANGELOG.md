@@ -6,6 +6,46 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.6]
+
+### Added
+- **Tree-sitter highlighting for `.scss` / `.sass`.** A new
+  `Lang::Scss` variant wires `tree-sitter-scss` into the highlight
+  cache so SCSS-only constructs that the CSS grammar has no view of
+  — `$variable` tokens, `@mixin` / `@include`, `@function` /
+  `@return`, `@use` / `@forward` / `@extend`, the `@if` / `@for` /
+  `@each` / `@while` control-flow at-rules, the `&` parent
+  selector, `%placeholder` selectors, `#{}` interpolation, and
+  `//` line comments — now render with proper colour instead of
+  falling back to plain text. The overlay is layered on top of the
+  existing CSS query override so selectors, properties, units, and
+  colour values keep the same tones; mixin / include / function
+  names ride the `@function` capture so they paint Blue alongside
+  `rgb(` / `calc(` calls. `.css` and `.less` continue to use
+  `tree-sitter-css` unchanged. Indented-syntax `.sass` files
+  highlight only the lines the SCSS grammar's error recovery can
+  salvage — there is no maintained tree-sitter grammar for
+  brace-free Sass.
+
+- **Pane-scoped mouse-drag selection in the side terminal.** The
+  host terminal's native Shift+drag selects across the whole
+  window and has no awareness of where the side pane ends, which
+  made it impossible to grab just the embedded tool's output. A
+  plain left-drag inside the side pane now selects within that
+  pane's grid (stream-style, like a text editor — same-row column
+  span; multi-row → from start to end-of-line, full middle rows,
+  then start-of-line to end col), paints the covered cells with
+  inverted SGR so the user sees what they're grabbing, and copies
+  the text to the system clipboard on release with a `ai: copied N
+  chars` status line. Trailing whitespace per row is trimmed so
+  what lands on the clipboard matches what the user saw, not the
+  blank padding TUIs use to fill rows. The selection is scoped to
+  one tab: switching tabs mid-drag, closing the pane, resizing,
+  or any non-drag mouse-down clears the highlight so coords can't
+  leak into the wrong grid. A plain click (`Down` → `Up` at the
+  same position) still reaches the PTY so AI tools' clickable
+  buttons keep working.
+
 ## [0.4.5] - 2026-05-19
 
 ### Changed
