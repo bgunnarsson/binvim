@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.4.7]
+## [0.4.7] - 2026-05-20
 
 ### Added
 - **First-class Windows support.** binvim now builds, tests, and
