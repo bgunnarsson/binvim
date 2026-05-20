@@ -42,6 +42,20 @@ case "$uname_s/$uname_m" in
         printf 'Both build from source against the version published on crates.io.\n' >&2
         exit 1
         ;;
+    # Git Bash / MSYS2 / Cygwin all run on Windows but report
+    # MINGW*/MSYS*/CYGWIN* from uname. Point users at the PowerShell
+    # installer + cargo + the GitHub Releases zip; this shell script
+    # isn't the right surface for a Windows install.
+    MINGW*/*|MSYS*/*|CYGWIN*/*)
+        printf 'binvim on Windows:\n\n' >&2
+        printf '  Native installer (PowerShell):\n' >&2
+        printf '      iwr https://binvim.dev/install.ps1 -UseBasicParsing | iex\n\n' >&2
+        printf '  Or via cargo:\n' >&2
+        printf '      cargo install --locked binvim\n\n' >&2
+        printf '  Or grab the prebuilt zip from\n' >&2
+        printf '      https://github.com/%s/releases/latest\n' "$REPO" >&2
+        exit 1
+        ;;
     Linux/*)                    err "unsupported Linux architecture: $uname_m" ;;
     *)                          err "unsupported OS: $uname_s" ;;
 esac

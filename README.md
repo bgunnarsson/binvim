@@ -140,6 +140,16 @@ curl -fsSL https://binvim.dev/install.sh | sh
 
 Pulls the matching musl-static tarball (`x86_64` or `aarch64`) from the latest GitHub Release, verifies its SHA-256, and drops the binary at `~/.local/bin/binvim`. Override with `BINVIM_VERSION=v0.1.0` or `BINVIM_INSTALL_DIR=/opt/bin` if needed.
 
+### Windows — PowerShell installer
+
+```powershell
+iwr https://binvim.dev/install.ps1 -UseBasicParsing | iex
+```
+
+Pulls the `x86_64-pc-windows-msvc` zip from the latest GitHub Release and drops `binvim.exe` (+ `binvim-install.exe`) into `%LOCALAPPDATA%\binvim\bin\`. The script doesn't mutate `PATH` — it prints the one-liner to do that yourself, so the install stays reversible. Override with `$env:BINVIM_VERSION = 'v0.1.0'` or `$env:BINVIM_INSTALL_DIR = 'C:\bin'`.
+
+`:terminal` on Windows requires Windows 10 1809+ (ConPTY). Older versions will fail to open a PTY.
+
 ### crates.io
 
 ```sh

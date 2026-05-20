@@ -29,9 +29,21 @@ jobs:
           - target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
             use_cross: true
+            archive_ext: tar.gz
+            bin_suffix: ''
           - target: aarch64-unknown-linux-musl
             runner: ubuntu-latest
             use_cross: true
+            archive_ext: tar.gz
+            bin_suffix: ''
+          # x86_64-pc-windows-msvc — native build on a windows-latest
+          # runner. Packaged as a .zip (Windows convention) and signed
+          # the same way as the Linux tarballs.
+          - target: x86_64-pc-windows-msvc
+            runner: windows-latest
+            use_cross: false
+            archive_ext: zip
+            bin_suffix: .exe
           # No macOS targets — `brew install bgunnarsson/binvim/binvim`
           # and `cargo install --locked binvim` both work on macOS and
           # avoid the matrix complexity (signing, two arch runners,
@@ -62,12 +74,13 @@ jobs:
         if: matrix.use_cross
         run: cross build --release --target ${{ matrix.target }} --locked
 
-      - name: build (native, macos)
+      - name: build (native)
         if: ${{ !matrix.use_cross }}
         run: cargo build --release --target ${{ matrix.target }} --locked
 
-      - name: package
-        id: package
+      - name: package (tar.gz)
+        if: matrix.archive_ext == 'tar.gz'
+        id: package_tar
         shell: bash
         run: |
           set -euo pipefail
@@ -78,10 +91,13 @@ jobs:
           fi
           NAME="binvim-${TAG}-${{ matrix.target }}"
           STAGE=$(mktemp -d)
-          cp "target/${{ matrix.target }}/release/binvim" "$STAGE/binvim"
-          cp "target/${{ matrix.target }}/release/binvim-install" "$STAGE/binvim-install"
+          cp "target/${{ matrix.target }}/release/binvim${{ matrix.bin_suffix }}" "$STAGE/binvim${{ matrix.bin_suffix }}"
+          cp "target/${{ matrix.target }}/release/binvim-install${{ matrix.bin_suffix }}" "$STAGE/binvim-install${{ matrix.bin_suffix }}"
           cp README.md LICENSE "$STAGE/"
-          tar -C "$STAGE" -czf "${NAME}.tar.gz" binvim binvim-install README.md LICENSE
+          tar -C "$STAGE" -czf "${NAME}.tar.gz" \
+            "binvim${{ matrix.bin_suffix }}" \
+            "binvim-install${{ matrix.bin_suffix }}" \
+            README.md LICENSE
           # macOS runners don't ship coreutils' `sha256sum`; fall
           # back to `shasum -a 256`, which is BSD-standard and
           # produces the same `<digest>  <filename>` format.
@@ -91,39 +107,63 @@ jobs:
             shasum -a 256 "${NAME}.tar.gz" > "${NAME}.tar.gz.sha256"
           fi
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+          echo "archive=${NAME}.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: package (zip)
+        if: matrix.archive_ext == 'zip'
+        id: package_zip
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            '${{ github.event.inputs.tag }}'
+          } else {
+            '${{ github.ref_name }}'
+          }
+          $name = "binvim-$tag-${{ matrix.target }}"
+          $stage = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "stage-$name")
+          Copy-Item "target/${{ matrix.target }}/release/binvim.exe" (Join-Path $stage 'binvim.exe')
+          Copy-Item "target/${{ matrix.target }}/release/binvim-install.exe" (Join-Path $stage 'binvim-install.exe')
+          Copy-Item README.md (Join-Path $stage 'README.md')
+          Copy-Item LICENSE (Join-Path $stage 'LICENSE')
+          Compress-Archive -Path "$stage/*" -DestinationPath "$name.zip" -Force
+          $hash = (Get-FileHash -Algorithm SHA256 "$name.zip").Hash.ToLower()
+          "$hash  $name.zip" | Set-Content "$name.zip.sha256"
+          "name=$name"          | Add-Content $env:GITHUB_OUTPUT
+          "archive=$name.zip"   | Add-Content $env:GITHUB_OUTPUT
 
       # Sigstore keyless signing — no static key in the repo. cosign
       # round-trips the workflow's OIDC token through Fulcio for a
-      # short-lived certificate, signs the tarball, and writes a Rekor
+      # short-lived certificate, signs the archive, and writes a Rekor
       # log entry. Verifiers run:
-      #   cosign verify-blob --bundle binvim-vX.Y.Z-target.tar.gz.bundle \
+      #   cosign verify-blob --bundle binvim-vX.Y.Z-target.<ext>.bundle \
       #     --certificate-identity-regexp \
       #       '^https://github\.com/bgunnarsson/binvim/\.github/workflows/release\.yml@' \
       #     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-      #     binvim-vX.Y.Z-target.tar.gz
+      #     binvim-vX.Y.Z-target.<ext>
       # The `.bundle` carries the signature, the Fulcio cert, and the
       # Rekor inclusion proof, so verification is offline once it's
       # downloaded.
       - name: install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: sign tarball with cosign (keyless)
+      - name: sign archive with cosign (keyless)
         shell: bash
         run: |
           set -euo pipefail
-          NAME="${{ steps.package.outputs.name }}"
+          ARCHIVE="${{ steps.package_tar.outputs.archive || steps.package_zip.outputs.archive }}"
           cosign sign-blob --yes \
-            --bundle "${NAME}.tar.gz.bundle" \
-            "${NAME}.tar.gz"
+            --bundle "${ARCHIVE}.bundle" \
+            "${ARCHIVE}"
 
       - name: upload artifact
         uses: actions/upload-artifact@v5
         with:
-          name: ${{ steps.package.outputs.name }}
+          name: ${{ steps.package_tar.outputs.name || steps.package_zip.outputs.name }}
           path: |
-            ${{ steps.package.outputs.name }}.tar.gz
-            ${{ steps.package.outputs.name }}.tar.gz.sha256
-            ${{ steps.package.outputs.name }}.tar.gz.bundle
+            ${{ steps.package_tar.outputs.archive || steps.package_zip.outputs.archive }}
+            ${{ steps.package_tar.outputs.archive || steps.package_zip.outputs.archive }}.sha256
+            ${{ steps.package_tar.outputs.archive || steps.package_zip.outputs.archive }}.bundle
 
   release:
     name: publish release
@@ -155,3 +195,6 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.tar.gz.sha256
             artifacts/*.tar.gz.bundle
+            artifacts/*.zip
+            artifacts/*.zip.sha256
+            artifacts/*.zip.bundle
