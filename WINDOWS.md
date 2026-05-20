@@ -1,4 +1,60 @@
-# Windows Port Plan
+# Windows Port
+
+## Status (post-0.4.7)
+
+All eight workstreams from the original plan are shipped. The editor builds, tests, and runs on `x86_64-pc-windows-msvc`; CI exercises every push against `windows-latest` alongside ubuntu + macos; the v0.4.7 release produces a signed Windows zip alongside the Linux tarballs.
+
+- [x] **WS1** — `src/paths.rs` centralises home / config / cache / data lookups behind the `dirs` crate
+- [x] **WS2** — `paths::find_on_path` handles `;`-split PATHs + `.exe` / `.cmd` / `.bat` synthesis
+- [x] **WS3** — tilde + path joins go through `PathBuf::join`; `is_path?` accepts `\` + `Path::is_absolute`
+- [x] **WS4** — `terminal::default_shell()` resolves `$COMSPEC` / `cmd.exe` on Windows
+- [x] **WS5** — `.editorconfig` `end_of_line` parsed; CRLF round-trip on load + save
+- [x] **WS6** — CI matrix is `[ubuntu-latest, macos-latest, windows-latest]` for test + clippy
+- [x] **WS7** — `install.ps1` + `release.yml` Windows-msvc zip + README install section + scoop bucket
+- [x] **WS8** — test fixtures portable (`std::env::temp_dir()` / `tempfile::TempDir`)
+
+Plus followups: tree-sitter-scss cfg-gated off MSVC (upstream master has the fix; no release cut yet) with CSS-grammar fallback, four Windows-only test fixes (pytest/vitest path normalisation, sh.exe resolution, scss test cfg-gate).
+
+## What's left
+
+Three categories of unfinished work, ordered by how visible they are to a user trying binvim on Windows.
+
+### 1. On-device verification
+
+CI proves the binary compiles and unit tests pass on `windows-latest`. None of the following has been exercised on a real Windows machine:
+
+- [ ] `install.ps1` end-to-end on a fresh Windows 10/11 VM — confirm the zip downloads, extracts to `%LOCALAPPDATA%\binvim\bin\`, the PATH hint prints, and `binvim --version` works.
+- [ ] LSP discovery — drop `rust-analyzer.exe` on PATH (or under `~/.cargo/bin`), open a `.rs` file, confirm diagnostics + hover + goto-def arrive. Repeat with one `.exe`-suffixed tool (`gopls.exe`) and one that should resolve via the tilde-expansion path (`csharp-ls` from `.dotnet/tools`).
+- [ ] DAP launch — install `netcoredbg.exe`, open a `.NET` project, `<leader>db` to set a breakpoint, `<leader>dr` to run, confirm the breakpoint hits and locals + watches populate.
+- [ ] `:terminal` — confirm `cmd.exe` spawns and `dir` runs. ConPTY requires Windows 10 1809+.
+- [ ] CRLF round-trip — open a file with `\r\n` line endings in a real editor session, edit, `:w`, hex-dump the result to confirm `\r\n` is preserved. Repeat with an `.editorconfig` forcing `end_of_line = lf` to confirm conversion.
+
+If any of these fail, the fix probably belongs in WS1-5; the plan covered the wiring but not the on-host validation.
+
+### 2. Features that don't work on Windows yet (out of WS1-8 scope but real)
+
+These shipped working on Unix and aren't broken — they just don't function on Windows because they assume a POSIX shell. The bare `:terminal` does work; only flows that *invoke* a shell with `-l -i -c` are affected.
+
+- [ ] **Task runner** (`:task`, `:tasklast`, `<leader>mm` / `<leader>ml`) — `task_glue` runs `default_shell() -l -i -c "cd <cwd> && exec <command>"`. `cmd.exe` rejects POSIX-style dash flags; needs a per-shell dispatch (`/C` for `cmd.exe`, `-Command` for `pwsh.exe`, untouched for `bash`-family). The five task sources (npm / Justfile / cargo / Makefile / dotnet) and the parsed shell command line otherwise carry over.
+- [ ] **AI side pane** (`<leader>jc/jx/jo` + uppercase variants for path handoff) — same `default_shell() -l -i -c "exec <tool>"` shape in `side_terminal_glue`. Same per-shell dispatch fix applies.
+- [ ] **`shell_quote`** for task launching — POSIX single-quote wrapping. Windows needs the cmd.exe quoting variant (double-quote with `^` escapes for caret-interpreted chars). Trivial once the dispatch above lands; rates a `#[cfg]` switch on the helper.
+- [ ] **Full SCSS highlighting** — `tree-sitter-scss 1.0.0` on crates.io passes a GCC-only flag to `cl.exe`. The crate's `master` branch already fixed it (commit [`9ab738d`](https://github.com/tree-sitter-grammars/tree-sitter-scss/commit/9ab738d)) but no release was cut. The cfg-gate in `Cargo.toml` and `lang.rs` is a one-liner removal once they ship a 1.0.1.
+
+### 3. Explicit deferrals (still deferred)
+
+These were called out as "out of scope for v1" in the original plan, by intent. Listed here for completeness, not as backlog items.
+
+- [ ] **winget submission** — three YAML manifests (installer + locale + version) submitted as a PR to `microsoft/winget-pkgs` under `manifests/b/Bgunnarsson/Binvim/0.4.7/`. Requires forking under bgunnarsson. Scheduled separately.
+- [ ] **Code-signing the Windows binary** — Microsoft SmartScreen will warn "Windows protected your PC" on first run of any unsigned exe. Fixing requires a real Authenticode certificate (~$100/yr from DigiCert / Sectigo / SSL.com) wired into `release.yml` between build and zip steps. Skipped for v1 — the `install.ps1` path documents the warning rather than papering over it.
+- [ ] **MSI / MSIX installer** — WiX or MSIX packaging for Add/Remove-Programs registration and IT-managed enterprise installs. `cargo install` / scoop / winget cover ~95% of developer-tool installs; defer until users specifically ask.
+- [ ] **PowerShell as default shell** — `terminal::default_shell()` could honour a `[terminal] shell = "pwsh"` config knob. Trivial once anyone wants it; cmd.exe is the universally-present default for now.
+- [ ] **WSL path translation** — opening a `\\wsl$\Ubuntu\home\user\foo.rs` from a Windows binvim, or vice versa from a WSL binvim picking up a Windows-side path. Different problem space — defer until the native Windows build is stable enough that anyone's mixing the two.
+
+---
+
+## Original plan (historical)
+
+Everything below is the plan that drove WS1-8. Kept for reference; reviewers landing in the repo now should read the **Status** + **What's left** sections above first.
 
 ## Context
 
