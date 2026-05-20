@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.4.6]
+## [0.4.6] - 2026-05-20
 
 ### Added
 - **Tree-sitter highlighting for `.scss` / `.sass`.** A new
