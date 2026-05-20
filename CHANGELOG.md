@@ -6,6 +6,66 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.7]
+
+### Added
+- **First-class Windows support.** binvim now builds, tests, and
+  installs on `x86_64-pc-windows-msvc`. The full port spans
+  directory discovery, PATH lookup, line endings, the terminal
+  fallback shell, CI, and the install pipeline:
+
+  - A new `paths` module routes every home / config / cache / data
+    lookup through the `dirs` crate, so `%APPDATA%` /
+    `%LOCALAPPDATA%` / `%USERPROFILE%` work the same way `$HOME` /
+    `~/.config` / `~/.cache` work on Unix. Sessions, undo history,
+    crash logs, recents, the spell wordlist override, and the
+    `config.toml` location all relocate automatically.
+  - PATH walking switched to `std::env::split_paths` (so `;` works
+    on Windows), with `.exe` / `.cmd` / `.bat` candidates
+    synthesised for bare LSP / DAP / formatter names. `elixir-ls`
+    also probes `language_server.bat`.
+  - Tilde expansion + path construction in the LSP and DAP specs
+    use `PathBuf::join` instead of `format!("{}/{}", home, ...)`,
+    so cargo-bin and dotnet-tools paths resolve correctly on
+    Windows.
+  - `:terminal`'s `$SHELL` fallback now picks `$COMSPEC` / `cmd.exe`
+    on Windows (previously hard-coded `/bin/sh`). The task runner
+    and AI side-pane share the same helper. The POSIX-shell
+    `-l -i -c` arg wrapping isn't translated to cmd.exe yet, so
+    tasks + AI launches stay Unix-only for v1.
+  - `.editorconfig`'s `end_of_line = lf | crlf` is now parsed and
+    honoured on save. Buffers detect the inferred line ending on
+    load and re-emit the same convention by default; mixed-ending
+    files collapse to LF (as before). The rope stays LF-normalised
+    so motion / render / LSP see one consistent newline byte.
+  - CI matrix expanded to `[ubuntu-latest, macos-latest,
+    windows-latest]` for `cargo test` and `cargo clippy`. `cargo
+    fmt --check` stays on Linux only.
+  - `install.ps1` (PowerShell installer): downloads the new
+    Windows zip from the GitHub Release, drops `binvim.exe` (+
+    `binvim-install.exe`) into `%LOCALAPPDATA%\binvim\bin\`, and
+    prints the PATH one-liner instead of mutating the registry.
+    Honours `$env:BINVIM_VERSION` / `$env:BINVIM_INSTALL_DIR`.
+    `install.sh` now prints a Windows-aware message when run from
+    Git Bash / MSYS / Cygwin instead of failing as "unsupported
+    OS."
+  - Release pipeline gained an `x86_64-pc-windows-msvc` matrix
+    entry; the artifact is a `.zip` (Windows convention) with the
+    same cosign keyless signing + `.sha256` sidecars the Linux
+    tarballs already had.
+
+  Known limitation: `tree-sitter-scss 1.0.0` on crates.io has an
+  MSVC-incompatible flag in its `build.rs` (a fix exists on
+  upstream master but hasn't been released). The dep is gated on
+  `cfg(not(target_env = "msvc"))`; SCSS files on Windows fall
+  back to the CSS grammar — selectors and properties highlight
+  fine, but `$var` / `@mixin` / `@include` / `#{}` /
+  `%placeholder` / `&` nesting lose their dedicated captures
+  until upstream cuts a new release.
+
+  See `WINDOWS.md` for the workstream-by-workstream plan that
+  guided the port.
+
 ## [0.4.6] - 2026-05-20
 
 ### Added

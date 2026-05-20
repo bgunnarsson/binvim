@@ -322,16 +322,17 @@ else
         fi
     fi
 
-    # Sanity-check the published Release. The build matrix has 4 targets
-    # and each emits 3 files (tar.gz + .sha256 + .bundle) — 12 assets
-    # total. A short count means the workflow's final upload step
-    # half-succeeded; loud enough to investigate, not fatal because the
-    # Homebrew + web push paths don't depend on these artifacts (they
-    # use the source tarball + install.sh respectively).
+    # Sanity-check the published Release. The build matrix has 3 targets
+    # (x86_64 musl, aarch64 musl, x86_64-pc-windows-msvc) and each emits
+    # 3 files (archive + .sha256 + .bundle) — 9 assets total. A short
+    # count means the workflow's final upload step half-succeeded; loud
+    # enough to investigate, not fatal because the Homebrew + web push
+    # paths don't depend on these artifacts (they use the source tarball
+    # + install.sh respectively).
     ASSETS="$(gh release view "$TAG" --json assets --jq '.assets | length' 2>/dev/null || echo 0)"
     echo "  Release ${TAG} has ${ASSETS} assets attached."
-    if [[ "$ASSETS" -lt 12 ]]; then
-        echo "  WARNING: expected 12 (4 targets × tar.gz + sha256 + bundle), got ${ASSETS}." >&2
+    if [[ "$ASSETS" -lt 9 ]]; then
+        echo "  WARNING: expected 9 (3 targets × archive + sha256 + bundle), got ${ASSETS}." >&2
         echo "  Inspect: gh release view ${TAG}" >&2
     fi
 fi
