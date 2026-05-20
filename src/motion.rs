@@ -668,11 +668,7 @@ mod tests {
     fn buf(s: &str) -> Buffer {
         Buffer {
             rope: Rope::from_str(s),
-            path: None,
-            dirty: false,
-            version: 0,
-            disk_mtime: None,
-            display_name: None,
+            ..Buffer::default()
         }
     }
 

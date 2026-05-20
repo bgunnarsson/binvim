@@ -219,10 +219,7 @@ mod tests {
         app.buffer = Buffer {
             rope: ropey::Rope::from_str(content),
             path: Some(PathBuf::from(path)),
-            dirty: false,
-            version: 0,
-            disk_mtime: None,
-            display_name: None,
+            ..Buffer::default()
         };
         app
     }

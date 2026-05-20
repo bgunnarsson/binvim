@@ -1,9 +1,93 @@
 use anyhow::{Context, Result};
 use ropey::Rope;
 use std::fs::File;
-use std::io::{BufWriter, Read};
+use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
+
+/// Line-ending convention for a buffer. We always normalize to LF in
+/// the rope so the rest of the editor (motion, render, LSP) only ever
+/// sees `\n`; this enum records what the file *was* on disk so save
+/// can emit the same. `.editorconfig`'s `end_of_line` overrides the
+/// inferred-from-disk value when set.
+///
+/// Mixed-ending files collapse to `Lf` on load — saving then loses
+/// the trailing CRs, which is fine: a Windows file with stray LFs is
+/// already inconsistent, and rewriting it uniformly is the lesser
+/// surprise. The detector counts CRLFs vs bare LFs and picks the
+/// majority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineEnding {
+    /// `\n` — Unix, the rope's internal representation.
+    Lf,
+    /// `\r\n` — Windows; the load+save round-trip preserves these.
+    Crlf,
+}
+
+impl LineEnding {
+    /// Platform default for path-less buffers (`Buffer::empty`).
+    /// `Crlf` on Windows, `Lf` everywhere else.
+    pub fn platform_default() -> Self {
+        if cfg!(windows) {
+            LineEnding::Crlf
+        } else {
+            LineEnding::Lf
+        }
+    }
+}
+
+/// Walk `bytes` counting CRLF vs bare-LF occurrences and pick the
+/// majority. Files with neither (no newlines at all) get the platform
+/// default — same heuristic editors like VS Code use.
+fn detect_line_ending(bytes: &[u8]) -> LineEnding {
+    let mut crlf = 0usize;
+    let mut lf = 0usize;
+    for (i, b) in bytes.iter().enumerate() {
+        if *b == b'\n' {
+            if i > 0 && bytes[i - 1] == b'\r' {
+                crlf += 1;
+            } else {
+                lf += 1;
+            }
+        }
+    }
+    if crlf == 0 && lf == 0 {
+        LineEnding::platform_default()
+    } else if crlf > lf {
+        LineEnding::Crlf
+    } else {
+        LineEnding::Lf
+    }
+}
+
+/// Stream the rope to `w`, translating `\n` → `\r\n` when `ending`
+/// is `Crlf`. `Lf` falls through to ropey's native `write_to`. The
+/// `Crlf` branch chunks through the rope's underlying str slices so
+/// throughput stays near memcpy speed.
+fn write_rope_with_eol<W: Write>(rope: &Rope, ending: LineEnding, mut w: W) -> std::io::Result<()> {
+    match ending {
+        LineEnding::Lf => rope.write_to(&mut w).map_err(std::io::Error::other),
+        LineEnding::Crlf => {
+            for chunk in rope.chunks() {
+                let bytes = chunk.as_bytes();
+                let mut start = 0;
+                for (i, b) in bytes.iter().enumerate() {
+                    if *b == b'\n' {
+                        if start < i {
+                            w.write_all(&bytes[start..i])?;
+                        }
+                        w.write_all(b"\r\n")?;
+                        start = i + 1;
+                    }
+                }
+                if start < bytes.len() {
+                    w.write_all(&bytes[start..])?;
+                }
+            }
+            Ok(())
+        }
+    }
+}
 
 /// Bytes above which a buffer is considered "large" — the rope still
 /// handles the volume fine, but tree-sitter highlight passes take
@@ -32,6 +116,10 @@ pub struct Buffer {
     /// Synthetic label for path-less internal buffers (e.g. `[Health]`). Lets
     /// the buffer list show something meaningful instead of `[No Name]`.
     pub display_name: Option<String>,
+    /// What the file was on disk (or platform default for path-less
+    /// buffers). `save` emits the matching ending; `.editorconfig`'s
+    /// `end_of_line` overrides this when set.
+    pub line_ending: LineEnding,
 }
 
 impl Default for Buffer {
@@ -49,6 +137,7 @@ impl Buffer {
             version: 0,
             disk_mtime: None,
             display_name: None,
+            line_ending: LineEnding::platform_default(),
         }
     }
 
@@ -60,10 +149,12 @@ impl Buffer {
             // Normalize CRLF → LF on load. ropey preserves bytes verbatim, so a
             // stray `\r` left in a line would reach the renderer and reset the
             // terminal cursor to column 0 — clobbering inline diagnostics and
-            // any subsequent same-row content.
+            // any subsequent same-row content. The detected ending is stored
+            // on the buffer so `save` can re-emit the same convention.
             let mut bytes = Vec::new();
             file.read_to_end(&mut bytes)
                 .with_context(|| format!("reading {}", path.display()))?;
+            let line_ending = detect_line_ending(&bytes);
             let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
             let rope = Rope::from_str(&text);
             Ok(Self {
@@ -73,6 +164,7 @@ impl Buffer {
                 version: 0,
                 disk_mtime: mtime,
                 display_name: None,
+                line_ending,
             })
         } else {
             Ok(Self {
@@ -82,6 +174,7 @@ impl Buffer {
                 version: 0,
                 disk_mtime: None,
                 display_name: None,
+                line_ending: LineEnding::platform_default(),
             })
         }
     }
@@ -92,8 +185,7 @@ impl Buffer {
             .as_ref()
             .context("no file path set (use :w {filename})")?;
         let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
-        self.rope
-            .write_to(BufWriter::new(file))
+        write_rope_with_eol(&self.rope, self.line_ending, BufWriter::new(file))
             .with_context(|| format!("writing {}", path.display()))?;
         self.dirty = false;
         // Refresh mtime so the watcher doesn't immediately think the file
@@ -236,5 +328,74 @@ mod tests {
         let text = "a\n".repeat(LARGE_FILE_LINES - 1);
         let b = buf_with_text(&text);
         assert!(!b.is_large());
+    }
+
+    #[test]
+    fn detect_lf_only_file() {
+        assert_eq!(detect_line_ending(b"a\nb\nc\n"), LineEnding::Lf);
+    }
+
+    #[test]
+    fn detect_crlf_only_file() {
+        assert_eq!(detect_line_ending(b"a\r\nb\r\nc\r\n"), LineEnding::Crlf);
+    }
+
+    #[test]
+    fn detect_mixed_picks_majority() {
+        // 2 CRLF, 1 LF → Crlf.
+        assert_eq!(detect_line_ending(b"a\r\nb\r\nc\n"), LineEnding::Crlf);
+        // 1 CRLF, 2 LF → Lf.
+        assert_eq!(detect_line_ending(b"a\r\nb\nc\n"), LineEnding::Lf);
+    }
+
+    #[test]
+    fn detect_no_newlines_falls_back_to_platform_default() {
+        assert_eq!(
+            detect_line_ending(b"no newlines"),
+            LineEnding::platform_default()
+        );
+    }
+
+    #[test]
+    fn lf_load_save_roundtrip() {
+        let tmp = std::env::temp_dir().join("binvim_lf_roundtrip.txt");
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, "hello\nworld\n").unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert_eq!(buf.line_ending, LineEnding::Lf);
+        buf.save().unwrap();
+        let out = std::fs::read(&tmp).unwrap();
+        assert_eq!(out, b"hello\nworld\n");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn crlf_load_save_roundtrip() {
+        let tmp = std::env::temp_dir().join("binvim_crlf_roundtrip.txt");
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, "hello\r\nworld\r\n").unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert_eq!(buf.line_ending, LineEnding::Crlf);
+        // The rope itself has been normalized to LF — verify.
+        assert_eq!(buf.rope.to_string(), "hello\nworld\n");
+        buf.save().unwrap();
+        let out = std::fs::read(&tmp).unwrap();
+        assert_eq!(out, b"hello\r\nworld\r\n");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn crlf_can_be_overridden_to_lf_on_save() {
+        let tmp = std::env::temp_dir().join("binvim_crlf_to_lf.txt");
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, "hello\r\nworld\r\n").unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert_eq!(buf.line_ending, LineEnding::Crlf);
+        // Simulate `.editorconfig`'s `end_of_line = lf` override.
+        buf.line_ending = LineEnding::Lf;
+        buf.save().unwrap();
+        let out = std::fs::read(&tmp).unwrap();
+        assert_eq!(out, b"hello\nworld\n");
+        let _ = std::fs::remove_file(&tmp);
     }
 }

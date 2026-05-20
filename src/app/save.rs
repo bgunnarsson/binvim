@@ -74,6 +74,9 @@ impl super::App {
         if self.editorconfig.insert_final_newline {
             self.ensure_final_newline();
         }
+        if let Some(forced) = self.editorconfig.end_of_line {
+            self.buffer.line_ending = forced;
+        }
         self.buffer.save()?;
         // Refresh git stripe after a successful write — the index hasn't
         // moved but the working tree just did, so hunks may have grown,

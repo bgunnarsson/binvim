@@ -6,7 +6,9 @@
 //! * `tab_width`    — integer
 //! * `trim_trailing_whitespace` — bool
 //! * `insert_final_newline`     — bool
+//! * `end_of_line`              — lf | crlf
 
+use crate::buffer::LineEnding;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,6 +24,10 @@ pub struct EditorConfig {
     pub tab_width: usize,
     pub trim_trailing_whitespace: bool,
     pub insert_final_newline: bool,
+    /// `None` when `.editorconfig` doesn't set `end_of_line`; in that
+    /// case `save` preserves whatever the file was on disk. `Some(_)`
+    /// forces the buffer to that convention on save.
+    pub end_of_line: Option<LineEnding>,
 }
 
 impl Default for EditorConfig {
@@ -32,6 +38,7 @@ impl Default for EditorConfig {
             tab_width: 4,
             trim_trailing_whitespace: false,
             insert_final_newline: true,
+            end_of_line: None,
         }
     }
 }
@@ -207,6 +214,11 @@ fn apply_property(cfg: &mut EditorConfig, key: &str, value: &str) {
             "false" => cfg.insert_final_newline = false,
             _ => {}
         },
+        "end_of_line" => match value {
+            "lf" => cfg.end_of_line = Some(LineEnding::Lf),
+            "crlf" => cfg.end_of_line = Some(LineEnding::Crlf),
+            _ => {}
+        },
         _ => {}
     }
 }
@@ -337,5 +349,27 @@ mod tests {
     fn brace_expansion() {
         let v = expand_braces("*.{rs,toml,json}");
         assert_eq!(v, vec!["*.rs", "*.toml", "*.json"]);
+    }
+
+    #[test]
+    fn parses_end_of_line_lf() {
+        let mut cfg = EditorConfig::default();
+        let text = "root = true\n[*]\nend_of_line = lf\n";
+        apply_file(&mut cfg, text, Path::new("/x"), Path::new("/x/foo.txt"));
+        assert_eq!(cfg.end_of_line, Some(LineEnding::Lf));
+    }
+
+    #[test]
+    fn parses_end_of_line_crlf() {
+        let mut cfg = EditorConfig::default();
+        let text = "[*]\nend_of_line = crlf\n";
+        apply_file(&mut cfg, text, Path::new("/x"), Path::new("/x/foo.txt"));
+        assert_eq!(cfg.end_of_line, Some(LineEnding::Crlf));
+    }
+
+    #[test]
+    fn unset_end_of_line_stays_none() {
+        let cfg = EditorConfig::default();
+        assert_eq!(cfg.end_of_line, None);
     }
 }

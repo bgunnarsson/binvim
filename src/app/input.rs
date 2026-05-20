@@ -2204,11 +2204,7 @@ mod tests {
     fn buf(text: &str) -> Buffer {
         Buffer {
             rope: Rope::from_str(text),
-            path: None,
-            dirty: false,
-            version: 0,
-            disk_mtime: None,
-            display_name: None,
+            ..Buffer::default()
         }
     }
 
