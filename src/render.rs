@@ -152,19 +152,23 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     let title_min = wk.title.chars().count() + 4; // some breathing space around the title
     let footer_min = " ESC close ".chars().count();
     let mut content_w = entry_min.max(title_min).max(footer_min);
-    let total_w = app.width as usize;
-    if content_w + 2 > total_w.saturating_sub(4) {
-        content_w = total_w.saturating_sub(6);
+    // Center inside the editor rect so the popup floats over the main
+    // window, not over the AI side pane / file tree (which sit at fixed
+    // columns and have their own focus / chrome).
+    let rect = app.editor_rect();
+    let area_w = rect.w as usize;
+    let area_h = rect.h as usize;
+    if content_w + 2 > area_w.saturating_sub(4) {
+        content_w = area_w.saturating_sub(6);
     }
     let popup_w = content_w + 2;
     let popup_h = wk.entries.len() + 3; // top + N entries + footer + bottom
 
-    let total_h = app.height as usize;
-    let popup_h = popup_h.min(total_h.saturating_sub(2));
+    let popup_h = popup_h.min(area_h.saturating_sub(2));
     let max_entries = popup_h.saturating_sub(3);
 
-    let left = total_w.saturating_sub(popup_w) / 2;
-    let top = total_h.saturating_sub(popup_h) / 2;
+    let left = rect.x as usize + area_w.saturating_sub(popup_w) / 2;
+    let top = rect.y as usize + area_h.saturating_sub(popup_h) / 2;
 
     let bg = app.config.chrome_bg();
     let border = app.config.theme_border();
@@ -1540,25 +1544,34 @@ pub(crate) fn picker_visible_rows(app: &App) -> usize {
 }
 
 fn picker_layout(app: &App) -> PickerLayout {
-    let total_w = app.width as usize;
-    let total_h = app.height as usize;
+    // Float over the editor rect (the main-window region), not the
+    // full terminal — keeps the popup centred when the AI side pane or
+    // file-tree pane has narrowed the editor area.
+    let rect = app.editor_rect();
+    let area_w = rect.w as usize;
+    let area_h = rect.h as usize;
     // Box dimensions — generous side margins so the popup floats clearly
     // above the dimmed buffer rather than touching the screen edges.
-    let box_w = ((total_w * 4) / 5)
+    let box_w = ((area_w * 4) / 5)
         .clamp(50, 100)
-        .min(total_w.saturating_sub(4));
+        .min(area_w.saturating_sub(4));
     // 7 rows of chrome: top border, top pad, prompt, separator, …, bottom
     // pad, footer, bottom border. Min 12 keeps at least 5 list rows visible.
-    let box_h = ((total_h * 3) / 5)
+    let box_h = ((area_h * 3) / 5)
         .clamp(12, 28)
-        .min(total_h.saturating_sub(2));
+        .min(area_h.saturating_sub(2));
 
     let inner_w = box_w.saturating_sub(2);
-    let left = total_w.saturating_sub(box_w) / 2;
+    let left = rect.x as usize + area_w.saturating_sub(box_w) / 2;
     // Bias slightly above centre so the popup doesn't visually fight the
     // status line.
     let bottom_chrome = 2;
-    let top = (total_h.saturating_sub(bottom_chrome).saturating_sub(box_h) / 2).max(0);
+    let top = rect.y as usize
+        + (area_h
+            .saturating_sub(bottom_chrome)
+            .saturating_sub(box_h)
+            / 2)
+        .max(0);
 
     let prompt_row = top + 2;
     let footer_row = top + box_h - 2;
