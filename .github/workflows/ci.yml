@@ -14,8 +14,14 @@ concurrency:
 
 jobs:
   test:
-    name: cargo test
-    runs-on: ubuntu-latest
+    name: cargo test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Each platform runs independently — a Windows-specific regression
+      # shouldn't mask a Linux-specific one and vice versa.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
 
@@ -25,7 +31,7 @@ jobs:
       - name: cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:
-          key: ci-test
+          key: ci-test-${{ matrix.os }}
 
       # `--test-threads=1` runs tests sequentially. Locally this is
       # ~5s slower across the full suite but keeps the failing-test
@@ -40,8 +46,12 @@ jobs:
         run: cargo test --locked --all-features -- --test-threads=1
 
   clippy:
-    name: cargo clippy
-    runs-on: ubuntu-latest
+    name: cargo clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v5
 
@@ -53,17 +63,19 @@ jobs:
       - name: cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:
-          key: ci-clippy
+          key: ci-clippy-${{ matrix.os }}
 
       # `-D warnings` would currently break the build on the pre-existing
       # dead-code warnings the repo carries; lint without escalating so
       # we still surface drift via the run log. Tighten once the existing
-      # warnings are paid down.
+      # warnings are paid down. Running on all three OSes catches
+      # platform-specific `#[cfg]`-gated unused imports.
       - name: cargo clippy
         run: cargo clippy --locked --all-targets -- -A warnings
 
   fmt:
     name: cargo fmt --check
+    # Formatting is platform-agnostic — verify on the cheapest runner only.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
