@@ -2339,41 +2339,47 @@ pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent:
 #[cfg(test)]
 mod tests {
     use super::{expand_snippet, razor_ref_augment};
-    use std::path::Path;
+
+    /// Build a fake path under the platform temp dir for tests that only
+    /// care about a path's file extension (they never touch the
+    /// filesystem). Centralising it keeps the boilerplate down and
+    /// works on Windows where `/tmp` isn't a useful root.
+    fn fake_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(name)
+    }
 
     #[test]
     fn ref_augment_cs_buffer_targets_razor_extensions() {
-        let aug = razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("Bar".into())).unwrap();
+        let aug = razor_ref_augment(&fake_path("Foo.cs"), Some("Bar".into())).unwrap();
         assert_eq!(aug.needle, "Bar");
         assert_eq!(aug.extensions, vec!["cshtml", "razor"]);
     }
 
     #[test]
     fn ref_augment_razor_buffer_includes_cs() {
-        let aug = razor_ref_augment(Path::new("/tmp/Index.cshtml"), Some("Model".into())).unwrap();
+        let aug = razor_ref_augment(&fake_path("Index.cshtml"), Some("Model".into())).unwrap();
         assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
-        let aug = razor_ref_augment(Path::new("/tmp/Page.razor"), Some("Model".into())).unwrap();
+        let aug = razor_ref_augment(&fake_path("Page.razor"), Some("Model".into())).unwrap();
         assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
     }
 
     #[test]
     fn ref_augment_skips_unrelated_buffers() {
-        assert!(razor_ref_augment(Path::new("/tmp/main.rs"), Some("foo".into())).is_none());
-        assert!(razor_ref_augment(Path::new("/tmp/script.ts"), Some("foo".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("main.rs"), Some("foo".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("script.ts"), Some("foo".into())).is_none());
     }
 
     #[test]
     fn ref_augment_skips_non_identifier_needles() {
-        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("=>".into())).is_none());
-        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("@".into())).is_none());
-        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), Some(String::new())).is_none());
-        assert!(razor_ref_augment(Path::new("/tmp/Foo.cs"), None).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some("=>".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some("@".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some(String::new())).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), None).is_none());
     }
 
     #[test]
     fn ref_augment_allows_underscore_identifiers() {
-        let aug =
-            razor_ref_augment(Path::new("/tmp/Foo.cs"), Some("_private_field".into())).unwrap();
+        let aug = razor_ref_augment(&fake_path("Foo.cs"), Some("_private_field".into())).unwrap();
         assert_eq!(aug.needle, "_private_field");
     }
 

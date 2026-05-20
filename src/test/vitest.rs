@@ -610,7 +610,7 @@ utils.test.ts > slugify > strips punctuation
     fn build_run_command_routes_path_filter_positionally() {
         let req = TestRunRequest {
             filter: Some("foo.test.ts".into()),
-            workspace_root: PathBuf::from("/tmp"),
+            workspace_root: std::env::temp_dir(),
             label: "file".into(),
         };
         let cmd = build_run_command(&req).unwrap();
@@ -622,7 +622,7 @@ utils.test.ts > slugify > strips punctuation
     fn build_run_command_routes_name_filter_via_dash_t() {
         let req = TestRunRequest {
             filter: Some("lowercases and dashes spaces".into()),
-            workspace_root: PathBuf::from("/tmp"),
+            workspace_root: std::env::temp_dir(),
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();

@@ -551,7 +551,7 @@ public void Parametrised(int x) {}
     fn build_run_command_wraps_name_filter() {
         let req = TestRunRequest {
             filter: Some("MyTest".into()),
-            workspace_root: PathBuf::from("/tmp"),
+            workspace_root: std::env::temp_dir(),
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();
@@ -567,7 +567,7 @@ public void Parametrised(int x) {}
     fn build_run_command_passes_raw_filter_through() {
         let req = TestRunRequest {
             filter: Some("ClassName=BarTests&Category!=Slow".into()),
-            workspace_root: PathBuf::from("/tmp"),
+            workspace_root: std::env::temp_dir(),
             label: "file".into(),
         };
         let cmd = build_run_command(&req).unwrap();

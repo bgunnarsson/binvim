@@ -493,7 +493,7 @@ ok      example.com/foo  0.123s
     fn build_run_command_anchors_name_filter() {
         let req = TestRunRequest {
             filter: Some("TestSlugify".into()),
-            workspace_root: PathBuf::from("/tmp"),
+            workspace_root: std::env::temp_dir(),
             label: "nearest".into(),
         };
         let cmd = build_run_command(&req).unwrap();
@@ -509,7 +509,7 @@ ok      example.com/foo  0.123s
     fn build_run_command_routes_package_filter_positionally() {
         let req = TestRunRequest {
             filter: Some("./pkg/...".into()),
-            workspace_root: PathBuf::from("/tmp"),
+            workspace_root: std::env::temp_dir(),
             label: "file".into(),
         };
         let cmd = build_run_command(&req).unwrap();

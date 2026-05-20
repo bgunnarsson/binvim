@@ -1232,7 +1232,7 @@ mod tests {
     #[test]
     fn toggle_breakpoint_adds_and_removes() {
         let mut m = DapManager::new();
-        let p = PathBuf::from("/tmp/x.cs");
+        let p = std::env::temp_dir().join("x.cs");
         assert!(!m.has_breakpoint(&p, 10));
         assert!(m.toggle_breakpoint(&p, 10));
         assert!(m.has_breakpoint(&p, 10));
@@ -1244,8 +1244,8 @@ mod tests {
     #[test]
     fn breakpoint_table_is_per_path() {
         let mut m = DapManager::new();
-        let a = PathBuf::from("/tmp/a.cs");
-        let b = PathBuf::from("/tmp/b.cs");
+        let a = std::env::temp_dir().join("a.cs");
+        let b = std::env::temp_dir().join("b.cs");
         m.toggle_breakpoint(&a, 5);
         m.toggle_breakpoint(&b, 5);
         assert!(m.has_breakpoint(&a, 5));
@@ -1256,7 +1256,7 @@ mod tests {
     #[test]
     fn set_breakpoint_condition_creates_when_absent() {
         let mut m = DapManager::new();
-        let p = PathBuf::from("/tmp/x.cs");
+        let p = std::env::temp_dir().join("x.cs");
         assert!(m.breakpoint_at(&p, 7).is_none());
         m.set_breakpoint_condition(&p, 7, Some("i == 3".into()));
         let bp = m.breakpoint_at(&p, 7).unwrap();
@@ -1268,7 +1268,7 @@ mod tests {
     #[test]
     fn set_breakpoint_condition_replaces_existing() {
         let mut m = DapManager::new();
-        let p = PathBuf::from("/tmp/x.cs");
+        let p = std::env::temp_dir().join("x.cs");
         m.toggle_breakpoint(&p, 12); // plain
         m.set_breakpoint_condition(&p, 12, Some("len > 0".into()));
         let bp = m.breakpoint_at(&p, 12).unwrap();
@@ -1290,7 +1290,7 @@ mod tests {
     #[test]
     fn hit_condition_independent_of_condition() {
         let mut m = DapManager::new();
-        let p = PathBuf::from("/tmp/x.cs");
+        let p = std::env::temp_dir().join("x.cs");
         m.set_breakpoint_condition(&p, 3, Some("x > 0".into()));
         m.set_breakpoint_hit_condition(&p, 3, Some("5".into()));
         let bp = m.breakpoint_at(&p, 3).unwrap();
@@ -1302,7 +1302,7 @@ mod tests {
     #[test]
     fn strip_breakpoint_conditions_keeps_breakpoint() {
         let mut m = DapManager::new();
-        let p = PathBuf::from("/tmp/x.cs");
+        let p = std::env::temp_dir().join("x.cs");
         m.set_breakpoint_condition(&p, 9, Some("y == 1".into()));
         m.set_breakpoint_hit_condition(&p, 9, Some("10".into()));
         assert!(m.strip_breakpoint_conditions(&p, 9));
@@ -1316,7 +1316,7 @@ mod tests {
     #[test]
     fn strip_breakpoint_conditions_returns_false_for_missing() {
         let mut m = DapManager::new();
-        let p = PathBuf::from("/tmp/x.cs");
+        let p = std::env::temp_dir().join("x.cs");
         assert!(!m.strip_breakpoint_conditions(&p, 1));
     }
 
