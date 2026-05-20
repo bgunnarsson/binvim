@@ -1538,11 +1538,12 @@ impl super::App {
                     self.status_msg = "debug: running".into();
                 }
                 DapEvent::Output(_) => {}
-                DapEvent::Thread { reason, thread_id } => {
-                    if reason == "exited" {
-                        self.status_msg = format!("debug: thread {} exited", thread_id);
-                    }
-                }
+                // Background threads start and exit constantly in managed
+                // runtimes (.NET, Go, JVM); surfacing each one in the status
+                // line is just noise. The user cares about Stopped /
+                // Continued / Exited (debuggee) / Terminated, not per-thread
+                // lifecycle.
+                DapEvent::Thread { .. } => {}
                 DapEvent::Breakpoint { .. } => {}
                 DapEvent::Exited { exit_code } => {
                     self.status_msg = format!("debug: debuggee exited ({})", exit_code);
