@@ -2046,19 +2046,25 @@ const START_LOGO: &[&str] = &[
 ];
 
 fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
-    let total_w = app.width as usize;
-    // Blank every row so leftover content from a prior frame can't bleed
-    // through. Don't touch the tab-bar row when it's painted above us.
+    // Constrain to the editor rect so the AI side pane (`:claude` /
+    // `:opencode` / `:codex`) and the file-tree pane keep their columns —
+    // the side pane is painted after us, but centering the logo on the
+    // full terminal width pushes it into (or under) those panes.
+    let rect = app.editor_rect();
+    let rows = rect.h as usize;
+    let top = rect.y as usize;
+    let left_off = rect.x as usize;
+    let area_w = rect.w as usize;
     let page_bg = app.config.background_color();
-    let blank: String = " ".repeat(total_w);
+    let blank: String = " ".repeat(area_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16))?;
+        queue!(out, MoveTo(left_off as u16, (row + top) as u16))?;
         if let Some(c) = page_bg {
             queue!(out, SetBackgroundColor(c), Print(&blank))?;
         } else {
-            queue!(out, Clear(ClearType::CurrentLine))?;
+            // Print spaces rather than ClearType::CurrentLine so we don't
+            // wipe the file-tree / side-pane columns to our left and right.
+            queue!(out, Print(&blank))?;
         }
     }
     // User config wins; fall back to the baked-in logo when no override is set.
@@ -2075,22 +2081,19 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
         &configured
     };
     let block_w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
-    if block_w == 0 || block_w > total_w {
+    if block_w == 0 || block_w > area_w {
         return Ok(());
     }
     let block_h = lines.len();
     if block_h > rows {
         return Ok(());
     }
-    let top = (rows.saturating_sub(block_h)) / 2;
+    let logo_top = (rows.saturating_sub(block_h)) / 2;
     let blue = app.config.theme_info();
     for (i, line) in lines.iter().enumerate() {
         let line_w = line.chars().count();
-        let left = (total_w.saturating_sub(line_w)) / 2;
-        queue!(
-            out,
-            MoveTo(left as u16, (top + i + app.buffer_top()) as u16)
-        )?;
+        let left = left_off + (area_w.saturating_sub(line_w)) / 2;
+        queue!(out, MoveTo(left as u16, (top + logo_top + i) as u16))?;
         apply_buf_bg(out, page_bg)?;
         queue!(out, SetForegroundColor(blue), Print(line))?;
         reset_to_buf_bg(out, page_bg)?;
