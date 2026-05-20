@@ -276,6 +276,7 @@ impl super::App {
                 let cur = self.active_side_terminal_idx as i32;
                 let next = ((cur + delta).rem_euclid(n as i32)) as usize;
                 self.active_side_terminal_idx = next;
+                self.side_terminal_selection = None;
             }
             crate::app::TerminalFocus::Bottom => {
                 let n = self.terminals.len();

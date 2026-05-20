@@ -474,21 +474,116 @@ impl super::App {
                 if let Some(idx) = clicked {
                     if idx < self.side_terminals.len() && idx != self.active_side_terminal_idx {
                         self.active_side_terminal_idx = idx;
+                        // Drag selection is scoped to a single tab —
+                        // dropping it on tab switch keeps the highlight
+                        // from leaking into a grid the user didn't drag
+                        // across.
+                        self.side_terminal_selection = None;
                     }
                 }
                 self.terminal_focus = crate::app::TerminalFocus::Side;
                 self.mode = Mode::Terminal;
                 return;
             }
-            // Body: forward to the PTY when the program asked for
-            // mouse tracking; otherwise just consume the event (and
-            // pull focus on a click). Coords are pane-relative,
-            // 1-based to match the xterm mouse protocol.
+            // Body: handle pane-scoped mouse-drag selection first
+            // (binvim's own, not forwarded to the PTY) — the host
+            // terminal's Shift+drag selects the whole window and has
+            // no awareness of where the side pane ends, so the user
+            // needs an inside-pane gesture to grab just the embedded
+            // tool's output. Plain left-drag (no modifier) is the
+            // selection gesture; it's intercepted before the PTY
+            // forward arm below. Click (`Down` → `Up` at same pos)
+            // still reaches the PTY so AI tools' clickable buttons
+            // keep working. Coords below are 0-based grid-local for
+            // selection storage; the xterm forward uses 1-based.
             let content_left = self.side_pane_content_left();
             let body_top = header_row + 1;
             if row >= body_top && col >= content_left {
-                let pane_row = row - body_top + 1;
-                let pane_col = col - content_left + 1;
+                let active_idx = self.active_side_terminal_idx;
+                let (grid_row, grid_col, grid_rows, grid_cols) = {
+                    let mut grow = row - body_top;
+                    let mut gcol = col - content_left;
+                    let (gr, gc) = if let Some(term) = self.active_side_terminal() {
+                        let inner = term.grid();
+                        let g = &inner.handler.grid;
+                        (g.rows, g.cols)
+                    } else {
+                        (0, 0)
+                    };
+                    if gr > 0 {
+                        grow = grow.min(gr - 1);
+                    }
+                    if gc > 0 {
+                        gcol = gcol.min(gc - 1);
+                    }
+                    (grow, gcol, gr, gc)
+                };
+                let _ = (grid_rows, grid_cols);
+                match ev.kind {
+                    MouseEventKind::Drag(MouseButton::Left)
+                        if !ev.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        // Start a fresh selection on the first drag
+                        // sample, or extend an in-flight one. Don't
+                        // forward to the PTY — drag is "ours" for
+                        // selection.
+                        let sel = self.side_terminal_selection.take();
+                        let new_sel = match sel {
+                            Some(mut s) if s.tab_idx == active_idx => {
+                                s.head = (grid_row, grid_col);
+                                s.dragging = true;
+                                s
+                            }
+                            _ => crate::app::SideSelection {
+                                tab_idx: active_idx,
+                                anchor: (grid_row, grid_col),
+                                head: (grid_row, grid_col),
+                                dragging: true,
+                            },
+                        };
+                        self.side_terminal_selection = Some(new_sel);
+                        if !matches!(self.mode, Mode::Terminal) {
+                            self.mode = Mode::Terminal;
+                            self.terminal_focus = crate::app::TerminalFocus::Side;
+                        }
+                        return;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        // If a drag selection just ended, copy the
+                        // covered cells to the system clipboard and
+                        // hold the highlight until the next click.
+                        if let Some(mut s) = self.side_terminal_selection.take() {
+                            if s.tab_idx == active_idx && s.dragging {
+                                s.dragging = false;
+                                let copied = if let Some(term) = self.active_side_terminal() {
+                                    let inner = term.grid();
+                                    crate::app::extract_selection_text(&inner.handler.grid, &s)
+                                } else {
+                                    String::new()
+                                };
+                                self.side_terminal_selection = Some(s);
+                                if !copied.is_empty() {
+                                    super::registers::set_system_clipboard(&copied);
+                                    let n = copied.chars().count();
+                                    self.status_msg = format!("ai: copied {n} chars");
+                                }
+                                return;
+                            }
+                            // Wasn't our drag — put it back so the
+                            // next render still sees it.
+                            self.side_terminal_selection = Some(s);
+                        }
+                    }
+                    MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
+                        // A fresh click drops any held-over selection
+                        // highlight so the user sees an empty pane
+                        // again before the next drag.
+                        self.side_terminal_selection = None;
+                    }
+                    _ => {}
+                }
+                let pane_row = grid_row + 1;
+                let pane_col = grid_col + 1;
                 if let Some(term) = self.active_side_terminal() {
                     let mouse = term.mouse_state();
                     if mouse.any {

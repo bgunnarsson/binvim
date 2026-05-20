@@ -54,7 +54,9 @@ mod visual;
 mod windows;
 
 pub use health::{DiagnosticsCounts, HealthSnapshot};
-pub use side_terminal_glue::{SideTerminal, TerminalFocus, side_terminal_loading};
+pub use side_terminal_glue::{
+    SideSelection, SideTerminal, TerminalFocus, extract_selection_text, side_terminal_loading,
+};
 pub use state::{
     BufferStash, CompletionState, FindRecord, FoldRange, HOVER_MAX_HEIGHT, HoverCodeBlock,
     HoverLine, HoverState, LastEdit, Register, WhichKeyState, YankHighlight,
@@ -590,6 +592,12 @@ pub struct App {
     /// frame the strip is visible, consumed by mouse-down in the
     /// header row to switch tabs.
     pub side_terminal_tab_hitboxes: std::cell::Cell<Vec<(usize, u16, u16)>>,
+    /// Pane-scoped mouse-drag text selection in the active side
+    /// terminal tab. Drives both the selection-highlight overlay
+    /// (`render.rs::draw_side_terminal_pane`) and the clipboard
+    /// copy on `Up`. Cleared on tab switch, pane close, resize, and
+    /// any non-drag mouse-down that lands in the pane.
+    pub side_terminal_selection: Option<SideSelection>,
     /// Which terminal pane consumes keystrokes when `Mode::Terminal`
     /// is active. Set whenever focus moves between the bottom and
     /// side panes; resets to `Bottom` after `close_side_terminal`
@@ -880,6 +888,7 @@ impl App {
             active_side_terminal_idx: 0,
             side_terminal_pane_open: false,
             side_terminal_tab_hitboxes: std::cell::Cell::new(Vec::new()),
+            side_terminal_selection: None,
             terminal_focus: TerminalFocus::Bottom,
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),

@@ -66,6 +66,97 @@ pub enum TerminalFocus {
     Side,
 }
 
+/// Mouse-drag text selection scoped to a single side-terminal tab.
+/// The host terminal's native Shift+drag selects across the whole
+/// window with no awareness of binvim's panes — this struct + the
+/// drag handling in `app/input.rs` lets the user drag inside the
+/// side pane and have binvim select just within the embedded
+/// terminal's grid, then copy to the system clipboard on release.
+///
+/// Coords are 0-based pane-local grid cells (row 0 = first row of
+/// the terminal body, col 0 = first column of the grid). Selection
+/// is stream-style — from `anchor` to `head` walks across rows like
+/// a text-editor selection, not a rectangular block.
+#[derive(Copy, Clone, Debug)]
+pub struct SideSelection {
+    /// The tab index this selection belongs to. The renderer + the
+    /// "copy on release" path both gate on this matching the active
+    /// tab so switching tabs mid-drag doesn't leak a selection into
+    /// the wrong grid.
+    pub tab_idx: usize,
+    pub anchor: (usize, usize),
+    pub head: (usize, usize),
+    /// True while the left button is held down — false after release
+    /// so subsequent renders still show the highlight but a fresh
+    /// `Down` knows to clear-and-restart rather than extend.
+    pub dragging: bool,
+}
+
+impl SideSelection {
+    /// `(start, end)` in row-major order so callers can iterate
+    /// without worrying which way the user dragged.
+    pub fn ordered(&self) -> ((usize, usize), (usize, usize)) {
+        if self.anchor <= self.head {
+            (self.anchor, self.head)
+        } else {
+            (self.head, self.anchor)
+        }
+    }
+
+    /// True when `(row, col)` falls inside the stream-style range.
+    /// Matches a text editor's notion of selection: same-row → a
+    /// column span; multi-row → from start to end-of-line, full
+    /// middle rows, then start-of-line to end col.
+    pub fn contains(&self, row: usize, col: usize) -> bool {
+        let (a, b) = self.ordered();
+        if row < a.0 || row > b.0 {
+            return false;
+        }
+        if a.0 == b.0 {
+            col >= a.1 && col <= b.1
+        } else if row == a.0 {
+            col >= a.1
+        } else if row == b.0 {
+            col <= b.1
+        } else {
+            true
+        }
+    }
+}
+
+/// Pull text out of a terminal grid for the cells inside `sel`.
+/// Trailing whitespace is trimmed per row (matches what the user
+/// sees vs. what's actually in the cells — TUIs pad rows with blanks
+/// out to the full width). Multi-row selections join with `\n`.
+pub fn extract_selection_text(grid: &crate::terminal::Grid, sel: &SideSelection) -> String {
+    let (start, end) = sel.ordered();
+    let rows = grid.cells.len();
+    if rows == 0 {
+        return String::new();
+    }
+    let last_row = (rows - 1).min(end.0);
+    let mut out = String::new();
+    for row in start.0.min(last_row)..=last_row {
+        let row_cells = &grid.cells[row];
+        let cols = row_cells.len();
+        let (lo, hi) = if row == start.0 && row == end.0 {
+            (start.1.min(cols), (end.1 + 1).min(cols))
+        } else if row == start.0 {
+            (start.1.min(cols), cols)
+        } else if row == end.0 {
+            (0, (end.1 + 1).min(cols))
+        } else {
+            (0, cols)
+        };
+        let line: String = row_cells[lo..hi].iter().map(|c| c.ch).collect();
+        out.push_str(line.trim_end());
+        if row < last_row {
+            out.push('\n');
+        }
+    }
+    out
+}
+
 impl super::App {
     /// Open (or focus) the right-side terminal pane and run `command`
     /// inside a freshly-spawned interactive shell tab labelled
@@ -294,6 +385,10 @@ impl super::App {
             .active_side_terminal_idx
             .min(self.side_terminals.len() - 1);
         self.side_terminals.remove(idx);
+        // Drop any drag selection — the grid it was anchored to is
+        // either gone (last tab closed) or now belongs to a different
+        // tab (index shift), so the coords can't be trusted.
+        self.side_terminal_selection = None;
         if self.side_terminals.is_empty() {
             self.active_side_terminal_idx = 0;
             self.side_terminal_pane_open = false;
@@ -311,7 +406,7 @@ impl super::App {
     /// PTY (SIGWINCH). Same rationale as `resize_all_terminals`.
     /// Uses `side_pane_content_cols()` so the reserved border column
     /// isn't double-counted into the child's reported width.
-    pub(super) fn resize_all_side_terminals(&self) {
+    pub(super) fn resize_all_side_terminals(&mut self) {
         if self.side_terminals.is_empty() {
             return;
         }
@@ -320,6 +415,10 @@ impl super::App {
         for s in &self.side_terminals {
             let _ = s.terminal.resize(rows, cols);
         }
+        // Grid coords just shifted under any in-flight drag selection;
+        // drop it rather than partially-highlight cells that no
+        // longer exist where the user clicked.
+        self.side_terminal_selection = None;
     }
 
     /// Drain pending PTY output into every side terminal's grid.

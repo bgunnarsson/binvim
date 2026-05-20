@@ -3015,15 +3015,28 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let grid = &inner.handler.grid;
     let grid_rows = grid.rows.min(body_rows);
     let grid_cols = grid.cols.min(content_cols);
+    // Mouse-drag selection — paint the covered cells with inverted
+    // SGR so the user sees what they're grabbing before release
+    // copies it to the clipboard. Gated on `tab_idx` so switching
+    // tabs mid-drag doesn't leak the highlight into the wrong grid.
+    let sel = app
+        .side_terminal_selection
+        .as_ref()
+        .filter(|s| s.tab_idx == app.active_side_terminal_idx);
     for row in 0..body_rows {
         let screen_y = body_top + row as u16;
         queue!(out, MoveTo(content_left, screen_y))?;
         if row < grid_rows {
             let mut painted = 0usize;
             for col in 0..grid_cols {
-                let cell = grid.cells[row][col];
+                let mut cell = grid.cells[row][col];
                 if cell.ch == '\0' {
                     continue;
+                }
+                if let Some(s) = sel {
+                    if s.contains(row, col) {
+                        cell.reverse = !cell.reverse;
+                    }
                 }
                 paint_terminal_cell(out, cell)?;
                 painted += 1;
