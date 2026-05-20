@@ -388,9 +388,27 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       codesigning so Gatekeeper doesn't trip on first launch. `install.sh`
       now resolves `Darwin/{arm64,x86_64}` so the `curl … | sh` path works
       on Mac too.
-- [ ] **Windows.** A real undertaking — terminal, clipboard, file paths, child-process plumbing all need
-      audit. Probably ConPTY + `arboard` Windows backend + `\\?\` long-path handling. Consider only after the
-      editor is feature-complete enough to be worth the porting cost. **considering**
+- [x] **Windows.** Shipped in 0.4.7. `paths` module centralising
+      `%APPDATA%` / `%LOCALAPPDATA%` / `%USERPROFILE%` lookups (sessions, undo,
+      crash, recents, config, spell wordlist all relocate). PATH walking via
+      `std::env::split_paths` with `.exe` / `.cmd` / `.bat` synthesis for bare
+      LSP / DAP / formatter names. Tilde + path construction via `PathBuf::join`.
+      `:terminal` falls back to `$COMSPEC` / `cmd.exe`. `.editorconfig`
+      `end_of_line = lf | crlf` parsed + honoured on save with CRLF round-trip
+      (buffer detects on load, rope stays LF-normalised). CI matrix expanded
+      to ubuntu + macos + windows. Release pipeline gained
+      `x86_64-pc-windows-msvc` zip + cosign signing. `install.ps1` mirrors
+      `install.sh`'s shape. Scoop bucket via `scoop/binvim.json` in this repo.
+      Known limitations: `tree-sitter-scss 1.0.0` has an MSVC-incompatible
+      flag (fixed on upstream master, no release yet — gated to fall back to
+      CSS grammar on MSVC); task runner + AI side pane still pass POSIX-shell
+      flags so they only work where a POSIX shell is on `$SHELL`.
+- [ ] **winget submission.** Three YAML manifests (installer + locale +
+      version) submitted as a PR to `microsoft/winget-pkgs`. Requires forking
+      under bgunnarsson — winget reviewers do an automated validation pass +
+      a human content review before the package goes live. Deferred until
+      after manual on-device verification of the 0.4.7 zip on a real Windows
+      machine. **planned**
 - [x] **Nix flake.** `flake.nix` at the repo root: `rustPlatform.buildRustPackage` with the committed
       `Cargo.lock` for vendoring, builds both `binvim` and `binvim-install` from one derivation. Outputs:
       `packages.default` (the editor), `apps.binvim` / `apps.binvim-install` (so `nix run
