@@ -3,18 +3,27 @@
 //! `$HOME` directly — `$HOME` is unset on Windows, where the right
 //! roots are `%USERPROFILE%`, `%APPDATA%`, and `%LOCALAPPDATA%`.
 //!
-//! The `dirs` crate handles the per-platform conventions; this module
-//! just scopes each root under our `binvim` subdirectory and exposes
-//! it as a single function call.
+//! macOS uses the XDG layout (`~/.config`, `~/.cache`, `~/.local/share`)
+//! rather than `~/Library/Application Support` / `~/Library/Caches`.
+//! That mirrors what almost every Rust CLI does (ripgrep, fd, bat,
+//! zoxide, …) and — more importantly here — matches what binvim
+//! itself used pre-Windows-port, so existing macOS users don't lose
+//! their configs / sessions / undo history on upgrade. The `dirs`
+//! crate's macOS defaults are aimed at GUI apps; for a TUI editor
+//! they're the wrong call.
 //!
 //! ## Per platform
 //!
-//! | function       | Linux                    | macOS                              | Windows                                 |
-//! |----------------|--------------------------|------------------------------------|-----------------------------------------|
-//! | `home_dir()`   | `$HOME`                  | `$HOME`                            | `%USERPROFILE%`                         |
-//! | `config_dir()` | `~/.config/binvim/`      | `~/Library/Application Support/binvim/` | `%APPDATA%\binvim\`                 |
-//! | `cache_dir()`  | `~/.cache/binvim/`       | `~/Library/Caches/binvim/`         | `%LOCALAPPDATA%\binvim\`                |
-//! | `data_dir()`   | `~/.local/share/binvim/` | `~/Library/Application Support/binvim/` | `%APPDATA%\binvim\`                 |
+//! | function       | Linux                    | macOS                    | Windows                  |
+//! |----------------|--------------------------|--------------------------|--------------------------|
+//! | `home_dir()`   | `$HOME`                  | `$HOME`                  | `%USERPROFILE%`          |
+//! | `config_dir()` | `~/.config/binvim/`      | `~/.config/binvim/`      | `%APPDATA%\binvim\`      |
+//! | `cache_dir()`  | `~/.cache/binvim/`       | `~/.cache/binvim/`       | `%LOCALAPPDATA%\binvim\` |
+//! | `data_dir()`   | `~/.local/share/binvim/` | `~/.local/share/binvim/` | `%APPDATA%\binvim\`      |
+//!
+//! `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` / `XDG_DATA_HOME` are honoured
+//! on both Linux and macOS so a user who's set them globally gets the
+//! same routing on both platforms.
 //!
 //! All four return `None` when the platform can't resolve the parent
 //! root (unset / unreadable env vars). Callers fall back to skipping
@@ -37,24 +46,57 @@ pub fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
-/// `~/.config/binvim/` on Linux, `~/Library/Application Support/binvim/`
-/// on macOS, `%APPDATA%\binvim\` on Windows. Holds `config.toml`.
+/// `~/.config/binvim/` on Unix (Linux and macOS, both honour
+/// `XDG_CONFIG_HOME`), `%APPDATA%\binvim\` on Windows. Holds
+/// `config.toml`.
 pub fn config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join(APP))
+    #[cfg(unix)]
+    {
+        xdg_or_home("XDG_CONFIG_HOME", ".config")
+    }
+    #[cfg(not(unix))]
+    {
+        dirs::config_dir().map(|d| d.join(APP))
+    }
 }
 
-/// `~/.cache/binvim/` on Linux, `~/Library/Caches/binvim/` on macOS,
-/// `%LOCALAPPDATA%\binvim\` on Windows. Holds sessions, undo history,
-/// crash logs, and recents.
+/// `~/.cache/binvim/` on Unix (Linux and macOS, both honour
+/// `XDG_CACHE_HOME`), `%LOCALAPPDATA%\binvim\` on Windows. Holds
+/// sessions, undo history, crash logs, and recents.
 pub fn cache_dir() -> Option<PathBuf> {
-    dirs::cache_dir().map(|d| d.join(APP))
+    #[cfg(unix)]
+    {
+        xdg_or_home("XDG_CACHE_HOME", ".cache")
+    }
+    #[cfg(not(unix))]
+    {
+        dirs::cache_dir().map(|d| d.join(APP))
+    }
 }
 
-/// `~/.local/share/binvim/` on Linux; the Application Support path on
-/// macOS; `%APPDATA%\binvim\` on Windows. Holds the spell wordlist
-/// override.
+/// `~/.local/share/binvim/` on Unix (Linux and macOS, both honour
+/// `XDG_DATA_HOME`), `%APPDATA%\binvim\` on Windows. Holds the spell
+/// wordlist override.
 pub fn data_dir() -> Option<PathBuf> {
-    dirs::data_dir().map(|d| d.join(APP))
+    #[cfg(unix)]
+    {
+        xdg_or_home("XDG_DATA_HOME", ".local/share")
+    }
+    #[cfg(not(unix))]
+    {
+        dirs::data_dir().map(|d| d.join(APP))
+    }
+}
+
+/// XDG-style resolution: honour `$var` if set + non-empty, otherwise
+/// fall back to `$HOME/<sub>`. Returns the path with `binvim` appended
+/// so call sites get the per-app subdirectory in one shot.
+#[cfg(unix)]
+fn xdg_or_home(var: &str, sub: &str) -> Option<PathBuf> {
+    if let Some(v) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(v).join(APP));
+    }
+    home_dir().map(|h| h.join(sub).join(APP))
 }
 
 /// Resolve `~/sub/path` against `home_dir()`. Returns `None` when the
