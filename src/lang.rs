@@ -314,8 +314,14 @@ impl Lang {
             Lang::Css => tree_sitter_css::LANGUAGE.into(),
             // tree-sitter-scss still exposes the old-style `language()`
             // function (returns `Language` directly) rather than the
-            // newer `LANGUAGE: LanguageFn` constant.
+            // newer `LANGUAGE: LanguageFn` constant. On Windows-MSVC
+            // the crate's build.rs passes a GCC-only flag that cl.exe
+            // rejects (see the Cargo.toml comment); fall back to the
+            // plain CSS grammar there until upstream gates it.
+            #[cfg(not(target_env = "msvc"))]
             Lang::Scss => tree_sitter_scss::language(),
+            #[cfg(target_env = "msvc")]
+            Lang::Scss => tree_sitter_css::LANGUAGE.into(),
             Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
             Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
             Lang::Razor => tree_sitter_razor::LANGUAGE.into(),
@@ -446,7 +452,13 @@ impl Lang {
             // `@function` / `@return`, control-flow at-rules, `%placeholder`,
             // `#{}` interpolation. Later patterns win, so the SCSS captures
             // override the generic CSS ones where they collide.
+            // On Windows-MSVC the SCSS grammar isn't linked (see Cargo.toml);
+            // the SCSS overlay's node names don't exist in the CSS grammar,
+            // so we drop it there.
+            #[cfg(not(target_env = "msvc"))]
             Lang::Scss => format!("{CSS_QUERY_OVERRIDE}\n{SCSS_QUERY_OVERLAY}"),
+            #[cfg(target_env = "msvc")]
+            Lang::Scss => CSS_QUERY_OVERRIDE.into(),
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
             Lang::CSharp => tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(),
             // Razor's grammar extends C#, so the bundled C# query already
