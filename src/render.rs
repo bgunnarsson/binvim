@@ -6162,6 +6162,7 @@ fn lang_icon(lang: Lang) -> char {
         Lang::Go => '\u{e627}',
         Lang::Html => '\u{e60e}',
         Lang::Css => '\u{e749}',
+        Lang::Scss => '\u{e603}',
         Lang::Markdown => '\u{e609}',
         // Nerd Fonts v3 dropped `\u{f81a}` (the old "C#" glyph from v2),
         // so any user on a recent font (Hack Nerd Font, JetBrainsMono
@@ -6202,6 +6203,7 @@ fn lang_name(lang: Lang) -> &'static str {
         Lang::Go => "go",
         Lang::Html => "html",
         Lang::Css => "css",
+        Lang::Scss => "scss",
         Lang::Markdown => "markdown",
         Lang::CSharp => "csharp",
         Lang::Razor => "razor",

@@ -15,6 +15,20 @@ pub enum Lang {
     Go,
     Html,
     Css,
+    /// `.scss` / `.sass` — tree-sitter-scss (a superset grammar that
+    /// forks tree-sitter-css and adds the SCSS-only constructs:
+    /// `$variables`, `@mixin` / `@include`, `@function` / `@return`,
+    /// `@if` / `@for` / `@each` / `@while`, `@use` / `@forward` /
+    /// `@extend`, the `&` parent-selector, `%placeholder`, `#{}`
+    /// interpolation, and `//` line comments). Plain CSS is a subset
+    /// so the grammar parses `.css` too — we keep that on
+    /// tree-sitter-css for now to preserve the existing CSS query
+    /// tuning, but `.scss` / `.sass` route here. Indented-syntax
+    /// `.sass` files only highlight on the lines the SCSS grammar's
+    /// error recovery can salvage (no braces / semicolons isn't a
+    /// supported shape) — there is no maintained tree-sitter grammar
+    /// for indented Sass.
+    Scss,
     Markdown,
     CSharp,
     /// Razor (`.cshtml` / `.razor`) — tree-sitter-razor extends the C#
@@ -92,7 +106,8 @@ impl Lang {
                 "go" => return Some(Lang::Go),
                 "html" | "htm" => return Some(Lang::Html),
                 "cshtml" | "razor" => return Some(Lang::Razor),
-                "css" | "scss" | "less" => return Some(Lang::Css),
+                "css" | "less" => return Some(Lang::Css),
+                "scss" | "sass" => return Some(Lang::Scss),
                 "md" | "markdown" => return Some(Lang::Markdown),
                 "cs" => return Some(Lang::CSharp),
                 "sh" | "bash" | "zsh" | "ksh" => return Some(Lang::Bash),
@@ -198,6 +213,7 @@ impl Lang {
             | Lang::Svelte
             | Lang::Zig
             | Lang::Kotlin
+            | Lang::Scss
             | Lang::Sql => Some("//"),
             Lang::Python
             | Lang::Bash
@@ -258,7 +274,8 @@ impl Lang {
             "go" | "golang" => Some(Lang::Go),
             "html" | "htm" | "xhtml" => Some(Lang::Html),
             "cshtml" | "razor" => Some(Lang::Razor),
-            "css" | "scss" | "sass" | "less" => Some(Lang::Css),
+            "css" | "less" => Some(Lang::Css),
+            "scss" | "sass" => Some(Lang::Scss),
             "markdown" | "md" => Some(Lang::Markdown),
             "csharp" | "cs" | "c#" => Some(Lang::CSharp),
             "bash" | "sh" | "shell" | "zsh" | "ksh" => Some(Lang::Bash),
@@ -295,6 +312,10 @@ impl Lang {
             Lang::Go => tree_sitter_go::LANGUAGE.into(),
             Lang::Html => tree_sitter_html::LANGUAGE.into(),
             Lang::Css => tree_sitter_css::LANGUAGE.into(),
+            // tree-sitter-scss still exposes the old-style `language()`
+            // function (returns `Language` directly) rather than the
+            // newer `LANGUAGE: LanguageFn` constant.
+            Lang::Scss => tree_sitter_scss::language(),
             Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
             Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
             Lang::Razor => tree_sitter_razor::LANGUAGE.into(),
@@ -418,6 +439,14 @@ impl Lang {
             // (Sapphire), pseudo-states stay @attribute, and property
             // names keep the original Lavender @property tone.
             Lang::Css => CSS_QUERY_OVERRIDE.into(),
+            // SCSS shares the CSS node names (it's a CSS-grammar fork),
+            // so the CSS override paints all the selectors / properties
+            // / at-rules the same way. The SCSS overlay appends the
+            // SCSS-only constructs — `$variable`, `@mixin` / `@include`,
+            // `@function` / `@return`, control-flow at-rules, `%placeholder`,
+            // `#{}` interpolation. Later patterns win, so the SCSS captures
+            // override the generic CSS ones where they collide.
+            Lang::Scss => format!("{CSS_QUERY_OVERRIDE}\n{SCSS_QUERY_OVERLAY}"),
             Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
             Lang::CSharp => tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(),
             // Razor's grammar extends C#, so the bundled C# query already
@@ -555,6 +584,90 @@ const CSS_QUERY_OVERRIDE: &str = r#"
 (unit) @type
 (plain_value) @constant
 "#;
+
+/// SCSS-only captures, layered on top of `CSS_QUERY_OVERRIDE` (which
+/// already handles every node SCSS inherits from tree-sitter-css —
+/// selectors, properties, at-rules, units, colour values, …). This
+/// overlay adds the SCSS-specific constructs the CSS grammar has no
+/// view of: `$variable` tokens, the `@mixin` / `@include` /
+/// `@function` / `@return` directive family, control-flow at-rules
+/// (`@if` / `@else` / `@for` / `@each` / `@while`), the `%placeholder`
+/// selector, `#{}` interpolation, and the `//` line comments SCSS
+/// adds on top of CSS's `/* … */` only model. Mixin / include /
+/// function names ride the `@function` capture (Blue) to match the
+/// way CSS function calls (`rgb(`, `calc(`) already render.
+const SCSS_QUERY_OVERLAY: &str = r##"
+; `//` line comments — SCSS extends CSS with these. The grammar
+; tags them `js_comment` (it ported the JS-style comment lexer);
+; route them to the same @comment tone as the `/* … */` block
+; comments the CSS grammar already covers.
+(js_comment) @comment
+
+; `$foo` variable tokens — both at the declaration site
+; (`$primary: #8985ff;`) and at every reference.
+(variable) @variable
+
+; `%placeholder` selectors — read as a class so they sit alongside
+; `.foo` (also @constructor) rather than fading into plain text.
+(placeholder) @constructor
+
+; `#{expr}` interpolation — paint the `#{` / `}` brackets with the
+; operator tone, the way JSX `{expr}` braces are tinted, so the
+; interpolation reads as syntax rather than literal characters.
+(interpolation "#{" @operator)
+(interpolation "}" @operator)
+
+; SCSS-only at-rules. CSS_QUERY_OVERRIDE already lists the CSS
+; subset (`@media`, `@import`, …); these are the directives the
+; SCSS grammar adds on top.
+[
+  "@mixin"
+  "@include"
+  "@function"
+  "@return"
+  "@use"
+  "@forward"
+  "@extend"
+  "@at-root"
+  "@if"
+  "@else"
+  "@for"
+  "@each"
+  "@while"
+  "@debug"
+  "@warn"
+  "@error"
+  "if"
+  "from"
+  "through"
+  "in"
+] @keyword
+
+; Mixin / function / include identifiers — paint them as functions
+; so `@mixin card(...)` and `@include card(...)` render their name
+; in the same Blue tone as `rgb(` / `calc(` calls.
+(mixin_statement
+  name: (identifier) @function)
+
+(function_statement
+  name: (identifier) @function)
+
+(include_statement
+  (identifier) @function)
+
+; Default / actual values inside `(parameter)` aren't separately
+; addressable, so we tag the parameter variable directly. The
+; (variable) @variable rule above already covers it but adding
+; @variable.parameter as a later pattern lets a theme distinguish
+; the parameter site from a free-floating `$var` reference if it
+; wants to. Themes that don't bind @variable.parameter inherit the
+; @variable colour automatically.
+(parameter
+  (variable) @variable.parameter)
+
+(arguments
+  (variable) @variable.parameter)
+"##;
 
 const JSX_OVERLAY_QUERY: &str = r#"
 ; HTML-style tag names (lowercase) — open + close + self-closing.
@@ -2026,6 +2139,56 @@ export function Page() {
         assert_ne!(id_c, property_c, "id and property should differ");
     }
 
+    /// Regression: `.scss` files were routed to tree-sitter-css, whose
+    /// grammar doesn't recognise `$variable`, `@mixin`, `@include`, the
+    /// `&` parent selector, or nested rule sets — so a realistic SCSS
+    /// file came out half-coloured at best. With tree-sitter-scss
+    /// wired up for `Lang::Scss`, every SCSS-only construct should
+    /// produce coloured bytes.
+    #[test]
+    fn scss_specific_constructs_get_coloured() {
+        let cfg = Config::default();
+        let src = "$primary: #8985ff;\n\
+                   @mixin card($pad: 1rem) {\n  padding: $pad;\n}\n\
+                   .app {\n  .header { color: $primary; }\n  \
+                   .card { @include card(1.25rem); &.featured { border: 2px solid $primary; } }\n}\n";
+        let colors = compute_byte_colors(Lang::Scss, src, &cfg).expect("scss highlight cache");
+        let var_decl = src.find("$primary").expect("$primary in source");
+        let mixin_kw = src.find("@mixin").expect("@mixin in source");
+        let mixin_name = src.find("card(").expect("mixin name in source");
+        let include_kw = src.find("@include").expect("@include in source");
+        let nesting_idx = src.find("&.featured").expect("& in source");
+        assert!(colors[var_decl].is_some(), "$primary should be coloured");
+        assert!(
+            colors[mixin_kw].is_some(),
+            "@mixin keyword should be coloured"
+        );
+        assert!(
+            colors[mixin_name].is_some(),
+            "mixin name `card` should be coloured"
+        );
+        assert!(
+            colors[include_kw].is_some(),
+            "@include keyword should be coloured"
+        );
+        assert!(
+            colors[nesting_idx].is_some(),
+            "`&` nesting selector should be coloured"
+        );
+    }
+
+    /// Sanity check that `Lang::detect` routes the SCSS-family extensions
+    /// to `Lang::Scss` (not the older `Lang::Css` lump). Easy to break by
+    /// dropping `"scss"` back into the CSS arm during a refactor.
+    #[test]
+    fn scss_extensions_detect_as_scss() {
+        use std::path::Path;
+        assert_eq!(Lang::detect(Path::new("a.scss")), Some(Lang::Scss));
+        assert_eq!(Lang::detect(Path::new("b.sass")), Some(Lang::Scss));
+        assert_eq!(Lang::detect(Path::new("c.css")), Some(Lang::Css));
+        assert_eq!(Lang::detect(Path::new("d.less")), Some(Lang::Css));
+    }
+
     /// Inline `<style>` block inside HTML — the CSS property names
     /// should be coloured by the CSS sub-highlighter, not left as
     /// raw_text by tree-sitter-html.
@@ -2140,6 +2303,7 @@ export function Page() {
     fuzz_lang!(fuzz_go, Lang::Go);
     fuzz_lang!(fuzz_html, Lang::Html);
     fuzz_lang!(fuzz_css, Lang::Css);
+    fuzz_lang!(fuzz_scss, Lang::Scss);
     fuzz_lang!(fuzz_markdown, Lang::Markdown);
     fuzz_lang!(fuzz_csharp, Lang::CSharp);
     fuzz_lang!(fuzz_razor, Lang::Razor);
