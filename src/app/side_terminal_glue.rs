@@ -204,7 +204,7 @@ impl super::App {
         // interpreter. `-c "exec {command}"` runs the launcher and
         // replaces the shell process with the AI tool, so the user
         // never sees a residual shell prompt.
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let shell = crate::terminal::default_shell();
         let launcher = format!("exec {command}");
         // Compute the `@<path> ` prefix on the spawn path only — the
         // re-focus branch above returns early so an ongoing

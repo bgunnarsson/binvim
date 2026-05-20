@@ -856,14 +856,14 @@ pub struct TerminalInner {
 }
 
 impl Terminal {
-    /// Spawn `shell` (default `$SHELL`, falling back to `/bin/sh`)
-    /// in a `rows × cols` PTY. The reader thread starts immediately;
-    /// callers should drive `drain()` on each frame so the grid
-    /// reflects the latest output.
+    /// Spawn `shell` (default `$SHELL`, falling back to the platform
+    /// default) in a `rows × cols` PTY. The reader thread starts
+    /// immediately; callers should drive `drain()` on each frame so
+    /// the grid reflects the latest output.
     pub fn spawn(rows: u16, cols: u16, shell: Option<&str>) -> Result<Self> {
         let shell_cmd = match shell {
             Some(s) => s.to_string(),
-            None => std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
+            None => default_shell(),
         };
         Self::spawn_program(rows, cols, &shell_cmd, &[])
     }
@@ -1122,6 +1122,25 @@ impl TerminalInner {
     }
     pub fn cursor(&self) -> (usize, usize) {
         (self.handler.cur_row, self.handler.cur_col)
+    }
+}
+
+/// The shell to spawn when no override is provided. Honours `$SHELL`
+/// first; falls back to the platform's canonical login shell —
+/// `/bin/sh` on Unix, `$COMSPEC` (or `cmd.exe`) on Windows. Callers
+/// that need POSIX-shell semantics (`-l -i -c`) should be aware that
+/// Windows' `cmd.exe` uses a different flag dialect (`/C`); that
+/// translation is out of scope for v1 of the Windows port.
+pub fn default_shell() -> String {
+    if let Ok(s) = std::env::var("SHELL") {
+        if !s.is_empty() {
+            return s;
+        }
+    }
+    if cfg!(windows) {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())
+    } else {
+        "/bin/sh".into()
     }
 }
 

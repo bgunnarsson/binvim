@@ -129,7 +129,7 @@ impl super::App {
         // Node script) and the resulting shell `exec`s into the task
         // program. The shell wrapper inherits cwd via env::set_current_dir
         // before the spawn, so the task runs from `task.cwd`.
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+        let shell = crate::terminal::default_shell();
         // Push the task's working directory into the spawn via a `cd`
         // prefix on the shell command. Cleaner than mutating
         // std::env::current_dir() (which is process-global) — the
