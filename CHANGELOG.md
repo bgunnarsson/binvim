@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.4.8]
+## [0.4.8] - 2026-05-25
 
 ### Added
 - **`:update` command.** A new in-editor overlay that reuses the
