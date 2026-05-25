@@ -303,6 +303,26 @@ fn print_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) {
                     let_color(SUBTLE, &format!("     targeting: {targets}\n"));
                 }
             }
+            // Update / NotInstalled are produced by `build_update_plan`, which
+            // the CLI doesn't drive (it's install-only); handled for
+            // exhaustiveness and in case the CLI grows an update mode.
+            Choice::Update(inst) => {
+                let_color(TEAL, " ↑ ");
+                print!("{}", item.tool.label);
+                let_color(SUBTLE, &format!("  [{}]  ", item.tool.role.tag()));
+                print!("{}", inst.upgrade_display());
+                let_color(SUBTLE, &format!("   ({used})"));
+                println!();
+            }
+            Choice::NotInstalled => {
+                let_color(SUBTLE, " · ");
+                print!("{}", item.tool.label);
+                let_color(
+                    SUBTLE,
+                    &format!("  [{}] — not installed", item.tool.role.tag()),
+                );
+                println!();
+            }
             Choice::Manual(msg) => {
                 let_color(YELLOW, " ! ");
                 print!("{}", item.tool.label);
@@ -355,6 +375,9 @@ fn print_summary(s: &Summary) {
     println!("Summary:");
     let_color(GREEN, &format!("  {} installed\n", s.installed));
     let_color(SUBTLE, &format!("  {} already present\n", s.skipped));
+    if s.not_installed > 0 {
+        let_color(SUBTLE, &format!("  {} not installed\n", s.not_installed));
+    }
     if s.manual > 0 {
         let_color(YELLOW, &format!("  {} manual\n", s.manual));
     }

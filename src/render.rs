@@ -1566,12 +1566,8 @@ fn picker_layout(app: &App) -> PickerLayout {
     // Bias slightly above centre so the popup doesn't visually fight the
     // status line.
     let bottom_chrome = 2;
-    let top = rect.y as usize
-        + (area_h
-            .saturating_sub(bottom_chrome)
-            .saturating_sub(box_h)
-            / 2)
-        .max(0);
+    let top =
+        rect.y as usize + (area_h.saturating_sub(bottom_chrome).saturating_sub(box_h) / 2).max(0);
 
     let prompt_row = top + 2;
     let footer_row = top + box_h - 2;
@@ -2212,7 +2208,7 @@ const INSTALL_BANNER: &[&str] = &[
 
 fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
     use crate::app::installer::{
-        InstallerStage, bundle_picker_items, node_picker_items, plan_rows,
+        InstallerKind, InstallerStage, bundle_picker_items, node_picker_items, plan_rows,
     };
 
     let Some(state) = app.installer.as_ref() else {
@@ -2275,7 +2271,10 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
         InstallerStage::Bundles | InstallerStage::NodeVersions => {
             "j/k move · Space toggle · a all · n none · Enter confirm · q quit"
         }
-        InstallerStage::Plan => "y install · n back · q quit",
+        InstallerStage::Plan => match state.kind {
+            InstallerKind::Install => "y install · n back · q quit",
+            InstallerKind::Update => "y update · n back · q quit",
+        },
     };
     queue!(out, MoveTo(left as u16, cursor_y as u16))?;
     apply_buf_bg(out, page_bg)?;
@@ -2437,6 +2436,7 @@ fn paint_plan_rows(
             PlanRowColor::Teal => p.teal,
             PlanRowColor::Yellow => p.yellow,
             PlanRowColor::Red => p.red,
+            PlanRowColor::Subtle => p.overlay0,
         };
         queue!(
             out,

@@ -81,6 +81,10 @@ pub enum ExCommand {
     /// then suspends the editor lazygit-style and runs the installs
     /// against the shared `binvim::install` catalog.
     Install,
+    /// `:update` — same overlay as `:install`, but the plan only upgrades
+    /// tools already on `$PATH` (to the catalog's pinned / newest versions);
+    /// tools that aren't installed are left for `:install`.
+    Update,
     /// `:claude` / `:codex` / `:opencode` — open (or focus) the
     /// right-side AI-assistant terminal pane and start the named
     /// tool inside a fresh shell tab. Re-running the same command
@@ -337,6 +341,7 @@ pub fn parse(line: &str) -> ExCommand {
         "tasklast" | "trun" => ExCommand::TaskLast,
         "lazygit" | "lg" => ExCommand::Lazygit,
         "install" | "installer" => ExCommand::Install,
+        "update" => ExCommand::Update,
         "claude" => ExCommand::AiTool(AiTool::Claude),
         "codex" => ExCommand::AiTool(AiTool::Codex),
         "opencode" => ExCommand::AiTool(AiTool::Opencode),

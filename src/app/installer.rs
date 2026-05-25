@@ -1,4 +1,8 @@
-//! `:install` — in-editor wrapper around `binvim::install`.
+//! `:install` / `:update` — in-editor wrapper around `binvim::install`.
+//!
+//! Both commands share this overlay; `InstallerKind` selects the plan
+//! builder and wording. `:install` installs what's missing; `:update`
+//! upgrades tools already on `$PATH` (and leaves the rest for `:install`).
 //!
 //! Full-screen overlay that mirrors the `binvim-install` CLI:
 //!   1. **Bundles** — multi-select checkbox of every language /
@@ -18,8 +22,8 @@
 
 use crate::mode::Mode;
 use binvim::install::{
-    BUNDLES, Choice, NodeVersion, PlanItem, build_plan, bundle_summary, detect_managers,
-    discover_node_versions, plan_needs_node, run_plan,
+    BUNDLES, Choice, NodeVersion, PlanItem, build_plan, build_update_plan, bundle_summary,
+    detect_managers, discover_node_versions, plan_needs_node, run_plan,
 };
 
 /// State machine for the overlay. `App.installer` is `Some` while the
@@ -30,6 +34,26 @@ pub enum InstallerStage {
     Bundles,
     NodeVersions,
     Plan,
+}
+
+/// Whether the overlay is running `:install` (install what's missing) or
+/// `:update` (upgrade what's already on `$PATH`). The two share the entire
+/// three-stage flow; only the plan builder, the wording, and the run banner
+/// differ.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallerKind {
+    Install,
+    Update,
+}
+
+impl InstallerKind {
+    /// Verb used in subtitles / help / banners ("install" vs "update").
+    fn verb(self) -> &'static str {
+        match self {
+            InstallerKind::Install => "install",
+            InstallerKind::Update => "update",
+        }
+    }
 }
 
 pub struct InstallerState {
@@ -53,13 +77,15 @@ pub struct InstallerState {
     /// The built plan, populated at the transition into the Plan
     /// stage and rendered there.
     pub plan: Vec<PlanItem>,
+    /// Whether this overlay installs (`:install`) or updates (`:update`).
+    pub kind: InstallerKind,
     /// Subtitle text the renderer paints under the banner. Stage-
     /// specific (e.g. counts of items, hint about npm).
     pub subtitle: String,
 }
 
 impl InstallerState {
-    fn new_bundles() -> Self {
+    fn new(kind: InstallerKind) -> Self {
         Self {
             stage: InstallerStage::Bundles,
             cursor: 0,
@@ -68,10 +94,8 @@ impl InstallerState {
             detected_nodes: Vec::new(),
             node_picks: Vec::new(),
             plan: Vec::new(),
-            subtitle: format!(
-                "install — pick the languages you want set up  ({} bundles)",
-                BUNDLES.len()
-            ),
+            kind,
+            subtitle: bundles_subtitle(kind),
         }
     }
 
@@ -85,10 +109,35 @@ impl InstallerState {
     }
 }
 
+fn bundles_subtitle(kind: InstallerKind) -> String {
+    let tail = match kind {
+        InstallerKind::Install => "pick the languages you want set up",
+        InstallerKind::Update => "pick the installed languages to update",
+    };
+    format!("{} — {tail}  ({} bundles)", kind.verb(), BUNDLES.len())
+}
+
+fn node_subtitle(kind: InstallerKind, detected: usize) -> String {
+    format!(
+        "npm packages — pick which Node.js installations to {} for  ({detected} detected)",
+        kind.verb()
+    )
+}
+
 impl super::App {
     /// `:install` entry point. Pops the overlay; subsequent keystrokes
     /// route through `handle_installer_key`.
     pub(super) fn cmd_install(&mut self) {
+        self.open_installer(InstallerKind::Install);
+    }
+
+    /// `:update` entry point — same overlay as `:install`, but the plan only
+    /// upgrades tools already on `$PATH` (see `install::build_update_plan`).
+    pub(super) fn cmd_update(&mut self) {
+        self.open_installer(InstallerKind::Update);
+    }
+
+    fn open_installer(&mut self, kind: InstallerKind) {
         // Other full-screen overlays would otherwise paint over us.
         self.show_health_page = false;
         self.show_messages_page = false;
@@ -100,7 +149,7 @@ impl super::App {
         self.signature_help = None;
         self.whichkey = None;
 
-        self.installer = Some(InstallerState::new_bundles());
+        self.installer = Some(InstallerState::new(kind));
         self.show_install_page = true;
         self.mode = Mode::Installer;
     }
@@ -177,9 +226,13 @@ impl super::App {
             return;
         }
         state.bundle_picks = picks.clone();
+        let kind = state.kind;
 
         let managers = detect_managers();
-        let plan = build_plan(&picks, &managers);
+        let plan = match kind {
+            InstallerKind::Install => build_plan(&picks, &managers),
+            InstallerKind::Update => build_update_plan(&picks, &managers),
+        };
         let needs_npm = plan_needs_node(&plan);
 
         if needs_npm {
@@ -211,10 +264,7 @@ impl super::App {
             }
             state.cursor = 0;
             state.stage = InstallerStage::NodeVersions;
-            state.subtitle = format!(
-                "npm packages — pick which Node.js installations to install for  ({} detected)",
-                state.detected_nodes.len()
-            );
+            state.subtitle = node_subtitle(kind, state.detected_nodes.len());
             state.plan = plan;
         } else {
             let state = self.installer.as_mut().unwrap();
@@ -248,8 +298,9 @@ impl super::App {
         state.stage = InstallerStage::Plan;
         state.cursor = 0;
         state.subtitle = format!(
-            "plan — {} items · press y to install, n to go back, q to cancel",
-            state.plan.len()
+            "plan — {} items · press y to {}, n to go back, q to cancel",
+            state.plan.len(),
+            state.kind.verb()
         );
     }
 
@@ -267,10 +318,7 @@ impl super::App {
                 }
             }
             state.cursor = 0;
-            state.subtitle = format!(
-                "npm packages — pick which Node.js installations to install for  ({} detected)",
-                state.detected_nodes.len()
-            );
+            state.subtitle = node_subtitle(state.kind, state.detected_nodes.len());
         } else {
             // No Node stage to return to — go all the way back to bundles.
             state.stage = InstallerStage::Bundles;
@@ -281,10 +329,7 @@ impl super::App {
                 }
             }
             state.cursor = 0;
-            state.subtitle = format!(
-                "install — pick the languages you want set up  ({} bundles)",
-                BUNDLES.len()
-            );
+            state.subtitle = bundles_subtitle(state.kind);
         }
     }
 
@@ -306,29 +351,46 @@ impl super::App {
 
         // Pull the plan + node versions off `installer` so we can
         // mutate `self` freely during the run.
-        let (plan, node_versions) = {
+        let (plan, node_versions, kind) = {
             let state = match self.installer.as_mut() {
                 Some(s) => s,
                 None => return,
             };
-            (std::mem::take(&mut state.plan), state.node_versions())
+            (
+                std::mem::take(&mut state.plan),
+                state.node_versions(),
+                state.kind,
+            )
         };
+        let verb = kind.verb();
 
         let mut stdout = std::io::stdout();
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show);
         let _ = disable_raw_mode();
 
-        // Banner line so the user knows where the install output is
-        // coming from, then run.
+        // Banner line so the user knows where the output is coming from,
+        // then run.
         println!();
-        println!("─── binvim-install (in-editor) ───");
+        println!("─── binvim-{verb} (in-editor) ───");
         println!();
         let summary = run_plan(&plan, &node_versions);
+        let done = match kind {
+            InstallerKind::Install => "installed",
+            InstallerKind::Update => "updated",
+        };
         println!();
         println!("─── Summary ───");
-        println!("  {} installed", summary.installed);
-        println!("  {} already present", summary.skipped);
+        println!("  {} {done}", summary.installed);
+        if summary.skipped > 0 {
+            println!("  {} already present", summary.skipped);
+        }
+        if summary.not_installed > 0 {
+            println!(
+                "  {} not installed (run :install to add)",
+                summary.not_installed
+            );
+        }
         if summary.manual > 0 {
             println!("  {} manual (see above)", summary.manual);
         }
@@ -360,13 +422,19 @@ impl super::App {
 
         // Status line summary in the editor, then dismiss the overlay.
         self.status_msg = if summary.failed.is_empty() {
-            format!(
-                "install: {} installed, {} already present, {} manual",
-                summary.installed, summary.skipped, summary.manual
-            )
+            match kind {
+                InstallerKind::Install => format!(
+                    "install: {} installed, {} already present, {} manual",
+                    summary.installed, summary.skipped, summary.manual
+                ),
+                InstallerKind::Update => format!(
+                    "update: {} updated, {} not installed, {} manual",
+                    summary.installed, summary.not_installed, summary.manual
+                ),
+            }
         } else {
             format!(
-                "install: {} installed, {} failed — see :messages for the rerun command",
+                "{verb}: {} {done}, {} failed — see :messages for the rerun command",
                 summary.installed,
                 summary.failed.len()
             )
@@ -460,6 +528,28 @@ pub fn plan_rows(state: &InstallerState) -> Vec<PlanRow> {
                     target,
                 });
             }
+            Choice::Update(inst) => {
+                let mut target = String::new();
+                if matches!(inst, I::Npm(_)) && !node_targets.is_empty() {
+                    target = format!("targeting: {node_targets}");
+                }
+                rows.push(PlanRow {
+                    glyph: " ↑ ",
+                    color: PlanRowColor::Teal,
+                    label: item.tool.label.to_string(),
+                    role: item.tool.role.tag(),
+                    detail: format!("{}   ({used})", inst.upgrade_display()),
+                    target,
+                });
+            }
+            Choice::NotInstalled => rows.push(PlanRow {
+                glyph: " · ",
+                color: PlanRowColor::Subtle,
+                label: item.tool.label.to_string(),
+                role: item.tool.role.tag(),
+                detail: format!("not installed — run :install to add it ({used})"),
+                target: String::new(),
+            }),
             Choice::Manual(msg) => rows.push(PlanRow {
                 glyph: " ! ",
                 color: PlanRowColor::Yellow,
@@ -496,4 +586,6 @@ pub enum PlanRowColor {
     Teal,
     Yellow,
     Red,
+    /// Muted — used for `:update`'s "not installed" rows.
+    Subtle,
 }

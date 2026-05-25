@@ -213,6 +213,8 @@ It opens a checkbox list of every language binvim supports. Pick the ones you ca
 
 The same flow is available **inside the editor** — `:install` (or `:installer`) opens a full-screen overlay with the identical three-stage UX (bundles → optional Node.js versions → plan review). `y` on the plan stage suspends binvim lazygit-style and runs the installs against the host terminal, then drops back into the editor with a status-line summary. Both entry points share the catalog + runner in `binvim::install`, so adding a language only requires touching one place.
 
+`:update` runs the same overlay but only upgrades tools you already have on `$PATH` to the catalog's pinned (or newest) versions — handy after a binvim release bumps its pins. Tools that aren't installed are left untouched and flagged "not installed — run :install to add it". Managers that own their own version (`brew`, `apt`, `nix`) upgrade via their native upgrade command; pinned managers (`npm`, `cargo`, `go`, `gem`, `pipx`, `dotnet`, `composer`) re-run their install at the pin.
+
 ## Run
 
 ```sh

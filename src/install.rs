@@ -202,6 +202,82 @@ impl Installer {
         cmd.stderr(Stdio::inherit());
         Some(cmd)
     }
+
+    /// The *upgrade* form of the command, used by `:update` for tools already
+    /// on `$PATH`. Managers that own their package version (brew / apt / nix)
+    /// get their real upgrade subcommand; pipx / dotnet need an explicit
+    /// upgrade verb because a second `install` errors when the tool exists.
+    /// Everything else upgrades by re-running its install command at the
+    /// pinned version, which those managers treat as a replace. `Npm` returns
+    /// `None` (the runner drives it per Node version, same as install).
+    pub fn upgrade_command(&self) -> Option<Command> {
+        let mut cmd = match self {
+            Installer::Brew(p) => {
+                let mut c = Command::new("brew");
+                c.args(["upgrade", p]);
+                c
+            }
+            Installer::Apt(p) => {
+                let mut c = Command::new("sudo");
+                c.args(["apt-get", "install", "--only-upgrade", "-y", p]);
+                c
+            }
+            Installer::Pipx(p) => {
+                let mut c = Command::new("pipx");
+                c.args(["install", "--force", p]);
+                c
+            }
+            Installer::Pip(p) => {
+                let mut c = Command::new("pip");
+                c.args(["install", "--user", "--upgrade", p]);
+                c
+            }
+            Installer::DotnetTool(p, version) => {
+                let mut c = Command::new("dotnet");
+                c.args(["tool", "update", "--global", p]);
+                if let Some(v) = version {
+                    c.args(["--version", v]);
+                }
+                c
+            }
+            Installer::Nix(r) => {
+                let mut c = Command::new("nix");
+                c.args(["profile", "upgrade", nix_profile_name(r)]);
+                c
+            }
+            // Cargo / Rustup / Go / Gem / Composer re-run their install command
+            // (a replace at the pinned version); Npm / Manual return None.
+            _ => return self.build_command(),
+        };
+        cmd.stdin(Stdio::inherit());
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+        Some(cmd)
+    }
+
+    /// Human-readable form of [`upgrade_command`](Self::upgrade_command), for
+    /// the `:update` plan preview.
+    pub fn upgrade_display(&self) -> String {
+        match self {
+            Installer::Brew(p) => format!("brew upgrade {p}"),
+            Installer::Apt(p) => format!("sudo apt-get install --only-upgrade -y {p}"),
+            Installer::Pipx(p) => format!("pipx install --force {p}"),
+            Installer::Pip(p) => format!("pip install --user --upgrade {p}"),
+            Installer::DotnetTool(p, None) => format!("dotnet tool update --global {p}"),
+            Installer::DotnetTool(p, Some(v)) => {
+                format!("dotnet tool update --global {p} --version {v}")
+            }
+            Installer::Nix(r) => format!("nix profile upgrade {}", nix_profile_name(r)),
+            // Everything else upgrades by re-running its install command.
+            other => other.display(),
+        }
+    }
+}
+
+/// The profile entry name `nix profile upgrade` matches against — the flake
+/// attribute after `#` (`nixpkgs#nil` → `nil`).
+fn nix_profile_name(flake_ref: &str) -> &str {
+    flake_ref.rsplit('#').next().unwrap_or(flake_ref)
 }
 
 pub struct Bundle {
@@ -642,9 +718,19 @@ pub struct PlanItem {
 }
 
 pub enum Choice {
-    /// Already on `$PATH`. Skipped during run.
+    /// Already on `$PATH`. Skipped during run. (`:install` only —
+    /// `:update` re-runs the installer for on-PATH tools, see `Update`.)
     Already,
     Install(&'static Installer),
+    /// On `$PATH` already, and we have an installer whose manager can bring
+    /// it to the pinned / newest version. The runner uses the installer's
+    /// *upgrade* command (`brew upgrade`, `dotnet tool update`, …) rather
+    /// than its install command. Produced only by `build_update_plan`.
+    Update(&'static Installer),
+    /// Not on `$PATH`. `:update` only touches tools already installed, so it
+    /// leaves these alone and points the user at `:install`. Produced only by
+    /// `build_update_plan`.
+    NotInstalled,
     /// Caller should print the message to the user — we have no automatic
     /// install path (netcoredbg, OmniSharp).
     Manual(&'static str),
@@ -700,6 +786,64 @@ pub fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<
             chosen,
         });
     }
+    sort_plan(&mut plan);
+    plan
+}
+
+/// Plan variant for `:update`. Same dedupe-by-`bin` as [`build_plan`], but the
+/// per-tool resolution flips: only tools already on `$PATH` get an action.
+/// On-PATH tools become `Choice::Update` (the runner uses the installer's
+/// upgrade command) when a manager is available, falling back to `Manual` /
+/// `NoManager` exactly like install. Tools that aren't installed become
+/// `Choice::NotInstalled` — `:update` deliberately leaves them for `:install`.
+pub fn build_update_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<PlanItem> {
+    let mut by_bin: BTreeMap<&'static str, (Tool, Vec<&'static str>)> = BTreeMap::new();
+    for &idx in selected {
+        let bundle = &BUNDLES[idx];
+        for tool in bundle.tools {
+            by_bin
+                .entry(tool.bin)
+                .and_modify(|(_, names)| names.push(bundle.name))
+                .or_insert_with(|| (*tool, vec![bundle.name]));
+        }
+    }
+
+    let mut plan = Vec::new();
+    for (_, (tool_copy, used_by)) in by_bin {
+        let tool: &'static Tool = find_static_tool(tool_copy.bin).expect("tool came from BUNDLES");
+        let chosen = if !on_path(tool.bin) {
+            Choice::NotInstalled
+        } else {
+            match pick_installer(tool, managers) {
+                Some(inst) => Choice::Update(inst),
+                None => {
+                    if let Some(Installer::Manual(s)) = tool.installers.first() {
+                        Choice::Manual(s)
+                    } else {
+                        let missing: Vec<String> = tool
+                            .installers
+                            .iter()
+                            .filter(|i| !matches!(i, Installer::Manual(_)))
+                            .map(|i| i.display())
+                            .collect();
+                        Choice::NoManager(missing)
+                    }
+                }
+            }
+        };
+        plan.push(PlanItem {
+            tool,
+            used_by,
+            chosen,
+        });
+    }
+    sort_plan(&mut plan);
+    plan
+}
+
+/// Stable ordering shared by both plan builders: LSP → formatter → DAP → tool,
+/// then alphabetically by label within each role.
+fn sort_plan(plan: &mut [PlanItem]) {
     plan.sort_by_key(|p| {
         let role_rank = match p.tool.role {
             Role::Lsp => 0,
@@ -709,7 +853,6 @@ pub fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<
         };
         (role_rank, p.tool.label)
     });
-    plan
 }
 
 pub fn find_static_tool(bin: &str) -> Option<&'static Tool> {
@@ -726,16 +869,23 @@ pub fn find_static_tool(bin: &str) -> Option<&'static Tool> {
 /// True iff the plan contains at least one `npm install -g` step, i.e. the
 /// user needs to be prompted for which Node.js installation(s) to target.
 pub fn plan_needs_node(plan: &[PlanItem]) -> bool {
-    plan.iter()
-        .any(|p| matches!(p.chosen, Choice::Install(Installer::Npm(_))))
+    plan.iter().any(|p| {
+        matches!(
+            p.chosen,
+            Choice::Install(Installer::Npm(_)) | Choice::Update(Installer::Npm(_))
+        )
+    })
 }
 
 // ─── run ───────────────────────────────────────────────────────────────────
 
 pub struct Summary {
+    /// Count of install *and* update actions that succeeded.
     pub installed: usize,
     pub skipped: usize,
     pub manual: usize,
+    /// `:update` only — tools skipped because they weren't on `$PATH`.
+    pub not_installed: usize,
     pub failed: Vec<(String, String)>,
 }
 
@@ -749,6 +899,7 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
         installed: 0,
         skipped: 0,
         manual: 0,
+        not_installed: 0,
         failed: Vec::new(),
     };
     let mut stdout = std::io::stdout();
@@ -760,13 +911,16 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
             Choice::Manual(_) => {
                 summary.manual += 1;
             }
+            Choice::NotInstalled => {
+                summary.not_installed += 1;
+            }
             Choice::NoManager(_) => {
                 summary.failed.push((
                     item.tool.label.to_string(),
                     "no package manager available".into(),
                 ));
             }
-            Choice::Install(Installer::Npm(pkgs)) => {
+            Choice::Install(Installer::Npm(pkgs)) | Choice::Update(Installer::Npm(pkgs)) => {
                 if node_versions.is_empty() {
                     summary.failed.push((
                         item.tool.label.to_string(),
@@ -836,7 +990,129 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
                     }
                 }
             }
+            Choice::Update(inst) => {
+                let _ = writeln!(
+                    stdout,
+                    "\n↑ {} — {}",
+                    item.tool.label,
+                    inst.upgrade_display()
+                );
+                let Some(mut cmd) = inst.upgrade_command() else {
+                    summary.manual += 1;
+                    continue;
+                };
+                match cmd.status() {
+                    Ok(s) if s.success() => {
+                        summary.installed += 1;
+                        let _ = writeln!(stdout, "✓ updated");
+                    }
+                    Ok(s) => {
+                        let msg = format!("exit code {}", s.code().unwrap_or(-1));
+                        let _ = writeln!(stdout, "✗ failed ({msg})");
+                        summary.failed.push((item.tool.label.to_string(), msg));
+                    }
+                    Err(e) => {
+                        let msg = format!("spawn error: {e}");
+                        let _ = writeln!(stdout, "✗ {msg}");
+                        summary.failed.push((item.tool.label.to_string(), msg));
+                    }
+                }
+            }
         }
     }
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrade_display_uses_manager_upgrade_verbs() {
+        // Managers that own their package version get a real upgrade verb.
+        assert_eq!(Installer::Brew("llvm").upgrade_display(), "brew upgrade llvm");
+        assert_eq!(
+            Installer::Apt("clangd").upgrade_display(),
+            "sudo apt-get install --only-upgrade -y clangd"
+        );
+        assert_eq!(
+            Installer::Nix("nixpkgs#nil").upgrade_display(),
+            "nix profile upgrade nil"
+        );
+        // pipx / dotnet need an explicit upgrade verb because a second
+        // `install` errors when the tool is already present.
+        assert_eq!(
+            Installer::Pipx("ruff==0.15.13").upgrade_display(),
+            "pipx install --force ruff==0.15.13"
+        );
+        assert_eq!(
+            Installer::DotnetTool("csharp-ls", Some("0.24.0")).upgrade_display(),
+            "dotnet tool update --global csharp-ls --version 0.24.0"
+        );
+        assert_eq!(
+            Installer::DotnetTool("csharpier", None).upgrade_display(),
+            "dotnet tool update --global csharpier"
+        );
+    }
+
+    #[test]
+    fn upgrade_display_reruns_install_for_pinned_managers() {
+        // npm / cargo / go / gem / composer / rustup all upgrade by re-running
+        // their (pinned) install command, so the displays should match.
+        for inst in [
+            Installer::Npm(&["prettier@3.8.3"]),
+            Installer::Cargo("stylua", &["--version", "2.5.2"]),
+            Installer::Go("golang.org/x/tools/gopls@v0.21.1"),
+            Installer::Gem("ruby-lsp", Some("0.26.9")),
+            Installer::Composer("friendsofphp/php-cs-fixer:3.95.2"),
+            Installer::Rustup("rust-analyzer"),
+        ] {
+            assert_eq!(inst.upgrade_display(), inst.display());
+        }
+    }
+
+    #[test]
+    fn nix_profile_name_takes_flake_attr() {
+        assert_eq!(nix_profile_name("nixpkgs#nil"), "nil");
+        assert_eq!(
+            nix_profile_name("nixpkgs#nixfmt-rfc-style"),
+            "nixfmt-rfc-style"
+        );
+        // No `#` — fall back to the whole ref.
+        assert_eq!(nix_profile_name("noattr"), "noattr");
+    }
+
+    #[test]
+    fn plan_needs_node_detects_update_npm() {
+        // An `:update` plan whose npm tool resolved to `Update` must still
+        // demand a Node target, exactly like a fresh `Install`.
+        let tool = find_static_tool("prettier").expect("prettier is in the catalog");
+        let npm: &'static Installer = tool
+            .installers
+            .iter()
+            .find(|i| matches!(i, Installer::Npm(_)))
+            .expect("prettier installs via npm");
+        let plan = vec![PlanItem {
+            tool,
+            used_by: vec!["YAML"],
+            chosen: Choice::Update(npm),
+        }];
+        assert!(plan_needs_node(&plan));
+    }
+
+    #[test]
+    fn not_installed_choice_is_inert_in_run_plan() {
+        // A `NotInstalled` item must touch nothing and just bump the counter.
+        let tool = find_static_tool("rust-analyzer").expect("in catalog");
+        let plan = vec![PlanItem {
+            tool,
+            used_by: vec!["Rust"],
+            chosen: Choice::NotInstalled,
+        }];
+        let summary = run_plan(&plan, &[]);
+        assert_eq!(summary.not_installed, 1);
+        assert_eq!(summary.installed, 0);
+        assert_eq!(summary.skipped, 0);
+        assert!(summary.failed.is_empty());
+    }
 }

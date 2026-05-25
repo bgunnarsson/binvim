@@ -1771,6 +1771,7 @@ impl super::App {
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
             ExCommand::Lazygit => self.cmd_lazygit(),
             ExCommand::Install => self.cmd_install(),
+            ExCommand::Update => self.cmd_update(),
             ExCommand::TaskPicker => self.cmd_task_picker(),
             ExCommand::TaskLast => self.cmd_task_last(),
             // Ex commands open the tool without the path handoff — the
