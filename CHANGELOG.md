@@ -6,6 +6,32 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.8]
+
+### Added
+- **`:update` command.** A new in-editor overlay that reuses the
+  `:install` three-stage flow (bundles → optional Node.js versions →
+  plan) but only upgrades the LSPs / formatters / DAP adapters you
+  already have on `$PATH` to the catalog's pinned (or newest)
+  versions — handy after a release bumps its pins. Tools that aren't
+  installed are left untouched and flagged "not installed — run
+  :install to add it". Managers that own their package version
+  (`brew`, `apt`, `nix`) upgrade via their native upgrade command;
+  pinned managers (`npm`, `cargo`, `go`, `gem`, `pipx`, `dotnet`,
+  `composer`) re-run their install at the pin.
+- **binvim self-update from `:update`.** The first row in the
+  `:update` list is binvim itself. It detects how the running binary
+  was installed — Homebrew, cargo, the install script, Scoop, or Nix —
+  from the executable's path and runs the matching upgrade (`brew
+  upgrade`, `cargo install --locked --force binvim`, re-running
+  `install.sh`, `scoop update binvim`, `nix profile upgrade binvim`).
+  A source / dev build is detected and shown with manual instructions
+  instead. The new binary takes effect on the next launch.
+- **Installed-tool indicator in the install / update picker.** Tools
+  already on `$PATH` are now painted green in the bundle list (probed
+  once when the overlay opens, deduped across bundles), so you can see
+  what's installed at a glance.
+
 ## [0.4.7] - 2026-05-20
 
 ### Added
