@@ -215,6 +215,8 @@ The same flow is available **inside the editor** — `:install` (or `:installer`
 
 `:update` runs the same overlay but only upgrades tools you already have on `$PATH` to the catalog's pinned (or newest) versions — handy after a binvim release bumps its pins. Tools that aren't installed are left untouched and flagged "not installed — run :install to add it". Managers that own their own version (`brew`, `apt`, `nix`) upgrade via their native upgrade command; pinned managers (`npm`, `cargo`, `go`, `gem`, `pipx`, `dotnet`, `composer`) re-run their install at the pin.
 
+The **first checkbox in the `:update` list is binvim itself**. It detects how the running binary was installed — Homebrew, cargo, the install script, Scoop, or Nix — from the executable's path and runs the matching upgrade (`brew upgrade …`, `cargo install --locked --force binvim`, re-running `install.sh`, `scoop update binvim`, `nix profile upgrade binvim`). A source/dev build is detected too and shown with manual instructions instead. The new binary takes effect on the next launch.
+
 ## Run
 
 ```sh

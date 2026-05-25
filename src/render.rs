@@ -2291,7 +2291,7 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
     let viewport = rows.saturating_sub(cursor_y - top + 1);
     match state.stage {
         InstallerStage::Bundles => {
-            let items = bundle_picker_items();
+            let items = bundle_picker_items(state);
             paint_checkbox_list(
                 out,
                 app,

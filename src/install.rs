@@ -1023,6 +1023,183 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
     summary
 }
 
+// ─── binvim self-update ──────────────────────────────────────────────────────
+
+/// How the running `binvim` binary appears to have been installed, and how to
+/// bring it up to date. Detected from the canonical path of the current
+/// executable (`std::env::current_exe`), so symlinked Homebrew bin shims and
+/// cargo shims resolve to their real location first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BinvimUpdate {
+    /// `brew upgrade <formula>`.
+    Brew(&'static str),
+    /// `cargo install --locked --force binvim`.
+    Cargo,
+    /// Re-run the Unix install script (`curl … | sh`).
+    Script,
+    /// `scoop update binvim`.
+    Scoop,
+    /// `nix profile upgrade <name>`.
+    Nix(&'static str),
+    /// Re-run the Windows PowerShell installer.
+    WindowsScript,
+    /// Source / dev build or an unrecognised location — no automatic path.
+    /// Carries a note describing what to do by hand.
+    Manual(String),
+}
+
+impl BinvimUpdate {
+    /// Short method name for the picker summary + status messages.
+    pub fn method(&self) -> &'static str {
+        match self {
+            BinvimUpdate::Brew(_) => "Homebrew",
+            BinvimUpdate::Cargo => "cargo",
+            BinvimUpdate::Script | BinvimUpdate::WindowsScript => "install script",
+            BinvimUpdate::Scoop => "Scoop",
+            BinvimUpdate::Nix(_) => "Nix",
+            BinvimUpdate::Manual(_) => "manual",
+        }
+    }
+
+    /// One-line preview of the command (or the manual note).
+    pub fn display(&self) -> String {
+        match self {
+            BinvimUpdate::Brew(f) => format!("brew upgrade {f}"),
+            BinvimUpdate::Cargo => "cargo install --locked --force binvim".into(),
+            BinvimUpdate::Script => "curl -fsSL https://binvim.dev/install.sh | sh".into(),
+            BinvimUpdate::Scoop => "scoop update binvim".into(),
+            BinvimUpdate::Nix(n) => format!("nix profile upgrade {n}"),
+            BinvimUpdate::WindowsScript => {
+                "iwr https://binvim.dev/install.ps1 -UseBasicParsing | iex".into()
+            }
+            BinvimUpdate::Manual(note) => note.clone(),
+        }
+    }
+
+    pub fn is_manual(&self) -> bool {
+        matches!(self, BinvimUpdate::Manual(_))
+    }
+
+    /// The process to spawn, or `None` for `Manual`.
+    pub fn build_command(&self) -> Option<Command> {
+        let mut cmd = match self {
+            BinvimUpdate::Brew(f) => {
+                let mut c = Command::new("brew");
+                c.args(["upgrade", f]);
+                c
+            }
+            BinvimUpdate::Cargo => {
+                let mut c = Command::new("cargo");
+                c.args(["install", "--locked", "--force", "binvim"]);
+                c
+            }
+            BinvimUpdate::Script => {
+                let mut c = Command::new("sh");
+                c.args(["-c", "curl -fsSL https://binvim.dev/install.sh | sh"]);
+                c
+            }
+            BinvimUpdate::Scoop => {
+                // scoop is a PowerShell shim, not a real exe — go through pwsh.
+                let mut c = Command::new("powershell");
+                c.args(["-NoProfile", "-Command", "scoop update binvim"]);
+                c
+            }
+            BinvimUpdate::Nix(n) => {
+                let mut c = Command::new("nix");
+                c.args(["profile", "upgrade", n]);
+                c
+            }
+            BinvimUpdate::WindowsScript => {
+                let mut c = Command::new("powershell");
+                c.args([
+                    "-NoProfile",
+                    "-Command",
+                    "iwr https://binvim.dev/install.ps1 -UseBasicParsing | iex",
+                ]);
+                c
+            }
+            BinvimUpdate::Manual(_) => return None,
+        };
+        cmd.stdin(Stdio::inherit());
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+        Some(cmd)
+    }
+}
+
+/// Inspect the running executable's path to guess how binvim was installed.
+/// Best-effort — an unrecognised location falls back to `Manual` with a note.
+pub fn detect_binvim_update() -> BinvimUpdate {
+    let exe = match std::env::current_exe() {
+        Ok(p) => std::fs::canonicalize(&p).unwrap_or(p),
+        Err(e) => {
+            return BinvimUpdate::Manual(format!(
+                "couldn't locate the running binvim binary ({e}) — update it the way you installed it"
+            ));
+        }
+    };
+    // Forward-slash-normalise so the substring checks also hold on Windows.
+    let norm = exe.to_string_lossy().replace('\\', "/");
+
+    // Most-specific locations first: a Homebrew bin shim canonicalises into
+    // the Cellar; nix into the store; scoop into its apps dir.
+    if norm.contains("/Cellar/binvim/") {
+        return BinvimUpdate::Brew("bgunnarsson/binvim/binvim");
+    }
+    if norm.contains("/nix/store/") || norm.contains("/.nix-profile/") {
+        return BinvimUpdate::Nix("binvim");
+    }
+    if norm.contains("/scoop/apps/binvim/") || norm.contains("/scoop/shims/") {
+        return BinvimUpdate::Scoop;
+    }
+
+    if let Some(home) = crate::paths::home_dir() {
+        if exe.starts_with(home.join(".cargo").join("bin")) {
+            return BinvimUpdate::Cargo;
+        }
+        // The Unix install script drops the binary at ~/.local/bin/binvim.
+        if exe.starts_with(home.join(".local").join("bin")) {
+            return BinvimUpdate::Script;
+        }
+    }
+    if let Some(cargo_home) = std::env::var_os("CARGO_HOME") {
+        if exe.starts_with(PathBuf::from(cargo_home).join("bin")) {
+            return BinvimUpdate::Cargo;
+        }
+    }
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        if exe.starts_with(PathBuf::from(local).join("binvim").join("bin")) {
+            return BinvimUpdate::WindowsScript;
+        }
+    }
+
+    BinvimUpdate::Manual(format!(
+        "running from {} — looks like a source build; update with `git pull && cargo build --release`, or `cargo install --locked --force binvim`",
+        exe.display()
+    ))
+}
+
+/// Run a binvim self-update with inherited stdio (caller must have handed the
+/// terminal off first). `Manual` prints its note and returns `Ok(())` — there's
+/// nothing to spawn. The new binary takes effect on the next launch.
+pub fn run_binvim_update(update: &BinvimUpdate) -> Result<(), String> {
+    use std::io::Write;
+    let mut stdout = std::io::stdout();
+    let _ = writeln!(stdout, "\n↑ binvim — {}", update.display());
+    let Some(mut cmd) = update.build_command() else {
+        return Ok(());
+    };
+    match cmd.status() {
+        Ok(s) if s.success() => {
+            let _ = writeln!(stdout, "✓ updated — restart binvim to use the new version");
+            Ok(())
+        }
+        Ok(s) => Err(format!("exit code {}", s.code().unwrap_or(-1))),
+        Err(e) => Err(format!("spawn error: {e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1030,7 +1207,10 @@ mod tests {
     #[test]
     fn upgrade_display_uses_manager_upgrade_verbs() {
         // Managers that own their package version get a real upgrade verb.
-        assert_eq!(Installer::Brew("llvm").upgrade_display(), "brew upgrade llvm");
+        assert_eq!(
+            Installer::Brew("llvm").upgrade_display(),
+            "brew upgrade llvm"
+        );
         assert_eq!(
             Installer::Apt("clangd").upgrade_display(),
             "sudo apt-get install --only-upgrade -y clangd"
@@ -1114,5 +1294,33 @@ mod tests {
         assert_eq!(summary.installed, 0);
         assert_eq!(summary.skipped, 0);
         assert!(summary.failed.is_empty());
+    }
+
+    #[test]
+    fn binvim_update_auto_methods_build_a_command() {
+        for u in [
+            BinvimUpdate::Brew("bgunnarsson/binvim/binvim"),
+            BinvimUpdate::Cargo,
+            BinvimUpdate::Script,
+            BinvimUpdate::Scoop,
+            BinvimUpdate::Nix("binvim"),
+            BinvimUpdate::WindowsScript,
+        ] {
+            assert!(!u.is_manual());
+            assert!(u.build_command().is_some(), "{u:?} should be runnable");
+            assert!(!u.display().is_empty());
+        }
+        // Manual has a note and nothing to spawn.
+        let m = BinvimUpdate::Manual("build from source".into());
+        assert!(m.is_manual());
+        assert!(m.build_command().is_none());
+        assert_eq!(m.display(), "build from source");
+    }
+
+    #[test]
+    fn detect_binvim_update_never_panics() {
+        // Whatever the test runner's exe path looks like, detection resolves
+        // to *some* variant (most likely cargo's target dir → Manual).
+        let _ = detect_binvim_update();
     }
 }

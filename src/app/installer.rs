@@ -6,7 +6,8 @@
 //!
 //! Full-screen overlay that mirrors the `binvim-install` CLI:
 //!   1. **Bundles** — multi-select checkbox of every language /
-//!      Copilot / editor-tool bundle.
+//!      Copilot / editor-tool bundle. In `:update` mode a binvim
+//!      self-update row is prepended at index 0 (see `binvim_offset`).
 //!   2. **NodeVersions** — only if the plan has any `npm install -g`
 //!      step. Skipped automatically when exactly one Node.js
 //!      installation is detected; errors out if none.
@@ -22,8 +23,9 @@
 
 use crate::mode::Mode;
 use binvim::install::{
-    BUNDLES, Choice, NodeVersion, PlanItem, build_plan, build_update_plan, bundle_summary,
-    detect_managers, discover_node_versions, plan_needs_node, run_plan,
+    BUNDLES, BinvimUpdate, Choice, NodeVersion, PlanItem, build_plan, build_update_plan,
+    bundle_summary, detect_binvim_update, detect_managers, discover_node_versions, plan_needs_node,
+    run_binvim_update, run_plan,
 };
 
 /// State machine for the overlay. `App.installer` is `Some` while the
@@ -79,6 +81,12 @@ pub struct InstallerState {
     pub plan: Vec<PlanItem>,
     /// Whether this overlay installs (`:install`) or updates (`:update`).
     pub kind: InstallerKind,
+    /// `:update` only — how the running binvim binary can update itself,
+    /// shown as the first checkbox in the bundle list. `None` in `:install`
+    /// mode (so no binvim row is rendered).
+    pub binvim_update: Option<BinvimUpdate>,
+    /// Whether the user ticked the binvim self-update row.
+    pub binvim_selected: bool,
     /// Subtitle text the renderer paints under the banner. Stage-
     /// specific (e.g. counts of items, hint about npm).
     pub subtitle: String,
@@ -86,17 +94,32 @@ pub struct InstallerState {
 
 impl InstallerState {
     fn new(kind: InstallerKind) -> Self {
+        // Only `:update` self-updates binvim; `:install` leaves it out.
+        let binvim_update = match kind {
+            InstallerKind::Update => Some(detect_binvim_update()),
+            InstallerKind::Install => None,
+        };
+        let row_count = BUNDLES.len() + binvim_update.is_some() as usize;
         Self {
             stage: InstallerStage::Bundles,
             cursor: 0,
-            checked: vec![false; BUNDLES.len()],
+            checked: vec![false; row_count],
             bundle_picks: Vec::new(),
             detected_nodes: Vec::new(),
             node_picks: Vec::new(),
             plan: Vec::new(),
             kind,
+            binvim_update,
+            binvim_selected: false,
             subtitle: bundles_subtitle(kind),
         }
+    }
+
+    /// `1` when the bundle list has a leading binvim self-update row (update
+    /// mode), `0` otherwise. The bundle picker's `checked` / `cursor` indices
+    /// are shifted by this much relative to `BUNDLES`.
+    pub fn binvim_offset(&self) -> usize {
+        self.binvim_update.is_some() as usize
     }
 
     /// Resolve the picked Node.js installations into a borrowed slice
@@ -215,17 +238,27 @@ impl super::App {
         let Some(state) = self.installer.as_mut() else {
             return;
         };
+        // In update mode index 0 is the binvim self-update row; bundle rows
+        // start at `offset`, so map checked indices back onto BUNDLES.
+        let offset = state.binvim_offset();
+        let binvim_selected = offset == 1 && state.checked.first().copied().unwrap_or(false);
         let picks: Vec<usize> = state
             .checked
             .iter()
             .enumerate()
-            .filter_map(|(i, &c)| if c { Some(i) } else { None })
+            .skip(offset)
+            .filter_map(|(i, &c)| if c { Some(i - offset) } else { None })
             .collect();
-        if picks.is_empty() {
-            self.status_msg = "Nothing selected — pick at least one bundle.".into();
+        if picks.is_empty() && !binvim_selected {
+            self.status_msg = if offset == 1 {
+                "Nothing selected — pick binvim or at least one bundle.".into()
+            } else {
+                "Nothing selected — pick at least one bundle.".into()
+            };
             return;
         }
         state.bundle_picks = picks.clone();
+        state.binvim_selected = binvim_selected;
         let kind = state.kind;
 
         let managers = detect_managers();
@@ -297,9 +330,9 @@ impl super::App {
         };
         state.stage = InstallerStage::Plan;
         state.cursor = 0;
+        let count = state.plan.len() + state.binvim_selected as usize;
         state.subtitle = format!(
-            "plan — {} items · press y to {}, n to go back, q to cancel",
-            state.plan.len(),
+            "plan — {count} items · press y to {}, n to go back, q to cancel",
             state.kind.verb()
         );
     }
@@ -322,9 +355,13 @@ impl super::App {
         } else {
             // No Node stage to return to — go all the way back to bundles.
             state.stage = InstallerStage::Bundles;
-            state.checked = vec![false; BUNDLES.len()];
+            let offset = state.binvim_offset();
+            state.checked = vec![false; BUNDLES.len() + offset];
+            if offset == 1 {
+                state.checked[0] = state.binvim_selected;
+            }
             for &i in &state.bundle_picks {
-                if let Some(slot) = state.checked.get_mut(i) {
+                if let Some(slot) = state.checked.get_mut(i + offset) {
                     *slot = true;
                 }
             }
@@ -349,17 +386,23 @@ impl super::App {
             },
         };
 
-        // Pull the plan + node versions off `installer` so we can
-        // mutate `self` freely during the run.
-        let (plan, node_versions, kind) = {
+        // Pull the plan + node versions + binvim self-update off `installer`
+        // so we can mutate `self` freely during the run.
+        let (plan, node_versions, kind, binvim) = {
             let state = match self.installer.as_mut() {
                 Some(s) => s,
                 None => return,
+            };
+            let binvim = if state.binvim_selected {
+                state.binvim_update.clone()
+            } else {
+                None
             };
             (
                 std::mem::take(&mut state.plan),
                 state.node_versions(),
                 state.kind,
+                binvim,
             )
         };
         let verb = kind.verb();
@@ -373,6 +416,22 @@ impl super::App {
         // then run.
         println!();
         println!("─── binvim-{verb} (in-editor) ───");
+
+        // binvim self-update runs first — a replaced binary only takes effect
+        // on the next launch, so it shouldn't gate the toolchain updates.
+        let binvim_note = binvim.as_ref().map(|u| {
+            if u.is_manual() {
+                println!("\n↑ binvim — update it yourself:");
+                println!("  {}", u.display());
+                format!("binvim: manual ({})", u.method())
+            } else {
+                match run_binvim_update(u) {
+                    Ok(()) => format!("binvim updated via {}", u.method()),
+                    Err(e) => format!("binvim update FAILED ({e})"),
+                }
+            }
+        });
+
         println!();
         let summary = run_plan(&plan, &node_versions);
         let done = match kind {
@@ -381,6 +440,9 @@ impl super::App {
         };
         println!();
         println!("─── Summary ───");
+        if let Some(note) = &binvim_note {
+            println!("  {note}");
+        }
         println!("  {} {done}", summary.installed);
         if summary.skipped > 0 {
             println!("  {} already present", summary.skipped);
@@ -421,7 +483,7 @@ impl super::App {
         );
 
         // Status line summary in the editor, then dismiss the overlay.
-        self.status_msg = if summary.failed.is_empty() {
+        let tools_msg = if summary.failed.is_empty() {
             match kind {
                 InstallerKind::Install => format!(
                     "install: {} installed, {} already present, {} manual",
@@ -438,6 +500,10 @@ impl super::App {
                 summary.installed,
                 summary.failed.len()
             )
+        };
+        self.status_msg = match &binvim_note {
+            Some(note) => format!("{note} · {tools_msg}"),
+            None => tools_msg,
         };
         self.dismiss_install();
     }
@@ -477,11 +543,23 @@ fn handle_picker_keys(state: &mut InstallerState, k: crossterm::event::KeyEvent)
 /// renderer borrows immutably and we'd otherwise be juggling lifetimes
 /// against `App.installer`.
 
-pub fn bundle_picker_items() -> Vec<(String, String)> {
-    BUNDLES
-        .iter()
-        .map(|b| (b.name.to_string(), bundle_summary(b)))
-        .collect()
+pub fn bundle_picker_items(state: &InstallerState) -> Vec<(String, String)> {
+    let mut items = Vec::new();
+    // `:update` puts a binvim self-update row at the top of the list.
+    if let Some(u) = &state.binvim_update {
+        let summary = if u.is_manual() {
+            format!("self-update ({}) — {}", u.method(), u.display())
+        } else {
+            format!("self-update via {} — {}", u.method(), u.display())
+        };
+        items.push(("binvim".to_string(), summary));
+    }
+    items.extend(
+        BUNDLES
+            .iter()
+            .map(|b| (b.name.to_string(), bundle_summary(b))),
+    );
+    items
 }
 
 pub fn node_picker_items(state: &InstallerState) -> Vec<(String, String)> {
@@ -503,6 +581,33 @@ pub fn plan_rows(state: &InstallerState) -> Vec<PlanRow> {
         .collect::<Vec<_>>()
         .join(", ");
     let mut rows = Vec::new();
+    // binvim self-update sits at the top of the plan, mirroring its row in
+    // the bundle list.
+    if state.binvim_selected {
+        if let Some(u) = &state.binvim_update {
+            let (glyph, color, detail) = if u.is_manual() {
+                (
+                    " ! ",
+                    PlanRowColor::Yellow,
+                    format!("manual: {}", u.display()),
+                )
+            } else {
+                (
+                    " ↑ ",
+                    PlanRowColor::Teal,
+                    format!("{}   (self-update via {})", u.display(), u.method()),
+                )
+            };
+            rows.push(PlanRow {
+                glyph,
+                color,
+                label: "binvim".to_string(),
+                role: "BIN",
+                detail,
+                target: String::new(),
+            });
+        }
+    }
     for item in &state.plan {
         let used = item.used_by.join(", ");
         match &item.chosen {
