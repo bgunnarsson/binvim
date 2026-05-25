@@ -21,10 +21,12 @@
 //! (`j/k`, `Space`, `a`/`n`, `Enter`, `q`/`Esc`) so users moving
 //! between the CLI and the in-editor flow don't have to relearn.
 
+use std::collections::HashSet;
+
 use crate::mode::Mode;
 use binvim::install::{
     BUNDLES, BinvimUpdate, Choice, NodeVersion, PlanItem, build_plan, build_update_plan,
-    bundle_summary, detect_binvim_update, detect_managers, discover_node_versions, plan_needs_node,
+    detect_binvim_update, detect_managers, discover_node_versions, on_path, plan_needs_node,
     run_binvim_update, run_plan,
 };
 
@@ -87,6 +89,10 @@ pub struct InstallerState {
     pub binvim_update: Option<BinvimUpdate>,
     /// Whether the user ticked the binvim self-update row.
     pub binvim_selected: bool,
+    /// Catalog tool `bin`s found on `$PATH`, probed once when the overlay
+    /// opens (probing per render frame would be far too many syscalls). Used
+    /// to mark already-installed tools green in the bundle picker.
+    pub installed: HashSet<&'static str>,
     /// Subtitle text the renderer paints under the banner. Stage-
     /// specific (e.g. counts of items, hint about npm).
     pub subtitle: String,
@@ -100,6 +106,15 @@ impl InstallerState {
             InstallerKind::Install => None,
         };
         let row_count = BUNDLES.len() + binvim_update.is_some() as usize;
+        // Dedupe bins across bundles before probing so a shared tool
+        // (prettier, lldb-dap, …) is only checked once.
+        let installed: HashSet<&'static str> = BUNDLES
+            .iter()
+            .flat_map(|b| b.tools.iter().map(|t| t.bin))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .filter(|bin| on_path(bin))
+            .collect();
         Self {
             stage: InstallerStage::Bundles,
             cursor: 0,
@@ -111,6 +126,7 @@ impl InstallerState {
             kind,
             binvim_update,
             binvim_selected: false,
+            installed,
             subtitle: bundles_subtitle(kind),
         }
     }
@@ -137,7 +153,11 @@ fn bundles_subtitle(kind: InstallerKind) -> String {
         InstallerKind::Install => "pick the languages you want set up",
         InstallerKind::Update => "pick the installed languages to update",
     };
-    format!("{} — {tail}  ({} bundles)", kind.verb(), BUNDLES.len())
+    format!(
+        "{} — {tail}  ({} bundles · green = already installed)",
+        kind.verb(),
+        BUNDLES.len()
+    )
 }
 
 fn node_subtitle(kind: InstallerKind, detected: usize) -> String {
@@ -538,13 +558,32 @@ fn handle_picker_keys(state: &mut InstallerState, k: crossterm::event::KeyEvent)
     }
 }
 
-/// Renderer-side helpers — small enough not to warrant their own
-/// module. Each returns owned `Vec<(name, summary)>` because the
-/// renderer borrows immutably and we'd otherwise be juggling lifetimes
-/// against `App.installer`.
+/// Renderer-side helpers — small enough not to warrant their own module.
+/// Each returns owned `PickerRow`s because the renderer borrows immutably and
+/// we'd otherwise be juggling lifetimes against `App.installer`.
 
-pub fn bundle_picker_items(state: &InstallerState) -> Vec<(String, String)> {
-    let mut items = Vec::new();
+/// One row in a checkbox picker: a name plus a summary the renderer paints
+/// to its right.
+pub struct PickerRow {
+    pub name: String,
+    pub summary: PickerSummary,
+}
+
+pub enum PickerSummary {
+    /// A single uncoloured string (Node picker rows, binvim self-update row).
+    Plain(String),
+    /// A bundle's tool list, each flagged with whether it's already on
+    /// `$PATH`, so the renderer can paint installed tools green.
+    Tools(Vec<ToolStatus>),
+}
+
+pub struct ToolStatus {
+    pub label: String,
+    pub installed: bool,
+}
+
+pub fn bundle_picker_rows(state: &InstallerState) -> Vec<PickerRow> {
+    let mut rows = Vec::new();
     // `:update` puts a binvim self-update row at the top of the list.
     if let Some(u) = &state.binvim_update {
         let summary = if u.is_manual() {
@@ -552,21 +591,36 @@ pub fn bundle_picker_items(state: &InstallerState) -> Vec<(String, String)> {
         } else {
             format!("self-update via {} — {}", u.method(), u.display())
         };
-        items.push(("binvim".to_string(), summary));
+        rows.push(PickerRow {
+            name: "binvim".to_string(),
+            summary: PickerSummary::Plain(summary),
+        });
     }
-    items.extend(
-        BUNDLES
+    for b in BUNDLES {
+        let tools = b
+            .tools
             .iter()
-            .map(|b| (b.name.to_string(), bundle_summary(b))),
-    );
-    items
+            .map(|t| ToolStatus {
+                label: t.label.to_string(),
+                installed: state.installed.contains(t.bin),
+            })
+            .collect();
+        rows.push(PickerRow {
+            name: b.name.to_string(),
+            summary: PickerSummary::Tools(tools),
+        });
+    }
+    rows
 }
 
-pub fn node_picker_items(state: &InstallerState) -> Vec<(String, String)> {
+pub fn node_picker_rows(state: &InstallerState) -> Vec<PickerRow> {
     state
         .detected_nodes
         .iter()
-        .map(|v| (v.label.clone(), v.npm_path.display().to_string()))
+        .map(|v| PickerRow {
+            name: v.label.clone(),
+            summary: PickerSummary::Plain(v.npm_path.display().to_string()),
+        })
         .collect()
 }
 

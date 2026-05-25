@@ -2208,7 +2208,7 @@ const INSTALL_BANNER: &[&str] = &[
 
 fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
     use crate::app::installer::{
-        InstallerKind, InstallerStage, bundle_picker_items, node_picker_items, plan_rows,
+        InstallerKind, InstallerStage, bundle_picker_rows, node_picker_rows, plan_rows,
     };
 
     let Some(state) = app.installer.as_ref() else {
@@ -2291,11 +2291,11 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
     let viewport = rows.saturating_sub(cursor_y - top + 1);
     match state.stage {
         InstallerStage::Bundles => {
-            let items = bundle_picker_items(state);
+            let rows_data = bundle_picker_rows(state);
             paint_checkbox_list(
                 out,
                 app,
-                &items,
+                &rows_data,
                 state.cursor,
                 &state.checked,
                 body_top,
@@ -2306,11 +2306,11 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
             )?;
         }
         InstallerStage::NodeVersions => {
-            let items = node_picker_items(state);
+            let rows_data = node_picker_rows(state);
             paint_checkbox_list(
                 out,
                 app,
-                &items,
+                &rows_data,
                 state.cursor,
                 &state.checked,
                 body_top,
@@ -2334,7 +2334,7 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
 fn paint_checkbox_list(
     out: &mut impl Write,
     _app: &App,
-    items: &[(String, String)],
+    rows: &[crate::app::installer::PickerRow],
     cursor: usize,
     checked: &[bool],
     top: usize,
@@ -2343,12 +2343,13 @@ fn paint_checkbox_list(
     p: &DashboardPalette,
     page_bg: Option<Color>,
 ) -> Result<()> {
-    if items.is_empty() {
+    use crate::app::installer::PickerSummary;
+    if rows.is_empty() {
         return Ok(());
     }
-    let name_w = items
+    let name_w = rows
         .iter()
-        .map(|(n, _)| n.chars().count())
+        .map(|r| r.name.chars().count())
         .max()
         .unwrap_or(0)
         .max(20);
@@ -2358,7 +2359,7 @@ fn paint_checkbox_list(
     } else {
         0
     };
-    for (offset, (i, (name, summary))) in items
+    for (offset, (i, row)) in rows
         .iter()
         .enumerate()
         .skip(scroll)
@@ -2395,15 +2396,39 @@ fn paint_checkbox_list(
         if active {
             queue!(out, SetAttribute(Attribute::Bold))?;
         }
-        let padded = format!("{:<width$}", name, width = name_w);
+        let padded = format!("{:<width$}", row.name, width = name_w);
         queue!(out, Print(truncate(&padded, body_w / 3)))?;
         queue!(out, SetAttribute(Attribute::Reset))?;
-        queue!(
-            out,
-            SetForegroundColor(p.overlay0),
-            Print("  "),
-            Print(truncate(summary, body_w.saturating_sub(name_w + 8))),
-        )?;
+        // Summary column. `Tools` paints each tool green when it's already on
+        // PATH so the user can see what's installed at a glance; everything
+        // else is dim.
+        let summary_w = body_w.saturating_sub(name_w + 8);
+        queue!(out, SetForegroundColor(p.overlay0), Print("  "))?;
+        match &row.summary {
+            PickerSummary::Plain(s) => {
+                queue!(out, Print(truncate(s, summary_w)))?;
+            }
+            PickerSummary::Tools(tools) => {
+                let mut used = 0usize;
+                for (ti, t) in tools.iter().enumerate() {
+                    if ti > 0 {
+                        if used + 3 > summary_w {
+                            break;
+                        }
+                        queue!(out, SetForegroundColor(p.overlay0), Print(" · "))?;
+                        used += 3;
+                    }
+                    let remaining = summary_w.saturating_sub(used);
+                    if remaining == 0 {
+                        break;
+                    }
+                    let label = truncate(&t.label, remaining);
+                    used += label.chars().count();
+                    let color = if t.installed { p.green } else { p.overlay0 };
+                    queue!(out, SetForegroundColor(color), Print(label))?;
+                }
+            }
+        }
         reset_to_buf_bg(out, page_bg)?;
     }
     Ok(())
