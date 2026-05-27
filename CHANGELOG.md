@@ -6,7 +6,22 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-27
+
 ### Added
+- **Package manager (`<leader>p`).** A generic package-manager entry
+  point that detects the active buffer's ecosystem from its workspace
+  and drives an add / upgrade flow. NuGet (via the `dotnet` CLI) is the
+  first backend; cargo / npm slot in later as additional
+  `PackageEcosystem` arms with no app-layer changes. `<leader>pi` picks
+  a `.csproj` → installed packages → versions (the installed one
+  highlighted, `Tab` toggles prereleases, type to narrow) → install;
+  `<leader>ps` picks a `.csproj` → searches the registry → package →
+  version → add. Backed by `dotnet list package` /
+  `dotnet package search --exact-match` / `dotnet add package`, parsed
+  from JSON. Network + restore calls run on background threads and post
+  results to a channel drained in the main loop; an epoch guard drops
+  results from cancelled flows.
 - **Multi-line inline ghost completions.** A Copilot / inline-completion
   suggestion that spans several lines now renders in full: the first
   line paints inline at the cursor as before, and lines 2+ paint as
@@ -14,6 +29,26 @@ follows [Semantic Versioning](https://semver.org/).
   real buffer lines beneath them down by the ghost's height. `<Tab>`
   still accepts the whole suggestion. Previously only the first line was
   shown even though the accept already inserted all of them.
+
+### Fixed
+- **NuGet parsing tolerates the dotnet first-run banner and honours a
+  project's `nuget.config`.** The version / search parse crashed when an
+  older SDK printed the "Welcome to .NET" banner ahead of the JSON;
+  `run_capture` now sets `DOTNET_NOLOGO` + `DOTNET_CLI_TELEMETRY_OPTOUT`
+  and every parser slices to the outermost `{ … }`, so any banner /
+  telemetry notice around the JSON is ignored. The list / search / add
+  calls also run in the manifest's directory so a project's
+  `nuget.config` and its private feeds are used.
+- **`<leader>p` which-key prompts.** The Package sub-menu is now
+  advertised in the Leader which-key popup (`p → +Package`), and the
+  which-key timer arms for the `<leader>p` prefix — previously pressing
+  `<leader>p` showed no sub-menu and, on the start page, swallowed the
+  `i` / `s` follow-up key.
+- **Cursor viewport tracking on inlay-hint-heavy lines.** The viewport
+  tracker now counts inlay-hint label widths the same way the cursor
+  renderer does, via one shared `cursor_visual_col_walk` helper, so on
+  hint-heavy Razor / C# lines the view scrolls to keep the rendered
+  cursor on screen instead of leaving it drawn off where the user typed.
 
 ## [0.4.8] - 2026-05-25
 

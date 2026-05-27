@@ -341,6 +341,20 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       hint about the previous instance possibly still being alive (the kickoff itself still
       proceeds — the user might genuinely want a second instance).
 
+## Package manager
+
+- [x] **Package manager (`<leader>p`) with a NuGet backend.** A generic, ecosystem-detecting entry point —
+      `package.rs` resolves the active buffer's workspace ecosystem and the per-ecosystem dispatch shells out;
+      `app/package_glue.rs` chains the manifest → package/search → version pickers over background threads with
+      an epoch guard so results from a cancelled flow get dropped. NuGet (dotnet CLI) ships first: `<leader>pi`
+      upgrades an installed package (pick `.csproj` → installed list → version picker, the installed version
+      highlighted, `Tab` toggles prereleases, type to narrow), `<leader>ps` adds a new one (pick `.csproj` →
+      registry search → package → version). Backed by `dotnet list package` / `dotnet package search
+      --exact-match` / `dotnet add package`, with the pure JSON parsers carrying the tests. The dotnet first-run
+      banner is tolerated (parsers slice to the outermost `{ … }`, `DOTNET_NOLOGO` set) and the manifest
+      directory's `nuget.config` private feeds are honoured. cargo / npm are future `PackageEcosystem` arms that
+      need no app-layer changes — **shipped in 0.5.0.**
+
 ## Quality / Tooling
 
 - [x] **CI: `cargo test` + `cargo clippy` on PRs.** `.github/workflows/ci.yml`
