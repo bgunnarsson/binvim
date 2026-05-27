@@ -33,10 +33,10 @@ impl super::App {
             .as_ref()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()))
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        // Today every backend is .NET, so the .NET-flavoured root walk is the
-        // right one; when npm / cargo land this moves behind `detect`.
-        let workspace_root = crate::dap::find_dotnet_workspace_root(&start_dir);
-        let Some(eco) = package::detect(buffer_path.as_deref(), &workspace_root) else {
+        // `detect` resolves the ecosystem (from the buffer's extension first,
+        // then a marker walk) and the matching workspace root in one step.
+        let Some((eco, workspace_root)) = package::detect(buffer_path.as_deref(), &start_dir)
+        else {
             self.status_msg = "No package manager detected for this buffer".into();
             return;
         };
