@@ -25,6 +25,12 @@ pub enum PackageEcosystem {
     DotNet,
     /// npm — `package.json` manifests, driven by the `npm` CLI.
     Npm,
+    /// Rust — `Cargo.toml` manifests; `cargo` for search/add, crates.io's HTTP
+    /// API for the version list (no `cargo` command enumerates all versions).
+    Cargo,
+    /// Go — `go.mod` manifests; `go` for the version list/add, pkg.go.dev's
+    /// search page (scraped) for search (the toolchain has no search command).
+    Go,
 }
 
 impl PackageEcosystem {
@@ -32,6 +38,8 @@ impl PackageEcosystem {
         match self {
             PackageEcosystem::DotNet => "NuGet",
             PackageEcosystem::Npm => "npm",
+            PackageEcosystem::Cargo => "Cargo",
+            PackageEcosystem::Go => "Go",
         }
     }
 }
@@ -82,10 +90,15 @@ pub fn detect(buffer_path: Option<&Path>, start_dir: &Path) -> Option<(PackageEc
         return Some((eco, workspace_root(eco, start_dir)));
     }
     // Marker fallback: pick the first ecosystem that has a manifest somewhere
-    // above `start_dir`. .NET is probed before npm so a mixed repo (an ASP.NET
-    // app with a frontend) keeps resolving to NuGet when the active buffer is
-    // neither a C# nor a JS/TS file.
-    for eco in [PackageEcosystem::DotNet, PackageEcosystem::Npm] {
+    // above `start_dir`. .NET is probed before the rest so a mixed repo (an
+    // ASP.NET app with a frontend) keeps resolving to NuGet when the active
+    // buffer is neither a C# nor a JS/TS file.
+    for eco in [
+        PackageEcosystem::DotNet,
+        PackageEcosystem::Npm,
+        PackageEcosystem::Cargo,
+        PackageEcosystem::Go,
+    ] {
         let root = workspace_root(eco, start_dir);
         if !find_manifests(eco, &root).is_empty() {
             return Some((eco, root));
@@ -104,6 +117,14 @@ fn eco_from_extension(buffer_path: Option<&Path>) -> Option<PackageEcosystem> {
     if p.file_name().and_then(|s| s.to_str()) == Some("package.json") {
         return Some(PackageEcosystem::Npm);
     }
+    // `Cargo.toml` / `go.mod` carry no telling extension (`toml` is shared, and
+    // `go.mod`'s "mod" isn't unique), so match them by basename. The `.rs` /
+    // `.go` source extensions are handled in the final `match` below.
+    match p.file_name().and_then(|s| s.to_str()) {
+        Some("Cargo.toml") => return Some(PackageEcosystem::Cargo),
+        Some("go.mod") => return Some(PackageEcosystem::Go),
+        _ => {}
+    }
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
     if matches!(
         ext,
@@ -117,14 +138,20 @@ fn eco_from_extension(buffer_path: Option<&Path>) -> Option<PackageEcosystem> {
     ) {
         return Some(PackageEcosystem::Npm);
     }
-    None
+    match ext {
+        "rs" => Some(PackageEcosystem::Cargo),
+        "go" => Some(PackageEcosystem::Go),
+        _ => None,
+    }
 }
 
 /// Walk up from `start_dir` to the workspace root appropriate for `eco`.
 pub fn workspace_root(eco: PackageEcosystem, start_dir: &Path) -> PathBuf {
     match eco {
         PackageEcosystem::DotNet => crate::dap::find_dotnet_workspace_root(start_dir),
-        PackageEcosystem::Npm => find_npm_workspace_root(start_dir),
+        PackageEcosystem::Npm => find_root_by_marker(start_dir, "package.json"),
+        PackageEcosystem::Cargo => find_root_by_marker(start_dir, "Cargo.toml"),
+        PackageEcosystem::Go => find_root_by_marker(start_dir, "go.mod"),
     }
 }
 
@@ -134,7 +161,9 @@ pub fn find_manifests(eco: PackageEcosystem, workspace_root: &Path) -> Vec<Manif
         // Reuse the DAP layer's project discovery — it already finds
         // `.csproj/.fsproj/.vbproj`, skips bin/obj, and is depth-bounded.
         PackageEcosystem::DotNet => crate::dap::find_dotnet_projects(workspace_root),
-        PackageEcosystem::Npm => find_npm_manifests(workspace_root),
+        PackageEcosystem::Npm => find_manifests_named(workspace_root, "package.json"),
+        PackageEcosystem::Cargo => find_manifests_named(workspace_root, "Cargo.toml"),
+        PackageEcosystem::Go => find_manifests_named(workspace_root, "go.mod"),
     };
     paths
         .into_iter()
@@ -149,16 +178,18 @@ pub fn find_manifests(eco: PackageEcosystem, workspace_root: &Path) -> Vec<Manif
         .collect()
 }
 
-/// Walk up from `start` to the npm workspace root: the closest `.git` directory
-/// (so a monorepo's sibling packages are all enumerable), else the nearest
-/// ancestor holding a `package.json`, else `start` itself.
-fn find_npm_workspace_root(start: &Path) -> PathBuf {
+/// Walk up from `start` to a workspace root keyed off `marker` (a manifest
+/// filename): the closest `.git` directory wins (so a monorepo's sibling
+/// packages are all enumerable), else the nearest ancestor holding `marker`,
+/// else `start` itself. Used for npm / Cargo / Go — .NET has its own `.sln`-
+/// aware walk in `dap`.
+fn find_root_by_marker(start: &Path, marker: &str) -> PathBuf {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     let mut dir: &Path = canon.as_path();
-    let mut nearest_pkg: Option<PathBuf> = None;
+    let mut nearest: Option<PathBuf> = None;
     loop {
-        if nearest_pkg.is_none() && dir.join("package.json").is_file() {
-            nearest_pkg = Some(dir.to_path_buf());
+        if nearest.is_none() && dir.join(marker).is_file() {
+            nearest = Some(dir.to_path_buf());
         }
         if dir.join(".git").exists() {
             return dir.to_path_buf();
@@ -168,20 +199,28 @@ fn find_npm_workspace_root(start: &Path) -> PathBuf {
             _ => break,
         }
     }
-    nearest_pkg.unwrap_or(canon)
+    nearest.unwrap_or(canon)
 }
 
-/// Recursively enumerate `package.json` manifests under `dir`, skipping
-/// `node_modules` and other build/VCS dirs. Depth-bounded to stay cheap on
-/// large monorepos — mirrors `dap::find_dotnet_projects`.
-fn find_npm_manifests(dir: &Path) -> Vec<PathBuf> {
+/// Recursively enumerate manifests named `filename` under `dir`, skipping the
+/// usual build/VCS/dependency dirs. Depth-bounded to stay cheap on large
+/// monorepos — mirrors `dap::find_dotnet_projects`.
+fn find_manifests_named(dir: &Path, filename: &str) -> Vec<PathBuf> {
     fn ignored(name: &str) -> bool {
         matches!(
             name,
-            "node_modules" | ".git" | "bin" | "obj" | "target" | "dist" | "build" | ".next"
+            "node_modules"
+                | ".git"
+                | "bin"
+                | "obj"
+                | "target"
+                | "vendor"
+                | "dist"
+                | "build"
+                | ".next"
         )
     }
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+    fn walk(dir: &Path, filename: &str, out: &mut Vec<PathBuf>, depth: usize) {
         if depth > 6 {
             return;
         }
@@ -196,15 +235,15 @@ fn find_npm_manifests(dir: &Path) -> Vec<PathBuf> {
             };
             if file_type.is_dir() {
                 if !name.starts_with('.') && !ignored(name) {
-                    walk(&path, out, depth + 1);
+                    walk(&path, filename, out, depth + 1);
                 }
-            } else if file_type.is_file() && name == "package.json" {
+            } else if file_type.is_file() && name == filename {
                 out.push(path);
             }
         }
     }
     let mut out = Vec::new();
-    walk(dir, &mut out, 0);
+    walk(dir, filename, &mut out, 0);
     out.sort();
     out
 }
@@ -235,6 +274,18 @@ pub fn list_installed(
             let text = std::fs::read_to_string(manifest)
                 .map_err(|e| format!("read {}: {e}", manifest.display()))?;
             parse_npm_installed_json(&text)
+        }
+        // Both Cargo + Go read their manifest directly: the dependency table is
+        // declarative, so there's no CLI round-trip and the list works offline.
+        PackageEcosystem::Cargo => {
+            let text = std::fs::read_to_string(manifest)
+                .map_err(|e| format!("read {}: {e}", manifest.display()))?;
+            parse_cargo_installed_toml(&text)
+        }
+        PackageEcosystem::Go => {
+            let text = std::fs::read_to_string(manifest)
+                .map_err(|e| format!("read {}: {e}", manifest.display()))?;
+            parse_gomod_installed(&text)
         }
     }
 }
@@ -278,6 +329,26 @@ pub fn list_versions(
             )?;
             parse_npm_versions_json(&json)
         }
+        // crates.io's HTTP API is the only source for the full version list —
+        // `cargo search` returns just the latest, and there's no `cargo
+        // versions`. The endpoint already returns newest-first.
+        PackageEcosystem::Cargo => {
+            let url = format!("https://crates.io/api/v1/crates/{}/versions", urlencode(id));
+            let json = http_get(&url)?;
+            parse_crates_versions_json(&json)
+        }
+        // `go list -m -versions` lists every tagged version (oldest→newest) and
+        // works for any module, required or not. Run in the manifest dir so the
+        // module-mode toolchain + GOPROXY config apply.
+        PackageEcosystem::Go => {
+            let out = run_capture(
+                "go",
+                &["list", "-m", "-versions", id],
+                manifest_dir(manifest),
+                &[],
+            )?;
+            parse_go_versions(&out)
+        }
     }
 }
 
@@ -307,6 +378,26 @@ pub fn search(
             )?;
             parse_npm_search_json(&json)
         }
+        // `cargo search` returns `name = "ver"  # desc` lines with the latest
+        // version inline — no HTTP needed for this step. The 30-row cap matches
+        // what the picker can usefully show.
+        PackageEcosystem::Cargo => {
+            let out = run_capture(
+                "cargo",
+                &["search", query, "--limit", "30"],
+                manifest_dir(manifest),
+                &[],
+            )?;
+            Ok(parse_cargo_search(&out))
+        }
+        // Go has no search command, so scrape pkg.go.dev's search page for the
+        // module paths. Versions aren't shown on the results page (the version
+        // picker fetches them next), so each hit's `latest` is left blank.
+        PackageEcosystem::Go => {
+            let url = format!("https://pkg.go.dev/search?q={}", urlencode(query));
+            let html = http_get(&url)?;
+            Ok(parse_godev_search_html(&html))
+        }
     }
 }
 
@@ -329,6 +420,17 @@ pub fn add(eco: PackageEcosystem, manifest: &Path, id: &str, version: &str) -> R
         PackageEcosystem::Npm => {
             let spec = format!("{id}@{version}");
             run_capture("npm", &["install", &spec], manifest_dir(manifest), &[]).map(|_| ())
+        }
+        // `cargo add <id>@<version>` edits `Cargo.toml` and re-resolves; run in
+        // the manifest dir so it targets this package (not a workspace sibling).
+        PackageEcosystem::Cargo => {
+            let spec = format!("{id}@{version}");
+            run_capture("cargo", &["add", &spec], manifest_dir(manifest), &[]).map(|_| ())
+        }
+        // `go get <module>@<version>` rewrites the `require` line in `go.mod`.
+        PackageEcosystem::Go => {
+            let spec = format!("{id}@{version}");
+            run_capture("go", &["get", &spec], manifest_dir(manifest), &[]).map(|_| ())
         }
     }
 }
@@ -401,6 +503,49 @@ fn run_capture(
         return Err(format!("{bin} exit {code}: {msg}"));
     }
     String::from_utf8(output.stdout).map_err(|e| format!("{bin} stdout not utf-8: {e}"))
+}
+
+/// Fetch `url` over HTTPS and return the body. We shell out to `curl` rather
+/// than link an HTTP client: it keeps the "subprocess + parse" shape of every
+/// other backend, adds no compile-time dependency, and these calls already run
+/// off the main thread. `-f` turns HTTP errors (404 / 5xx) into a non-zero exit
+/// so they surface as `Err`; crates.io requires a non-empty User-Agent.
+fn http_get(url: &str) -> Result<String, String> {
+    run_capture(
+        "curl",
+        &[
+            "-sSLf",
+            "--max-time",
+            "20",
+            "-A",
+            "binvim (https://binvim.dev)",
+            url,
+        ],
+        None,
+        &[],
+    )
+    .map_err(|e| {
+        if e.starts_with("failed to run curl") {
+            "curl not found — it's required for crates.io / pkg.go.dev lookups".into()
+        } else {
+            e
+        }
+    })
+}
+
+/// Percent-encode `s` for use in a URL path segment / query value (RFC 3986
+/// unreserved set passes through, everything else becomes `%XX`).
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// Narrow `s` to the outermost JSON object (first `{` … last `}`). `dotnet`
@@ -560,7 +705,7 @@ pub fn parse_npm_installed_json(json: &str) -> Result<Vec<InstalledPackage>, Str
             let requested = spec.as_str().unwrap_or("").to_string();
             out.push(InstalledPackage {
                 id: id.clone(),
-                resolved: clean_npm_version(&requested),
+                resolved: clean_version(&requested),
                 requested,
             });
         }
@@ -616,11 +761,189 @@ pub fn parse_npm_search_json(json: &str) -> Result<Vec<SearchHit>, String> {
     Ok(out)
 }
 
-/// Strip a leading SemVer range operator (`^`, `~`, `>=`, `v`, …) off an npm
-/// version spec so it can be compared against a concrete published version.
-/// A spec with embedded whitespace (a compound range like `>=1 <2`) or no
-/// digit core returns empty — there's no single version to flag.
-fn clean_npm_version(spec: &str) -> String {
+/// Parse a `Cargo.toml` and return its declared dependencies. Unions
+/// `[dependencies]` / `[dev-dependencies]` / `[build-dependencies]` (deduping
+/// by name, first wins), sorted by id. A dep value is either a bare version
+/// string (`serde = "1"`) or a table (`serde = { version = "1", … }`); a
+/// path/git/workspace dep with no version yields an empty `resolved`.
+pub fn parse_cargo_installed_toml(text: &str) -> Result<Vec<InstalledPackage>, String> {
+    let doc: toml::Value = toml::from_str(text).map_err(|e| format!("parse Cargo.toml: {e}"))?;
+    let mut out: Vec<InstalledPackage> = Vec::new();
+    for key in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        let Some(tbl) = doc.get(key).and_then(|d| d.as_table()) else {
+            continue;
+        };
+        for (id, val) in tbl {
+            if id.is_empty() || out.iter().any(|e| e.id == *id) {
+                continue;
+            }
+            let requested = match val {
+                toml::Value::String(s) => s.clone(),
+                toml::Value::Table(t) => t
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                _ => String::new(),
+            };
+            out.push(InstalledPackage {
+                id: id.clone(),
+                resolved: clean_version(&requested),
+                requested,
+            });
+        }
+    }
+    out.sort_by_key(|p| p.id.to_lowercase());
+    Ok(out)
+}
+
+/// Parse the crates.io `…/versions` response. Skips yanked releases (they're not
+/// normally installable) and tags prereleases. The API already returns
+/// newest-first, so the order is preserved.
+pub fn parse_crates_versions_json(json: &str) -> Result<Vec<PackageVersion>, String> {
+    let v: Value = serde_json::from_str(json).map_err(|e| format!("parse crates versions: {e}"))?;
+    let mut out: Vec<PackageVersion> = Vec::new();
+    for ver in v
+        .get("versions")
+        .and_then(|a| a.as_array())
+        .into_iter()
+        .flatten()
+    {
+        if ver.get("yanked").and_then(|y| y.as_bool()).unwrap_or(false) {
+            continue;
+        }
+        let Some(num) = ver.get("num").and_then(|s| s.as_str()) else {
+            continue;
+        };
+        if num.is_empty() {
+            continue;
+        }
+        out.push(PackageVersion {
+            version: num.to_string(),
+            prerelease: is_prerelease(num),
+        });
+    }
+    Ok(out)
+}
+
+/// Parse `cargo search <query> --limit N` output — lines of the form
+/// `name = "version"    # description`. Non-matching lines (the trailing
+/// `... and N crates more` / `note:` footer) are skipped.
+pub fn parse_cargo_search(text: &str) -> Vec<SearchHit> {
+    let mut out: Vec<SearchHit> = Vec::new();
+    for line in text.lines() {
+        let Some((name, rest)) = line.trim().split_once(" = ") else {
+            continue;
+        };
+        let name = name.trim();
+        // `rest` opens with the quoted version: `"1.2.3"    # desc`.
+        let version = rest
+            .trim()
+            .strip_prefix('"')
+            .and_then(|r| r.split('"').next());
+        let Some(version) = version else { continue };
+        if name.is_empty() || version.is_empty() {
+            continue;
+        }
+        out.push(SearchHit {
+            id: name.to_string(),
+            latest: version.to_string(),
+        });
+    }
+    out
+}
+
+/// Parse a `go.mod` and return its **direct** requirements. Handles both the
+/// single-line `require mod ver` form and the `require ( … )` block; transitive
+/// deps (marked `// indirect`) are skipped since they aren't user-managed. Go
+/// versions are exact (`v1.2.3`), so `requested` == `resolved`.
+pub fn parse_gomod_installed(text: &str) -> Result<Vec<InstalledPackage>, String> {
+    fn push(line: &str, out: &mut Vec<InstalledPackage>) {
+        if line.contains("// indirect") {
+            return;
+        }
+        let line = line.split("//").next().unwrap_or(line);
+        let mut parts = line.split_whitespace();
+        let (Some(module), Some(version)) = (parts.next(), parts.next()) else {
+            return;
+        };
+        if out.iter().any(|e| e.id == module) {
+            return;
+        }
+        out.push(InstalledPackage {
+            id: module.to_string(),
+            requested: version.to_string(),
+            resolved: version.to_string(),
+        });
+    }
+    let mut out: Vec<InstalledPackage> = Vec::new();
+    let mut in_block = false;
+    for raw in text.lines() {
+        let line = raw.trim();
+        if in_block {
+            if line.starts_with(')') {
+                in_block = false;
+            } else {
+                push(line, &mut out);
+            }
+        } else if let Some(rest) = line.strip_prefix("require ") {
+            let rest = rest.trim();
+            if rest == "(" {
+                in_block = true;
+            } else {
+                push(rest, &mut out);
+            }
+        }
+    }
+    out.sort_by_key(|p| p.id.to_lowercase());
+    Ok(out)
+}
+
+/// Parse `go list -m -versions <module>` output: `<module> v1 v2 v3 …` on one
+/// line, oldest→newest. Drop the leading module token and reverse to
+/// newest-first. A module with no tagged versions yields an empty list.
+pub fn parse_go_versions(text: &str) -> Result<Vec<PackageVersion>, String> {
+    let mut tokens = text.split_whitespace();
+    let _module = tokens.next();
+    let mut out: Vec<PackageVersion> = tokens
+        .map(|v| PackageVersion {
+            prerelease: is_prerelease(v),
+            version: v.to_string(),
+        })
+        .collect();
+    out.reverse();
+    Ok(out)
+}
+
+/// Scrape module paths out of a pkg.go.dev search-results page. Each hit is an
+/// `<a href="/MODULE_PATH" … data-test-id="snippet-title">`; the version isn't
+/// shown on the results page, so `latest` is left blank (the version picker
+/// fetches it next). **Fragile by nature** — it depends on pkg.go.dev's markup,
+/// so a layout change breaks only this parser (surfacing as "no results").
+pub fn parse_godev_search_html(html: &str) -> Vec<SearchHit> {
+    // `[^>]*` spans the newline-separated attributes between `href` and the
+    // `data-test-id` marker without ever crossing the tag's closing `>`.
+    let re = regex::Regex::new(r#"href="/([^"?]+)"[^>]*data-test-id="snippet-title""#).unwrap();
+    let mut out: Vec<SearchHit> = Vec::new();
+    for cap in re.captures_iter(html) {
+        let path = cap[1].to_string();
+        if out.iter().any(|h| h.id == path) {
+            continue;
+        }
+        out.push(SearchHit {
+            id: path,
+            latest: String::new(),
+        });
+    }
+    out
+}
+
+/// Strip a leading SemVer range operator (`^`, `~`, `>=`, `v`, …) off a version
+/// spec so it can be compared against a concrete published version (shared by
+/// npm and Cargo, whose `Cargo.toml` reqs use the same operators). A spec with
+/// embedded whitespace (a compound range like `>=1 <2`) or no digit core
+/// returns empty — there's no single version to flag.
+fn clean_version(spec: &str) -> String {
     let spec = spec.trim();
     let core = spec.trim_start_matches(['^', '~', '>', '<', '=', 'v', ' ']);
     if core.is_empty()
@@ -754,6 +1077,10 @@ mod tests {
         assert_eq!(eco("/x/app.ts"), Some(PackageEcosystem::Npm));
         assert_eq!(eco("/x/app.tsx"), Some(PackageEcosystem::Npm));
         assert_eq!(eco("/x/package.json"), Some(PackageEcosystem::Npm));
+        assert_eq!(eco("/x/main.rs"), Some(PackageEcosystem::Cargo));
+        assert_eq!(eco("/x/Cargo.toml"), Some(PackageEcosystem::Cargo));
+        assert_eq!(eco("/x/main.go"), Some(PackageEcosystem::Go));
+        assert_eq!(eco("/x/go.mod"), Some(PackageEcosystem::Go));
         // A generic `.json` is too broad to claim for npm by extension alone.
         assert_eq!(eco("/x/appsettings.json"), None);
     }
@@ -835,14 +1162,157 @@ mod tests {
     }
 
     #[test]
-    fn clean_npm_version_strips_range_operators() {
-        assert_eq!(clean_npm_version("^4.17.21"), "4.17.21");
-        assert_eq!(clean_npm_version("~1.2.0"), "1.2.0");
-        assert_eq!(clean_npm_version(">=3.0.0"), "3.0.0");
-        assert_eq!(clean_npm_version("18.2.0"), "18.2.0");
+    fn clean_version_strips_range_operators() {
+        assert_eq!(clean_version("^4.17.21"), "4.17.21");
+        assert_eq!(clean_version("~1.2.0"), "1.2.0");
+        assert_eq!(clean_version(">=3.0.0"), "3.0.0");
+        assert_eq!(clean_version("18.2.0"), "18.2.0");
         // No single version to flag for these.
-        assert_eq!(clean_npm_version("*"), "");
-        assert_eq!(clean_npm_version(">=1 <2"), "");
-        assert_eq!(clean_npm_version("workspace:*"), "");
+        assert_eq!(clean_version("*"), "");
+        assert_eq!(clean_version(">=1 <2"), "");
+        assert_eq!(clean_version("workspace:*"), "");
+    }
+
+    // ── Cargo ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parses_cargo_deps_string_and_table_forms() {
+        let toml = r#"
+            [package]
+            name = "demo"
+
+            [dependencies]
+            serde = "1.0.219"
+            tokio = { version = "1.40", features = ["full"] }
+
+            [dev-dependencies]
+            proptest = "1"
+
+            [build-dependencies]
+            cc = "1.0"
+        "#;
+        let pkgs = parse_cargo_installed_toml(toml).unwrap();
+        assert_eq!(pkgs.len(), 4);
+        assert_eq!(pkgs[0].id, "cc"); // sorted
+        let serde = pkgs.iter().find(|p| p.id == "serde").unwrap();
+        assert_eq!(serde.requested, "1.0.219");
+        assert_eq!(serde.resolved, "1.0.219");
+        let tokio = pkgs.iter().find(|p| p.id == "tokio").unwrap();
+        assert_eq!(tokio.requested, "1.40"); // version pulled out of the table
+    }
+
+    #[test]
+    fn cargo_path_dep_has_empty_resolved() {
+        let toml = r#"
+            [dependencies]
+            local = { path = "../local" }
+        "#;
+        let pkgs = parse_cargo_installed_toml(toml).unwrap();
+        assert_eq!(pkgs.len(), 1);
+        assert_eq!(pkgs[0].resolved, "");
+    }
+
+    #[test]
+    fn parses_crates_versions_skips_yanked_keeps_order() {
+        // Shape captured from `https://crates.io/api/v1/crates/<c>/versions`
+        // (newest-first).
+        let json = r#"{"versions":[
+            {"num":"1.0.228","yanked":false},
+            {"num":"1.0.227","yanked":true},
+            {"num":"1.0.0-rc.1","yanked":false},
+            {"num":"0.9.0","yanked":false}
+        ]}"#;
+        let vs = parse_crates_versions_json(json).unwrap();
+        assert_eq!(vs.len(), 3); // yanked dropped
+        assert_eq!(vs[0].version, "1.0.228"); // order preserved (newest-first)
+        assert!(
+            vs.iter()
+                .find(|v| v.version == "1.0.0-rc.1")
+                .unwrap()
+                .prerelease
+        );
+        assert!(!vs[0].prerelease);
+    }
+
+    #[test]
+    fn parses_cargo_search_lines() {
+        let text = "\
+serde = \"1.0.228\"          # A generic serialization/deserialization framework
+serde_json = \"1.0.140\"     # A JSON serialization file format
+... and 16345 crates more (use --limit N to see more)
+note: to learn more about a package, run `cargo info <name>`";
+        let hits = parse_cargo_search(text);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, "serde");
+        assert_eq!(hits[0].latest, "1.0.228");
+        assert_eq!(hits[1].id, "serde_json");
+    }
+
+    // ── Go ───────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn parses_gomod_direct_requires_skipping_indirect() {
+        let gomod = "\
+module example.com/x
+
+go 1.22
+
+require (
+\tgithub.com/foo/bar v1.2.3
+\tgolang.org/x/text v0.14.0 // indirect
+)
+
+require github.com/baz/qux v2.0.0
+";
+        let pkgs = parse_gomod_installed(gomod).unwrap();
+        assert_eq!(pkgs.len(), 2); // indirect dep excluded
+        assert_eq!(pkgs[0].id, "github.com/baz/qux");
+        assert_eq!(pkgs[0].resolved, "v2.0.0");
+        assert_eq!(pkgs[1].id, "github.com/foo/bar");
+        assert!(!pkgs.iter().any(|p| p.id == "golang.org/x/text"));
+    }
+
+    #[test]
+    fn parses_go_versions_newest_first() {
+        // `go list -m -versions M` → module then space-separated versions.
+        let out = "golang.org/x/text v0.1.0 v0.2.0 v0.14.0\n";
+        let vs = parse_go_versions(out).unwrap();
+        assert_eq!(vs.len(), 3);
+        assert_eq!(vs[0].version, "v0.14.0"); // newest first
+        assert_eq!(vs.last().unwrap().version, "v0.1.0");
+    }
+
+    #[test]
+    fn go_module_with_no_tagged_versions_is_empty() {
+        let vs = parse_go_versions("example.com/x\n").unwrap();
+        assert!(vs.is_empty());
+    }
+
+    #[test]
+    fn scrapes_godev_search_module_paths() {
+        // Markup captured from a real pkg.go.dev search page — attributes span
+        // newlines between `href` and the `data-test-id` marker.
+        let html = r#"
+          <h2>
+            <a href="/gopkg.in/yaml.v3" data-gtmc="search result" data-gtmv="0"
+                data-test-id="snippet-title">
+              yaml <span class="SearchSnippet-header-path">(gopkg.in/yaml.v3)</span>
+            </a>
+          </h2>
+          <a href="/sigs.k8s.io/yaml" data-test-id="snippet-title">k8s yaml</a>
+          <a href="/some/other/link">not a result</a>
+        "#;
+        let hits = parse_godev_search_html(html);
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0].id, "gopkg.in/yaml.v3");
+        assert_eq!(hits[1].id, "sigs.k8s.io/yaml");
+        assert!(hits[0].latest.is_empty()); // version not on the results page
+    }
+
+    #[test]
+    fn urlencode_escapes_reserved() {
+        assert_eq!(urlencode("github.com/foo/bar"), "github.com%2Ffoo%2Fbar");
+        assert_eq!(urlencode("hello world"), "hello%20world");
+        assert_eq!(urlencode("serde_json-1.0"), "serde_json-1.0");
     }
 }
