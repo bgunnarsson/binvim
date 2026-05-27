@@ -358,6 +358,10 @@ impl super::App {
                 self.package_begin(crate::app::state::PackageFlowKind::Install)
             }
             Action::PackageSearch => self.package_begin(crate::app::state::PackageFlowKind::Search),
+            Action::AndroidLaunchAvd => self.android_list_avds(),
+            Action::AndroidCreateAvd => self.android_create_avd(),
+            Action::AndroidDevices => self.android_list_devices(),
+            Action::AndroidDebug => self.android_debug_session(),
             Action::VisualSwitch(target) => match self.mode {
                 Mode::Visual(cur) if cur == target => self.exit_visual(),
                 _ => {

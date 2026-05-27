@@ -66,6 +66,11 @@ pub enum PromptKind {
     /// basename of the cursor entry. Pre-fills with the current
     /// basename. Returns focus to the file-tree pane on Enter / Esc.
     FileTreeRename,
+    /// `<leader>Ac` — typed string names the new Android Virtual Device.
+    /// The system image chosen in the preceding picker is stashed on
+    /// `App.android.flow`; Enter kicks off create (installing the image
+    /// first if it isn't downloaded yet).
+    AndroidAvdName,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -227,6 +227,15 @@ impl super::App {
                         PickerPayload::PackageVersion { version } => {
                             self.pkg_pick_version(version);
                         }
+                        PickerPayload::AndroidAvd { name } => {
+                            self.android_launch_avd(name);
+                        }
+                        PickerPayload::AndroidSystemImage { pkg } => {
+                            self.android_pick_system_image(pkg);
+                        }
+                        PickerPayload::AndroidDevice { serial } => {
+                            self.android_pick_device(serial);
+                        }
                     }
                 }
             }
@@ -304,7 +313,11 @@ impl super::App {
             // Package manifest / installed / version lists filter locally.
             | PickerKind::PackageManifest
             | PickerKind::PackageInstalled
-            | PickerKind::PackageVersion => picker.refilter(),
+            | PickerKind::PackageVersion
+            // Android AVD / system-image / device lists filter locally too.
+            | PickerKind::AndroidAvd
+            | PickerKind::AndroidSystemImage
+            | PickerKind::AndroidDevice => picker.refilter(),
             PickerKind::PackageSearch => {
                 // Network search — don't filter locally. Mark the query dirty;
                 // the debounced `pkg_search_tick` fires the request.

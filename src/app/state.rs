@@ -548,6 +548,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("p".into(), "+Package".into()),
         ("s".into(), "+Test".into()),
         ("t".into(), "+Terminal".into()),
+        ("A".into(), "+Android".into()),
         ("G".into(), "Grep".into()),
         ("e".into(), "File explorer".into()),
         ("a".into(), "Code actions".into()),
@@ -587,6 +588,15 @@ pub fn package_prefix_entries() -> Vec<(String, String)> {
     vec![
         ("i".into(), "Install / manage".into()),
         ("s".into(), "Search & add".into()),
+    ]
+}
+
+pub fn android_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("l".into(), "Launch emulator".into()),
+        ("c".into(), "Create AVD".into()),
+        ("d".into(), "Running devices".into()),
+        ("b".into(), "Debug session".into()),
     ]
 }
 
@@ -665,6 +675,74 @@ pub struct PackageState {
 }
 
 impl PackageState {
+    pub fn new() -> Self {
+        let (tx, rx) = channel();
+        Self {
+            tx,
+            rx,
+            busy: false,
+            epoch: 0,
+            flow: None,
+        }
+    }
+}
+
+/// One result delivered from a background Android SDK thread back to the main
+/// loop, stamped with the flow `epoch` so a result from a cancelled flow is
+/// dropped (same staleness guard as [`PackageEvent`]).
+pub enum AndroidEvent {
+    /// `emulator -list-avds` — names of defined AVDs.
+    AvdsListed {
+        epoch: u64,
+        result: Result<Vec<String>, String>,
+    },
+    /// `adb devices -l` — running devices / emulators.
+    DevicesListed {
+        epoch: u64,
+        result: Result<Vec<crate::android::Device>, String>,
+    },
+    /// `sdkmanager --list` — installable / installed system images.
+    ImagesListed {
+        epoch: u64,
+        result: Result<Vec<crate::android::SystemImage>, String>,
+    },
+    /// `avdmanager create avd` (preceded by an on-demand `sdkmanager` install
+    /// when the chosen image wasn't present) finished.
+    AvdCreated {
+        epoch: u64,
+        name: String,
+        result: Result<(), String>,
+    },
+    /// The debug-attach prep (gradle build + install + `am start -D` + adb
+    /// JDWP forward) finished. On success the App fires the jdtls
+    /// `vscode.java.startDebugSession` request to obtain the DAP port.
+    DebugReady {
+        epoch: u64,
+        result: Result<crate::android::DebugPrep, String>,
+    },
+}
+
+/// In-flight `<leader>A` create-AVD flow — carries the chosen system image
+/// across the async gap while the name prompt is open.
+pub struct AndroidFlow {
+    /// System image package chosen in the create flow. The create job runs
+    /// `sdkmanager <pkg>` (idempotent — a no-op if already downloaded) before
+    /// `avdmanager create avd`, so no separate "installed?" flag is needed.
+    pub pending_image: Option<String>,
+}
+
+/// Owns the channel between background Android threads and the main loop, plus
+/// the active create flow. Drained each tick alongside `package` / `lsp` /
+/// `dap`.
+pub struct AndroidState {
+    pub tx: Sender<AndroidEvent>,
+    pub rx: Receiver<AndroidEvent>,
+    pub busy: bool,
+    pub epoch: u64,
+    pub flow: Option<AndroidFlow>,
+}
+
+impl AndroidState {
     pub fn new() -> Self {
         let (tx, rx) = channel();
         Self {

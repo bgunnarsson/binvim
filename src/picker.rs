@@ -50,6 +50,14 @@ pub enum PickerKind {
     /// `<leader>p` step 3 — pick a version to install. Installed version is
     /// `marked`; `Tab` toggles prereleases; the built-in fuzzy filter narrows.
     PackageVersion,
+    /// `<leader>Al` — pick a defined AVD to launch.
+    AndroidAvd,
+    /// `<leader>Ac` step 1 — pick a system image for the new AVD. Installed
+    /// images are `marked`. Opens empty (`(loading…)`) while `sdkmanager` runs.
+    AndroidSystemImage,
+    /// `<leader>Ad` — running devices / emulators (`adb devices`). Selection
+    /// is informational today; in a debug flow it picks the attach target.
+    AndroidDevice,
 }
 
 pub struct PickerState {
@@ -147,6 +155,18 @@ pub enum PickerPayload {
     /// stashed on `App.package.flow`.
     PackageVersion {
         version: String,
+    },
+    /// An AVD name chosen to launch (`emulator -avd <name>`).
+    AndroidAvd {
+        name: String,
+    },
+    /// A system image package chosen for AVD creation.
+    AndroidSystemImage {
+        pkg: String,
+    },
+    /// A running device / emulator serial (`adb` `-s` target).
+    AndroidDevice {
+        serial: String,
     },
 }
 

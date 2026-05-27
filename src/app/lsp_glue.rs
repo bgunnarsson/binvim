@@ -358,6 +358,9 @@ impl super::App {
                         self.status_msg = format!("LSP: no {kind} found");
                     }
                 }
+                LspEvent::JavaDebugSession { port } => {
+                    self.android_attach_debug(port);
+                }
                 LspEvent::Completion { items } => {
                     // Servers (typescript-language-server especially) often dump
                     // their entire symbol table and expect the client to filter.

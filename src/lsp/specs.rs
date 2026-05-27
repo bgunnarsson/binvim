@@ -49,6 +49,39 @@ pub fn specs_for_path(path: &Path) -> Vec<ServerSpec> {
 /// Command candidates are bare names — `resolve_command` then walks `$PATH` to find them.
 /// We only special-case `~/.cargo/bin` for rust-analyzer because that's the Rust toolchain
 /// convention (and not tied to any other tool's package manager).
+/// Directory binvim looks in for the jdtls `java-debug` plugin jar(s) — the
+/// same path the install catalog's manual step populates. Shared so the
+/// Android debug orchestration can sanity-check it.
+pub fn java_debug_dir() -> Option<PathBuf> {
+    crate::paths::cache_dir().map(|d| d.join("java-debug"))
+}
+
+/// `initializationOptions` for jdtls: a `{ "bundles": [<jar>, …] }` object
+/// listing every java-debug plugin jar under [`java_debug_dir`]. Returns
+/// `Value::Null` when the directory is missing or holds no matching jar, so
+/// jdtls still starts (just without debug support) when the plugin isn't
+/// installed.
+fn java_debug_init_options() -> Value {
+    let Some(dir) = java_debug_dir() else {
+        return Value::Null;
+    };
+    let mut bundles: Vec<Value> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if name.ends_with(".jar") && name.contains("java.debug.plugin") {
+                bundles.push(Value::String(p.to_string_lossy().into_owned()));
+            }
+        }
+    }
+    if bundles.is_empty() {
+        Value::Null
+    } else {
+        json!({ "bundles": bundles })
+    }
+}
+
 fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
     let home = crate::paths::home_dir();
     let join_home = |rel: &str| -> String {
@@ -489,7 +522,11 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
                     "build.gradle.kts".into(),
                     ".git".into(),
                 ],
-                initialization_options: Value::Null,
+                // Load the java-debug plugin jar(s) if present so
+                // `vscode.java.startDebugSession` is available for the Android
+                // attach flow (`<leader>Ab`). Null when none are installed —
+                // jdtls just runs without debug support.
+                initialization_options: java_debug_init_options(),
             })
         }
         "cs" | "vb" => {

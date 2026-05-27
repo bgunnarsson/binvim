@@ -408,8 +408,12 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `dlv`                           | Go debug adapter (DAP)                   | `go install github.com/go-delve/delve/cmd/dlv@latest`                    |
 | `debugpy` (Python module)       | Python debug adapter (DAP)               | `pip install debugpy` (or `pipx inject` into a venv). binvim runs it as `python3 -m debugpy.adapter`. |
 | `lldb-dap`                      | Rust / C / C++ debug adapter (DAP)       | Ships with LLVM 18+: `brew install llvm` (then add `$(brew --prefix llvm)/bin` to `$PATH`). Falls back to the legacy `lldb-vscode` if `lldb-dap` isn't present. |
+| `java-debug` (jdtls plugin)     | Android Java / Kotlin debug adapter (DAP) | Download `com.microsoft.java.debug.plugin-*.jar` from [github.com/microsoft/java-debug](https://github.com/microsoft/java-debug/releases) into `~/.cache/binvim/java-debug/`; jdtls loads it for `<leader>ab` attach debugging. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
 | `yazi`                          | `<space>e` file manager — optional; built-in sidebar tree via `[file_explorer] tree = true` doesn't need it | `brew install yazi`                                                      |
+| `sdkmanager` / `avdmanager`     | Android SDK command-line tools — emulator management (`<leader>a`), no Android Studio | `brew install --cask android-commandlinetools`, then `sdkmanager --licenses` |
+| `adb`                           | Android platform-tools (device bridge)   | `brew install --cask android-platform-tools` / `apt install android-tools-adb` |
+| `emulator`                      | Android emulator runtime                 | `sdkmanager emulator` — binvim locates it under `$ANDROID_HOME/emulator` |
 
 binvim auto-discovers project-local binaries by walking up to the closest `node_modules/.bin/`, so a `devDependency` in your project takes precedence over a global install.
 

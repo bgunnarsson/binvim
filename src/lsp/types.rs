@@ -285,6 +285,12 @@ pub enum LspEvent {
         kind: &'static str,
         path: Option<PathBuf>,
     },
+    /// jdtls answered `vscode.java.startDebugSession` — `port` is the TCP
+    /// port the java-debug adapter is now listening on. The App connects a
+    /// DAP attach session to it (the Android JDWP flow in `app/dap_glue.rs`).
+    JavaDebugSession {
+        port: u16,
+    },
 }
 
 /// A code action the user can pick from `<leader>a`. We keep the raw

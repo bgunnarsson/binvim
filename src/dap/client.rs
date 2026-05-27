@@ -7,7 +7,8 @@
 use anyhow::Result;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStderr, ChildStdin, Command, Stdio};
+use std::net::{SocketAddr, TcpStream};
+use std::process::{Child, ChildStderr, Command, Stdio};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -19,12 +20,18 @@ use super::types::{DapIncoming, OutputLine};
 pub struct DapClient {
     #[allow(dead_code)]
     pub adapter_key: String,
-    child: Arc<Mutex<Child>>,
-    stdin: Arc<Mutex<ChildStdin>>,
+    /// `Some` for child-process adapters (stdio transport); `None` for a TCP
+    /// attach connection (e.g. the jdtls-hosted java-debug adapter) where
+    /// there's no child to reap.
+    child: Option<Arc<Mutex<Child>>>,
+    /// The write half of the transport — `ChildStdin` for spawned adapters,
+    /// a `TcpStream` clone for TCP attach. Boxed so both share `write_frame`.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     pub incoming_rx: Receiver<DapIncoming>,
     /// Adapter stderr — populated by a side thread that pushes each line
     /// into the channel as a synthetic `output` event. Lets the user see
-    /// adapter crashes that would otherwise look like a silent hang.
+    /// adapter crashes that would otherwise look like a silent hang. Empty
+    /// (sender dropped) for the TCP transport — there's no separate stderr.
     pub stderr_rx: Receiver<OutputLine>,
     next_seq: Arc<Mutex<u64>>,
 }
@@ -46,7 +53,8 @@ impl DapClient {
             .stderr(Stdio::piped())
             .spawn()
             .ok()?;
-        let stdin = Arc::new(Mutex::new(child.stdin.take()?));
+        let stdin: Arc<Mutex<Box<dyn Write + Send>>> =
+            Arc::new(Mutex::new(Box::new(child.stdin.take()?)));
         let stdout = child.stdout.take()?;
         let stderr = child.stderr.take()?;
 
@@ -62,8 +70,37 @@ impl DapClient {
 
         Some(Self {
             adapter_key: spec.key.to_string(),
-            child: Arc::new(Mutex::new(child)),
-            stdin,
+            child: Some(Arc::new(Mutex::new(child))),
+            writer: stdin,
+            incoming_rx: rx,
+            stderr_rx,
+            next_seq: Arc::new(Mutex::new(1)),
+        })
+    }
+
+    /// Attach to a DAP adapter already listening on a TCP socket — the shape
+    /// the jdtls `java-debug` plugin uses (jdtls returns a port from
+    /// `vscode.java.startDebugSession`; we connect a fresh DAP session to it).
+    /// One reader thread parses framed messages off the socket; the cloned
+    /// write half drives `write_frame`. There's no child process and no
+    /// separate stderr stream, so `child` is `None` and `stderr_rx` is inert.
+    pub fn connect_tcp(adapter_key: &str, addr: SocketAddr) -> Option<Self> {
+        let stream = TcpStream::connect(addr).ok()?;
+        let reader = stream.try_clone().ok()?;
+
+        let (tx, rx) = channel();
+        thread::spawn(move || {
+            reader_loop(reader, tx);
+        });
+
+        // Live-but-empty stderr channel: the sender is dropped here, so the
+        // manager's `stderr_rx.try_recv()` loop simply never yields a line.
+        let (_stderr_tx, stderr_rx) = channel();
+
+        Some(Self {
+            adapter_key: adapter_key.to_string(),
+            child: None,
+            writer: Arc::new(Mutex::new(Box::new(stream))),
             incoming_rx: rx,
             stderr_rx,
             next_seq: Arc::new(Mutex::new(1)),
@@ -74,7 +111,9 @@ impl DapClient {
     /// the child reaps, `None` while it's still alive. The manager polls
     /// this on `drain` so a silent crash becomes an `AdapterError` event.
     pub fn try_exit_status(&self) -> Option<i32> {
-        let mut child = self.child.lock().ok()?;
+        // TCP attach has no child to reap — the session ends via the adapter's
+        // `terminated` event rather than a process exit.
+        let mut child = self.child.as_ref()?.lock().ok()?;
         match child.try_wait() {
             Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
             _ => None,
@@ -125,9 +164,9 @@ impl DapClient {
     fn write_frame(&self, msg: &Value) -> Result<()> {
         let body = serde_json::to_string(msg)?;
         let frame = format!("Content-Length: {}\r\n\r\n{}", body.len(), body);
-        let mut stdin = self.stdin.lock().unwrap();
-        stdin.write_all(frame.as_bytes())?;
-        stdin.flush()?;
+        let mut writer = self.writer.lock().unwrap();
+        writer.write_all(frame.as_bytes())?;
+        writer.flush()?;
         Ok(())
     }
 }

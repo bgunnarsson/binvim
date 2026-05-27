@@ -440,6 +440,15 @@ pub enum Action {
     /// `<leader>ps` — open the package manager in search mode (pick a
     /// manifest, search the registry, then a version to add).
     PackageSearch,
+    /// `<leader>Al` — list the defined AVDs and launch the chosen emulator.
+    AndroidLaunchAvd,
+    /// `<leader>Ac` — create a new AVD (pick a system image, then name it).
+    AndroidCreateAvd,
+    /// `<leader>Ad` — list running devices / emulators (`adb devices`).
+    AndroidDevices,
+    /// `<leader>Ab` — start an Android debug session (build + install +
+    /// attach over JDWP via the jdtls java-debug plugin).
+    AndroidDebug,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -513,6 +522,9 @@ pub struct PendingCmd {
     /// (`i` install / manage installed, `s` search & add). The ecosystem
     /// (NuGet / cargo / npm) is detected from the active buffer at dispatch.
     pub awaiting_package_leader: bool,
+    /// Set after `<leader>A` — next char picks an Android action (`l` launch
+    /// emulator, `c` create AVD, `d` running devices, `b` debug session).
+    pub awaiting_android_leader: bool,
     /// Set after `<C-w>` — next char picks a window action
     /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
     /// Wired in Normal mode only; cancels on any unrecognised follow-up.
@@ -558,6 +570,7 @@ impl PendingCmd {
             && !self.awaiting_test_leader
             && !self.awaiting_ai_leader
             && !self.awaiting_package_leader
+            && !self.awaiting_android_leader
             && !self.awaiting_window_leader
     }
 
@@ -997,6 +1010,13 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_package_leader = true;
             return ParseResult::Pending;
         }
+        // `A` opens the Android sub-menu (`<leader>Al` launch emulator,
+        // `<leader>Ac` create AVD, `<leader>Ad` devices, `<leader>Ab` debug).
+        // Capital `A` so lowercase `<leader>a` stays bound to Code actions.
+        if ch == 'A' {
+            state.awaiting_android_leader = true;
+            return ParseResult::Pending;
+        }
         let action = match ch {
             ' ' => Some(Action::OpenPicker {
                 kind: PickerLeader::Files,
@@ -1198,6 +1218,23 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let action = match ch {
             'i' => Some(Action::PackageInstall),
             's' => Some(Action::PackageSearch),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Android prefix dispatch (after `<leader>A`).
+    if state.awaiting_android_leader {
+        state.awaiting_android_leader = false;
+        let action = match ch {
+            'l' => Some(Action::AndroidLaunchAvd),
+            'c' => Some(Action::AndroidCreateAvd),
+            'd' => Some(Action::AndroidDevices),
+            'b' => Some(Action::AndroidDebug),
             _ => None,
         };
         state.reset();
@@ -1771,6 +1808,40 @@ mod tests {
         assert!(matches!(
             parse(&mut state, key('i'), ParseCtx::Normal),
             ParseResult::Action(Action::PackageInstall)
+        ));
+    }
+
+    #[test]
+    fn leader_capital_a_l_emits_android_launch() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, key(' '), ParseCtx::Normal),
+            ParseResult::Pending
+        ));
+        // Capital `A` (the Android sub-leader) must not collide with lowercase
+        // `a` (Code actions).
+        assert!(matches!(
+            parse(&mut state, key('A'), ParseCtx::Normal),
+            ParseResult::Pending
+        ));
+        assert!(matches!(
+            parse(&mut state, key('l'), ParseCtx::Normal),
+            ParseResult::Action(Action::AndroidLaunchAvd)
+        ));
+    }
+
+    #[test]
+    fn leader_lowercase_a_still_code_actions() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, key(' '), ParseCtx::Normal),
+            ParseResult::Pending
+        ));
+        assert!(matches!(
+            parse(&mut state, key('a'), ParseCtx::Normal),
+            ParseResult::Action(Action::OpenPicker {
+                kind: PickerLeader::CodeActions
+            })
         ));
     }
 

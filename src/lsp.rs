@@ -18,7 +18,7 @@ mod specs;
 mod types;
 
 pub use manager::{CopilotStatus, LspManager};
-pub use specs::{find_node_modules_bin, find_tailwind_config};
+pub use specs::{find_node_modules_bin, find_tailwind_config, java_debug_dir};
 pub use types::{
     ActiveBufferLspStatus, CodeActionItem, CodeLensItem, CompletionItem, Diagnostic,
     DocumentHighlightRange, InlayHint, LocationItem, LspCommand, LspEvent, LspHealth,

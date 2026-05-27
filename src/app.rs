@@ -20,6 +20,7 @@
 //! - [`picker_glue`]: generic picker open/handle and yazi shell-out
 //! - [`health`]: `:health` command output
 
+mod android_glue;
 mod buffers;
 mod cmdline_complete;
 mod cmdline_history;
@@ -634,6 +635,14 @@ pub struct App {
     /// and the active install/search flow. Drained per tick like `test`;
     /// results advance the flow in `handle_package_events`.
     pub package: state::PackageState,
+    /// `<leader>A` Android emulator manager — owns its own background-thread
+    /// channel and the active create-AVD flow. Drained per tick like
+    /// `package`; results advance the flow in `handle_android_events`.
+    pub android: state::AndroidState,
+    /// Debug-attach context captured between `AndroidEvent::DebugReady` (adb
+    /// forward done) and the jdtls `JavaDebugSession` reply that hands back the
+    /// DAP port — at which point we attach and clear this.
+    pub pending_android_debug: Option<crate::android::DebugPrep>,
     /// `:testresults` / auto-opened-on-run overlay toggle. Same
     /// scrollable-overlay pattern as `:health` / `:messages`.
     pub show_test_results_page: bool,
@@ -915,6 +924,8 @@ impl App {
             registers_content_height: std::cell::Cell::new(0),
             test: crate::test::TestManager::new(),
             package: state::PackageState::new(),
+            android: state::AndroidState::new(),
+            pending_android_debug: None,
             show_test_results_page: false,
             show_install_page: false,
             installer: None,
@@ -1040,6 +1051,11 @@ impl App {
             if self.package.busy {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
+            // An Android SDK op (list / create / launch) is in flight on a
+            // background thread — same tightening so its result lands promptly.
+            if self.android.busy {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
             // A live yank flash needs us to wake up at its deadline so the
             // highlight clears on time.
             if let Some(h) = self.yank_highlight.as_ref() {
@@ -1146,6 +1162,11 @@ impl App {
                             title: "Package".into(),
                             entries: state::package_prefix_entries(),
                         })
+                    } else if self.pending.awaiting_android_leader {
+                        Some(WhichKeyState {
+                            title: "Android".into(),
+                            entries: state::android_prefix_entries(),
+                        })
                     } else {
                         None
                     };
@@ -1188,6 +1209,11 @@ impl App {
                 needs_render = true;
             }
             if self.pkg_search_tick() {
+                needs_render = true;
+            }
+            // Android SDK results (AVD list / device list / system images /
+            // create outcome) come back on their own background channel.
+            if self.handle_android_events() {
                 needs_render = true;
             }
             // Drain PTY output → grid mutations once per loop. Any

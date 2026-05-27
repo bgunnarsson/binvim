@@ -6,6 +6,7 @@
 
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use super::client::DapClient;
@@ -72,8 +73,12 @@ pub struct DapSession {
     pub client: DapClient,
     /// Launch-request arguments. Built before spawn and held so they can
     /// be sent the moment the `initialize` response arrives, without
-    /// re-running adapter-specific resolution.
+    /// re-running adapter-specific resolution. For an attach session this
+    /// holds the `attach`-request arguments instead.
     pub launch_args: Value,
+    /// The configuration request sent after `initialize` — `"launch"` for a
+    /// spawned adapter, `"attach"` for a TCP attach (Android / JDWP).
+    pub request_command: &'static str,
     /// Last status message emitted by the adapter (or our own status
     /// machine) — surfaced verbatim in the bottom pane header.
     pub status_line: String,
@@ -304,7 +309,69 @@ impl DapManager {
             pending_watch_evals: HashMap::new(),
             client,
             launch_args,
+            request_command: "launch",
             status_line: "initialising adapter…".into(),
+        });
+        Ok(())
+    }
+
+    /// Start a debug session by attaching to an adapter already listening on a
+    /// TCP port — the jdtls-hosted java-debug shape for Android. There's no
+    /// process to spawn or prelaunch to run (the caller in `app/dap_glue.rs`
+    /// has already built + installed the app, forwarded the JDWP port via adb,
+    /// and obtained both the DAP port and the attach arguments). The handshake
+    /// is otherwise identical: `initialize`, then — on its response —
+    /// `attach` rather than `launch`.
+    pub fn start_attach_session(
+        &mut self,
+        adapter_key: &'static str,
+        adapter_id: &str,
+        dap_port: u16,
+        workspace_root: PathBuf,
+        attach_args: Value,
+    ) -> Result<(), String> {
+        if self.is_active() {
+            return Err("debug session already active — :dapstop first".into());
+        }
+        let addr = SocketAddr::from(([127, 0, 0, 1], dap_port));
+        let client = DapClient::connect_tcp(adapter_key, addr)
+            .ok_or_else(|| format!("could not connect to {adapter_key} adapter on :{dap_port}"))?;
+
+        let init_seq = client.alloc_seq();
+        client
+            .send_request(
+                init_seq,
+                "initialize",
+                json!({
+                    "clientID": "binvim",
+                    "clientName": "binvim",
+                    "adapterID": adapter_id,
+                    "pathFormat": "path",
+                    "linesStartAt1": true,
+                    "columnsStartAt1": true,
+                    "supportsVariableType": true,
+                    "supportsVariablePaging": false,
+                    "supportsRunInTerminalRequest": false,
+                }),
+            )
+            .map_err(|e| format!("initialize send failed: {e}"))?;
+
+        self.session = Some(DapSession {
+            adapter_key: adapter_key.to_string(),
+            workspace_root,
+            state: SessionState::Initializing,
+            frames: Vec::new(),
+            current_thread: None,
+            scopes: Vec::new(),
+            scope_for_display: None,
+            children: HashMap::new(),
+            expanded: HashSet::new(),
+            pending_variable_fetches: HashMap::new(),
+            pending_watch_evals: HashMap::new(),
+            client,
+            launch_args: attach_args,
+            request_command: "attach",
+            status_line: "attaching to debuggee…".into(),
         });
         Ok(())
     }
@@ -648,16 +715,24 @@ impl DapManager {
             "initialize" => {
                 events.push(DapEvent::Initialized);
                 if let Some(session) = self.session.as_mut() {
-                    session.status_line = "launching debuggee…".into();
+                    session.status_line = if session.request_command == "attach" {
+                        "attaching to debuggee…".into()
+                    } else {
+                        "launching debuggee…".into()
+                    };
                 }
                 if let Some(session) = self.session.as_ref() {
                     let seq = session.client.alloc_seq();
-                    let _ = session
-                        .client
-                        .send_request(seq, "launch", session.launch_args.clone());
+                    let _ = session.client.send_request(
+                        seq,
+                        session.request_command,
+                        session.launch_args.clone(),
+                    );
                 }
             }
-            "launch" => {
+            // `launch` (spawned adapters) and `attach` (TCP / JDWP) both move
+            // the session into the configuration phase on a successful reply.
+            "launch" | "attach" => {
                 if let Some(s) = self.session.as_mut() {
                     s.state = SessionState::Configuring;
                 }

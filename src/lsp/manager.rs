@@ -70,6 +70,11 @@ pub(super) enum PendingRequest {
         buffer_version: u64,
         lens_index: usize,
     },
+    /// jdtls `workspace/executeCommand` for `vscode.java.startDebugSession`
+    /// — the response is the integer TCP port the java-debug adapter is
+    /// listening on. Tracked (unlike the fire-and-forget `execute_command`)
+    /// because we need that port to attach.
+    JavaDebugSession,
     /// Copilot `checkStatus` — response says whether the user is signed
     /// in and surfaces their handle.
     CopilotCheckStatus,
@@ -693,6 +698,30 @@ impl LspManager {
         true
     }
 
+    /// Ask jdtls to start a java-debug session and report the listening TCP
+    /// port via `LspEvent::JavaDebugSession`. Targets the jdtls client by key
+    /// (the java-debug plugin is hosted there) rather than the buffer's
+    /// primary server, so it works even when the active buffer is Kotlin.
+    /// Errors when jdtls isn't attached (no `.java` file opened yet).
+    pub fn request_java_debug_session(&mut self) -> Result<(), String> {
+        let Some(client) = self.clients.get("jdtls") else {
+            return Err(
+                "jdtls is not running — open a .java file in the project so it attaches".into(),
+            );
+        };
+        let id = client.alloc_id();
+        client
+            .send_request(
+                id,
+                "workspace/executeCommand",
+                json!({ "command": "vscode.java.startDebugSession" }),
+            )
+            .map_err(|e| format!("startDebugSession send failed: {e}"))?;
+        self.pending
+            .insert(("jdtls".to_string(), id), PendingRequest::JavaDebugSession);
+        Ok(())
+    }
+
     /// Request `textDocument/references` from the primary server with
     /// `includeDeclaration: true` so the user sees the definition site too.
     pub fn request_references(&mut self, path: &Path, line: usize, col: usize) -> bool {
@@ -947,6 +976,7 @@ fn pending_request_kind(req: &PendingRequest) -> &'static str {
         PendingRequest::SemanticTokens { .. } => "SemanticTokens",
         PendingRequest::CodeLens { .. } => "CodeLens",
         PendingRequest::CodeLensResolve { .. } => "CodeLensResolve",
+        PendingRequest::JavaDebugSession => "JavaDebugSession",
         PendingRequest::CopilotCheckStatus => "CopilotCheckStatus",
         PendingRequest::CopilotSignIn => "CopilotSignIn",
         PendingRequest::CopilotInline { .. } => "CopilotInline",
@@ -1096,6 +1126,18 @@ fn handle_response(
                 lens_index,
                 command,
             })
+        }
+        PendingRequest::JavaDebugSession => {
+            // The reply is a bare integer port. Older/newer plugin builds may
+            // wrap it as `{ "port": <n> }`, so accept either shape.
+            let port = result
+                .as_u64()
+                .or_else(|| result.get("port").and_then(|v| v.as_u64()))
+                .filter(|p| *p > 0 && *p <= u16::MAX as u64);
+            match port {
+                Some(p) => Some(LspEvent::JavaDebugSession { port: p as u16 }),
+                None => Some(LspEvent::NotFound("java debug session")),
+            }
         }
         PendingRequest::CopilotCheckStatus => {
             // Copilot returns `{ status: "OK" | "NotSignedIn" | ...,

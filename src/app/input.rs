@@ -1859,6 +1859,10 @@ impl super::App {
                     crate::mode::PromptKind::FileTreeRename => {
                         self.finish_file_tree_rename(input);
                     }
+                    crate::mode::PromptKind::AndroidAvdName => {
+                        self.mode = Mode::Normal;
+                        self.android_avd_name_entered(input);
+                    }
                 }
             }
             KeyCode::Backspace => {

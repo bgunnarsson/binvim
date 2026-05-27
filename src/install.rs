@@ -53,6 +53,9 @@ pub struct Tool {
 #[derive(Copy, Clone)]
 pub enum Installer {
     Brew(&'static str),
+    /// `brew install --cask <token>` — for things Homebrew ships as a cask
+    /// rather than a formula (the Android command-line tools / platform-tools).
+    BrewCask(&'static str),
     Apt(&'static str),
     /// `npm i -g pkg[@version] [pkg[@version] ...]` — version pin goes
     /// in the package string (`@x.y.z`). Each entry in the slice is
@@ -88,6 +91,7 @@ impl Installer {
     pub fn manager(&self) -> &'static str {
         match self {
             Installer::Brew(_) => "brew",
+            Installer::BrewCask(_) => "brew",
             Installer::Apt(_) => "apt-get",
             Installer::Npm(_) => "npm",
             Installer::Cargo(_, _) => "cargo",
@@ -106,6 +110,7 @@ impl Installer {
     pub fn display(&self) -> String {
         match self {
             Installer::Brew(p) => format!("brew install {p}"),
+            Installer::BrewCask(p) => format!("brew install --cask {p}"),
             Installer::Apt(p) => format!("sudo apt-get install -y {p}"),
             Installer::Npm(pkgs) => format!("npm install -g {}", pkgs.join(" ")),
             Installer::Cargo(p, extra) if extra.is_empty() => format!("cargo install {p}"),
@@ -135,6 +140,11 @@ impl Installer {
             Installer::Brew(p) => {
                 let mut c = Command::new("brew");
                 c.args(["install", p]);
+                c
+            }
+            Installer::BrewCask(p) => {
+                let mut c = Command::new("brew");
+                c.args(["install", "--cask", p]);
                 c
             }
             Installer::Apt(p) => {
@@ -217,6 +227,11 @@ impl Installer {
                 c.args(["upgrade", p]);
                 c
             }
+            Installer::BrewCask(p) => {
+                let mut c = Command::new("brew");
+                c.args(["upgrade", "--cask", p]);
+                c
+            }
             Installer::Apt(p) => {
                 let mut c = Command::new("sudo");
                 c.args(["apt-get", "install", "--only-upgrade", "-y", p]);
@@ -260,6 +275,7 @@ impl Installer {
     pub fn upgrade_display(&self) -> String {
         match self {
             Installer::Brew(p) => format!("brew upgrade {p}"),
+            Installer::BrewCask(p) => format!("brew upgrade --cask {p}"),
             Installer::Apt(p) => format!("sudo apt-get install --only-upgrade -y {p}"),
             Installer::Pipx(p) => format!("pipx install --force {p}"),
             Installer::Pip(p) => format!("pip install --user --upgrade {p}"),
@@ -460,6 +476,30 @@ pub const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Brew("kotlin-language-server")] },
         Tool { bin: "ktfmt", label: "ktfmt", role: Role::Formatter,
             installers: &[Installer::Brew("ktfmt")] },
+    ]},
+    // Android SDK command-line tools — no Android Studio required. The
+    // command-line-tools cask links `sdkmanager` / `avdmanager` onto $PATH;
+    // platform-tools links `adb`. The emulator binary and system images aren't
+    // on $PATH (they live under $ANDROID_HOME) — binvim locates them via
+    // `android::sdk_root`, and system images are installed on demand at
+    // AVD-create time, so they're deliberately not listed here. The java-debug
+    // plugin jar drives the jdtls-hosted DAP attach used for `<leader>ab`.
+    Bundle { name: "Android SDK", tools: &[
+        Tool { bin: "sdkmanager", label: "Android command-line tools (sdkmanager, avdmanager)", role: Role::Tool,
+            installers: &[Installer::BrewCask("android-commandlinetools"), Installer::Manual(
+                "Download the command-line tools from https://developer.android.com/studio#command-line-tools, unzip to $ANDROID_HOME/cmdline-tools/latest/, then run `sdkmanager --licenses`.",
+            )] },
+        Tool { bin: "adb", label: "platform-tools (adb)", role: Role::Tool,
+            installers: &[Installer::BrewCask("android-platform-tools"), Installer::Apt("android-tools-adb"),
+                          Installer::Manual("Run `sdkmanager platform-tools` once the command-line tools are installed.")] },
+        Tool { bin: "emulator", label: "Android emulator", role: Role::Tool,
+            installers: &[Installer::Manual(
+                "Run `sdkmanager emulator` once the command-line tools are installed — binvim finds it under $ANDROID_HOME/emulator.",
+            )] },
+        Tool { bin: "java-debug-plugin", label: "java-debug (jdtls DAP plugin)", role: Role::Dap,
+            installers: &[Installer::Manual(
+                "Download com.microsoft.java.debug.plugin-*.jar from https://github.com/microsoft/java-debug/releases (or build it) into ~/.cache/binvim/java-debug/ — jdtls loads it for Android attach debugging.",
+            )] },
     ]},
     Bundle { name: "Docker", tools: &[
         Tool { bin: "docker-langserver", label: "dockerfile-language-server-nodejs", role: Role::Lsp,
@@ -1218,6 +1258,15 @@ mod tests {
         assert_eq!(
             Installer::Nix("nixpkgs#nil").upgrade_display(),
             "nix profile upgrade nil"
+        );
+        // Casks use the same upgrade verb as formulas, with --cask.
+        assert_eq!(
+            Installer::BrewCask("android-commandlinetools").display(),
+            "brew install --cask android-commandlinetools"
+        );
+        assert_eq!(
+            Installer::BrewCask("android-commandlinetools").upgrade_display(),
+            "brew upgrade --cask android-commandlinetools"
         );
         // pipx / dotnet need an explicit upgrade verb because a second
         // `install` errors when the tool is already present.

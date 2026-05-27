@@ -1111,6 +1111,7 @@ fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
         Mode::Prompt(crate::mode::PromptKind::ReplaceAll) => ("Replace in buffer", ' '),
         Mode::Prompt(crate::mode::PromptKind::FileTreeCreate) => ("New entry", ' '),
         Mode::Prompt(crate::mode::PromptKind::FileTreeRename) => ("Rename", ' '),
+        Mode::Prompt(crate::mode::PromptKind::AndroidAvdName) => ("AVD name", ' '),
         _ => ("", ' '),
     }
 }
