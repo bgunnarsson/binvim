@@ -187,19 +187,25 @@ impl super::App {
     }
 
     fn pkg_spawn_versions(&mut self, id: String) {
+        let Some(manifest) = self.pkg_manifest() else {
+            return;
+        };
         let (eco, tx, epoch) = (self.pkg_eco(), self.package.tx.clone(), self.package.epoch);
         self.package.busy = true;
         thread::spawn(move || {
-            let result = package::list_versions(eco, &id);
+            let result = package::list_versions(eco, &manifest, &id);
             let _ = tx.send(PackageEvent::Versions { epoch, result });
         });
     }
 
     fn pkg_spawn_search(&mut self, query: String) {
+        let Some(manifest) = self.pkg_manifest() else {
+            return;
+        };
         let (eco, tx, epoch) = (self.pkg_eco(), self.package.tx.clone(), self.package.epoch);
         self.package.busy = true;
         thread::spawn(move || {
-            let result = package::search(eco, &query);
+            let result = package::search(eco, &manifest, &query);
             let _ = tx.send(PackageEvent::SearchResults {
                 epoch,
                 query,
@@ -235,6 +241,10 @@ impl super::App {
             .as_ref()
             .map(|f| f.eco)
             .unwrap_or(PackageEcosystem::DotNet)
+    }
+
+    fn pkg_manifest(&self) -> Option<PathBuf> {
+        self.package.flow.as_ref().and_then(|f| f.manifest.clone())
     }
 
     // ── Main-loop hooks ─────────────────────────────────────────────────────

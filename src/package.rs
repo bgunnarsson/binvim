@@ -117,6 +117,7 @@ pub fn list_installed(
             let json = run_capture(
                 "dotnet",
                 &["list", path.as_ref(), "package", "--format", "json"],
+                manifest_dir(manifest),
             )?;
             parse_installed_json(&json)
         }
@@ -126,7 +127,13 @@ pub fn list_installed(
 /// List every available version of `id` from the registry, newest-first. Both
 /// stable and prerelease versions are returned (each tagged); the caller hides
 /// prereleases until the user toggles them, so this never needs a refetch.
-pub fn list_versions(eco: PackageEcosystem, id: &str) -> Result<Vec<PackageVersion>, String> {
+/// Runs in the manifest's directory so the project's `nuget.config` (and any
+/// private feeds it declares) is honoured.
+pub fn list_versions(
+    eco: PackageEcosystem,
+    manifest: &Path,
+    id: &str,
+) -> Result<Vec<PackageVersion>, String> {
     match eco {
         PackageEcosystem::DotNet => {
             let json = run_capture(
@@ -140,17 +147,27 @@ pub fn list_versions(eco: PackageEcosystem, id: &str) -> Result<Vec<PackageVersi
                     "--format",
                     "json",
                 ],
+                manifest_dir(manifest),
             )?;
             parse_versions_json(&json)
         }
     }
 }
 
-/// Search the registry for packages matching `query`.
-pub fn search(eco: PackageEcosystem, query: &str) -> Result<Vec<SearchHit>, String> {
+/// Search the registry for packages matching `query`. Runs in the manifest's
+/// directory so the project's `nuget.config` / private feeds apply.
+pub fn search(
+    eco: PackageEcosystem,
+    manifest: &Path,
+    query: &str,
+) -> Result<Vec<SearchHit>, String> {
     match eco {
         PackageEcosystem::DotNet => {
-            let json = run_capture("dotnet", &["package", "search", query, "--format", "json"])?;
+            let json = run_capture(
+                "dotnet",
+                &["package", "search", query, "--format", "json"],
+                manifest_dir(manifest),
+            )?;
             parse_search_json(&json)
         }
     }
@@ -165,10 +182,17 @@ pub fn add(eco: PackageEcosystem, manifest: &Path, id: &str, version: &str) -> R
             run_capture(
                 "dotnet",
                 &["add", path.as_ref(), "package", id, "--version", version],
+                manifest_dir(manifest),
             )
             .map(|_| ())
         }
     }
+}
+
+/// The directory a command should run in for a given manifest — its parent so
+/// `nuget.config` discovery walks up from the project.
+fn manifest_dir(manifest: &Path) -> Option<&Path> {
+    manifest.parent()
 }
 
 /// A version string is a prerelease iff it carries a SemVer pre-release
@@ -184,9 +208,18 @@ pub fn is_prerelease(version: &str) -> bool {
 /// as `format.rs`'s `run_stdin_pipe`, minus the stdin write. `dotnet` writes
 /// some errors to stdout rather than stderr, so we fall back to stdout when
 /// stderr is empty.
-fn run_capture(bin: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(bin)
-        .args(args)
+fn run_capture(bin: &str, args: &[&str], cwd: Option<&Path>) -> Result<String, String> {
+    let mut cmd = Command::new(bin);
+    cmd.args(args)
+        // Suppress the first-run "Welcome to .NET" banner + telemetry notice,
+        // which older SDKs print to *stdout* ahead of the JSON and would
+        // otherwise break the parse. `json_slice` is the belt to this braces.
+        .env("DOTNET_NOLOGO", "1")
+        .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1");
+    if let Some(dir) = cwd {
+        cmd.current_dir(dir);
+    }
+    let output = cmd
         .output()
         .map_err(|e| format!("failed to run {bin}: {e}"))?;
     if !output.status.success() {
@@ -216,11 +249,23 @@ fn run_capture(bin: &str, args: &[&str]) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| format!("{bin} stdout not utf-8: {e}"))
 }
 
+/// Narrow `s` to the outermost JSON object (first `{` … last `}`). `dotnet`
+/// can prepend a first-run banner / telemetry notice and (on some SDKs) append
+/// help text to stdout; slicing to the braces lets the parse survive that.
+/// Falls back to the whole string when no braces are present.
+fn json_slice(s: &str) -> &str {
+    match (s.find('{'), s.rfind('}')) {
+        (Some(a), Some(b)) if b >= a => &s[a..=b],
+        _ => s,
+    }
+}
+
 /// Parse `dotnet list <csproj> package --format json`. Unions top-level
 /// packages across all target frameworks, deduping by id (a multi-targeted
 /// project lists the same package once per framework), sorted by id.
 pub fn parse_installed_json(json: &str) -> Result<Vec<InstalledPackage>, String> {
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("parse installed: {e}"))?;
+    let v: Value =
+        serde_json::from_str(json_slice(json)).map_err(|e| format!("parse installed: {e}"))?;
     let mut out: Vec<InstalledPackage> = Vec::new();
     for proj in v
         .get("projects")
@@ -270,7 +315,8 @@ pub fn parse_installed_json(json: &str) -> Result<Vec<InstalledPackage>, String>
 /// `latestVersion` — we fall back to that so the feature degrades to
 /// latest-only rather than erroring.
 pub fn parse_versions_json(json: &str) -> Result<Vec<PackageVersion>, String> {
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("parse versions: {e}"))?;
+    let v: Value =
+        serde_json::from_str(json_slice(json)).map_err(|e| format!("parse versions: {e}"))?;
     let mut out: Vec<PackageVersion> = Vec::new();
     for src in v
         .get("searchResult")
@@ -307,7 +353,8 @@ pub fn parse_versions_json(json: &str) -> Result<Vec<PackageVersion>, String> {
 /// Parse `dotnet package search <query> --format json` — registry hits with
 /// their latest version, kept in the registry's relevance order.
 pub fn parse_search_json(json: &str) -> Result<Vec<SearchHit>, String> {
-    let v: Value = serde_json::from_str(json).map_err(|e| format!("parse search: {e}"))?;
+    let v: Value =
+        serde_json::from_str(json_slice(json)).map_err(|e| format!("parse search: {e}"))?;
     let mut out: Vec<SearchHit> = Vec::new();
     for src in v
         .get("searchResult")
@@ -426,6 +473,23 @@ mod tests {
         assert_eq!(hits[0].id, "Newtonsoft.Json");
         assert_eq!(hits[0].latest, "13.0.3");
         assert_eq!(hits[1].id, "Newtonsoft.Json.Bson");
+    }
+
+    #[test]
+    fn parses_versions_with_dotnet_first_run_banner() {
+        // Older SDKs print the first-run banner to stdout ahead of the JSON;
+        // the parser must tolerate it (this is the reported crash).
+        let json = "\nWelcome to .NET 8.0!\r\n---------------------\r\nSDK Version: 8.0.419\n\nTelemetry\r\n---------\r\nThe .NET tools collect usage data...\n\n{\"searchResult\":[{\"packages\":[{\"id\":\"X\",\"version\":\"1.2.3\"}]}]}\n";
+        let vs = parse_versions_json(json).unwrap();
+        assert_eq!(vs.len(), 1);
+        assert_eq!(vs[0].version, "1.2.3");
+    }
+
+    #[test]
+    fn json_slice_extracts_object() {
+        assert_eq!(json_slice("noise {\"a\":1} trailing"), "{\"a\":1}");
+        assert_eq!(json_slice("{\"a\":1}"), "{\"a\":1}");
+        assert_eq!(json_slice("no braces here"), "no braces here");
     }
 
     #[test]
