@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Multi-line inline ghost completions.** A Copilot / inline-completion
+  suggestion that spans several lines now renders in full: the first
+  line paints inline at the cursor as before, and lines 2+ paint as
+  muted italic phantom rows directly below the cursor line, pushing the
+  real buffer lines beneath them down by the ghost's height. `<Tab>`
+  still accepts the whole suggestion. Previously only the first line was
+  shown even though the accept already inserted all of them.
+
 ## [0.4.8] - 2026-05-25
 
 ### Added

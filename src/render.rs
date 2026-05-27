@@ -5290,6 +5290,32 @@ fn draw_buffer(
     // row *above* the line. We paint it first, on the very next loop
     // iteration the real line paints below.
     let mut pending_lens = line_idx < total_lines && bs.line_has_code_lens(line_idx);
+    // Multi-line Copilot ghost. The first line of the visible tail is
+    // painted inline at the cursor by draw_line_with_selection; lines
+    // 2+ are queued here and emitted as phantom rows directly below
+    // the anchor line — same row-injection trick code lens uses, so
+    // the real buffer lines below get pushed down by the ghost height.
+    // `ghost_overflow` is moved into `pending_ghost` once the anchor
+    // line paints, then drained one row per loop iteration.
+    let mut ghost_overflow: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    let ghost_anchor_line: Option<usize> = if is_active {
+        app.copilot_ghost.as_ref().and_then(|ghost| {
+            // Same gate as the inline first-line render below.
+            let on = ghost.col == app.window.cursor.col
+                && Some(ghost.path.as_path()) == bs.buffer.path.as_deref()
+                && matches!(app.mode, Mode::Insert);
+            if !on {
+                return None;
+            }
+            for tail_line in app.copilot_ghost_visible_tail(ghost).split('\n').skip(1) {
+                ghost_overflow.push_back(tail_line.to_string());
+            }
+            Some(ghost.line)
+        })
+    } else {
+        None
+    };
+    let mut pending_ghost: std::collections::VecDeque<String> = std::collections::VecDeque::new();
     for row in 0..rows {
         // Wipe this pane's row (leaves adjacent panes untouched), then
         // return the cursor to the pane's left edge so the per-line draw
@@ -5302,12 +5328,32 @@ fn draw_buffer(
             Print(&pane_blank),
             MoveTo(left as u16, (row + top) as u16),
         )?;
+        // Ghost overflow rows sit immediately under the anchor line, so
+        // they drain before the next real line's phantom lens row.
+        if let Some(text) = pending_ghost.pop_front() {
+            queue!(out, Print(" ".repeat(gutter)))?;
+            let truncated: String = text.chars().take(avail).collect();
+            if !truncated.is_empty() {
+                queue!(
+                    out,
+                    SetForegroundColor(app.config.theme_dim()),
+                    SetAttribute(Attribute::Italic),
+                    Print(&truncated),
+                    SetAttribute(Attribute::NoItalic),
+                )?;
+                reset_to_buf_bg(out, buf_bg)?;
+            }
+            continue;
+        }
         if pending_lens && line_idx < total_lines {
             paint_code_lens_row(out, app, line_idx, gutter, avail, buf_bg)?;
             pending_lens = false;
             continue;
         }
         if line_idx < total_lines {
+            // Captured before the fold-advance below mutates line_idx —
+            // used to detect when we've just painted the ghost anchor.
+            let drawn_line = line_idx;
             // Git stripe — leftmost gutter column. Mirrors gitsigns /
             // GitGutter conventions: a coloured vertical block for
             // added (Green) / modified (Yellow) / a horizontal block
@@ -5418,6 +5464,11 @@ fn draw_buffer(
             // Tee up a phantom lens row for the next iteration if the
             // line we just advanced to has any lenses anchored on it.
             pending_lens = line_idx < total_lines && bs.line_has_code_lens(line_idx);
+            // If the line we just drew was the ghost's anchor, queue its
+            // overflow lines so the next iterations paint them below.
+            if Some(drawn_line) == ghost_anchor_line {
+                pending_ghost = std::mem::take(&mut ghost_overflow);
+            }
         } else {
             queue!(
                 out,
@@ -6072,13 +6123,13 @@ fn draw_line_with_selection(
     }
 
     // Copilot ghost suggestion — when the cursor is on this line in
-    // Insert mode and we have a live ghost, render its visible tail
-    // (the divergent portion after whatever the user already typed)
-    // as muted Overlay0 italic after the line's real content. We
-    // only paint the first line for now; multi-line suggestions are
-    // still accepted whole on `<Tab>`, the user just doesn't see
-    // lines 2+ ghosted. Skipped for inactive panes (the ghost
-    // belongs to the focused cursor, not every viewport).
+    // Insert mode and we have a live ghost, render the first line of
+    // its visible tail (the divergent portion after whatever the user
+    // already typed) as muted Overlay0 italic after the line's real
+    // content. Lines 2+ of a multi-line suggestion are painted by the
+    // phantom-row loop in draw_buffer, directly below this line.
+    // Skipped for inactive panes (the ghost belongs to the focused
+    // cursor, not every viewport).
     if is_active {
         if let Some(ghost) = app.copilot_ghost.as_ref() {
             if ghost.line == line_idx

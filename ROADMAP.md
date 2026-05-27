@@ -145,8 +145,9 @@ Status legend: **next** = actively in scope, **planned** = agreed direction, **c
       response's `range` so typed prefix isn't duplicated, trims trailing overlap with post-cursor text,
       auto-opens `{ … }` blocks for partial suggestions); `<Enter>` accepts the LSP popup item; any other key
       dismisses the ghost. Provider-neutral — Copilot's the first server wired but any server speaking the
-      spec gets the UI for free. Multi-line ghost render (only the first line is currently painted; accepts
-      insert all lines) is the remaining polish item.
+      spec gets the UI for free. Multi-line ghost render is now in: the first tail line paints inline at the
+      cursor, lines 2+ paint as muted phantom rows directly below the anchor line — reusing the same
+      row-injection trick code lens uses, so the real buffer lines below get pushed down by the ghost height.
 
 ## LSP
 
