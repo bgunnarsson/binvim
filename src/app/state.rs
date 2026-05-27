@@ -545,6 +545,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("h".into(), "+Hunk".into()),
         ("j".into(), "+AI".into()),
         ("m".into(), "+Task".into()),
+        ("p".into(), "+Package".into()),
         ("s".into(), "+Test".into()),
         ("t".into(), "+Terminal".into()),
         ("G".into(), "Grep".into()),

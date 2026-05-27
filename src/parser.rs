@@ -1758,6 +1758,34 @@ mod tests {
     }
 
     #[test]
+    fn leader_p_i_emits_package_install() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, key(' '), ParseCtx::Normal),
+            ParseResult::Pending
+        ));
+        assert!(matches!(
+            parse(&mut state, key('p'), ParseCtx::Normal),
+            ParseResult::Pending
+        ));
+        assert!(matches!(
+            parse(&mut state, key('i'), ParseCtx::Normal),
+            ParseResult::Action(Action::PackageInstall)
+        ));
+    }
+
+    #[test]
+    fn leader_p_s_emits_package_search() {
+        let mut state = PendingCmd::default();
+        let _ = parse(&mut state, key(' '), ParseCtx::Normal);
+        let _ = parse(&mut state, key('p'), ParseCtx::Normal);
+        assert!(matches!(
+            parse(&mut state, key('s'), ParseCtx::Normal),
+            ParseResult::Action(Action::PackageSearch)
+        ));
+    }
+
+    #[test]
     fn ctrl_a_emits_adjust_number_plus_one() {
         let mut state = PendingCmd::default();
         let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
