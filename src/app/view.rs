@@ -260,23 +260,21 @@ impl super::App {
     /// Visual column of the cursor on its own line, treating tabs as
     /// `TAB_WIDTH` columns. Used by horizontal viewport tracking and cursor
     /// placement.
+    ///
+    /// Must stay in lock-step with the cursor-render walk in
+    /// `render.rs` (`place_cursor`): inlay hints anchored at a column take
+    /// their full label width *before* the char there, so the rendered
+    /// cursor sits past them. If this walk ignored hints, the viewport
+    /// would think the cursor is still near the left edge and never
+    /// scroll — drawing the cursor off the pane on hint-heavy lines (e.g.
+    /// Razor / C# with type hints) even when the buffer line is short.
     pub fn cursor_visual_col(&self) -> usize {
         if self.window.cursor.line >= self.buffer.line_count() {
             return 0;
         }
         let line = self.buffer.rope.line(self.window.cursor.line);
-        let mut v = 0usize;
-        for (i, c) in line.chars().enumerate() {
-            if i >= self.window.cursor.col {
-                break;
-            }
-            if c == '\t' {
-                v += crate::render::TAB_WIDTH;
-            } else {
-                v += 1;
-            }
-        }
-        v
+        let hints_at = crate::render::inlay_hint_widths_for_line(self, self.window.cursor.line);
+        crate::render::cursor_visual_col_walk(line.chars(), self.window.cursor.col, &hints_at)
     }
 
     pub fn buffer_rows(&self) -> usize {

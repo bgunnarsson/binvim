@@ -4852,8 +4852,42 @@ fn home_relative_with(path: &str, home: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DebugPalette, display_lsp_root, home_relative_with, tokenize_console_line, truncate,
+        DebugPalette, cursor_visual_col_walk, display_lsp_root, home_relative_with,
+        tokenize_console_line, truncate,
     };
+
+    #[test]
+    fn cursor_visual_col_counts_tabs_as_tab_width() {
+        // "\t\tfoo", cursor on the 'f' (col 2) → two tabs = 8 cells.
+        let chars = "\t\tfoo".chars();
+        assert_eq!(cursor_visual_col_walk(chars, 2, &[]), 8);
+    }
+
+    #[test]
+    fn cursor_visual_col_adds_hints_before_cursor() {
+        // "foo" with a 5-cell hint anchored at col 1 (after 'f'): cursor
+        // at col 3 sits past the hint, so visual = 3 chars + 5 hint = 8.
+        let hints = [0, 5, 0, 0];
+        assert_eq!(cursor_visual_col_walk("foo".chars(), 3, &hints), 8);
+    }
+
+    #[test]
+    fn cursor_visual_col_excludes_hint_at_cursor() {
+        // A hint anchored exactly at the cursor col renders to the
+        // cursor's right and must not shift it. "foo", cursor at col 1,
+        // hint at col 1 → visual stays 1 (just the 'f').
+        let hints = [0, 5, 0, 0];
+        assert_eq!(cursor_visual_col_walk("foo".chars(), 1, &hints), 1);
+    }
+
+    #[test]
+    fn cursor_visual_col_short_line_wide_hint_pushes_past_pane() {
+        // Regression: a short buffer line ("x", 1 char) with a wide
+        // leading hint must report a large visual col so the viewport
+        // knows to scroll — otherwise the rendered cursor lands off-pane.
+        let hints = [40, 0];
+        assert_eq!(cursor_visual_col_walk("x".chars(), 1, &hints), 41);
+    }
 
     #[test]
     fn tokenizer_splits_log_prefix_and_url() {
@@ -7632,34 +7666,47 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
             return Ok(());
         }
     }
-    let mut visual = 0usize;
-    for (i, c) in line.chars().enumerate() {
-        // Stop *before* adding the hint at col i — the cursor sits at
-        // buffer position N which means "between buffer chars N-1 and
-        // N". A hint anchored at col N renders between those same two
-        // chars, conceptually *after* the cursor (it annotates what's
-        // behind the cursor, e.g. `var view│: string` where `│` is
-        // the cursor and `: string` is a trailing type hint). Adding
-        // the col-N hint here would push the cursor past it visually
-        // and a backspace would feel like it ate from the next token.
-        if i >= app.window.cursor.col {
-            break;
-        }
-        if let Some(w) = hints_at.get(i) {
-            visual += *w;
-        }
-        if c == '\t' {
-            visual += TAB_WIDTH;
-        } else {
-            visual += 1;
-        }
-    }
+    let visual = cursor_visual_col_walk(line.chars(), app.window.cursor.col, &hints_at);
     // Account for horizontal scroll. `adjust_viewport` keeps the cursor
     // within `[view_left, view_left + buffer_cols)`, so subtraction is safe.
     let on_screen = visual.saturating_sub(app.window.view_left);
     let col = pane.x + (gutter + on_screen) as u16;
     queue!(out, MoveTo(col, row))?;
     Ok(())
+}
+
+/// Visual column of `cursor_col` on a line: tabs count as `TAB_WIDTH`,
+/// plus the label width of every inlay hint anchored *strictly before*
+/// the cursor (`hint_widths[i]` = total hint width at char col `i`; a
+/// short/empty slice means no hints). Hints anchored *at* `cursor_col`
+/// are deliberately excluded — the cursor sits between buffer chars
+/// `N-1` and `N`, and a hint at col `N` renders just to the cursor's
+/// right (it annotates the char behind the cursor, e.g. `var view│: int`
+/// where `│` is the cursor). Counting it would push the cursor past the
+/// hint and make a backspace feel like it ate from the next token.
+///
+/// Shared by the cursor renderer (`place_cursor`) and the viewport
+/// tracker (`App::cursor_visual_col`) so the two can't drift: when the
+/// viewport's walk ignored hints, it kept thinking the cursor was near
+/// the left edge and never scrolled, drawing the cursor off the pane on
+/// hint-heavy lines (Razor / C# type hints) even when the buffer line
+/// itself was short.
+pub(crate) fn cursor_visual_col_walk(
+    chars: impl Iterator<Item = char>,
+    cursor_col: usize,
+    hint_widths: &[usize],
+) -> usize {
+    let mut visual = 0usize;
+    for (i, c) in chars.enumerate() {
+        if i >= cursor_col {
+            break;
+        }
+        if let Some(w) = hint_widths.get(i) {
+            visual += *w;
+        }
+        visual += if c == '\t' { TAB_WIDTH } else { 1 };
+    }
+    visual
 }
 
 /// Per-buffer-col total inlay-hint label width on `line`. Index `i`
