@@ -271,8 +271,12 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
 | `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
 | `<space>jc` / `<space>jC` | Spawn a new Claude tab in the right-side pane — uppercase variant additionally pre-types `@<active-buffer cwd-relative path>` into the input once the tool is ready. Same shift-pair pattern for `<space>jx` / `<space>jX` (Codex) and `<space>jo` / `<space>jO` (opencode). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. |
+| `<space>pi` | Package manager — manage installed packages: pick a project manifest (`.csproj`), pick an installed package, then a version to change to. The installed version is highlighted; `Tab` toggles prereleases; type to narrow the version list. |
+| `<space>ps` | Package manager — search & add: pick a manifest, type to search the registry, pick a package, then a version to add. |
 
-Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
+The package manager detects the ecosystem from the active buffer's workspace. Today only **.NET / NuGet** (via the `dotnet` CLI) is wired up; cargo / npm slot in as future backends. Requires the `dotnet` SDK on `PATH` (`dotnet package search` needs SDK 8.0.4xx+; the full per-version list is reliable on the .NET 10 SDK).
+
+Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>p` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 

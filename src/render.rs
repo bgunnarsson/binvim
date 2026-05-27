@@ -1720,6 +1720,15 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
                     | crate::picker::PickerKind::Grep
                     | crate::picker::PickerKind::References,
             );
+            // A `marked` row (the installed version in the version picker)
+            // renders in the info colour so it stands out from its siblings;
+            // selection styling still wins when the cursor is on it.
+            let (path_fg, name_fg) = if picker.marked == Some(item_idx) && !selected {
+                let c = app.config.theme_info();
+                (c, c)
+            } else {
+                (path_fg, name_fg)
+            };
             // Matched-char positions are stored per-filtered-row alongside
             // the indices into items — empty when the picker has no query.
             let positions = picker

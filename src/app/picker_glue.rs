@@ -124,6 +124,11 @@ impl super::App {
                 self.pending_debug_project = None;
                 self.pending_debug_profiles.clear();
                 self.pending_code_lens_commands.clear();
+                // Abandon any in-flight package flow; bump the epoch so a
+                // late background result is dropped on arrival.
+                if self.package.flow.take().is_some() {
+                    self.package.epoch += 1;
+                }
             }
             KeyCode::Enter => {
                 let payload = picker.current().cloned();
@@ -210,6 +215,18 @@ impl super::App {
                         PickerPayload::TaskIdx(idx) => {
                             self.task_run_picked(idx);
                         }
+                        PickerPayload::PackageManifest(path) => {
+                            self.pkg_pick_manifest(path);
+                        }
+                        PickerPayload::PackageInstalled { id, installed } => {
+                            self.pkg_pick_installed(id, installed);
+                        }
+                        PickerPayload::PackageSearchHit { id } => {
+                            self.pkg_pick_search_hit(id);
+                        }
+                        PickerPayload::PackageVersion { version } => {
+                            self.pkg_pick_version(version);
+                        }
                     }
                 }
             }
@@ -219,6 +236,12 @@ impl super::App {
             }
             KeyCode::Up => picker.move_up(),
             KeyCode::Down => picker.move_down(),
+            KeyCode::Tab => {
+                // Version picker: Tab toggles prerelease visibility.
+                if picker.kind == PickerKind::PackageVersion {
+                    self.pkg_toggle_prerelease();
+                }
+            }
             KeyCode::PageUp => {
                 let page = crate::render::picker_visible_rows(self).max(1) as i64;
                 if let Some(p) = self.picker.as_mut() {
@@ -277,7 +300,16 @@ impl super::App {
             | PickerKind::TestTarget
             | PickerKind::CodeLens
             | PickerKind::SpellSuggestions
-            | PickerKind::Task => picker.refilter(),
+            | PickerKind::Task
+            // Package manifest / installed / version lists filter locally.
+            | PickerKind::PackageManifest
+            | PickerKind::PackageInstalled
+            | PickerKind::PackageVersion => picker.refilter(),
+            PickerKind::PackageSearch => {
+                // Network search — don't filter locally. Mark the query dirty;
+                // the debounced `pkg_search_tick` fires the request.
+                self.pkg_mark_search_dirty();
+            }
             PickerKind::Grep => {
                 if picker.input.len() < 2 {
                     picker::replace_items(picker, Vec::new());

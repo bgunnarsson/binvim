@@ -354,6 +354,10 @@ impl super::App {
             Action::Lazygit => self.cmd_lazygit(),
             Action::TaskPicker => self.cmd_task_picker(),
             Action::TaskLast => self.cmd_task_last(),
+            Action::PackageInstall => {
+                self.package_begin(crate::app::state::PackageFlowKind::Install)
+            }
+            Action::PackageSearch => self.package_begin(crate::app::state::PackageFlowKind::Search),
             Action::VisualSwitch(target) => match self.mode {
                 Mode::Visual(cur) if cur == target => self.exit_visual(),
                 _ => {

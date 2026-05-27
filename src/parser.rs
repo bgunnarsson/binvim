@@ -434,6 +434,12 @@ pub enum Action {
     /// `<leader>ml` — re-run the most recent task. Same effect as
     /// `:tasklast`.
     TaskLast,
+    /// `<leader>pi` — open the package manager on installed packages
+    /// (pick a manifest, then a package, then a version to change to).
+    PackageInstall,
+    /// `<leader>ps` — open the package manager in search mode (pick a
+    /// manifest, search the registry, then a version to add).
+    PackageSearch,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -503,6 +509,10 @@ pub struct PendingCmd {
     /// to launch in the right-side terminal pane (`c` Claude, `x`
     /// Codex, `o` opencode).
     pub awaiting_ai_leader: bool,
+    /// Set after `<leader>p` — next char picks a package-manager action
+    /// (`i` install / manage installed, `s` search & add). The ecosystem
+    /// (NuGet / cargo / npm) is detected from the active buffer at dispatch.
+    pub awaiting_package_leader: bool,
     /// Set after `<C-w>` — next char picks a window action
     /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
     /// Wired in Normal mode only; cancels on any unrecognised follow-up.
@@ -547,6 +557,7 @@ impl PendingCmd {
             && !self.awaiting_terminal_leader
             && !self.awaiting_test_leader
             && !self.awaiting_ai_leader
+            && !self.awaiting_package_leader
             && !self.awaiting_window_leader
     }
 
@@ -979,6 +990,13 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_ai_leader = true;
             return ParseResult::Pending;
         }
+        // `p` opens the package-manager sub-menu (`<leader>pi` install /
+        // manage, `<leader>ps` search & add). The ecosystem is detected
+        // from the active buffer when the action fires.
+        if ch == 'p' {
+            state.awaiting_package_leader = true;
+            return ParseResult::Pending;
+        }
         let action = match ch {
             ' ' => Some(Action::OpenPicker {
                 kind: PickerLeader::Files,
@@ -1162,6 +1180,24 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'q' => Some(Action::TerminalClose),
             'f' => Some(Action::TerminalFocus),
             'p' => Some(Action::TerminalToggle),
+            _ => None,
+        };
+        state.reset();
+        return match action {
+            Some(a) => ParseResult::Action(a),
+            None => ParseResult::Cancelled,
+        };
+    }
+
+    // Package-manager prefix dispatch (after `<leader>p`). `i` manages
+    // installed packages (change a version), `s` searches the registry to
+    // add a new one. The concrete package manager is detected from the
+    // active buffer's workspace in `package_begin`.
+    if state.awaiting_package_leader {
+        state.awaiting_package_leader = false;
+        let action = match ch {
+            'i' => Some(Action::PackageInstall),
+            's' => Some(Action::PackageSearch),
             _ => None,
         };
         state.reset();

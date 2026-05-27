@@ -19,6 +19,7 @@ mod lsp;
 mod markdown_render;
 mod mode;
 mod motion;
+mod package;
 mod parser;
 mod paths;
 mod picker;

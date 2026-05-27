@@ -4,6 +4,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 
 use crate::buffer::Buffer;
@@ -579,6 +580,100 @@ pub fn terminal_prefix_entries() -> Vec<(String, String)> {
         ("f".into(), "Focus terminal".into()),
         ("q".into(), "Close terminal".into()),
     ]
+}
+
+pub fn package_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("i".into(), "Install / manage".into()),
+        ("s".into(), "Search & add".into()),
+    ]
+}
+
+/// Which `<leader>p` flow is in progress.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PackageFlowKind {
+    /// `<leader>pi` — list installed packages and change a version.
+    Install,
+    /// `<leader>ps` — search the registry and add a new package.
+    Search,
+}
+
+/// One result delivered from a background package-manager thread back to the
+/// main loop. Stamped with the `epoch` of the flow that spawned it so results
+/// from an Esc'd / superseded flow are dropped — the same staleness guard the
+/// LSP if-due hooks and the test adapter_key use. `SearchResults` also carries
+/// the `query` it ran for, so a slow earlier search can't clobber a newer one.
+pub enum PackageEvent {
+    Installed {
+        epoch: u64,
+        result: Result<Vec<crate::package::InstalledPackage>, String>,
+    },
+    Versions {
+        epoch: u64,
+        result: Result<Vec<crate::package::PackageVersion>, String>,
+    },
+    SearchResults {
+        epoch: u64,
+        query: String,
+        result: Result<Vec<crate::package::SearchHit>, String>,
+    },
+    AddDone {
+        epoch: u64,
+        id: String,
+        version: String,
+        result: Result<(), String>,
+    },
+}
+
+/// In-flight `<leader>p` flow. Carries the picks made so far across the async
+/// gaps between pickers — a fetch fires after each pick, and its result
+/// reopens the next picker.
+pub struct PackageFlow {
+    pub eco: crate::package::PackageEcosystem,
+    pub kind: PackageFlowKind,
+    /// Chosen manifest (`.csproj`); set once the manifest step is past.
+    pub manifest: Option<std::path::PathBuf>,
+    /// Chosen package id; set once the package / search step is past.
+    pub package_id: Option<String>,
+    /// Whether the version picker is currently showing prereleases (`Tab`).
+    pub include_prerelease: bool,
+    /// Every version for `package_id`, fetched once (stable + prerelease); the
+    /// version picker is rebuilt from this on each prerelease toggle.
+    pub version_cache: Vec<crate::package::PackageVersion>,
+    /// Currently-resolved version of `package_id`, so the version picker can
+    /// highlight + preselect it. Empty when adding a brand-new package.
+    pub installed_version: String,
+    /// Last time the search picker's input changed — drives the debounce
+    /// before a registry search fires. `None` when no search is pending.
+    pub search_dirty_at: Option<Instant>,
+}
+
+/// Owns the channel between background package threads and the main loop plus
+/// the active flow. One persistent channel for the editor's lifetime, drained
+/// each tick alongside `lsp` / `dap` / `test`.
+pub struct PackageState {
+    pub tx: Sender<PackageEvent>,
+    pub rx: Receiver<PackageEvent>,
+    /// True while a background op is in flight — tightens the main-loop poll
+    /// so the result is picked up promptly.
+    pub busy: bool,
+    /// Bumped at the start of every flow; stamped onto spawned events so a
+    /// late result from a cancelled flow is discarded.
+    pub epoch: u64,
+    pub flow: Option<PackageFlow>,
+}
+
+impl PackageState {
+    pub fn new() -> Self {
+        let (tx, rx) = channel();
+        Self {
+            tx,
+            rx,
+            busy: false,
+            epoch: 0,
+            flow: None,
+        }
+    }
 }
 
 pub fn test_prefix_entries() -> Vec<(String, String)> {

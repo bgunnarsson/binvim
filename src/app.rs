@@ -36,6 +36,7 @@ pub(crate) mod installer;
 mod lazygit_glue;
 mod lsp_glue;
 mod multi_cursor;
+mod package_glue;
 mod pair;
 mod picker_glue;
 mod quickfix;
@@ -629,6 +630,10 @@ pub struct App {
     /// output buffer. Drained per main-loop tick alongside `lsp` /
     /// `dap`; the resulting events go through `handle_test_events`.
     pub test: crate::test::TestManager,
+    /// `<leader>p` package manager — owns the background-thread channel
+    /// and the active install/search flow. Drained per tick like `test`;
+    /// results advance the flow in `handle_package_events`.
+    pub package: state::PackageState,
     /// `:testresults` / auto-opened-on-run overlay toggle. Same
     /// scrollable-overlay pattern as `:health` / `:messages`.
     pub show_test_results_page: bool,
@@ -909,6 +914,7 @@ impl App {
             registers_scroll: 0,
             registers_content_height: std::cell::Cell::new(0),
             test: crate::test::TestManager::new(),
+            package: state::PackageState::new(),
             show_test_results_page: false,
             show_install_page: false,
             installer: None,
@@ -1028,6 +1034,12 @@ impl App {
             if self.test.is_running() {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
+            // A package-manager op (search / restore / add) is in flight on
+            // a background thread — tighten so its result is applied promptly
+            // instead of waiting on the next keystroke.
+            if self.package.busy {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
             // A live yank flash needs us to wake up at its deadline so the
             // highlight clears on time.
             if let Some(h) = self.yank_highlight.as_ref() {
@@ -1129,6 +1141,11 @@ impl App {
                             title: "AI".into(),
                             entries: state::ai_prefix_entries(),
                         })
+                    } else if self.pending.awaiting_package_leader {
+                        Some(WhichKeyState {
+                            title: "Package".into(),
+                            entries: state::package_prefix_entries(),
+                        })
                     } else {
                         None
                     };
@@ -1162,6 +1179,15 @@ impl App {
                 self.handle_test_events(test_events);
             }
             if had_test_events || test_progress {
+                needs_render = true;
+            }
+            // Package-manager results (installed list / versions / search
+            // hits / add outcome) come back on a background channel; the
+            // debounce tick fires the registry search once typing settles.
+            if self.handle_package_events() {
+                needs_render = true;
+            }
+            if self.pkg_search_tick() {
                 needs_render = true;
             }
             // Drain PTY output → grid mutations once per loop. Any

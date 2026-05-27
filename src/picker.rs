@@ -37,6 +37,19 @@ pub enum PickerKind {
     /// cargo alias / builtin verb, Makefile target, dotnet verb). The
     /// selected task spawns in a labelled bottom-terminal tab.
     Task,
+    /// `<leader>p` step 1 — pick which dependency manifest (`.csproj`) to
+    /// operate on when the workspace has more than one.
+    PackageManifest,
+    /// `<leader>pi` step 2 — pick an already-installed package to change its
+    /// version. Opens empty (`(loading…)`) while `dotnet list package` runs.
+    PackageInstalled,
+    /// `<leader>ps` step 2 — free-text registry search. Typing fires a
+    /// debounced `dotnet package search`; the local fuzzy filter is disabled
+    /// (the server does the matching).
+    PackageSearch,
+    /// `<leader>p` step 3 — pick a version to install. Installed version is
+    /// `marked`; `Tab` toggles prereleases; the built-in fuzzy filter narrows.
+    PackageVersion,
 }
 
 pub struct PickerState {
@@ -55,6 +68,10 @@ pub struct PickerState {
     /// picker UI. Empty when `input` is empty.
     pub match_positions: Vec<Vec<usize>>,
     pub selected: usize,
+    /// Optional item index (into `items`, not `filtered`) to render in an
+    /// accent colour — used by the version picker to flag the installed
+    /// version. `None` for every other picker.
+    pub marked: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +130,24 @@ pub enum PickerPayload {
     /// `Task` is too heavy to embed (path + arg list), so the picker
     /// payload is just a route key. Same pattern as `CodeActionIdx`.
     TaskIdx(usize),
+    /// Absolute path to a `.csproj` chosen from the package-manifest picker.
+    PackageManifest(PathBuf),
+    /// An installed package chosen for a version change. `installed` is its
+    /// currently-resolved version, carried through so the version picker can
+    /// highlight + preselect it without a second lookup.
+    PackageInstalled {
+        id: String,
+        installed: String,
+    },
+    /// A package id chosen from the registry-search results, to be added fresh.
+    PackageSearchHit {
+        id: String,
+    },
+    /// A version chosen from the version picker — installed into the manifest
+    /// stashed on `App.package.flow`.
+    PackageVersion {
+        version: String,
+    },
 }
 
 impl PickerState {
@@ -128,6 +163,7 @@ impl PickerState {
             filtered,
             match_positions: Vec::new(),
             selected: 0,
+            marked: None,
         }
     }
 
