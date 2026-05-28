@@ -1109,10 +1109,20 @@ impl super::App {
         };
         self.status_msg = format!("debug: {label}");
         self.debug_pane_open = true;
+        // Land on the Console tab so the prelaunch build's output —
+        // the only feedback while `cargo build` / `dotnet build` runs —
+        // is visible without the user having to switch tabs.
+        self.dap_pane_tab = crate::app::DapPaneTab::Console;
+        self.dap_pane_cursor = 0;
+        self.dap_tab_scrolls.clear();
+        self.dap_tab_h_scrolls.clear();
         self.adjust_viewport();
         match self.dap.start_session(adapter, ctx) {
             Ok(()) => {
-                self.status_msg = "debug: session starting".into();
+                self.status_msg = match self.dap.pending_build_label() {
+                    Some(l) => format!("debug: {l}…"),
+                    None => "debug: session starting".into(),
+                };
             }
             Err(e) => {
                 self.status_msg = format!("debug: {e}");
@@ -1396,7 +1406,10 @@ impl super::App {
         self.pending_debug_profiles.clear();
         match self.dap.start_session(adapter, ctx) {
             Ok(()) => {
-                self.status_msg = "debug: session starting".into();
+                self.status_msg = match self.dap.pending_build_label() {
+                    Some(l) => format!("debug: {l}…"),
+                    None => "debug: session starting".into(),
+                };
             }
             Err(e) => {
                 self.status_msg = format!("debug: {e}");

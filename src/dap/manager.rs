@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::Receiver;
 
 use super::client::DapClient;
 use super::specs::DapAdapterSpec;
@@ -32,6 +33,36 @@ pub struct DapManager {
     /// every `stopped` event. The list survives across sessions — only the
     /// `result` field on each entry clears between sessions.
     pub watches: Vec<DapWatch>,
+    /// In-flight prelaunch build (`dotnet build`, `cargo build`, …). Held
+    /// here rather than blocking the main thread inside `start_session` so
+    /// the editor stays responsive and the build's stdout/stderr can stream
+    /// into the Console tab live. `drain` watches for child exit and
+    /// transitions into the real `DapSession` on success.
+    pub pending_build: Option<PendingBuild>,
+}
+
+/// One asynchronously-running adapter prelaunch. Built by `start_session`
+/// when the adapter spec declares a `PrelaunchCommand`; consumed by `drain`
+/// once the child process exits. The reader threads (one per pipe) push
+/// each line into the matching `Receiver`; `drain` promotes those into
+/// `output_buffer` entries categorised "stdout"/"stderr" so the Console
+/// tab paints them with the same colours as live debuggee output.
+#[allow(dead_code)]
+pub struct PendingBuild {
+    /// Adapter to spawn after the build completes successfully. Moved
+    /// into `start_session_post_build` on transition.
+    pub adapter: DapAdapterSpec,
+    /// Launch context to pass to the adapter post-build.
+    pub ctx: super::specs::LaunchContext,
+    /// Child process running the prelaunch command.
+    pub child: std::process::Child,
+    /// Stdout/stderr lines from the reader threads, drained per `drain` tick.
+    pub stdout_rx: Receiver<String>,
+    pub stderr_rx: Receiver<String>,
+    /// Human label for status / completion messages ("Building .NET project").
+    pub label: String,
+    /// Spawn time — used to render elapsed seconds in the completion message.
+    pub started_at: std::time::Instant,
 }
 
 const OUTPUT_LOG_CAP: usize = 2000;
@@ -100,10 +131,56 @@ impl DapManager {
     }
 
     pub fn is_active(&self) -> bool {
+        if self.pending_build.is_some() {
+            return true;
+        }
         self.session
             .as_ref()
             .map(|s| !matches!(s.state, SessionState::Terminated))
             .unwrap_or(false)
+    }
+
+    /// Human-readable label for the in-flight prelaunch, e.g. "Building
+    /// .NET project". Used by the editor to surface "debug: building …"
+    /// in the status line so the user knows what the editor is doing
+    /// while the build streams output into the Console tab.
+    pub fn pending_build_label(&self) -> Option<&str> {
+        self.pending_build.as_ref().map(|b| b.label.as_str())
+    }
+
+    /// Adapter key (`"dotnet"`, `"lldb"`, …) of the in-flight prelaunch.
+    /// Used by the debug pane header to show `[DEBUG | <adapter>]` while
+    /// the build is running but before `self.session` exists.
+    pub fn pending_build_adapter_key(&self) -> Option<&str> {
+        self.pending_build.as_ref().map(|b| b.adapter.key)
+    }
+
+    /// Append `line` to `output_buffer`, evicting from the head if the
+    /// rolling cap is exceeded. Centralised so the prelaunch streaming
+    /// path and the adapter-side push paths share the same eviction.
+    fn push_output_line(&mut self, line: OutputLine) {
+        self.output_buffer.push(line);
+        if self.output_buffer.len() > OUTPUT_LOG_CAP {
+            let excess = self.output_buffer.len() - OUTPUT_LOG_CAP;
+            self.output_buffer.drain(0..excess);
+        }
+    }
+
+    /// Kill any in-flight prelaunch build and reap its child. Called
+    /// from `stop_session`/`stop_session_blocking` so a pending build
+    /// gets cancelled when the user explicitly stops the session, or
+    /// when `dap_start_session` restarts over a still-building previous
+    /// launch.
+    fn cancel_pending_build(&mut self) {
+        if let Some(mut b) = self.pending_build.take() {
+            let _ = b.child.kill();
+            let _ = b.child.wait();
+            let msg = format!("✗ {} cancelled", b.label);
+            self.push_output_line(OutputLine {
+                category: "stderr".into(),
+                output: msg,
+            });
+        }
     }
 
     pub fn toggle_breakpoint(&mut self, path: &Path, line: usize) -> bool {
@@ -227,10 +304,19 @@ impl DapManager {
         true
     }
 
-    /// Spawn the adapter, run its prelaunch hook (synchronous — typically
-    /// 1-2s for `dotnet build`), and send the initial `initialize` request.
-    /// The rest of the handshake is driven by responses + events arriving
-    /// on the channel, which `drain` processes.
+    /// Begin starting a debug session. If the adapter declares a prelaunch
+    /// (`dotnet build`, `cargo build`, …), the command is spawned with
+    /// piped stdout/stderr and stashed in `pending_build`; reader threads
+    /// stream each line into channels and `drain` promotes them into the
+    /// Console tab live. The real adapter spawn + `initialize` only fires
+    /// once the build child exits successfully — see
+    /// `start_session_post_build`. Adapters without a prelaunch (delve,
+    /// debugpy) go straight to that path.
+    ///
+    /// Returns `Ok(())` as soon as the build child has spawned (or as soon
+    /// as the synchronous spawn path completes for no-prelaunch adapters).
+    /// Build failures surface asynchronously as a `DapEvent::AdapterError`
+    /// after the child exits non-zero.
     pub fn start_session(
         &mut self,
         adapter: DapAdapterSpec,
@@ -240,31 +326,82 @@ impl DapManager {
             return Err("debug session already active — :dapstop first".into());
         }
 
-        let root = ctx.root.clone();
-        // Prelaunch runs inside `ctx.root` — the dispatch in `dap_glue.rs`
-        // sets this to the project / manifest / package directory the
-        // build command should run inside (e.g. the `.csproj`'s parent
-        // for .NET, the member crate's manifest dir for Rust, the
-        // package dir for Go).
-        let prelaunch_cwd = root.clone();
         if let Some(pre) = (adapter.prelaunch)(&ctx) {
-            let output = std::process::Command::new(&pre.program)
+            // Spawn the build asynchronously so the editor stays responsive
+            // while it runs. `dotnet build` on a real solution can sit on
+            // the CPU for several seconds; the synchronous variant of this
+            // froze the editor and gave the user zero feedback.
+            use std::io::{BufRead, BufReader};
+            use std::process::{Command, Stdio};
+            use std::sync::mpsc;
+            let mut child = Command::new(&pre.program)
                 .args(&pre.args)
-                .current_dir(&prelaunch_cwd)
-                .output()
+                .current_dir(&ctx.root)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
                 .map_err(|e| format!("{} failed to start: {}", pre.program, e))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let detail = stderr
-                    .lines()
-                    .rev()
-                    .find(|l| !l.trim().is_empty())
-                    .or_else(|| stdout.lines().rev().find(|l| !l.trim().is_empty()))
-                    .unwrap_or("(no output)");
-                return Err(format!("{}: {}", pre.label, detail));
+            let (stdout_tx, stdout_rx) = mpsc::channel::<String>();
+            let (stderr_tx, stderr_rx) = mpsc::channel::<String>();
+            if let Some(stdout) = child.stdout.take() {
+                std::thread::spawn(move || {
+                    let r = BufReader::new(stdout);
+                    for line in r.lines().map_while(|r| r.ok()) {
+                        if stdout_tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                });
             }
+            if let Some(stderr) = child.stderr.take() {
+                std::thread::spawn(move || {
+                    let r = BufReader::new(stderr);
+                    for line in r.lines().map_while(|r| r.ok()) {
+                        if stderr_tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+            // Header line so the Console tab shows *something* the
+            // moment the pane opens, before the build child has even
+            // printed its first line. The leading `›` glyph + plain
+            // category match the "session-internal status" look used
+            // elsewhere (verified-breakpoint summaries etc.) rather
+            // than masquerading as stdout from the build itself.
+            let header = format!("› {} ({} {})", pre.label, pre.program, pre.args.join(" "));
+            self.push_output_line(OutputLine {
+                category: "console".into(),
+                output: header,
+            });
+            self.pending_build = Some(PendingBuild {
+                adapter,
+                ctx,
+                child,
+                stdout_rx,
+                stderr_rx,
+                label: pre.label,
+                started_at: std::time::Instant::now(),
+            });
+            return Ok(());
         }
+
+        // No prelaunch — spawn the adapter and send `initialize` directly.
+        self.start_session_post_build(adapter, ctx)
+    }
+
+    /// Spawn the adapter process and send `initialize`. Called either
+    /// directly from `start_session` (no-prelaunch adapters) or from
+    /// `drain` once the prelaunch build has exited successfully. Splitting
+    /// the launch-args resolution out into this stage matters for .NET:
+    /// `dotnet_launch_args` scans `bin/Debug/net*/` for the freshly built
+    /// dll, so it can't run until the build has actually produced one.
+    fn start_session_post_build(
+        &mut self,
+        adapter: DapAdapterSpec,
+        ctx: super::specs::LaunchContext,
+    ) -> Result<(), String> {
+        let root = ctx.root.clone();
 
         // Resolve launch args before spawning the adapter — if the dll
         // can't be found we avoid leaking an orphan netcoredbg process.
@@ -380,6 +517,11 @@ impl DapManager {
     /// Best-effort — we drop the client immediately so any in-flight reply
     /// gets discarded.
     pub fn stop_session(&mut self) {
+        // Kill an in-flight prelaunch first — `is_active()` treats a
+        // pending build as an active session, so the caller's "stop
+        // before restart" path winds up here even when no DAP session
+        // proper has come up yet.
+        self.cancel_pending_build();
         if let Some(session) = self.session.as_ref() {
             let seq = session.client.alloc_seq();
             let _ = session.client.send_request(
@@ -402,6 +544,10 @@ impl DapManager {
     /// within the budget — caller can fall through either way; this is
     /// purely best-effort.
     pub fn stop_session_blocking(&mut self, max_wait: std::time::Duration) -> bool {
+        // Cancel any in-flight prelaunch first so the freshly-spawned
+        // adapter doesn't race with a still-running build child holding
+        // file locks on the project's output dirs.
+        self.cancel_pending_build();
         // Pull the client out before clearing the session so we can keep
         // polling it after `self.session = None`. The DAP protocol layer
         // is done with it at this point — only the OS-level child handle
@@ -587,6 +733,111 @@ impl DapManager {
         let _ = session.client.send_request(seq, command, arguments);
     }
 
+    /// Drain whatever the prelaunch reader threads have queued, then
+    /// check whether the build child has exited. On a successful exit
+    /// we transition into the real adapter spawn via
+    /// `start_session_post_build`; on a failed exit we emit an
+    /// `AdapterError` (without `Terminated` — there's no session yet,
+    /// and we want the debug pane to stay open so the user can read
+    /// the build output that just streamed in). Returns `true` if
+    /// anything happened that the main loop should redraw for.
+    fn pump_pending_build(&mut self, events: &mut Vec<DapEvent>) -> bool {
+        // Snapshot what the reader threads have sent so we can release
+        // the `&mut self.pending_build` borrow before mutating
+        // `self.output_buffer` through `push_output_line`.
+        let mut stdout_batch: Vec<String> = Vec::new();
+        let mut stderr_batch: Vec<String> = Vec::new();
+        let mut exit_outcome: Option<Result<std::process::ExitStatus, std::io::Error>> = None;
+        let mut elapsed_secs = 0.0f32;
+        let mut label = String::new();
+        if let Some(b) = self.pending_build.as_mut() {
+            while let Ok(line) = b.stdout_rx.try_recv() {
+                stdout_batch.push(line);
+            }
+            while let Ok(line) = b.stderr_rx.try_recv() {
+                stderr_batch.push(line);
+            }
+            match b.child.try_wait() {
+                Ok(Some(status)) => {
+                    exit_outcome = Some(Ok(status));
+                    elapsed_secs = b.started_at.elapsed().as_secs_f32();
+                    label = b.label.clone();
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    exit_outcome = Some(Err(e));
+                    elapsed_secs = b.started_at.elapsed().as_secs_f32();
+                    label = b.label.clone();
+                }
+            }
+        }
+        let mut progress = !stdout_batch.is_empty() || !stderr_batch.is_empty();
+        for s in stdout_batch {
+            let line = OutputLine {
+                category: "stdout".into(),
+                output: s,
+            };
+            self.push_output_line(line.clone());
+            events.push(DapEvent::Output(line));
+        }
+        for s in stderr_batch {
+            let line = OutputLine {
+                category: "stderr".into(),
+                output: s,
+            };
+            self.push_output_line(line.clone());
+            events.push(DapEvent::Output(line));
+        }
+
+        let Some(outcome) = exit_outcome else {
+            return progress;
+        };
+        progress = true;
+        // Drop the build now that the child has been reaped. After the
+        // take, `self.pending_build` is None — so `is_active()` correctly
+        // becomes false if `start_session_post_build` fails below and
+        // doesn't create a session.
+        let build = self.pending_build.take().expect("checked above");
+        match outcome {
+            Ok(status) if status.success() => {
+                let summary = format!("✓ {} succeeded in {:.1}s", label, elapsed_secs);
+                self.push_output_line(OutputLine {
+                    category: "console".into(),
+                    output: summary,
+                });
+                if let Err(e) = self.start_session_post_build(build.adapter, build.ctx) {
+                    let msg = format!("debug: {e}");
+                    self.push_output_line(OutputLine {
+                        category: "stderr".into(),
+                        output: msg.clone(),
+                    });
+                    events.push(DapEvent::AdapterError(msg));
+                }
+            }
+            Ok(status) => {
+                let code = status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".into());
+                let summary = format!("✗ {} failed (exit {}) in {:.1}s", label, code, elapsed_secs);
+                self.push_output_line(OutputLine {
+                    category: "stderr".into(),
+                    output: summary.clone(),
+                });
+                events.push(DapEvent::AdapterError(summary));
+            }
+            Err(e) => {
+                let summary = format!("✗ {} wait failed: {}", label, e);
+                self.push_output_line(OutputLine {
+                    category: "stderr".into(),
+                    output: summary.clone(),
+                });
+                events.push(DapEvent::AdapterError(summary));
+            }
+        }
+        progress
+    }
+
     /// Pull all available messages off the reader-thread channel, run them
     /// through the protocol state machine, and return:
     ///
@@ -601,6 +852,14 @@ impl DapManager {
     /// main loop request a redraw on those silent state mutations.
     pub fn drain(&mut self) -> (Vec<DapEvent>, bool) {
         let mut events = Vec::new();
+        // ------------------------------------------------------------------
+        // Pending-build pump. Done first so the build's final output
+        // lines flush into the pane on the same tick as the transition
+        // into the real DAP session, rather than getting clobbered by
+        // the initialize-launch chatter.
+        // ------------------------------------------------------------------
+        let build_progress = self.pump_pending_build(&mut events);
+
         let mut msgs = Vec::new();
         let mut stderr_lines: Vec<OutputLine> = Vec::new();
         let mut exit_code: Option<i32> = None;
@@ -616,7 +875,8 @@ impl DapManager {
             // the crash so the user sees something instead of a hang.
             exit_code = session.client.try_exit_status();
         }
-        let progress = !msgs.is_empty() || !stderr_lines.is_empty() || exit_code.is_some();
+        let progress =
+            build_progress || !msgs.is_empty() || !stderr_lines.is_empty() || exit_code.is_some();
         for line in stderr_lines {
             // Stream into the output buffer so the pane shows whatever the
             // adapter printed before dying.

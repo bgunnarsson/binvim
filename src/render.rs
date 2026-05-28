@@ -6452,6 +6452,10 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         .session
         .as_ref()
         .map(|s| s.adapter_key.clone())
+        // No session yet, but a prelaunch build is running — show its
+        // adapter key so the chip reads `[DEBUG | dotnet]` instead of
+        // `[DEBUG | idle]` while `dotnet build` streams into the pane.
+        .or_else(|| app.dap.pending_build_adapter_key().map(|s| s.to_string()))
         .unwrap_or_else(|| "idle".into());
     let chip_text = format!(" DEBUG | {} ", adapter_label);
     let chip_w = chip_text.chars().count() as u16;
