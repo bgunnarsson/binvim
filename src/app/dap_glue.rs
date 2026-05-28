@@ -322,12 +322,7 @@ impl super::App {
             MouseEventKind::Up(MouseButton::Left) => {
                 let text = self.dap_console_selection_text(&lines);
                 if !text.is_empty() {
-                    let chars = text.chars().count();
-                    if let Ok(mut cb) = arboard::Clipboard::new() {
-                        let _ = cb.set_text(text.clone());
-                    }
-                    self.write_register(None, text, false);
-                    self.status_msg = format!("copied {} chars from console", chars);
+                    self.dap_console_yank(text, "selection");
                 }
                 true
             }
@@ -370,6 +365,21 @@ impl super::App {
             }
         }
         out
+    }
+
+    /// Drop `text` into the OS clipboard, the unnamed register, and
+    /// surface a status-line message tagging which slice of the
+    /// console it came from (`"selection"` / `"all"` / etc.). Used
+    /// by both the mouse-drag-release path and the keyboard `y`/`Y`
+    /// bindings so all three routes feel identical.
+    fn dap_console_yank(&mut self, text: String, label: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let chars = text.chars().count();
+        super::registers::set_system_clipboard(&text);
+        self.write_register(None, text, false);
+        self.status_msg = format!("copied {chars} chars from console ({label})");
     }
 
     /// Pull the currently-selected console text into a single
@@ -628,6 +638,54 @@ impl super::App {
                     self.dap_pane_toggle_at_cursor();
                     self.dap_follow_selection();
                 }
+                true
+            }
+            // Yank the active console selection. Lowercase `y` is the
+            // paired action with mouse drag — uppercase `Y` further
+            // down is the "copy all visible" shortcut.
+            KeyCode::Char('y') if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console) => {
+                let lines = self.dap_console_flat_lines();
+                let text = self.dap_console_selection_text(&lines);
+                if text.is_empty() {
+                    self.status_msg =
+                        "no console selection — drag-select or press Y for all".into();
+                } else {
+                    self.dap_console_yank(text, "selection");
+                }
+                true
+            }
+            // Yank every currently-visible console line (post-filter)
+            // joined by `\n`. Headline use is "I just had a failed
+            // run, copy the whole log into a bug report."
+            KeyCode::Char('Y') if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console) => {
+                let lines = self.dap_console_flat_lines();
+                if lines.is_empty() {
+                    self.status_msg = "console is empty".into();
+                } else {
+                    let n = lines.len();
+                    let text = lines
+                        .into_iter()
+                        .map(|(_, body)| body)
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    self.dap_console_yank(text, &format!("{n} lines"));
+                }
+                true
+            }
+            // Wipe the rolling output buffer. No confirmation — adapter
+            // output keeps flowing in a live session, and a stopped
+            // session's build log lives in the project's `target/` or
+            // equivalent. Status line confirms how many entries went.
+            KeyCode::Char('C') if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console) => {
+                let n = self.dap.output_buffer.len();
+                self.dap.output_buffer.clear();
+                self.dap_console_selection = None;
+                self.dap_tab_scrolls.insert(self.dap_pane_tab, 0);
+                self.status_msg = if n == 0 {
+                    "console already empty".into()
+                } else {
+                    format!("console cleared ({n} entries)")
+                };
                 true
             }
             // Cycle Console-tab filter (All → Program → Errors → All).
