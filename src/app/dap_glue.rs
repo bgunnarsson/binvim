@@ -367,6 +367,125 @@ impl super::App {
         out
     }
 
+    /// Open the `/` prompt for the Console tab. Pre-fills with the
+    /// currently-committed query so the user can edit the previous
+    /// search rather than re-typing from scratch.
+    pub(super) fn open_dap_console_search(&mut self) {
+        self.cmdline = self.dap_console_search.clone().unwrap_or_default();
+        self.cmdline_cursor = self.cmdline.len();
+        self.history_reset();
+        self.mode = Mode::Prompt(crate::mode::PromptKind::DebugConsoleSearch);
+    }
+
+    /// Commit `query` as the active Console search. Empty input
+    /// clears any prior query (matches Vim's `/` + Enter behaviour).
+    /// Jumps to the first match and seeds the status line with a
+    /// "k/n matches" summary so the user knows where they are.
+    pub(super) fn commit_dap_console_search(&mut self, query: String) {
+        if query.is_empty() {
+            self.dap_console_search = None;
+            self.dap_console_match_idx = 0;
+            self.status_msg = "console search cleared".into();
+            return;
+        }
+        self.dap_console_search = Some(query.clone());
+        self.dap_console_match_idx = 0;
+        let lines = self.dap_console_match_lines();
+        if lines.is_empty() {
+            self.status_msg = format!("no matches for {query:?}");
+        } else {
+            self.dap_scroll_console_to(lines[0]);
+            self.status_msg = format!("{}/{} matches for {query:?}", 1, lines.len());
+        }
+    }
+
+    /// Flat-line indices (post-filter) of every console row whose
+    /// rendered text contains the active search query. Empty when
+    /// no search is active. Recomputed on demand — Console buffers
+    /// cap at a small number of entries and the search box is only
+    /// open during interactive use.
+    pub(super) fn dap_console_match_lines(&self) -> Vec<usize> {
+        let Some(query) = self.dap_console_search.as_deref() else {
+            return Vec::new();
+        };
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let mut out = Vec::new();
+        for (idx, (_, body)) in self.dap_console_flat_lines().iter().enumerate() {
+            if body.contains(query) {
+                out.push(idx);
+            }
+        }
+        out
+    }
+
+    /// `n` / `N` in the Console tab. `forward = true` walks to the
+    /// next match line; `false` walks to the previous. Clamps at the
+    /// ends (no wrap-around) so the user can tell when they've
+    /// exhausted the list.
+    pub(super) fn dap_console_jump_match(&mut self, forward: bool) {
+        let matches = self.dap_console_match_lines();
+        if matches.is_empty() {
+            self.status_msg = match self.dap_console_search.as_deref() {
+                Some(q) => format!("no matches for {q:?}"),
+                None => "no console search active — press / to start".into(),
+            };
+            return;
+        }
+        let next_idx = if forward {
+            (self.dap_console_match_idx + 1).min(matches.len() - 1)
+        } else {
+            self.dap_console_match_idx.saturating_sub(1)
+        };
+        self.dap_console_match_idx = next_idx;
+        self.dap_scroll_console_to(matches[next_idx]);
+        let q = self.dap_console_search.as_deref().unwrap_or("");
+        self.status_msg = format!("{}/{} matches for {q:?}", next_idx + 1, matches.len());
+    }
+
+    /// Drop the active Console search. Called from the Console key
+    /// handler on bare `Esc` when there's an active query (without
+    /// this, the only way to clear was to `/` + Enter on an empty
+    /// query). Returns `true` if anything was cleared so the caller
+    /// can decide whether to fall through to "exit pane focus".
+    pub(super) fn clear_dap_console_search(&mut self) -> bool {
+        if self.dap_console_search.is_none() {
+            return false;
+        }
+        self.dap_console_search = None;
+        self.dap_console_match_idx = 0;
+        self.status_msg = "console search cleared".into();
+        true
+    }
+
+    /// Position the Console scroll so flat-line `target` sits in
+    /// the middle of the visible viewport. Console scroll counts
+    /// lines hidden BELOW the bottom, so the math inverts from a
+    /// normal top-down view.
+    fn dap_scroll_console_to(&mut self, target: usize) {
+        let body_rows = self.dap_body_rows();
+        if body_rows == 0 {
+            return;
+        }
+        let total = self.dap_active_tab_row_count();
+        if total == 0 {
+            return;
+        }
+        // Aim to land `target` 1/3 from the top of the viewport so
+        // there's some context above and more lines visible below
+        // (where freshly-arriving output appends).
+        let upper = body_rows / 3;
+        let visible_start = target.saturating_sub(upper);
+        // visible_start == total - scroll - body_rows  ⇒
+        // scroll == total - body_rows - visible_start.
+        let scroll = total
+            .saturating_sub(body_rows)
+            .saturating_sub(visible_start);
+        self.dap_tab_scrolls
+            .insert(crate::app::DapPaneTab::Console, scroll);
+    }
+
     /// Drop `text` into the OS clipboard, the unnamed register, and
     /// surface a status-line message tagging which slice of the
     /// console it came from (`"selection"` / `"all"` / etc.). Used
@@ -535,6 +654,15 @@ impl super::App {
         let body_len = self.dap_active_tab_row_count();
         match key.code {
             KeyCode::Esc => {
+                // `Esc` is overloaded on the Console tab: if a search
+                // is active, clear that first (matches Vim's `:noh`
+                // pattern of "first Esc clears search, second exits").
+                // On any other tab, `Esc` always exits.
+                if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console)
+                    && self.clear_dap_console_search()
+                {
+                    return true;
+                }
                 self.dap_exit_pane_focus();
                 true
             }
@@ -638,6 +766,30 @@ impl super::App {
                     self.dap_pane_toggle_at_cursor();
                     self.dap_follow_selection();
                 }
+                true
+            }
+            // `/` opens the Console search prompt. Pre-fills with the
+            // previous query so the user can refine rather than retype.
+            KeyCode::Char('/') if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console) => {
+                self.open_dap_console_search();
+                true
+            }
+            // `n` / `N` walk to the next / previous matching line and
+            // scroll the Console viewport so the match lands roughly
+            // 1/3 from the top. Without an active query, the call
+            // surfaces a status hint instead of silently no-op'ing.
+            KeyCode::Char('n')
+                if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console)
+                    && self.dap_console_search.is_some() =>
+            {
+                self.dap_console_jump_match(true);
+                true
+            }
+            KeyCode::Char('N')
+                if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console)
+                    && self.dap_console_search.is_some() =>
+            {
+                self.dap_console_jump_match(false);
                 true
             }
             // Yank the active console selection. Lowercase `y` is the

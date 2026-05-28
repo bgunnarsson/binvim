@@ -433,6 +433,16 @@ pub struct App {
     /// the pane has focus. Default `All` is identical to pre-filter
     /// behaviour; `Program` and `Errors` hide noisier categories.
     pub dap_console_filter: ConsoleFilter,
+    /// Committed search query for the Console tab. `Some` after the
+    /// user hits Enter on the `/`-prompt; `None` when no search is
+    /// active. Substring match, case-sensitive — keeps the model
+    /// simple and predictable for log digging.
+    pub dap_console_search: Option<String>,
+    /// Which match the cursor is "on" in the flattened post-filter
+    /// console view. 0-indexed into `dap_console_match_lines`. `n`
+    /// moves forward, `N` backward; both clamp at the ends rather
+    /// than wrapping so the user can tell when they've run out.
+    pub dap_console_match_idx: usize,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -921,6 +931,8 @@ impl App {
             dap_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             dap_console_selection: None,
             dap_console_filter: ConsoleFilter::default(),
+            dap_console_search: None,
+            dap_console_match_idx: 0,
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             pending_code_lens_commands: Vec::new(),

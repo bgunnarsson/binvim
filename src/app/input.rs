@@ -1865,6 +1865,10 @@ impl super::App {
                         self.mode = Mode::Normal;
                         self.android_avd_name_entered(input);
                     }
+                    crate::mode::PromptKind::DebugConsoleSearch => {
+                        self.mode = Mode::DebugPane;
+                        self.commit_dap_console_search(input);
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -1967,6 +1971,13 @@ impl super::App {
                     state.pending_op = None;
                 }
                 self.mode = Mode::FileTree;
+            }
+            Some(crate::mode::PromptKind::DebugConsoleSearch) => {
+                // Esc on the search prompt returns to the pane
+                // without overwriting any previously-committed query,
+                // so the user can dismiss the box and keep their
+                // existing highlights intact.
+                self.mode = Mode::DebugPane;
             }
             _ => {
                 self.mode = Mode::Normal;

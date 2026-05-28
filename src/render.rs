@@ -1112,6 +1112,7 @@ fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
         Mode::Prompt(crate::mode::PromptKind::FileTreeCreate) => ("New entry", ' '),
         Mode::Prompt(crate::mode::PromptKind::FileTreeRename) => ("Rename", ' '),
         Mode::Prompt(crate::mode::PromptKind::AndroidAvdName) => ("AVD name", ' '),
+        Mode::Prompt(crate::mode::PromptKind::DebugConsoleSearch) => ("Console search", '/'),
         _ => ("", ' '),
     }
 }
@@ -4888,9 +4889,53 @@ fn home_relative_with(path: &str, home: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DebugPalette, cursor_visual_col_walk, display_lsp_root, home_relative_with,
-        tokenize_console_line, truncate,
+        DebugPalette, cursor_visual_col_walk, display_lsp_root, find_match_ranges,
+        home_relative_with, tokenize_console_line, truncate,
     };
+
+    #[test]
+    fn match_ranges_basic_substring() {
+        let r = find_match_ranges("error: connection refused", "connection");
+        assert_eq!(r, vec![(7, 17)]);
+    }
+
+    #[test]
+    fn match_ranges_multiple_non_overlapping() {
+        // Two consecutive "ab"s, plus a separated one. All three
+        // hit; the consecutive pair doesn't double-count.
+        let r = find_match_ranges("ababxxxab", "ab");
+        assert_eq!(r, vec![(0, 2), (2, 4), (7, 9)]);
+    }
+
+    #[test]
+    fn match_ranges_empty_query_is_no_match() {
+        // An empty query must not claim every column — otherwise
+        // committing `/` + Enter on an empty prompt would paint
+        // the whole pane.
+        let r = find_match_ranges("anything", "");
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn match_ranges_no_match() {
+        let r = find_match_ranges("hello world", "rust");
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn match_ranges_case_sensitive() {
+        // Vim's `/` is case-sensitive by default and our Console
+        // search follows the same rule for predictability.
+        let r = find_match_ranges("ERROR error Error", "error");
+        assert_eq!(r, vec![(6, 11)]);
+    }
+
+    #[test]
+    fn match_ranges_utf8_char_indexed() {
+        // Char-indexed columns: a 2-byte é counts as one column.
+        let r = find_match_ranges("café au lait", "au");
+        assert_eq!(r, vec![(5, 7)]);
+    }
 
     #[test]
     fn cursor_visual_col_counts_tabs_as_tab_width() {
@@ -6601,6 +6646,15 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, MoveTo(0, screen_y), SetBackgroundColor(body_bg))?;
         let idx = visible_start + r;
         if let Some(row) = rows_buf.get(idx) {
+            // Search-match overlay colours — `theme_surface` for
+            // every match (a subtle contrast against the pane bg
+            // so the eye picks it up without shouting), the
+            // `theme_warning` accent for the current match so
+            // `n`/`N` lands somewhere visually loud. Both feed
+            // into `paint_dap_row` and are only used when the row
+            // has `match_ranges`.
+            let match_bg = app.config.theme_surface();
+            let current_match_bg = app.config.theme_warning();
             paint_dap_row(
                 out,
                 row,
@@ -6609,6 +6663,8 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 body_bg,
                 app.config.theme_border(),
                 muted,
+                match_bg,
+                current_match_bg,
             )?;
         } else {
             queue!(out, Print(" ".repeat(width)))?;
@@ -6633,6 +6689,16 @@ pub struct DapTabRow {
     /// mouse-drag selection. Used by the Console tab. Painted in
     /// Surface2 on top of whatever the per-part colours were.
     pub selection_range: Option<(usize, usize)>,
+    /// Char-column ranges (each `[start, end)`) to overlay with the
+    /// console-search match colour. Multiple matches per row are
+    /// possible. Painted under the mouse-drag selection so a user
+    /// dragging across a match still sees the selection highlight
+    /// take precedence.
+    pub match_ranges: Vec<(usize, usize)>,
+    /// True when this row carries the "current" search match — the
+    /// one `n`/`N` parked the cursor on. Painted with a stronger
+    /// background than the other match rows.
+    pub current_match: bool,
 }
 
 pub struct DapTabPart {
@@ -6677,10 +6743,19 @@ fn paint_dap_row(
     pane_bg: Color,
     selection_bg: Color,
     muted: Color,
+    match_bg: Color,
+    current_match_bg: Color,
 ) -> Result<()> {
     let row_bg = if row.selected { selection_bg } else { pane_bg };
     let sel_bg = selection_bg;
     let sel_range = row.selection_range;
+    let match_ranges: &[(usize, usize)] = &row.match_ranges;
+    let row_match_bg = if row.current_match {
+        current_match_bg
+    } else {
+        match_bg
+    };
+    let in_match = |col: usize| match_ranges.iter().any(|(s, e)| col >= *s && col < *e);
     if width == 0 {
         return Ok(());
     }
@@ -6730,7 +6805,16 @@ fn paint_dap_row(
             let in_sel = sel_range
                 .map(|(s, e)| logical_col >= s && logical_col < e)
                 .unwrap_or(false);
-            let want_bg = if in_sel { sel_bg } else { row_bg };
+            // Selection wins over match — a user dragging across a
+            // highlighted match should still see the drag overlay
+            // (matches the editor's selection-beats-search ordering).
+            let want_bg = if in_sel {
+                sel_bg
+            } else if in_match(logical_col) {
+                row_match_bg
+            } else {
+                row_bg
+            };
             if last_bg != Some(want_bg) {
                 queue!(out, SetBackgroundColor(want_bg))?;
                 last_bg = Some(want_bg);
@@ -6856,6 +6940,7 @@ fn build_frames_rows(app: &App) -> Vec<DapTabRow> {
             selection_range: None,
             parts,
             selected: selected == Some(i),
+            ..Default::default()
         });
     }
     rows
@@ -6902,6 +6987,7 @@ fn build_locals_rows(app: &App, pane_focused: bool) -> Vec<DapTabRow> {
             selection_range: None,
             parts,
             selected: selected == Some(i),
+            ..Default::default()
         });
     }
     rows
@@ -6947,6 +7033,7 @@ fn build_watches_rows(app: &App) -> Vec<DapTabRow> {
             selection_range: None,
             parts,
             selected: selected == Some(i),
+            ..Default::default()
         });
     }
     rows
@@ -7018,6 +7105,7 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
                 selection_range: None,
                 parts,
                 selected: selected == Some(idx),
+                ..Default::default()
             });
             idx += 1;
         }
@@ -7039,6 +7127,42 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
     // `(flat_line_idx, char_col)`, so we walk the same flat order
     // here to assign per-row ranges.
     let selection = app.dap_console_selection.map(|s| s.ordered());
+    // `current_match_flat` is the flat-line index of the row `n`/`N`
+    // parked on, so we can mark it with the stronger background.
+    // Computed from `dap_console_match_idx` against the recomputed
+    // match list — both `build_console_rows` and `dap_console_jump_match`
+    // see the same filtered view.
+    let search_query = app.dap_console_search.as_deref().filter(|s| !s.is_empty());
+    let current_match_flat = search_query.and_then(|_| {
+        // Walk the visible buffer to find the nth match in flat order.
+        let mut count = 0usize;
+        let mut found = None;
+        let mut idx = 0usize;
+        'outer: for entry in app.dap.output_buffer.iter() {
+            if !filter.allows(&entry.category) {
+                continue;
+            }
+            for one in entry.output.lines() {
+                let body_for_match = if crate::ansi::has_escapes(one) {
+                    crate::ansi::parse_sgr_line(one)
+                        .into_iter()
+                        .map(|s| s.text)
+                        .collect::<String>()
+                } else {
+                    one.to_string()
+                };
+                if body_for_match.contains(search_query.unwrap()) {
+                    if count == app.dap_console_match_idx {
+                        found = Some(idx);
+                        break 'outer;
+                    }
+                    count += 1;
+                }
+                idx += 1;
+            }
+        }
+        found
+    });
     let mut flat_idx = 0usize;
     for line in app.dap.output_buffer.iter() {
         if !filter.allows(&line.category) {
@@ -7068,15 +7192,58 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
                 let to = if flat_idx == end.0 { end.1 } else { line_len };
                 if to > from { Some((from, to)) } else { None }
             });
+            // Per-row match ranges — computed against the ANSI-stripped
+            // visual body so the char columns align with what the
+            // user sees (and with the selection coords + clipboard
+            // text). Without this, an ANSI-coloured line would
+            // mis-position the highlight by however many invisible
+            // escape bytes the line carries.
+            let match_ranges = search_query
+                .map(|q| {
+                    let visual: String = parts.iter().flat_map(|p| p.text.chars()).collect();
+                    find_match_ranges(&visual, q)
+                })
+                .unwrap_or_default();
+            let current_match = current_match_flat == Some(flat_idx);
             rows.push(DapTabRow {
                 parts,
                 selected: false,
                 selection_range,
+                match_ranges,
+                current_match,
             });
             flat_idx += 1;
         }
     }
     rows
+}
+
+/// Char-column ranges of every (non-overlapping, left-to-right)
+/// substring match of `query` in `haystack`. Empty `query` returns
+/// an empty list (so an empty search doesn't claim every column).
+/// Char-indexed rather than byte-indexed so the column numbers
+/// align with the `paint_dap_row` overlay logic, which walks per
+/// char.
+fn find_match_ranges(haystack: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let qchars: Vec<char> = query.chars().collect();
+    let hchars: Vec<char> = haystack.chars().collect();
+    if qchars.len() > hchars.len() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i + qchars.len() <= hchars.len() {
+        if hchars[i..i + qchars.len()] == qchars[..] {
+            out.push((i, i + qchars.len()));
+            i += qchars.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
 }
 
 /// Convert an ANSI-styled console line into `DapTabPart`s. Lines
@@ -7380,6 +7547,7 @@ fn note_row(text: &str, p: &DebugPalette) -> DapTabRow {
         selection_range: None,
         parts: vec![DapTabPart::italic(text.to_string(), p.muted)],
         selected: false,
+        ..Default::default()
     }
 }
 

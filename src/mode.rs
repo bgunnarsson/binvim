@@ -71,6 +71,12 @@ pub enum PromptKind {
     /// `App.android.flow`; Enter kicks off create (installing the image
     /// first if it isn't downloaded yet).
     AndroidAvdName,
+    /// `/` inside the DAP Console tab — typed string becomes a literal
+    /// substring search across the visible (post-filter) console
+    /// lines. Enter commits the query and jumps to the first match;
+    /// `n`/`N` walks subsequent matches from the Console-mode key
+    /// handler. Esc cancels without overwriting any prior query.
+    DebugConsoleSearch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
