@@ -271,7 +271,65 @@ pub fn set_system_clipboard(text: &str) {
 /// text (an image, a file list, etc.). Swallows every failure so a missing
 /// display server / locked clipboard / image payload just makes `p` fall
 /// back to the in-memory register instead of erroring out.
+///
+/// arboard is the fast path, but its macOS reader iterates
+/// `NSPasteboard.pasteboardItems` looking for one whose item exposes
+/// `NSPasteboardTypeString`. Some apps (Electron-based editors, some
+/// browsers, occasionally Microsoft Office) don't lay their pasteboard
+/// items out that way — they put text under `public.utf8-plain-text`
+/// at the pasteboard level but not on any single item — and arboard
+/// returns `ContentNotAvailable` even though `pbpaste` reads them
+/// fine. So if arboard fails or returns empty we shell out to the
+/// platform's native clipboard reader as a fallback.
 pub fn get_system_clipboard() -> Option<String> {
-    let mut cb = arboard::Clipboard::new().ok()?;
-    cb.get_text().ok()
+    if let Ok(mut cb) = arboard::Clipboard::new() {
+        if let Ok(text) = cb.get_text() {
+            if !text.is_empty() {
+                return Some(text);
+            }
+        }
+    }
+    clipboard_fallback_read()
+}
+
+#[cfg(target_os = "macos")]
+fn clipboard_fallback_read() -> Option<String> {
+    let out = std::process::Command::new("pbpaste").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(out.stdout).ok()?;
+    if text.is_empty() { None } else { Some(text) }
+}
+
+#[cfg(target_os = "linux")]
+fn clipboard_fallback_read() -> Option<String> {
+    // Try wl-paste (Wayland) first, then xclip / xsel (X11). On a
+    // Wayland session under XWayland both may exist; wl-paste wins
+    // because it talks to the compositor directly.
+    let attempts: &[(&str, &[&str])] = &[
+        ("wl-paste", &["--no-newline"]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+        ("xsel", &["--clipboard", "--output"]),
+    ];
+    for (cmd, args) in attempts {
+        let Ok(out) = std::process::Command::new(cmd).args(*args).output() else {
+            continue;
+        };
+        if !out.status.success() {
+            continue;
+        }
+        let Ok(text) = String::from_utf8(out.stdout) else {
+            continue;
+        };
+        if !text.is_empty() {
+            return Some(text);
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn clipboard_fallback_read() -> Option<String> {
+    None
 }
