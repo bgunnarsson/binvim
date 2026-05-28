@@ -248,7 +248,8 @@ impl super::App {
                     || self.pending.awaiting_git_leader
                     || self.pending.awaiting_task_leader
                     || self.pending.awaiting_ai_leader
-                    || self.pending.awaiting_package_leader;
+                    || self.pending.awaiting_package_leader
+                    || self.pending.awaiting_android_leader;
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
@@ -1118,7 +1119,8 @@ impl super::App {
             || self.pending.awaiting_terminal_leader
             || self.pending.awaiting_test_leader
             || self.pending.awaiting_ai_leader
-            || self.pending.awaiting_package_leader;
+            || self.pending.awaiting_package_leader
+            || self.pending.awaiting_android_leader;
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());
