@@ -6,6 +6,59 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-28
+
+### Added
+- **Package-manager backends for npm, cargo, and Go (`<leader>p`).** The
+  `<leader>p` flow now detects npm / cargo / go workspaces alongside
+  NuGet and drives the same install / search → version → add flow
+  through the right CLI. `npm` uses `npm list` / `npm view` / `npm
+  install`; cargo reads `Cargo.toml` directly for installed packages
+  and falls back to the crates.io HTTP API for the version list (no
+  `cargo` command lists all versions), uses `cargo search` / `cargo
+  add` for the rest; Go parses `go.mod` for direct requires, scrapes
+  pkg.go.dev for search, and uses `go list -m -versions` / `go get`
+  for the rest. Adding a backend is now one match arm per ecosystem
+  with no app-layer churn.
+- **Android emulator management + JDWP debug attach (`<leader>A`).** A
+  new which-key submenu lists installed AVDs and connected devices,
+  launches AVDs, and (for the debug menu) attaches the DAP layer to a
+  running Android process over JDWP via `adb forward` plus the
+  jdtls-hosted java-debug adapter. Listings + launches run on a
+  background thread; the new `start_attach_session` path in
+  `DapManager` skips the spawn/launch handshake and goes straight to
+  initialize+attach.
+- **`:terminal` pane scrollback view.** Scroll wheel and Shift+PageUp /
+  Shift+PageDown (Shift+↑ / Shift+↓ for line-wise) now scroll the
+  pane's scrollback even when the embedded program isn't capturing
+  mouse input — previously those events were dropped on the floor at
+  a shell prompt. New output streams in while the view is detached
+  keeps the user anchored to the same content (tmux/screen
+  behaviour); typing snaps the view back to live. The pane header
+  shows `↑ N lines back · Shift+PageDown / scroll down to follow live`
+  while detached.
+- **`:terminal` drag-select + clipboard copy.** Plain left-drag inside
+  the pane body selects, release auto-copies the covered cells to the
+  system clipboard. Honours the scrollback view, so dragging across
+  scrolled-back history grabs the right text. Selection is
+  tab-scoped and clears on tab switch / pane close / pane resize.
+- **Live build feedback when starting a debug session.** Adapter
+  prelaunch commands (`dotnet build`, `cargo build`) are no longer
+  synchronous. They spawn with piped stdout/stderr, stream each line
+  into the debug Console tab live, and only kick off the real DAP
+  initialize+launch once the build child exits successfully. Build
+  failures emit an `AdapterError` but leave the pane open so the
+  output stays readable.
+
+### Fixed
+- **Clipboard reads fall back to `pbpaste` / `xclip` when `arboard`
+  can't reach the host clipboard.** Returning to binvim after copying
+  in another app sometimes had `arboard` time out on the X11 / Wayland
+  / pasteboard read; binvim now retries via the platform CLI tool so
+  the paste still lands.
+- **`<leader>A` which-key popup.** The new Android sub-menu didn't
+  arm the which-key timer, so the popup never appeared — fixed.
+
 ## [0.5.0] - 2026-05-27
 
 ### Added
