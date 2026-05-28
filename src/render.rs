@@ -2615,7 +2615,7 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         } else {
             match app.mode {
                 Mode::Terminal => {
-                    "  Esc to leave · Ctrl-[ to send Esc to shell · Shift+PageUp scrolls".into()
+                    "  Esc leaves · Ctrl-[ sends Esc · drag selects · Shift+PageUp scrolls".into()
                 }
                 _ => "  <leader>tf focus · <leader>tq close".into(),
             }
@@ -2658,6 +2658,15 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
     let grid_rows = grid.rows.min(body_rows);
     let grid_cols = grid.cols.min(total_w);
 
+    // Mouse-drag selection overlay — flip `reverse` on each cell
+    // inside the selection range so the user sees what they're
+    // grabbing before release copies it to the clipboard. Gated on
+    // `tab_idx` so switching tabs mid-drag doesn't leak the
+    // highlight into the wrong tab's grid.
+    let sel = app
+        .terminal_selection
+        .as_ref()
+        .filter(|s| s.tab_idx == app.active_terminal_idx);
     for row in 0..body_rows {
         let screen_y = (body_top + row) as u16;
         queue!(out, MoveTo(0, screen_y), Clear(ClearType::CurrentLine))?;
@@ -2672,7 +2681,7 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
             };
             let line_cols = line.len().min(grid_cols);
             for col in 0..line_cols {
-                let cell = line[col];
+                let mut cell = line[col];
                 // Wide-char continuation cells are tagged with `\0`
                 // by the vte handler. The host terminal already
                 // painted the right half of the wide glyph when we
@@ -2680,6 +2689,11 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 // anything here — even a space would clobber it.
                 if cell.ch == '\0' {
                     continue;
+                }
+                if let Some(s) = sel {
+                    if s.contains(row, col) {
+                        cell.reverse = !cell.reverse;
+                    }
                 }
                 paint_terminal_cell(out, cell)?;
             }

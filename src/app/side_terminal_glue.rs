@@ -157,6 +157,42 @@ pub fn extract_selection_text(grid: &crate::terminal::Grid, sel: &SideSelection)
     out
 }
 
+/// Pull text out of a grid via `visible_row`, so selection text
+/// reflects whichever rows the renderer actually painted (scrollback
+/// included). Identical shape to `extract_selection_text` otherwise;
+/// the bottom `:terminal` pane uses this variant because the user
+/// can drag-select across scrolled-back history, where
+/// `extract_selection_text` would index into the live cells and grab
+/// the wrong text.
+pub fn extract_visible_selection_text(grid: &crate::terminal::Grid, sel: &SideSelection) -> String {
+    let (start, end) = sel.ordered();
+    let mut out = String::new();
+    let mut first = true;
+    for row in start.0..=end.0 {
+        let row_cells = match grid.visible_row(row) {
+            Some(r) => r,
+            None => break,
+        };
+        let cols = row_cells.len();
+        let (lo, hi) = if row == start.0 && row == end.0 {
+            (start.1.min(cols), (end.1 + 1).min(cols))
+        } else if row == start.0 {
+            (start.1.min(cols), cols)
+        } else if row == end.0 {
+            (0, (end.1 + 1).min(cols))
+        } else {
+            (0, cols)
+        };
+        let line: String = row_cells[lo..hi].iter().map(|c| c.ch).collect();
+        if !first {
+            out.push('\n');
+        }
+        out.push_str(line.trim_end());
+        first = false;
+    }
+    out
+}
+
 impl super::App {
     /// Open (or focus) the right-side terminal pane and run `command`
     /// inside a freshly-spawned interactive shell tab labelled
@@ -552,4 +588,80 @@ pub fn side_terminal_loading(s: &SideTerminal) -> bool {
         return false;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::{Cell, Grid};
+
+    /// Build a `Grid` whose rows are filled left-aligned with the
+    /// glyphs of each `&str`, padded with blanks out to `cols`. Mirrors
+    /// what the vte handler would produce for a chunk of plain ASCII.
+    fn grid_from_lines(lines: &[&str], cols: usize) -> Grid {
+        let mut g = Grid::new(lines.len(), cols);
+        for (r, line) in lines.iter().enumerate() {
+            for (c, ch) in line.chars().enumerate() {
+                if c >= cols {
+                    break;
+                }
+                g.cells[r][c] = Cell {
+                    ch,
+                    ..Cell::default()
+                };
+            }
+        }
+        g
+    }
+
+    #[test]
+    fn extract_visible_selection_text_single_row_trims_trailing_pad() {
+        // "hello" on a 10-cell row — selection covers the whole row.
+        // The 5 trailing blank cells should be trimmed.
+        let g = grid_from_lines(&["hello"], 10);
+        let sel = SideSelection {
+            tab_idx: 0,
+            anchor: (0, 0),
+            head: (0, 9),
+            dragging: false,
+        };
+        assert_eq!(extract_visible_selection_text(&g, &sel), "hello");
+    }
+
+    #[test]
+    fn extract_visible_selection_text_multi_row_joins_with_newlines() {
+        let g = grid_from_lines(&["abc", "def", "ghi"], 5);
+        // Stream-style selection from (0, 1) to (2, 1) → "bc\ndef\ngh".
+        let sel = SideSelection {
+            tab_idx: 0,
+            anchor: (0, 1),
+            head: (2, 1),
+            dragging: false,
+        };
+        assert_eq!(extract_visible_selection_text(&g, &sel), "bc\ndef\ngh");
+    }
+
+    #[test]
+    fn extract_visible_selection_text_walks_scrollback_when_view_scrolled() {
+        // Push three lines into scrollback (a, b, c), keep "d" in the
+        // live grid. Then scroll the view all the way back. A
+        // selection covering rows 0..2 of the visible window should
+        // pull "a", "b", "c" from scrollback — the live "d" must NOT
+        // sneak in.
+        let mut g = grid_from_lines(&["d"], 5);
+        g.scrollback
+            .push(grid_from_lines(&["a"], 5).cells.remove(0));
+        g.scrollback
+            .push(grid_from_lines(&["b"], 5).cells.remove(0));
+        g.scrollback
+            .push(grid_from_lines(&["c"], 5).cells.remove(0));
+        g.scroll_view_by(3);
+        let sel = SideSelection {
+            tab_idx: 0,
+            anchor: (0, 0),
+            head: (2, 4),
+            dragging: false,
+        };
+        assert_eq!(extract_visible_selection_text(&g, &sel), "a\nb\nc");
+    }
 }

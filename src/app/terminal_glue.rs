@@ -84,6 +84,10 @@ impl super::App {
         }
         let idx = self.active_terminal_idx.min(self.terminals.len() - 1);
         self.terminals.remove(idx);
+        // Drop any held selection — the grid it was anchored to is
+        // either gone or about to be a different tab's, both of
+        // which would render the highlight against the wrong cells.
+        self.terminal_selection = None;
         let pane_closed = if self.terminals.is_empty() {
             self.active_terminal_idx = 0;
             self.terminal_pane_open = false;
@@ -110,6 +114,9 @@ impl super::App {
     pub(super) fn set_active_terminal(&mut self, idx: usize) {
         if idx < self.terminals.len() && idx != self.active_terminal_idx {
             self.active_terminal_idx = idx;
+            // Selection coords are tab-scoped — switching tabs would
+            // otherwise paint the highlight against an unrelated grid.
+            self.terminal_selection = None;
         }
     }
 
@@ -120,7 +127,7 @@ impl super::App {
     /// that's been hidden behind another for a while, its shell
     /// should already have the current winsize so we don't see a
     /// reflow flash on tab switch.
-    pub(super) fn resize_all_terminals(&self) {
+    pub(super) fn resize_all_terminals(&mut self) {
         if self.terminals.is_empty() {
             return;
         }
@@ -129,6 +136,9 @@ impl super::App {
         for t in &self.terminals {
             let _ = t.resize(rows, cols);
         }
+        // Grid coords just shifted under any in-flight selection — drop
+        // it so the highlight doesn't paint into stale row/col indices.
+        self.terminal_selection = None;
     }
 
     /// `<leader>tp` — show/hide the terminal pane WITHOUT killing
@@ -321,6 +331,7 @@ impl super::App {
                 let cur = self.active_terminal_idx as i32;
                 let next = ((cur + delta).rem_euclid(n as i32)) as usize;
                 self.active_terminal_idx = next;
+                self.terminal_selection = None;
             }
         }
     }
@@ -384,11 +395,14 @@ impl super::App {
         let pane_row = row - body_top + 1;
         let pane_col = col + 1;
 
-        let term = match self.active_terminal() {
-            Some(t) => t,
+        // Snapshot what we need from the active Terminal up-front so
+        // the borrow doesn't outlive the per-branch `self.*` mutations
+        // below (the borrow checker rightly refuses to let `term`
+        // straddle a `self.terminal_selection = …`).
+        let mouse = match self.active_terminal() {
+            Some(t) => t.mouse_state(),
             None => return true,
         };
-        let mouse = term.mouse_state();
         if !mouse.any {
             // No mouse-tracking program is running (typical shell
             // prompt). Scroll wheel events that would otherwise be
@@ -398,12 +412,86 @@ impl super::App {
             // editor's own wheel-step convention elsewhere.
             match ev.kind {
                 MouseEventKind::ScrollUp => {
-                    term.scroll_view_by(3);
+                    if let Some(t) = self.active_terminal() {
+                        t.scroll_view_by(3);
+                    }
                     return true;
                 }
                 MouseEventKind::ScrollDown => {
-                    term.scroll_view_by(-3);
+                    if let Some(t) = self.active_terminal() {
+                        t.scroll_view_by(-3);
+                    }
                     return true;
+                }
+                _ => {}
+            }
+            // Body-area drag selection — mirrors the side pane's
+            // gesture: plain left-drag selects, release auto-copies
+            // to the system clipboard. The host terminal's
+            // Shift+drag selects across the whole window with no
+            // awareness of our panes, so without this the user has
+            // no way to grab just the pane content. Coords are
+            // 0-based body-local so `SideSelection::contains` (which
+            // the renderer also calls with body-local coords) lines
+            // up.
+            let body_row = row - body_top;
+            let body_col = col;
+            let active_idx = self.active_terminal_idx;
+            match ev.kind {
+                MouseEventKind::Drag(MouseButton::Left)
+                    if !ev.modifiers.contains(KeyModifiers::SHIFT) =>
+                {
+                    let sel = self.terminal_selection.take();
+                    let new_sel = match sel {
+                        Some(mut s) if s.tab_idx == active_idx => {
+                            s.head = (body_row, body_col);
+                            s.dragging = true;
+                            s
+                        }
+                        _ => crate::app::SideSelection {
+                            tab_idx: active_idx,
+                            anchor: (body_row, body_col),
+                            head: (body_row, body_col),
+                            dragging: true,
+                        },
+                    };
+                    self.terminal_selection = Some(new_sel);
+                    if !matches!(self.mode, Mode::Terminal) {
+                        self.mode = Mode::Terminal;
+                        self.terminal_focus = crate::app::TerminalFocus::Bottom;
+                    }
+                    return true;
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    if let Some(mut s) = self.terminal_selection.take() {
+                        if s.tab_idx == active_idx && s.dragging {
+                            s.dragging = false;
+                            let copied = match self.active_terminal() {
+                                Some(t) => {
+                                    let inner = t.grid();
+                                    crate::app::extract_visible_selection_text(
+                                        &inner.handler.grid,
+                                        &s,
+                                    )
+                                }
+                                None => String::new(),
+                            };
+                            self.terminal_selection = Some(s);
+                            if !copied.is_empty() {
+                                let n = copied.chars().count();
+                                super::registers::set_system_clipboard(&copied);
+                                self.status_msg = format!("terminal: copied {n} chars");
+                            }
+                            return true;
+                        }
+                        // Not our drag — restore so the highlight stays.
+                        self.terminal_selection = Some(s);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
+                    // A fresh click drops any held-over selection so
+                    // the next drag starts from a clean slate.
+                    self.terminal_selection = None;
                 }
                 _ => {}
             }
@@ -423,7 +511,9 @@ impl super::App {
             Some(b) => b,
             None => return true,
         };
-        let _ = term.write_bytes(&bytes);
+        if let Some(t) = self.active_terminal() {
+            let _ = t.write_bytes(&bytes);
+        }
         if matches!(ev.kind, MouseEventKind::Down(_)) && !matches!(self.mode, Mode::Terminal) {
             self.mode = Mode::Terminal;
             self.terminal_focus = crate::app::TerminalFocus::Bottom;

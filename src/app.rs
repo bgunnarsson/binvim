@@ -57,7 +57,8 @@ mod windows;
 
 pub use health::{DiagnosticsCounts, HealthSnapshot};
 pub use side_terminal_glue::{
-    SideSelection, SideTerminal, TerminalFocus, extract_selection_text, side_terminal_loading,
+    SideSelection, SideTerminal, TerminalFocus, extract_selection_text,
+    extract_visible_selection_text, side_terminal_loading,
 };
 pub use state::{
     BufferStash, CompletionState, FindRecord, FoldRange, HOVER_MAX_HEIGHT, HoverCodeBlock,
@@ -600,6 +601,12 @@ pub struct App {
     /// copy on `Up`. Cleared on tab switch, pane close, resize, and
     /// any non-drag mouse-down that lands in the pane.
     pub side_terminal_selection: Option<SideSelection>,
+    /// Same shape, but for the bottom `:terminal` pane. Reuses
+    /// `SideSelection` because the data carrier is identical (just
+    /// `(anchor, head, tab_idx, dragging)`); the `tab_idx` here keys
+    /// into `terminals` rather than `side_terminals`. Cleared on the
+    /// same lifecycle events.
+    pub terminal_selection: Option<SideSelection>,
     /// Which terminal pane consumes keystrokes when `Mode::Terminal`
     /// is active. Set whenever focus moves between the bottom and
     /// side panes; resets to `Bottom` after `close_side_terminal`
@@ -903,6 +910,7 @@ impl App {
             side_terminal_pane_open: false,
             side_terminal_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             side_terminal_selection: None,
+            terminal_selection: None,
             terminal_focus: TerminalFocus::Bottom,
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
