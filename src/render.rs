@@ -2602,11 +2602,23 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
             used = tab_x as usize;
         }
     } else {
-        let hint = match app.mode {
-            Mode::Terminal => {
-                "  Esc to leave · Ctrl-[ to send Esc to shell · Shift+drag selects".to_string()
+        // When the user has scrolled the pane into history, replace
+        // the usual hint with a clear "scrolled back" marker so it's
+        // obvious why typing won't reach the prompt. Shift+PageDown /
+        // mouse-wheel down brings it live again.
+        let scroll_back = app.active_terminal().map(|t| t.view_scroll()).unwrap_or(0);
+        let hint = if scroll_back > 0 {
+            format!(
+                "  ↑ {} lines back · Shift+PageDown / scroll down to follow live",
+                scroll_back
+            )
+        } else {
+            match app.mode {
+                Mode::Terminal => {
+                    "  Esc to leave · Ctrl-[ to send Esc to shell · Shift+PageUp scrolls".into()
+                }
+                _ => "  <leader>tf focus · <leader>tq close".into(),
             }
-            _ => "  <leader>tf focus · <leader>tq close".to_string(),
         };
         queue!(
             out,
@@ -2650,8 +2662,17 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         let screen_y = (body_top + row) as u16;
         queue!(out, MoveTo(0, screen_y), Clear(ClearType::CurrentLine))?;
         if row < grid_rows {
-            for col in 0..grid_cols {
-                let cell = grid.cells[row][col];
+            // `visible_row` stitches scrollback to the live grid based
+            // on the current `view_scroll`. When `view_scroll == 0`
+            // the result is `grid.cells[row]` (live tail); when the
+            // user has scrolled back into history it's the matching
+            // scrollback row instead.
+            let Some(line) = grid.visible_row(row) else {
+                continue;
+            };
+            let line_cols = line.len().min(grid_cols);
+            for col in 0..line_cols {
+                let cell = line[col];
                 // Wide-char continuation cells are tagged with `\0`
                 // by the vte handler. The host terminal already
                 // painted the right half of the wide glyph when we

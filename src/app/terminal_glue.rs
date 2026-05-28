@@ -213,6 +213,33 @@ impl super::App {
             self.pending.awaiting_window_leader = true;
             return;
         }
+        // Shift+PageUp/PageDown — scroll the scrollback view (xterm /
+        // gnome-terminal convention). Shift+Up/Down scrolls one line
+        // at a time for fine adjustments. These work whether or not
+        // the embedded program has enabled mouse tracking, so the
+        // user always has a way to scroll. Handled BEFORE
+        // `keyevent_to_bytes` so the byte sequence isn't also sent
+        // to the PTY.
+        if key.modifiers.contains(KeyModifiers::SHIFT) {
+            let term = match self.terminal_focus {
+                crate::app::TerminalFocus::Bottom => self.active_terminal(),
+                crate::app::TerminalFocus::Side => None,
+            };
+            if let Some(term) = term {
+                let body_rows = self.terminal_pane_rows().saturating_sub(1).max(1) as isize;
+                let delta: Option<isize> = match key.code {
+                    KeyCode::PageUp => Some(body_rows.saturating_sub(1).max(1)),
+                    KeyCode::PageDown => Some(-(body_rows.saturating_sub(1).max(1))),
+                    KeyCode::Up => Some(1),
+                    KeyCode::Down => Some(-1),
+                    _ => None,
+                };
+                if let Some(d) = delta {
+                    term.scroll_view_by(d);
+                    return;
+                }
+            }
+        }
         // Tab switching inside the focused pane. We intercept these
         // BEFORE forwarding to the PTY so the user can cycle tabs
         // without leaving terminal mode:
@@ -250,11 +277,19 @@ impl super::App {
                     return;
                 }
                 if let Some(t) = self.active_terminal() {
+                    // The bottom pane is the fallback target — snap
+                    // any scrolled-back view back to live so the
+                    // user sees the prompt their keystroke lands on.
+                    t.snap_view_to_live();
                     let _ = t.write_bytes(&bytes);
                 }
             }
             crate::app::TerminalFocus::Bottom => {
                 if let Some(t) = self.active_terminal() {
+                    // Typing anywhere on the live PTY snaps the view
+                    // back so the user doesn't type blind into a
+                    // prompt that's scrolled off-screen.
+                    t.snap_view_to_live();
                     let _ = t.write_bytes(&bytes);
                 }
             }
@@ -355,6 +390,23 @@ impl super::App {
         };
         let mouse = term.mouse_state();
         if !mouse.any {
+            // No mouse-tracking program is running (typical shell
+            // prompt). Scroll wheel events that would otherwise be
+            // dropped get repurposed to scroll the pane's view into
+            // scrollback so the user can read output that's been
+            // pushed off the top. 3 lines per notch matches the
+            // editor's own wheel-step convention elsewhere.
+            match ev.kind {
+                MouseEventKind::ScrollUp => {
+                    term.scroll_view_by(3);
+                    return true;
+                }
+                MouseEventKind::ScrollDown => {
+                    term.scroll_view_by(-3);
+                    return true;
+                }
+                _ => {}
+            }
             if matches!(
                 ev.kind,
                 MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)

@@ -84,6 +84,13 @@ pub struct Grid {
     /// Newest at the tail. Each entry is a full row of cells, sized
     /// `cols` wide at the moment it scrolled.
     pub scrollback: Vec<Vec<Cell>>,
+    /// How far the renderer's view is shifted up from the live tail,
+    /// in lines. `0` follows live output; `K` shows the slice of
+    /// scrollback + grid ending `K` lines above the live cursor row.
+    /// Bumped automatically by `scroll_up()` so the user stays
+    /// anchored to the same content as new output streams in
+    /// (tmux/screen behaviour). Clamped to `scrollback.len()`.
+    pub view_scroll: usize,
 }
 
 /// Default scrollback size — `:terminal` panes don't need infinite
@@ -98,7 +105,35 @@ impl Grid {
             cols,
             cells: vec![vec![Cell::blank(); cols]; rows],
             scrollback: Vec::new(),
+            view_scroll: 0,
         }
+    }
+
+    /// Fetch the visible row at index `row` (0-based from the top of
+    /// the visible window), accounting for the current `view_scroll`.
+    /// Stitches the tail of scrollback to the head of `cells` so the
+    /// renderer can stay agnostic of where each line lives. Returns
+    /// `None` if `row` overshoots the combined buffer (shouldn't
+    /// happen when the renderer respects `rows`, but defensive).
+    pub fn visible_row(&self, row: usize) -> Option<&Vec<Cell>> {
+        let sb_len = self.scrollback.len();
+        let combined_top = sb_len.saturating_sub(self.view_scroll);
+        let idx = combined_top + row;
+        if idx < sb_len {
+            self.scrollback.get(idx)
+        } else {
+            self.cells.get(idx - sb_len)
+        }
+    }
+
+    /// Adjust `view_scroll` by `delta` lines (positive = scroll up
+    /// into history, negative = scroll down toward live), clamping to
+    /// `[0, scrollback.len()]`. Returns the new offset.
+    pub fn scroll_view_by(&mut self, delta: isize) -> usize {
+        let max = self.scrollback.len() as isize;
+        let next = (self.view_scroll as isize + delta).clamp(0, max);
+        self.view_scroll = next as usize;
+        self.view_scroll
     }
 
     fn clear(&mut self) {
@@ -117,9 +152,21 @@ impl Grid {
         }
         let evicted = self.cells.remove(0);
         self.scrollback.push(evicted);
+        // Keep the user anchored to the same content while output
+        // streams in (tmux/screen behaviour). Without this, new
+        // lines arriving in the live grid would slide the user's
+        // scrolled-back view upward through their own history.
+        if self.view_scroll > 0 {
+            self.view_scroll += 1;
+        }
         if self.scrollback.len() > SCROLLBACK_CAP {
             let drop_n = self.scrollback.len() - SCROLLBACK_CAP;
             self.scrollback.drain(0..drop_n);
+            // After eviction the view can no longer reach as far
+            // back — clamp before the renderer next reads it.
+            if self.view_scroll > self.scrollback.len() {
+                self.view_scroll = self.scrollback.len();
+            }
         }
         self.cells.push(vec![Cell::blank(); self.cols]);
     }
@@ -1077,6 +1124,42 @@ impl Terminal {
         self.inner.lock().unwrap().handler.alt_screen_active()
     }
 
+    /// Current scrollback view offset in lines (`0` = following live
+    /// output). Cheap — used by the status row in the pane header
+    /// and the mouse / key handlers when computing relative scrolls.
+    pub fn view_scroll(&self) -> usize {
+        self.inner
+            .lock()
+            .map(|i| i.handler.grid.view_scroll)
+            .unwrap_or(0)
+    }
+
+    /// True when the user has scrolled back into history. Renderer
+    /// uses this to surface a `↑Nb` marker in the pane header so the
+    /// user notices their view isn't live.
+    pub fn is_scrolled_back(&self) -> bool {
+        self.view_scroll() > 0
+    }
+
+    /// Adjust the scrollback view by `delta` lines (positive = scroll
+    /// up into history, negative = scroll down toward live). Clamped
+    /// to the available scrollback. Returns the new offset.
+    pub fn scroll_view_by(&self, delta: isize) -> usize {
+        match self.inner.lock() {
+            Ok(mut i) => i.handler.grid.scroll_view_by(delta),
+            Err(_) => 0,
+        }
+    }
+
+    /// Snap the view back to live output (offset 0). Called from the
+    /// key handler when the user types — they expect to see the prompt
+    /// they're typing into, not a stale scrollback position.
+    pub fn snap_view_to_live(&self) {
+        if let Ok(mut i) = self.inner.lock() {
+            i.handler.grid.view_scroll = 0;
+        }
+    }
+
     /// Snapshot of which DEC private mouse modes the inner program
     /// has enabled. Callers compare against this to decide whether
     /// to forward mouse events into the PTY.
@@ -1230,6 +1313,71 @@ mod tests {
         assert_eq!(h.grid.scrollback.len(), 1);
         let scrolled = &h.grid.scrollback[0];
         assert_eq!(scrolled[0].ch, 'a');
+    }
+
+    #[test]
+    fn visible_row_follows_scrollback_when_view_scrolled_back() {
+        // Print enough lines to push three into scrollback (lines
+        // "a","b","c"), leaving the live grid showing "d","e","f","g".
+        let mut h = parse_bytes(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng", 4, 5);
+        assert_eq!(h.grid.scrollback.len(), 3);
+        // view_scroll = 0 → window is the live grid as before.
+        assert_eq!(visible_text(&h.grid, 0), "d");
+        assert_eq!(visible_text(&h.grid, 3), "g");
+        // Pull the view up by one line — top row should now be the
+        // last scrollback line ("c") and the live grid slides down
+        // by one (we lose visibility of "g" off the bottom).
+        h.grid.scroll_view_by(1);
+        assert_eq!(visible_text(&h.grid, 0), "c");
+        assert_eq!(visible_text(&h.grid, 1), "d");
+        assert_eq!(visible_text(&h.grid, 3), "f");
+        // Pull all the way back — top of window is the oldest
+        // scrollback line ("a"). Asking for a row past the combined
+        // length returns None (defensive bound).
+        h.grid.scroll_view_by(2);
+        assert_eq!(h.grid.view_scroll, 3);
+        assert_eq!(visible_text(&h.grid, 0), "a");
+        assert_eq!(visible_text(&h.grid, 3), "d");
+    }
+
+    #[test]
+    fn scroll_view_clamps_to_scrollback_bounds() {
+        // 3 lines pushed into scrollback. The view can scroll up by
+        // at most that many lines (any further is a no-op).
+        let mut h = parse_bytes(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng", 4, 5);
+        assert_eq!(h.grid.scrollback.len(), 3);
+        // Try to scroll way past the end — clamps to 3.
+        assert_eq!(h.grid.scroll_view_by(100), 3);
+        // Try to scroll down past 0 — clamps to 0.
+        assert_eq!(h.grid.scroll_view_by(-100), 0);
+    }
+
+    #[test]
+    fn scroll_up_anchors_user_to_content_when_view_scrolled() {
+        // Set up: 3 lines in scrollback, view scrolled all the way
+        // back so the user sees the oldest line at the top.
+        let mut h = parse_bytes(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng", 4, 5);
+        h.grid.scroll_view_by(3);
+        assert_eq!(visible_text(&h.grid, 0), "a");
+        // Streaming a new line scrolls the live grid up — without
+        // the auto-bump, the user's view would slide forward through
+        // their own history. With the bump, they stay anchored to
+        // "a" at the top.
+        parse_into(&mut h, b"\r\nh");
+        assert_eq!(h.grid.scrollback.len(), 4);
+        assert_eq!(h.grid.view_scroll, 4);
+        assert_eq!(visible_text(&h.grid, 0), "a");
+    }
+
+    fn visible_text(grid: &Grid, row: usize) -> String {
+        grid.visible_row(row)
+            .map(|r| r.iter().map(|c| c.ch).collect::<String>().trim_end().into())
+            .unwrap_or_default()
+    }
+
+    fn parse_into(h: &mut VteHandler, bytes: &[u8]) {
+        let mut parser = Parser::new();
+        parser.advance(h, bytes);
     }
 
     #[test]
