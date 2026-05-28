@@ -6512,7 +6512,17 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(out, SetBackgroundColor(pane_bg), Print(" "))?;
     for tab in crate::app::DapPaneTab::all().iter() {
         let label = tab.label();
-        let chip = format!(" {} ", label);
+        // Console picks up a `[mode]` suffix when a filter is active
+        // so the user can see at a glance what's hidden. Other tabs
+        // never carry a suffix.
+        let chip = if matches!(tab, crate::app::DapPaneTab::Console) {
+            match app.dap_console_filter.chip() {
+                "" => format!(" {} ", label),
+                m => format!(" {} [{}] ", label, m),
+            }
+        } else {
+            format!(" {} ", label)
+        };
         let chip_chars = chip.chars().count() as u16;
         let is_active = *tab == app.dap_pane_tab;
         let (bg, fg) = if is_active {
@@ -7017,6 +7027,7 @@ fn build_breakpoints_rows(app: &App) -> Vec<DapTabRow> {
 
 fn build_console_rows(app: &App) -> Vec<DapTabRow> {
     let palette = DebugPalette::from_config(&app.config);
+    let filter = app.dap_console_filter;
     let mut rows: Vec<DapTabRow> = Vec::new();
     if app.dap.output_buffer.is_empty() {
         rows.push(note_row("(no console output yet)", &palette));
@@ -7030,6 +7041,9 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
     let selection = app.dap_console_selection.map(|s| s.ordered());
     let mut flat_idx = 0usize;
     for line in app.dap.output_buffer.iter() {
+        if !filter.allows(&line.category) {
+            continue;
+        }
         for one in line.output.lines() {
             // Lines carrying ANSI escapes are styled by the emitter
             // (test runners, structured loggers, build tools all

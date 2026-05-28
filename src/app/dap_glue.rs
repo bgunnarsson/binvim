@@ -341,13 +341,22 @@ impl super::App {
     /// space. Returns a `Vec<(category, line)>`; callers usually
     /// only need `.1`.
     ///
+    /// Honours `dap_console_filter` — lines whose category is hidden
+    /// under the active preset are dropped, so the flat index used
+    /// by both the renderer and the mouse handler stays consistent
+    /// with what's painted on screen.
+    ///
     /// Lines with ANSI escapes are stripped so the visual char count
     /// (what the user sees + clicks on) matches the string length,
     /// and so selection-copy puts clean text on the clipboard rather
     /// than raw escape bytes.
     pub(super) fn dap_console_flat_lines(&self) -> Vec<(String, String)> {
+        let filter = self.dap_console_filter;
         let mut out = Vec::new();
         for entry in self.dap.output_buffer.iter() {
+            if !filter.allows(&entry.category) {
+                continue;
+            }
             for one in entry.output.lines() {
                 let body = if crate::ansi::has_escapes(one) {
                     crate::ansi::parse_sgr_line(one)
@@ -621,6 +630,27 @@ impl super::App {
                 }
                 true
             }
+            // Cycle Console-tab filter (All → Program → Errors → All).
+            // Only active on the Console tab so other tabs keep `f`
+            // free for future bindings.
+            KeyCode::Char('f') if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console) => {
+                self.dap_console_filter = self.dap_console_filter.next();
+                // Drop any active selection — the visible line numbers
+                // shift when categories are hidden, so keeping a
+                // selection rooted on flat-line indices would point at
+                // the wrong rows.
+                self.dap_console_selection = None;
+                // Reset Console scroll so the user lands on the
+                // newest filtered line instead of staring at empty
+                // rows from the old scroll position.
+                self.dap_tab_scrolls.insert(self.dap_pane_tab, 0);
+                self.status_msg = match self.dap_console_filter {
+                    crate::app::ConsoleFilter::All => "console: all categories".into(),
+                    crate::app::ConsoleFilter::Program => "console: program output only".into(),
+                    crate::app::ConsoleFilter::Errors => "console: stderr only".into(),
+                };
+                true
+            }
             // Stepping bindings while focus is in the pane.
             KeyCode::Char('c') => {
                 self.dap.step(StepKind::Continue);
@@ -671,12 +701,15 @@ impl super::App {
             crate::app::DapPaneTab::Breakpoints => {
                 self.dap.breakpoints.values().map(|v| v.len()).sum()
             }
-            crate::app::DapPaneTab::Console => self
-                .dap
-                .output_buffer
-                .iter()
-                .map(|o| o.output.lines().count().max(1))
-                .sum(),
+            crate::app::DapPaneTab::Console => {
+                let filter = self.dap_console_filter;
+                self.dap
+                    .output_buffer
+                    .iter()
+                    .filter(|o| filter.allows(&o.category))
+                    .map(|o| o.output.lines().count().max(1))
+                    .sum()
+            }
         }
     }
 

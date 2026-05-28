@@ -147,6 +147,55 @@ impl DapPaneTab {
     }
 }
 
+/// Filter preset applied to the Console tab. Cycled with `f` while
+/// focus is in the pane. `All` is the default and shows every line;
+/// `Program` hides adapter chatter (`console`/`telemetry`/`important`
+/// categories) so only the running program's stdout + stderr remain;
+/// `Errors` shows only `stderr` so the user can isolate failures
+/// without scrolling past stdout noise.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConsoleFilter {
+    #[default]
+    All,
+    Program,
+    Errors,
+}
+
+impl ConsoleFilter {
+    /// Cycle in the order shown in the tab label so the user can
+    /// press `f` repeatedly and predict the next state.
+    pub fn next(self) -> Self {
+        match self {
+            ConsoleFilter::All => ConsoleFilter::Program,
+            ConsoleFilter::Program => ConsoleFilter::Errors,
+            ConsoleFilter::Errors => ConsoleFilter::All,
+        }
+    }
+
+    /// Short suffix rendered next to the Console tab label so the
+    /// active filter is visible at a glance. Empty for `All` to
+    /// keep the default state unchanged-looking.
+    pub fn chip(self) -> &'static str {
+        match self {
+            ConsoleFilter::All => "",
+            ConsoleFilter::Program => "prog",
+            ConsoleFilter::Errors => "err",
+        }
+    }
+
+    /// True if a line emitted under `category` should be visible
+    /// under this filter. Categories follow the DAP spec naming —
+    /// `stdout` / `stderr` / `console` / `telemetry` / `important` —
+    /// plus whatever else the active adapter happens to emit.
+    pub fn allows(self, category: &str) -> bool {
+        match self {
+            ConsoleFilter::All => true,
+            ConsoleFilter::Program => matches!(category, "stdout" | "stderr"),
+            ConsoleFilter::Errors => category == "stderr",
+        }
+    }
+}
+
 /// One mouse-drag selection inside the Debug Console. `(line, col)`
 /// pairs index into the flattened console-line view (every newline
 /// counts as a line break) so the renderer + clipboard copier
@@ -380,6 +429,10 @@ pub struct App {
     /// click; persists across drag-release so the user sees what
     /// they just copied.
     pub dap_console_selection: Option<DapConsoleSelection>,
+    /// Active filter preset on the Console tab. Cycled with `f` when
+    /// the pane has focus. Default `All` is identical to pre-filter
+    /// behaviour; `Program` and `Errors` hide noisier categories.
+    pub dap_console_filter: ConsoleFilter,
     /// Active yank flash, if any. Drained automatically by the main loop
     /// once its `expires_at` deadline passes.
     pub yank_highlight: Option<YankHighlight>,
@@ -867,6 +920,7 @@ impl App {
             dap_tab_h_scrolls: HashMap::new(),
             dap_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             dap_console_selection: None,
+            dap_console_filter: ConsoleFilter::default(),
             yank_highlight: None,
             pending_code_actions: Vec::new(),
             pending_code_lens_commands: Vec::new(),
@@ -1361,5 +1415,65 @@ impl Drop for TerminalGuard {
             LeaveAlternateScreen
         );
         let _ = disable_raw_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn console_filter_cycles_in_order() {
+        // `f` cycles forward; three presses returns to the start.
+        let f = ConsoleFilter::All;
+        let f = f.next();
+        assert_eq!(f, ConsoleFilter::Program);
+        let f = f.next();
+        assert_eq!(f, ConsoleFilter::Errors);
+        let f = f.next();
+        assert_eq!(f, ConsoleFilter::All);
+    }
+
+    #[test]
+    fn console_filter_program_hides_adapter_categories() {
+        let f = ConsoleFilter::Program;
+        assert!(f.allows("stdout"));
+        assert!(f.allows("stderr"));
+        // Adapter chatter — netcoredbg banners, dlv hints, dotnet
+        // build summaries — all land in `console` and must hide
+        // under the Program filter.
+        assert!(!f.allows("console"));
+        assert!(!f.allows("telemetry"));
+        assert!(!f.allows("important"));
+    }
+
+    #[test]
+    fn console_filter_errors_only_stderr() {
+        let f = ConsoleFilter::Errors;
+        assert!(!f.allows("stdout"));
+        assert!(f.allows("stderr"));
+        assert!(!f.allows("console"));
+    }
+
+    #[test]
+    fn console_filter_all_passes_everything() {
+        let f = ConsoleFilter::All;
+        assert!(f.allows("stdout"));
+        assert!(f.allows("stderr"));
+        assert!(f.allows("console"));
+        assert!(f.allows("telemetry"));
+        // Unknown / adapter-specific categories must not be silently
+        // dropped under the default filter.
+        assert!(f.allows("custom-adapter-channel"));
+    }
+
+    #[test]
+    fn console_filter_chip_distinguishes_active_state() {
+        // The label-side chip is empty for the default so the tab
+        // strip looks identical to pre-filter behaviour, but
+        // populated for any active preset so the user can tell.
+        assert_eq!(ConsoleFilter::All.chip(), "");
+        assert_ne!(ConsoleFilter::Program.chip(), "");
+        assert_ne!(ConsoleFilter::Errors.chip(), "");
     }
 }
