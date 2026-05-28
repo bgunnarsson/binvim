@@ -3,6 +3,7 @@ use std::env;
 use std::path::PathBuf;
 
 mod android;
+mod ansi;
 mod app;
 mod buffer;
 mod code_lens_synth;

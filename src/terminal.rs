@@ -23,6 +23,7 @@
 
 #![allow(dead_code)]
 
+use crate::ansi::{ansi_256, ansi_basic_colour, ansi_bright_colour};
 use anyhow::{Context, Result};
 use crossterm::style::Color;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -576,61 +577,6 @@ fn parse_extended_colour(param: &[u16], iter: &mut vte::ParamsIter<'_>) -> Optio
         }
         _ => None,
     }
-}
-
-fn ansi_basic_colour(n: u16) -> Color {
-    match n {
-        0 => Color::Black,
-        1 => Color::DarkRed,
-        2 => Color::DarkGreen,
-        3 => Color::DarkYellow,
-        4 => Color::DarkBlue,
-        5 => Color::DarkMagenta,
-        6 => Color::DarkCyan,
-        7 => Color::Grey,
-        _ => Color::Reset,
-    }
-}
-
-fn ansi_bright_colour(n: u16) -> Color {
-    match n {
-        0 => Color::DarkGrey,
-        1 => Color::Red,
-        2 => Color::Green,
-        3 => Color::Yellow,
-        4 => Color::Blue,
-        5 => Color::Magenta,
-        6 => Color::Cyan,
-        7 => Color::White,
-        _ => Color::Reset,
-    }
-}
-
-fn ansi_256(idx: u8) -> Color {
-    // Standard xterm 256-colour cube: 0-15 are the basic + bright
-    // palette, 16-231 are a 6×6×6 RGB cube, 232-255 is a 24-step
-    // grayscale ramp. Translate to truecolor so the renderer can
-    // paint without consulting a separate lookup.
-    if idx < 8 {
-        return ansi_basic_colour(idx as u16);
-    }
-    if idx < 16 {
-        return ansi_bright_colour((idx - 8) as u16);
-    }
-    if idx < 232 {
-        let n = idx - 16;
-        let r = n / 36;
-        let g = (n % 36) / 6;
-        let b = n % 6;
-        let scale = |v: u8| if v == 0 { 0 } else { 55 + 40 * v };
-        return Color::Rgb {
-            r: scale(r),
-            g: scale(g),
-            b: scale(b),
-        };
-    }
-    let v = 8 + (idx - 232) * 10;
-    Color::Rgb { r: v, g: v, b: v }
 }
 
 impl Perform for VteHandler {

@@ -340,11 +340,24 @@ impl super::App {
     /// renderer + mouse handler operate on the same coordinate
     /// space. Returns a `Vec<(category, line)>`; callers usually
     /// only need `.1`.
+    ///
+    /// Lines with ANSI escapes are stripped so the visual char count
+    /// (what the user sees + clicks on) matches the string length,
+    /// and so selection-copy puts clean text on the clipboard rather
+    /// than raw escape bytes.
     pub(super) fn dap_console_flat_lines(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
         for entry in self.dap.output_buffer.iter() {
             for one in entry.output.lines() {
-                out.push((entry.category.clone(), one.to_string()));
+                let body = if crate::ansi::has_escapes(one) {
+                    crate::ansi::parse_sgr_line(one)
+                        .into_iter()
+                        .map(|seg| seg.text)
+                        .collect::<String>()
+                } else {
+                    one.to_string()
+                };
+                out.push((entry.category.clone(), body));
             }
         }
         out

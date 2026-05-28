@@ -7031,12 +7031,21 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
     let mut flat_idx = 0usize;
     for line in app.dap.output_buffer.iter() {
         for one in line.output.lines() {
-            let parts = match line.category.as_str() {
-                "stderr" => vec![DapTabPart::plain(one.to_string(), palette.red)],
-                "console" => vec![DapTabPart::plain(one.to_string(), palette.subtle)],
-                _ => tokenize_console_line(one, &palette),
+            // Lines carrying ANSI escapes are styled by the emitter
+            // (test runners, structured loggers, build tools all
+            // colourise their own output) — honour those and skip
+            // our local tokenizer. Lines without escapes fall
+            // through to per-category defaults + the tokenizer.
+            let parts = if crate::ansi::has_escapes(one) {
+                ansi_parts(one, &palette)
+            } else {
+                match line.category.as_str() {
+                    "stderr" => vec![DapTabPart::plain(one.to_string(), palette.red)],
+                    "console" => vec![DapTabPart::plain(one.to_string(), palette.subtle)],
+                    _ => tokenize_console_line(one, &palette),
+                }
             };
-            let line_len = one.chars().count();
+            let line_len = parts.iter().map(|p| p.text.chars().count()).sum::<usize>();
             let selection_range = selection.and_then(|(start, end)| {
                 if flat_idx < start.0 || flat_idx > end.0 {
                     return None;
@@ -7054,6 +7063,26 @@ fn build_console_rows(app: &App) -> Vec<DapTabRow> {
         }
     }
     rows
+}
+
+/// Convert an ANSI-styled console line into `DapTabPart`s. Lines
+/// without escapes never reach this function — `build_console_rows`
+/// short-circuits via `crate::ansi::has_escapes`. SGR colours
+/// override `palette.text`; runs that explicitly reset to default
+/// (`\x1b[39m` / `\x1b[0m`) fall back to `palette.text` so the
+/// rendered colour follows the user's theme rather than the
+/// terminal's default fg.
+fn ansi_parts(line: &str, p: &DebugPalette) -> Vec<DapTabPart> {
+    crate::ansi::parse_sgr_line(line)
+        .into_iter()
+        .filter(|seg| !seg.text.is_empty())
+        .map(|seg| DapTabPart {
+            text: seg.text,
+            fg: Some(seg.fg.unwrap_or(p.text)),
+            bold: seg.bold,
+            italic: seg.italic,
+        })
+        .collect()
 }
 
 /// Split a single console line into syntax-coloured parts. Pattern
