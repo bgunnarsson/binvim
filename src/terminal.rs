@@ -645,10 +645,39 @@ impl Perform for VteHandler {
                 self.cur_col = self.cur_col.saturating_sub(n);
                 self.pending_wrap = false;
             }
+            'E' => {
+                // CNL — Cursor Next Line: down N rows, snap to col 0.
+                let n = (first as usize).max(1);
+                self.cur_row = (self.cur_row + n).min(self.grid.rows.saturating_sub(1));
+                self.cur_col = 0;
+                self.pending_wrap = false;
+            }
+            'F' => {
+                // CPL — Cursor Previous Line: up N rows, snap to col 0.
+                // The .NET MSBuild terminal logger redraws its progress
+                // block each frame by emitting `\e[nF` to rewind to the
+                // top of the block, then erasing below and rewriting.
+                // Without this arm the cursor never moves up, so every
+                // timer tick (`(0.1s)`, `(0.2s)`, …) lands on a fresh
+                // line instead of overwriting the previous one.
+                let n = (first as usize).max(1);
+                self.cur_row = self.cur_row.saturating_sub(n);
+                self.cur_col = 0;
+                self.pending_wrap = false;
+            }
             'G' => {
                 // CHA — Cursor Horizontal Absolute (1-based).
                 let col = (first as usize).saturating_sub(1);
                 self.cur_col = col.min(self.grid.cols.saturating_sub(1));
+                self.pending_wrap = false;
+            }
+            'd' => {
+                // VPA — Vertical Position Absolute (1-based row),
+                // column unchanged. The counterpart to CHA on the
+                // vertical axis; progress renderers that jump to an
+                // absolute row use this.
+                let row = (first as usize).saturating_sub(1);
+                self.cur_row = row.min(self.grid.rows.saturating_sub(1));
                 self.pending_wrap = false;
             }
             'J' => match first {
@@ -1243,6 +1272,51 @@ mod tests {
         assert_eq!(line_text(&h.grid, 0), "abc");
         assert_eq!(line_text(&h.grid, 1), "de");
         assert_eq!((h.cur_row, h.cur_col), (1, 2));
+    }
+
+    #[test]
+    fn cpl_moves_up_to_line_start() {
+        // CPL (`\e[nF`) — up N rows AND to column 0. This is what the
+        // .NET MSBuild terminal logger uses to rewind to the top of
+        // its progress block before redrawing; without it the per-tick
+        // timer accumulated on fresh lines instead of overwriting.
+        // Start at (2,3), CPL 2 → (0,0), then write 'X'.
+        let h = parse_bytes(b"\x1b[3;4H\x1b[2FX", 4, 10);
+        assert_eq!(h.grid.cells[0][0].ch, 'X');
+        assert_eq!((h.cur_row, h.cur_col), (0, 1));
+    }
+
+    #[test]
+    fn cnl_moves_down_to_line_start() {
+        // CNL (`\e[nE`) — down N rows AND to column 0.
+        let h = parse_bytes(b"\x1b[1;5H\x1b[2EX", 4, 10);
+        assert_eq!(h.grid.cells[2][0].ch, 'X');
+        assert_eq!((h.cur_row, h.cur_col), (2, 1));
+    }
+
+    #[test]
+    fn vpa_sets_absolute_row_keeps_column() {
+        // VPA (`\e[nd`) — jump to 1-based row N, column unchanged.
+        // From (0,3) a VPA 3 lands on row 2, still at col 3.
+        let h = parse_bytes(b"\x1b[1;4H\x1b[3dX", 4, 10);
+        assert_eq!(h.grid.cells[2][3].ch, 'X');
+        assert_eq!((h.cur_row, h.cur_col), (2, 4));
+    }
+
+    #[test]
+    fn dotnet_progress_timer_overwrites_in_place() {
+        // Regression for the `dotnet build` timer rendering on a new
+        // line per tick. The logger draws one progress row, then each
+        // frame rewinds with CPL (`\e[1F`), erases below (`\e[0J`), and
+        // rewrites. All ticks must collapse onto the same row.
+        let h = parse_bytes(
+            b"proj (0.0s)\x1b[1F\x1b[0Jproj (0.1s)\x1b[1F\x1b[0Jproj (0.2s)",
+            3,
+            20,
+        );
+        assert_eq!(line_text(&h.grid, 0), "proj (0.2s)");
+        assert_eq!(line_text(&h.grid, 1), "");
+        assert_eq!(h.cur_row, 0);
     }
 
     #[test]

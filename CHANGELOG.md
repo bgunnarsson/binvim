@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **`:terminal` now honours `CPL` / `CNL` / `VPA` cursor moves.** The vt100
+  parser silently dropped `CSI nF` (cursor previous line), `CSI nE` (cursor
+  next line), and `CSI nd` (vertical position absolute). The .NET MSBuild
+  terminal logger uses `CSI nF` to rewind to the top of its progress block
+  each frame before redrawing, so without it a `dotnet build` timer printed
+  every tick (`(0.0s)`, `(0.1s)`, …) on a fresh line instead of overwriting
+  in place. All three are now handled.
+
 ## [0.5.1] - 2026-05-28
 
 ### Added
