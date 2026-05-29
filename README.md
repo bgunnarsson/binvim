@@ -1,3 +1,12 @@
+```
+██████╗ ██╗███╗   ██╗██╗   ██╗██╗███╗   ███╗
+██╔══██╗██║████╗  ██║██║   ██║██║████╗ ████║
+██████╔╝██║██╔██╗ ██║██║   ██║██║██╔████╔██║
+██╔══██╗██║██║╚██╗██║╚██╗ ██╔╝██║██║╚██╔╝██║
+██████╔╝██║██║ ╚████║ ╚████╔╝ ██║██║ ╚═╝ ██║
+╚═════╝ ╚═╝╚═╝  ╚═══╝  ╚═══╝  ╚═╝╚═╝     ╚═╝
+```
+
 # binvim — the first vim IDE
 
 **binvim is the first vim IDE** — a vim-native integrated development environment in a single binary, rather than a plain modal editor (Vim, Helix), an editor you assemble into an IDE from plugins (Neovim + distributions like AstroNvim / LazyVim), or a GUI IDE with bolted-on vim emulation (VS Code, Visual Studio, Rider). → [What is a vim IDE?](https://www.binvim.dev/what-is-a-vim-ide.html)
