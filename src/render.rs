@@ -2700,7 +2700,10 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
             }
         }
     }
-    queue!(out, ResetColor)?;
+    // `NoReverse` clears any reverse left set by the last selected
+    // cell so the attribute can't bleed into the status line / next
+    // pane (`ResetColor` only resets fg/bg, not SGR attributes).
+    queue!(out, SetAttribute(Attribute::NoReverse), ResetColor)?;
     // Cursor positioning is intentionally deferred to `place_cursor`
     // — subsequent draw passes (debug pane / status line /
     // notification) MoveTo around, so any Show + MoveTo we emit
@@ -2709,7 +2712,9 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 }
 
 /// Translate one `crate::terminal::Cell` to crossterm style + glyph
-/// and emit. Reverse attribute swaps fg/bg before applying.
+/// and emit. Reverse is forwarded as the host terminal's own
+/// `Reverse` attribute (not a manual fg/bg swap) so it stays visible
+/// on default-coloured cells — see the body for why.
 ///
 /// Underline is intentionally *not* forwarded to the outer terminal.
 /// Claude / Codex / opencode all use SGR 4 as the visual marker for
@@ -2722,17 +2727,27 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
 /// pane-style UX. SGR 4 is still tracked in the cell so the call
 /// can be flipped back on with one line if the policy changes.
 fn paint_terminal_cell(out: &mut impl Write, cell: crate::terminal::Cell) -> std::io::Result<()> {
-    let mut fg = cell.fg.unwrap_or(Color::Reset);
-    let mut bg = cell.bg.unwrap_or(Color::Reset);
-    if cell.reverse {
-        std::mem::swap(&mut fg, &mut bg);
-    }
+    let fg = cell.fg.unwrap_or(Color::Reset);
+    let bg = cell.bg.unwrap_or(Color::Reset);
     queue!(
         out,
         SetForegroundColor(fg),
         SetBackgroundColor(bg),
         SetAttribute(Attribute::NoUnderline),
     )?;
+    // Reverse goes through the host terminal's own attribute rather
+    // than swapping the `Color` values ourselves. A plain cell carries
+    // `Color::Reset` for both fg and bg, so a manual swap is a no-op —
+    // which made a selection (it flips `reverse` per covered cell)
+    // vanish over default-coloured text, highlighting only the cells
+    // that happened to carry an explicit colour. The terminal knows
+    // its real default fg/bg and swaps those, so the highlight lands
+    // on every cell in the range.
+    if cell.reverse {
+        queue!(out, SetAttribute(Attribute::Reverse))?;
+    } else {
+        queue!(out, SetAttribute(Attribute::NoReverse))?;
+    }
     if cell.bold {
         queue!(out, SetAttribute(Attribute::Bold))?;
     } else {
@@ -3152,7 +3167,10 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
             )?;
         }
     }
-    queue!(out, ResetColor)?;
+    // Clear any reverse left set by a selected cell — `ResetColor`
+    // only touches fg/bg, not SGR attributes, so it would otherwise
+    // bleed past the pane edge.
+    queue!(out, SetAttribute(Attribute::NoReverse), ResetColor)?;
     Ok(())
 }
 
