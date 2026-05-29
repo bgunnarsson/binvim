@@ -1,6 +1,20 @@
-# binvim
+# binvim — the first vim IDE
+
+**binvim is the first vim IDE** — a vim-native integrated development environment in a single binary, rather than a plain modal editor (Vim, Helix), an editor you assemble into an IDE from plugins (Neovim + distributions like AstroNvim / LazyVim), or a GUI IDE with bolted-on vim emulation (VS Code, Visual Studio, Rider). → [What is a vim IDE?](https://www.binvim.dev/what-is-a-vim-ide.html)
 
 A Vim-grammar TUI editor written in Rust. Tree-sitter highlighting (Rust, TS/TSX/JSX, JS, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML / `.csproj` / `.manifest` family, Bash, `.editorconfig`, `.gitignore`), multi-server LSP fan-out (rename, code-actions, inlay hints, semantic tokens layered over tree-sitter, document highlight, signature help, snippet expansion, find-references, document & workspace symbols, `:messages` capture for `window/showMessage` + `window/logMessage` + server stderr), opt-in GitHub Copilot via `copilot-language-server` with inline ghost completions, built-in debuggers via DAP for .NET (netcoredbg), Go (delve), Python (debugpy), and Rust / C / C++ (lldb-dap) with project / bin / script pickers, .NET launchSettings profiles, breakpoints, stack frames, locals with lazy expansion, VS / Rider F-keys, per-language formatters dispatched by extension (biome, csharpier, gofmt/goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter, plus `.editorconfig` reflow on every save), window splits with per-buffer layouts and pick-on-split (`<C-w>v` → picker → instant side-by-side), real multi-cursor with Sublime-style `Ctrl-N` selections, fuzzy pickers with file-type icons and match-character highlighting, `<leader>/` per-language comment toggle, sessions with persistent per-buffer jumplists, tab bar, persistent undo, code folding, surround operations, smart-indent, OS-clipboard paste, horizontal scrolling, a `:health` dashboard that surfaces per-LSP init state + pending-request breakdown + cache counts, and a Catppuccin Mocha palette — all in one binary, no plugins.
+
+## How binvim compares
+
+binvim is the first vim IDE. Here's how it stacks up against the editors and IDEs people usually weigh:
+
+- [What is a vim IDE?](https://www.binvim.dev/what-is-a-vim-ide.html)
+- [binvim vs Neovim](https://www.binvim.dev/binvim-vs-neovim.html)
+- [binvim vs Helix](https://www.binvim.dev/binvim-vs-helix.html)
+- [binvim vs AstroNvim / LazyVim](https://www.binvim.dev/binvim-vs-astronvim.html)
+- [binvim vs VS Code](https://www.binvim.dev/binvim-vs-vscode.html)
+- [binvim vs Visual Studio](https://www.binvim.dev/binvim-vs-visual-studio.html)
+- [binvim vs Rider](https://www.binvim.dev/binvim-vs-rider.html)
 
 ## Features
 
