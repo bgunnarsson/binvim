@@ -124,46 +124,13 @@ impl SideSelection {
     }
 }
 
-/// Pull text out of a terminal grid for the cells inside `sel`.
-/// Trailing whitespace is trimmed per row (matches what the user
-/// sees vs. what's actually in the cells — TUIs pad rows with blanks
-/// out to the full width). Multi-row selections join with `\n`.
-pub fn extract_selection_text(grid: &crate::terminal::Grid, sel: &SideSelection) -> String {
-    let (start, end) = sel.ordered();
-    let rows = grid.cells.len();
-    if rows == 0 {
-        return String::new();
-    }
-    let last_row = (rows - 1).min(end.0);
-    let mut out = String::new();
-    for row in start.0.min(last_row)..=last_row {
-        let row_cells = &grid.cells[row];
-        let cols = row_cells.len();
-        let (lo, hi) = if row == start.0 && row == end.0 {
-            (start.1.min(cols), (end.1 + 1).min(cols))
-        } else if row == start.0 {
-            (start.1.min(cols), cols)
-        } else if row == end.0 {
-            (0, (end.1 + 1).min(cols))
-        } else {
-            (0, cols)
-        };
-        let line: String = row_cells[lo..hi].iter().map(|c| c.ch).collect();
-        out.push_str(line.trim_end());
-        if row < last_row {
-            out.push('\n');
-        }
-    }
-    out
-}
-
-/// Pull text out of a grid via `visible_row`, so selection text
-/// reflects whichever rows the renderer actually painted (scrollback
-/// included). Identical shape to `extract_selection_text` otherwise;
-/// the bottom `:terminal` pane uses this variant because the user
-/// can drag-select across scrolled-back history, where
-/// `extract_selection_text` would index into the live cells and grab
-/// the wrong text.
+/// Pull text out of a grid via `visible_row` for the cells inside
+/// `sel`, so selection text reflects whichever rows the renderer
+/// actually painted (scrollback included) rather than always the live
+/// tail. Both terminal panes can drag-select across scrolled-back
+/// history, where indexing into the live cells would grab the wrong
+/// text. Trailing whitespace is trimmed per row (TUIs pad rows out to
+/// full width with blanks); multi-row selections join with `\n`.
 pub fn extract_visible_selection_text(grid: &crate::terminal::Grid, sel: &SideSelection) -> String {
     let (start, end) = sel.ordered();
     let mut out = String::new();
@@ -193,7 +160,90 @@ pub fn extract_visible_selection_text(grid: &crate::terminal::Grid, sel: &SideSe
     out
 }
 
+/// Per-pane double-click + word-drag tracking, shared by the three
+/// terminal-style panes (bottom `:terminal`, AI side pane, DAP
+/// console). `last` is the time + pane-local `(row_or_line, col)` of
+/// the previous left-click — a second click at the same cell within
+/// `DOUBLE_CLICK_WINDOW` registers as a double-click. `word_drag`
+/// holds the double-clicked word's `(row, start, end_exclusive)` so a
+/// following drag grows the selection word-by-word rather than
+/// char-by-char (mirrors the main editor's `word_drag_origin`).
+#[derive(Default, Clone, Copy)]
+pub struct PaneClickState {
+    pub last: Option<(std::time::Instant, usize, usize)>,
+    pub word_drag: Option<(usize, usize, usize)>,
+}
+
+/// Boundaries `(start, end_exclusive)` of the word straddling `col`
+/// in `chars` — a word being a maximal run of non-whitespace. `None`
+/// when `col` is past the end or sits on whitespace. Non-whitespace
+/// runs (rather than the editor's alphanumeric-class words) are what
+/// a terminal double-click is expected to grab: a whole path, flag,
+/// or `foo.bar` token reads as one unit, which is the useful default
+/// for the code / paths / logs these panes show.
+pub fn word_bounds_in_line(chars: &[char], col: usize) -> Option<(usize, usize)> {
+    if col >= chars.len() || chars[col].is_whitespace() {
+        return None;
+    }
+    let mut start = col;
+    while start > 0 && !chars[start - 1].is_whitespace() {
+        start -= 1;
+    }
+    let mut end = col + 1;
+    while end < chars.len() && !chars[end].is_whitespace() {
+        end += 1;
+    }
+    Some((start, end))
+}
+
+/// Inclusive `(lo, hi)` cell range a word-granular drag should cover.
+/// `origin` is the double-clicked word `(row, start, end_exclusive)`;
+/// `(drow, dcol)` the current drag point and `dword` the word under
+/// it (`None` over whitespace). The origin word always stays
+/// selected; the span grows by whole words toward the drag, anchored
+/// on the far side of the origin from the drag direction — same model
+/// as the editor's `word_drag_extend`, but in pane-local cell coords.
+pub fn word_drag_span(
+    origin: (usize, usize, usize),
+    drow: usize,
+    dcol: usize,
+    dword: Option<(usize, usize)>,
+) -> ((usize, usize), (usize, usize)) {
+    let (orow, ostart, oend) = origin;
+    let o_last = oend.saturating_sub(1).max(ostart);
+    if (drow, dcol) < (orow, ostart) {
+        // Backward drag — head snaps to the start of the drag word.
+        let lo_col = dword.map(|w| w.0).unwrap_or(dcol);
+        ((drow, lo_col), (orow, o_last))
+    } else if (drow, dcol) > (orow, o_last) {
+        // Forward drag — head snaps to the last cell of the drag word.
+        let hi_col = dword.map(|w| w.1.saturating_sub(1)).unwrap_or(dcol);
+        ((orow, ostart), (drow, hi_col))
+    } else {
+        // Still inside the origin word — hold the origin selection.
+        ((orow, ostart), (orow, o_last))
+    }
+}
+
 impl super::App {
+    /// `(start, end_exclusive)` of the word under the active side
+    /// terminal's body cell `(row, col)`, read through `visible_row`
+    /// so it matches scrolled-back content. `None` over whitespace.
+    pub(super) fn side_word_at(&self, row: usize, col: usize) -> Option<(usize, usize)> {
+        let t = self.active_side_terminal()?;
+        let inner = t.grid();
+        let cells = inner.handler.grid.visible_row(row)?;
+        // '\0' is a wide glyph's trailing half — treat it as part of
+        // the word (non-whitespace) so a CJK token isn't split. The
+        // copied text comes from the real cells, so the placeholder
+        // never leaks out.
+        let chars: Vec<char> = cells
+            .iter()
+            .map(|c| if c.ch == '\0' { 'x' } else { c.ch })
+            .collect();
+        word_bounds_in_line(&chars, col)
+    }
+
     /// Open (or focus) the right-side terminal pane and run `command`
     /// inside a freshly-spawned interactive shell tab labelled
     /// `label`. If a tab with the same label already exists we
@@ -663,5 +713,38 @@ mod tests {
             dragging: false,
         };
         assert_eq!(extract_visible_selection_text(&g, &sel), "a\nb\nc");
+    }
+
+    #[test]
+    fn word_bounds_picks_non_whitespace_run() {
+        let chars: Vec<char> = "foo  bar.baz quux".chars().collect();
+        // Inside "foo".
+        assert_eq!(word_bounds_in_line(&chars, 1), Some((0, 3)));
+        // "bar.baz" is one token — punctuation doesn't split it.
+        assert_eq!(word_bounds_in_line(&chars, 9), Some((5, 12)));
+        // On whitespace → no word.
+        assert_eq!(word_bounds_in_line(&chars, 3), None);
+        // Past the end → no word.
+        assert_eq!(word_bounds_in_line(&chars, 99), None);
+    }
+
+    #[test]
+    fn word_drag_span_grows_by_whole_words() {
+        // Origin word "bar" at row 0, cols [4, 7). Drag forward into
+        // "baz" (cols [8, 11)) → span covers bar..baz inclusive.
+        let origin = (0, 4, 7);
+        let (lo, hi) = word_drag_span(origin, 0, 9, Some((8, 11)));
+        assert_eq!((lo, hi), ((0, 4), (0, 10)));
+        // Drag backward into "foo" (cols [0, 3)) → anchor pins to the
+        // end of the origin word, head snaps to the drag word's start.
+        let (lo, hi) = word_drag_span(origin, 0, 1, Some((0, 3)));
+        assert_eq!((lo, hi), ((0, 0), (0, 6)));
+        // Drag still inside the origin word → origin selection held.
+        let (lo, hi) = word_drag_span(origin, 0, 5, Some((4, 7)));
+        assert_eq!((lo, hi), ((0, 4), (0, 6)));
+        // Forward drag over whitespace (no word) → head follows the
+        // raw drag column so the span doesn't snap back.
+        let (lo, hi) = word_drag_span(origin, 1, 2, None);
+        assert_eq!((lo, hi), ((0, 4), (1, 2)));
     }
 }

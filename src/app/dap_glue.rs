@@ -307,14 +307,63 @@ impl super::App {
                 if !matches!(self.mode, Mode::DebugPane) {
                     self.mode = Mode::DebugPane;
                 }
-                self.dap_console_selection = Some(crate::app::DapConsoleSelection {
-                    anchor: (line_idx, line_col),
-                    head: (line_idx, line_col),
-                });
+                // Double-click selects the word under the cursor and
+                // arms word-granular drag; a single click starts a
+                // fresh empty (anchor == head) selection.
+                let now = std::time::Instant::now();
+                let is_double = self
+                    .dap_click
+                    .last
+                    .filter(|(t, l, c)| {
+                        now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW
+                            && *l == line_idx
+                            && *c == line_col
+                    })
+                    .is_some();
+                if is_double {
+                    let chars: Vec<char> = lines[line_idx].1.chars().collect();
+                    if let Some((s, e)) = crate::app::word_bounds_in_line(&chars, line_col) {
+                        // DAP selection uses an exclusive end col, so
+                        // `head` is the word's exclusive end directly.
+                        self.dap_console_selection = Some(crate::app::DapConsoleSelection {
+                            anchor: (line_idx, s),
+                            head: (line_idx, e),
+                        });
+                        self.dap_click.word_drag = Some((line_idx, s, e));
+                        let text = self.dap_console_selection_text(&lines);
+                        if !text.is_empty() {
+                            self.dap_console_yank(text, "selection");
+                        }
+                    } else {
+                        self.dap_console_selection = Some(crate::app::DapConsoleSelection {
+                            anchor: (line_idx, line_col),
+                            head: (line_idx, line_col),
+                        });
+                        self.dap_click.word_drag = None;
+                    }
+                    self.dap_click.last = None;
+                } else {
+                    self.dap_console_selection = Some(crate::app::DapConsoleSelection {
+                        anchor: (line_idx, line_col),
+                        head: (line_idx, line_col),
+                    });
+                    self.dap_click.word_drag = None;
+                    self.dap_click.last = Some((now, line_idx, line_col));
+                }
                 true
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(sel) = self.dap_console_selection.as_mut() {
+                if let Some(origin) = self.dap_click.word_drag {
+                    let chars: Vec<char> = lines[line_idx].1.chars().collect();
+                    let dword = crate::app::word_bounds_in_line(&chars, line_col);
+                    let (lo, hi) = crate::app::word_drag_span(origin, line_idx, line_col, dword);
+                    // `word_drag_span` returns an inclusive `hi`; DAP's
+                    // selection end is exclusive, so bump the head col.
+                    self.dap_console_selection = Some(crate::app::DapConsoleSelection {
+                        anchor: lo,
+                        head: (hi.0, hi.1 + 1),
+                    });
+                } else if let Some(sel) = self.dap_console_selection.as_mut() {
                     sel.head = (line_idx, line_col);
                 }
                 true

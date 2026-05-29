@@ -454,21 +454,37 @@ impl super::App {
                 MouseEventKind::Drag(MouseButton::Left)
                     if !ev.modifiers.contains(KeyModifiers::SHIFT) =>
                 {
-                    let sel = self.terminal_selection.take();
-                    let new_sel = match sel {
-                        Some(mut s) if s.tab_idx == active_idx => {
-                            s.head = (body_row, body_col);
-                            s.dragging = true;
-                            s
-                        }
-                        _ => crate::app::SideSelection {
+                    // After a double-click the drag grows the selection
+                    // a whole word at a time; otherwise it's the plain
+                    // char-granular drag. Either way it's "ours" — never
+                    // forwarded to the PTY.
+                    if let Some(origin) = self.term_click.word_drag {
+                        let dword = self.terminal_word_at(body_row, body_col);
+                        let (lo, hi) =
+                            crate::app::word_drag_span(origin, body_row, body_col, dword);
+                        self.terminal_selection = Some(crate::app::SideSelection {
                             tab_idx: active_idx,
-                            anchor: (body_row, body_col),
-                            head: (body_row, body_col),
+                            anchor: lo,
+                            head: hi,
                             dragging: true,
-                        },
-                    };
-                    self.terminal_selection = Some(new_sel);
+                        });
+                    } else {
+                        let sel = self.terminal_selection.take();
+                        let new_sel = match sel {
+                            Some(mut s) if s.tab_idx == active_idx => {
+                                s.head = (body_row, body_col);
+                                s.dragging = true;
+                                s
+                            }
+                            _ => crate::app::SideSelection {
+                                tab_idx: active_idx,
+                                anchor: (body_row, body_col),
+                                head: (body_row, body_col),
+                                dragging: true,
+                            },
+                        };
+                        self.terminal_selection = Some(new_sel);
+                    }
                     if !matches!(self.mode, Mode::Terminal) {
                         self.mode = Mode::Terminal;
                         self.terminal_focus = crate::app::TerminalFocus::Bottom;
@@ -501,10 +517,60 @@ impl super::App {
                         self.terminal_selection = Some(s);
                     }
                 }
-                MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
-                    // A fresh click drops any held-over selection so
-                    // the next drag starts from a clean slate.
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Double-click selects the word under the cursor and
+                    // arms word-granular drag; a single click just drops
+                    // any held-over selection so the next drag starts
+                    // clean.
+                    let now = std::time::Instant::now();
+                    let is_double = self
+                        .term_click
+                        .last
+                        .filter(|(t, r, c)| {
+                            now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW
+                                && *r == body_row
+                                && *c == body_col
+                        })
+                        .is_some();
+                    if is_double {
+                        if let Some((s, e)) = self.terminal_word_at(body_row, body_col) {
+                            let sel = crate::app::SideSelection {
+                                tab_idx: active_idx,
+                                anchor: (body_row, s),
+                                head: (body_row, e.saturating_sub(1).max(s)),
+                                dragging: false,
+                            };
+                            let copied = match self.active_terminal() {
+                                Some(t) => {
+                                    let inner = t.grid();
+                                    crate::app::extract_visible_selection_text(
+                                        &inner.handler.grid,
+                                        &sel,
+                                    )
+                                }
+                                None => String::new(),
+                            };
+                            self.terminal_selection = Some(sel);
+                            self.term_click.word_drag = Some((body_row, s, e));
+                            if !copied.is_empty() {
+                                let n = copied.chars().count();
+                                super::registers::set_system_clipboard(&copied);
+                                self.status_msg = format!("terminal: copied {n} chars");
+                            }
+                        } else {
+                            self.terminal_selection = None;
+                            self.term_click.word_drag = None;
+                        }
+                        self.term_click.last = None;
+                    } else {
+                        self.terminal_selection = None;
+                        self.term_click.word_drag = None;
+                        self.term_click.last = Some((now, body_row, body_col));
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Right) => {
                     self.terminal_selection = None;
+                    self.term_click.word_drag = None;
                 }
                 _ => {}
             }
@@ -532,6 +598,20 @@ impl super::App {
             self.terminal_focus = crate::app::TerminalFocus::Bottom;
         }
         true
+    }
+
+    /// `(start, end_exclusive)` of the word under the active bottom
+    /// terminal's body cell `(row, col)`, read through `visible_row`
+    /// so it matches scrolled-back content. `None` over whitespace.
+    fn terminal_word_at(&self, row: usize, col: usize) -> Option<(usize, usize)> {
+        let t = self.active_terminal()?;
+        let inner = t.grid();
+        let cells = inner.handler.grid.visible_row(row)?;
+        let chars: Vec<char> = cells
+            .iter()
+            .map(|c| if c.ch == '\0' { 'x' } else { c.ch })
+            .collect();
+        crate::app::word_bounds_in_line(&chars, col)
     }
 }
 

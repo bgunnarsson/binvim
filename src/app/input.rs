@@ -526,24 +526,36 @@ impl super::App {
                         if !ev.modifiers.contains(KeyModifiers::SHIFT) =>
                     {
                         // Start a fresh selection on the first drag
-                        // sample, or extend an in-flight one. Don't
-                        // forward to the PTY — drag is "ours" for
-                        // selection.
-                        let sel = self.side_terminal_selection.take();
-                        let new_sel = match sel {
-                            Some(mut s) if s.tab_idx == active_idx => {
-                                s.head = (grid_row, grid_col);
-                                s.dragging = true;
-                                s
-                            }
-                            _ => crate::app::SideSelection {
+                        // sample, or extend an in-flight one. After a
+                        // double-click the drag grows word-by-word.
+                        // Don't forward to the PTY — drag is "ours".
+                        if let Some(origin) = self.side_click.word_drag {
+                            let dword = self.side_word_at(grid_row, grid_col);
+                            let (lo, hi) =
+                                crate::app::word_drag_span(origin, grid_row, grid_col, dword);
+                            self.side_terminal_selection = Some(crate::app::SideSelection {
                                 tab_idx: active_idx,
-                                anchor: (grid_row, grid_col),
-                                head: (grid_row, grid_col),
+                                anchor: lo,
+                                head: hi,
                                 dragging: true,
-                            },
-                        };
-                        self.side_terminal_selection = Some(new_sel);
+                            });
+                        } else {
+                            let sel = self.side_terminal_selection.take();
+                            let new_sel = match sel {
+                                Some(mut s) if s.tab_idx == active_idx => {
+                                    s.head = (grid_row, grid_col);
+                                    s.dragging = true;
+                                    s
+                                }
+                                _ => crate::app::SideSelection {
+                                    tab_idx: active_idx,
+                                    anchor: (grid_row, grid_col),
+                                    head: (grid_row, grid_col),
+                                    dragging: true,
+                                },
+                            };
+                            self.side_terminal_selection = Some(new_sel);
+                        }
                         if !matches!(self.mode, Mode::Terminal) {
                             self.mode = Mode::Terminal;
                             self.terminal_focus = crate::app::TerminalFocus::Side;
@@ -559,7 +571,13 @@ impl super::App {
                                 s.dragging = false;
                                 let copied = if let Some(term) = self.active_side_terminal() {
                                     let inner = term.grid();
-                                    crate::app::extract_selection_text(&inner.handler.grid, &s)
+                                    // `visible_row`-based so a selection
+                                    // made while scrolled back copies the
+                                    // history the user actually sees.
+                                    crate::app::extract_visible_selection_text(
+                                        &inner.handler.grid,
+                                        &s,
+                                    )
                                 } else {
                                     String::new()
                                 };
@@ -576,11 +594,63 @@ impl super::App {
                             self.side_terminal_selection = Some(s);
                         }
                     }
-                    MouseEventKind::Down(MouseButton::Left | MouseButton::Right) => {
-                        // A fresh click drops any held-over selection
-                        // highlight so the user sees an empty pane
-                        // again before the next drag.
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        // Double-click selects the word under the cursor
+                        // (and copies it), arming word-granular drag —
+                        // it's "ours", so it returns without forwarding.
+                        // A single click drops any held-over selection
+                        // and falls through to the PTY so the embedded
+                        // tool's clickable buttons keep working.
+                        let now = std::time::Instant::now();
+                        let is_double = self
+                            .side_click
+                            .last
+                            .filter(|(t, r, c)| {
+                                now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW
+                                    && *r == grid_row
+                                    && *c == grid_col
+                            })
+                            .is_some();
+                        if is_double {
+                            if let Some((s, e)) = self.side_word_at(grid_row, grid_col) {
+                                let sel = crate::app::SideSelection {
+                                    tab_idx: active_idx,
+                                    anchor: (grid_row, s),
+                                    head: (grid_row, e.saturating_sub(1).max(s)),
+                                    dragging: false,
+                                };
+                                let copied = if let Some(term) = self.active_side_terminal() {
+                                    let inner = term.grid();
+                                    crate::app::extract_visible_selection_text(
+                                        &inner.handler.grid,
+                                        &sel,
+                                    )
+                                } else {
+                                    String::new()
+                                };
+                                self.side_terminal_selection = Some(sel);
+                                self.side_click.word_drag = Some((grid_row, s, e));
+                                if !copied.is_empty() {
+                                    super::registers::set_system_clipboard(&copied);
+                                    let n = copied.chars().count();
+                                    self.status_msg = format!("ai: copied {n} chars");
+                                }
+                            } else {
+                                self.side_terminal_selection = None;
+                                self.side_click.word_drag = None;
+                            }
+                            self.side_click.last = None;
+                            self.terminal_focus = crate::app::TerminalFocus::Side;
+                            self.mode = Mode::Terminal;
+                            return;
+                        }
                         self.side_terminal_selection = None;
+                        self.side_click.word_drag = None;
+                        self.side_click.last = Some((now, grid_row, grid_col));
+                    }
+                    MouseEventKind::Down(MouseButton::Right) => {
+                        self.side_terminal_selection = None;
+                        self.side_click.word_drag = None;
                     }
                     _ => {}
                 }

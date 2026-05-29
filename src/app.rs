@@ -57,8 +57,8 @@ mod windows;
 
 pub use health::{DiagnosticsCounts, HealthSnapshot};
 pub use side_terminal_glue::{
-    SideSelection, SideTerminal, TerminalFocus, extract_selection_text,
-    extract_visible_selection_text, side_terminal_loading,
+    PaneClickState, SideSelection, SideTerminal, TerminalFocus, extract_visible_selection_text,
+    side_terminal_loading, word_bounds_in_line, word_drag_span,
 };
 pub use state::{
     BufferStash, CompletionState, FindRecord, FoldRange, HOVER_MAX_HEIGHT, HoverCodeBlock,
@@ -670,6 +670,13 @@ pub struct App {
     /// into `terminals` rather than `side_terminals`. Cleared on the
     /// same lifecycle events.
     pub terminal_selection: Option<SideSelection>,
+    /// Double-click + word-drag tracking for the bottom `:terminal`,
+    /// AI side pane, and DAP console respectively. Each pane keeps its
+    /// own so a double-click in one can't false-trigger off a click in
+    /// another at a coincidentally-equal pane-local cell.
+    pub term_click: PaneClickState,
+    pub side_click: PaneClickState,
+    pub dap_click: PaneClickState,
     /// Which terminal pane consumes keystrokes when `Mode::Terminal`
     /// is active. Set whenever focus moves between the bottom and
     /// side panes; resets to `Bottom` after `close_side_terminal`
@@ -977,6 +984,9 @@ impl App {
             side_terminal_tab_hitboxes: std::cell::Cell::new(Vec::new()),
             side_terminal_selection: None,
             terminal_selection: None,
+            term_click: PaneClickState::default(),
+            side_click: PaneClickState::default(),
+            dap_click: PaneClickState::default(),
             terminal_focus: TerminalFocus::Bottom,
             document_highlights: HashMap::new(),
             document_highlight_in_flight: std::collections::HashSet::new(),
