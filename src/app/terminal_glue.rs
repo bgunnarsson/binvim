@@ -231,12 +231,21 @@ impl super::App {
         // `keyevent_to_bytes` so the byte sequence isn't also sent
         // to the PTY.
         if key.modifiers.contains(KeyModifiers::SHIFT) {
-            let term = match self.terminal_focus {
-                crate::app::TerminalFocus::Bottom => self.active_terminal(),
-                crate::app::TerminalFocus::Side => None,
+            // Resolve both the target terminal AND the page size from
+            // the focused pane — the side pane spans the editor band
+            // (`buffer_rows()`), the bottom pane only its own slice
+            // (`terminal_pane_rows()`).
+            let (term, body_rows) = match self.terminal_focus {
+                crate::app::TerminalFocus::Bottom => (
+                    self.active_terminal(),
+                    self.terminal_pane_rows().saturating_sub(1).max(1) as isize,
+                ),
+                crate::app::TerminalFocus::Side => (
+                    self.active_side_terminal(),
+                    self.buffer_rows().saturating_sub(1).max(1) as isize,
+                ),
             };
             if let Some(term) = term {
-                let body_rows = self.terminal_pane_rows().saturating_sub(1).max(1) as isize;
                 let delta: Option<isize> = match key.code {
                     KeyCode::PageUp => Some(body_rows.saturating_sub(1).max(1)),
                     KeyCode::PageDown => Some(-(body_rows.saturating_sub(1).max(1))),
@@ -283,6 +292,10 @@ impl super::App {
         match self.terminal_focus {
             crate::app::TerminalFocus::Side => {
                 if let Some(t) = self.active_side_terminal() {
+                    // Snap a scrolled-back view back to live so the
+                    // user isn't typing blind into a prompt that's
+                    // scrolled off-screen (mirrors the bottom pane).
+                    t.snap_view_to_live();
                     let _ = t.write_bytes(&bytes);
                     return;
                 }

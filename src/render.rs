@@ -3114,19 +3114,26 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
         let screen_y = body_top + row as u16;
         queue!(out, MoveTo(content_left, screen_y))?;
         if row < grid_rows {
+            // `visible_row` stitches scrollback to the live grid based
+            // on the current `view_scroll`, so a scrolled-back side
+            // pane shows history instead of always pinning to the live
+            // tail (reading `grid.cells[row]` directly ignored scroll).
             let mut painted = 0usize;
-            for col in 0..grid_cols {
-                let mut cell = grid.cells[row][col];
-                if cell.ch == '\0' {
-                    continue;
-                }
-                if let Some(s) = sel {
-                    if s.contains(row, col) {
-                        cell.reverse = !cell.reverse;
+            if let Some(line) = grid.visible_row(row) {
+                let line_cols = line.len().min(grid_cols);
+                for col in 0..line_cols {
+                    let mut cell = line[col];
+                    if cell.ch == '\0' {
+                        continue;
                     }
+                    if let Some(s) = sel {
+                        if s.contains(row, col) {
+                            cell.reverse = !cell.reverse;
+                        }
+                    }
+                    paint_terminal_cell(out, cell)?;
+                    painted += 1;
                 }
-                paint_terminal_cell(out, cell)?;
-                painted += 1;
             }
             // Backfill any uncovered columns so editor content from a
             // prior frame can't bleed through under a short PTY line.
@@ -7817,6 +7824,16 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
                     }
                 }
                 if let Some(t) = app.active_side_terminal() {
+                    // Honour the embedded program's cursor-visibility
+                    // request. claude / codex / opencode all hide the
+                    // hardware cursor (`?25l`) and render their own
+                    // caret — forcing a system cursor on top just
+                    // paints a stray block at their parked position,
+                    // away from where the user is actually typing.
+                    if !t.cursor_visible() {
+                        queue!(out, Hide)?;
+                        return Ok(());
+                    }
                     let (cur_row, cur_col) = t.cursor();
                     let body_top = app.buffer_top() + 1;
                     let screen_y = body_top + cur_row;
@@ -7829,6 +7846,13 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
             }
             crate::app::TerminalFocus::Bottom => {
                 if let Some(t) = app.active_terminal() {
+                    // Same DECTCEM courtesy as the side pane — a TUI
+                    // running in the bottom terminal (vim, htop, …)
+                    // that hid the cursor draws its own caret.
+                    if !t.cursor_visible() {
+                        queue!(out, Hide)?;
+                        return Ok(());
+                    }
                     let (cur_row, cur_col) = t.cursor();
                     // Body of the pane starts one row below `terminal_pane_top()`
                     // (the first pane row is the header chip).

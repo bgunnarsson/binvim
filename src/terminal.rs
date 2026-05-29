@@ -242,6 +242,13 @@ pub struct VteHandler {
     /// the TUI gets a fresh canvas. On exit we swap it back. The
     /// `Option` is `Some` exactly when alt-screen is active.
     saved_main: Option<SavedScreen>,
+    /// DEC private mode 25 (DECTCEM) — cursor visibility. TUIs that
+    /// render their own caret (claude / opencode / codex are all
+    /// built on frameworks that hide the hardware cursor on startup
+    /// with `\x1b[?25l` and draw their own) rely on the terminal
+    /// respecting this. Defaults to `true` (visible) so a plain
+    /// shell, which never touches DECTCEM, keeps its cursor.
+    cursor_visible: bool,
 }
 
 /// Snapshot of the main screen taken when a TUI enters alt-screen
@@ -282,6 +289,7 @@ impl VteHandler {
             mouse_sgr: false,
             pending_wrap: false,
             saved_main: None,
+            cursor_visible: true,
         }
     }
 
@@ -340,6 +348,11 @@ impl VteHandler {
         self.pen = saved.pen;
         self.pending_wrap = saved.pending_wrap;
         self.saved = saved.saved;
+        // A TUI that hid the cursor (`?25l`) is expected to restore it
+        // on exit, but not all do. The shell prompt we're swapping back
+        // to assumes a visible cursor, so force it back on rather than
+        // leave the user with no caret if the TUI was sloppy.
+        self.cursor_visible = true;
     }
 
     /// True when a TUI has switched us into alt-screen mode. Used by
@@ -712,6 +725,7 @@ impl Perform for VteHandler {
                 for param in params.iter() {
                     let n = param.first().copied().unwrap_or(0);
                     match n {
+                        25 => self.cursor_visible = enable,
                         1000 => self.mouse_button_mode = enable,
                         1002 => self.mouse_drag_mode = enable,
                         1003 => self.mouse_motion_mode = enable,
@@ -1090,6 +1104,18 @@ impl Terminal {
     pub fn cursor(&self) -> (usize, usize) {
         let inner = self.inner.lock().unwrap();
         (inner.handler.cur_row, inner.handler.cur_col)
+    }
+
+    /// Whether the embedded program currently wants the hardware
+    /// cursor shown (DECTCEM, `\x1b[?25h` / `\x1b[?25l`). TUIs that
+    /// draw their own caret hide it; the renderer honours this so we
+    /// don't paint a stray system cursor at the program's parked
+    /// position while its real caret lives elsewhere.
+    pub fn cursor_visible(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|i| i.handler.cursor_visible)
+            .unwrap_or(true)
     }
 
     /// True when the embedded program has switched into alt-screen
@@ -1613,6 +1639,27 @@ mod tests {
         assert!(!h.mouse_button_mode, "1000 should have been disabled");
         assert!(!h.mouse_drag_mode);
         assert!(!h.mouse_motion_mode);
+    }
+
+    #[test]
+    fn dectcem_toggles_cursor_visibility() {
+        // Default visible; `?25l` hides, `?25h` re-shows. TUIs that
+        // draw their own caret rely on this so binvim doesn't paint a
+        // stray system cursor over them.
+        let h = parse_bytes(b"x", 4, 10);
+        assert!(h.cursor_visible, "fresh terminal should show the cursor");
+        let h = parse_bytes(b"\x1b[?25l", 4, 10);
+        assert!(!h.cursor_visible, "?25l should hide the cursor");
+        let h = parse_bytes(b"\x1b[?25l\x1b[?25h", 4, 10);
+        assert!(h.cursor_visible, "?25h should re-show the cursor");
+    }
+
+    #[test]
+    fn alt_screen_exit_restores_cursor_visibility() {
+        // A TUI that hid the cursor and left alt-screen without
+        // restoring it shouldn't leave the shell prompt caret-less.
+        let h = parse_bytes(b"\x1b[?1049h\x1b[?25l\x1b[?1049l", 4, 10);
+        assert!(h.cursor_visible);
     }
 
     #[test]
