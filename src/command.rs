@@ -131,6 +131,8 @@ pub enum AiTool {
     Claude,
     Codex,
     Opencode,
+    OpenClaw,
+    Hermes,
 }
 
 impl AiTool {
@@ -141,6 +143,8 @@ impl AiTool {
             AiTool::Claude => "claude",
             AiTool::Codex => "codex",
             AiTool::Opencode => "opencode",
+            AiTool::OpenClaw => "openclaw",
+            AiTool::Hermes => "hermes",
         }
     }
 
@@ -152,6 +156,8 @@ impl AiTool {
             AiTool::Claude => "claude",
             AiTool::Codex => "codex",
             AiTool::Opencode => "opencode",
+            AiTool::OpenClaw => "openclaw",
+            AiTool::Hermes => "hermes",
         }
     }
 }
@@ -345,6 +351,8 @@ pub fn parse(line: &str) -> ExCommand {
         "claude" => ExCommand::AiTool(AiTool::Claude),
         "codex" => ExCommand::AiTool(AiTool::Codex),
         "opencode" => ExCommand::AiTool(AiTool::Opencode),
+        "openclaw" => ExCommand::AiTool(AiTool::OpenClaw),
+        "hermes" => ExCommand::AiTool(AiTool::Hermes),
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
         "dapbreak" | "dapb" => parse_dapbreak_args(rest),

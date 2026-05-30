@@ -247,6 +247,26 @@ impl super::App {
                 let t = AiTool::Opencode;
                 self.open_side_terminal(t.label(), t.command(), true);
             }
+            Action::AiOpenClaw => {
+                use crate::command::AiTool;
+                let t = AiTool::OpenClaw;
+                self.open_side_terminal(t.label(), t.command(), false);
+            }
+            Action::AiOpenClawHandoff => {
+                use crate::command::AiTool;
+                let t = AiTool::OpenClaw;
+                self.open_side_terminal(t.label(), t.command(), true);
+            }
+            Action::AiHermes => {
+                use crate::command::AiTool;
+                let t = AiTool::Hermes;
+                self.open_side_terminal(t.label(), t.command(), false);
+            }
+            Action::AiHermesHandoff => {
+                use crate::command::AiTool;
+                let t = AiTool::Hermes;
+                self.open_side_terminal(t.label(), t.command(), true);
+            }
             Action::AiClose => {
                 if self.side_terminals.is_empty() {
                     self.status_msg = "ai: no side pane to close".into();

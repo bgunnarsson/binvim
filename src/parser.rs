@@ -348,6 +348,18 @@ pub enum Action {
     /// `<leader>jO` — opencode with file-path handoff. Same
     /// pattern as [`Action::AiClaudeHandoff`].
     AiOpencodeHandoff,
+    /// `<leader>jw` — open (or focus) openclaw in the right-side
+    /// terminal pane. Equivalent to `:openclaw`.
+    AiOpenClaw,
+    /// `<leader>jW` — openclaw with file-path handoff. Same
+    /// pattern as [`Action::AiClaudeHandoff`].
+    AiOpenClawHandoff,
+    /// `<leader>jh` — open (or focus) hermes in the right-side
+    /// terminal pane. Equivalent to `:hermes`.
+    AiHermes,
+    /// `<leader>jH` — hermes with file-path handoff. Same
+    /// pattern as [`Action::AiClaudeHandoff`].
+    AiHermesHandoff,
     /// `<leader>jq` — close the active right-side AI terminal tab.
     /// If it was the last side tab, hides the pane and snaps focus
     /// back to the bottom pane.
@@ -1282,6 +1294,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'X' => Some(Action::AiCodexHandoff),
             'o' => Some(Action::AiOpencode),
             'O' => Some(Action::AiOpencodeHandoff),
+            'w' => Some(Action::AiOpenClaw),
+            'W' => Some(Action::AiOpenClawHandoff),
+            'h' => Some(Action::AiHermes),
+            'H' => Some(Action::AiHermesHandoff),
             'f' => Some(Action::AiFocus),
             'p' => Some(Action::AiToggle),
             'q' => Some(Action::AiClose),
