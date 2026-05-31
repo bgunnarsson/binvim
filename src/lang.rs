@@ -2323,7 +2323,26 @@ export function Page() {
     fuzz_lang!(fuzz_markdown, Lang::Markdown);
     fuzz_lang!(fuzz_csharp, Lang::CSharp);
     fuzz_lang!(fuzz_razor, Lang::Razor);
-    fuzz_lang!(fuzz_bash, Lang::Bash);
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+        #[test]
+        fn fuzz_bash(src in "\\PC{0,400}") {
+            // TEMP capture: write each candidate to the real stderr fd
+            // (bypasses libtest's per-test capture, which is discarded
+            // when the C side SIGSEGVs) so the last line in the CI log
+            // pinpoints the crashing input.
+            {
+                use std::io::Write;
+                let mut e = std::io::stderr().lock();
+                let _ = writeln!(e, "BASHFUZZ {:?}", src);
+                let _ = e.flush();
+            }
+            let cfg = Config::default();
+            if let Some(colors) = compute_byte_colors(Lang::Bash, &src, &cfg) {
+                prop_assert_eq!(colors.len(), src.len());
+            }
+        }
+    }
     fuzz_lang!(fuzz_yaml, Lang::Yaml);
     fuzz_lang!(fuzz_xml, Lang::Xml);
     fuzz_lang!(fuzz_editorconfig, Lang::EditorConfig);
