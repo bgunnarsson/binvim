@@ -255,6 +255,18 @@ impl super::App {
                     && !leader_pending
                     && !super::state::is_start_page_passthrough(&k)
                 {
+                    // A restored session parks its tabs behind the start
+                    // page (hydrate_from_session re-raises the logo after
+                    // loading them). When tabs are waiting like that, any
+                    // key dismisses the logo and drops the user onto the
+                    // first tab. With no tabs (fresh launch, single empty
+                    // buffer) the key is swallowed so the page stays put.
+                    if self.show_tabs() {
+                        self.show_start_page = false;
+                        if let Some(idx) = self.first_real_tab() {
+                            let _ = self.switch_to(idx);
+                        }
+                    }
                     return Ok(());
                 }
                 // While the health dashboard, messages overlay, or

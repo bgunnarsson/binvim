@@ -492,6 +492,26 @@ impl super::App {
             .collect()
     }
 
+    /// First tabline tab backed by a real (named) buffer, falling back
+    /// to the first visible tab. Used to leap off the start page: a
+    /// restored session parks its tabs behind the logo (see
+    /// `hydrate_from_session`), and any key should drop the user onto
+    /// the first of them rather than the phantom `[No Name]` seed.
+    pub(super) fn first_real_tab(&self) -> Option<usize> {
+        let tabs = self.visible_tab_indices();
+        tabs.iter()
+            .copied()
+            .find(|&i| {
+                let buf = if i == self.active {
+                    &self.buffer
+                } else {
+                    &self.buffers[i].buffer
+                };
+                buf.path.is_some()
+            })
+            .or_else(|| tabs.first().copied())
+    }
+
     /// Rect of the currently-focused window. Used by overlays (cursor
     /// placement, hover popup, signature popup, completion popup) that
     /// anchor on the active cursor's terminal coordinates.
