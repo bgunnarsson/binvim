@@ -563,15 +563,19 @@ pub fn ai_prefix_entries() -> Vec<(String, String)> {
     // handoff siblings, then the pane controls (focus / toggle /
     // close) — same shape as `<leader>t` for the bottom pane.
     vec![
-        ("c".into(), "Claude (new tab)".into()),
-        ("x".into(), "Codex (new tab)".into()),
-        ("o".into(), "opencode (new tab)".into()),
+        ("c".into(), "Claude".into()),
+        ("x".into(), "Codex".into()),
+        ("o".into(), "opencode".into()),
+        ("w".into(), "openclaw".into()),
+        ("h".into(), "hermes".into()),
         ("C".into(), "Claude + @path handoff".into()),
         ("X".into(), "Codex + @path handoff".into()),
         ("O".into(), "opencode + @path handoff".into()),
+        ("W".into(), "openclaw + @path handoff".into()),
+        ("H".into(), "hermes + @path handoff".into()),
         ("f".into(), "Focus side pane".into()),
         ("p".into(), "Toggle side pane".into()),
-        ("q".into(), "Close tab".into()),
+        ("q".into(), "Close".into()),
     ]
 }
 
