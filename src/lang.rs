@@ -2334,6 +2334,7 @@ export function Page() {
             .step_by(2)
             .map(|i| u8::from_str_radix(&HEX[i..i + 2], 16).unwrap())
             .collect();
+        use std::io::Write;
         let s = String::from_utf8(bytes).expect("valid utf8");
         let cfg = Config::default();
         let mut e = std::io::stderr().lock();
@@ -2346,7 +2347,6 @@ export function Page() {
             .chain(std::iter::once(s.len()))
             .collect();
         for &end in &bounds {
-            use std::io::Write;
             let _ = writeln!(e, "PREFIX {end}");
             let _ = e.flush();
             let _ = compute_byte_colors(Lang::Bash, &s[..end], &cfg);
