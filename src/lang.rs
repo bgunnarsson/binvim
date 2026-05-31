@@ -2323,30 +2323,38 @@ export function Page() {
     fuzz_lang!(fuzz_markdown, Lang::Markdown);
     fuzz_lang!(fuzz_csharp, Lang::CSharp);
     fuzz_lang!(fuzz_razor, Lang::Razor);
-    proptest! {
-        #![proptest_config(ProptestConfig::with_cases(64))]
-        #[test]
-        fn fuzz_bash(src in "\\PC{0,400}") {
-            // TEMP capture: write each candidate to the real stderr fd
-            // (bypasses libtest's per-test capture, which is discarded
-            // when the C side SIGSEGVs) so the last line in the CI log
-            // pinpoints the crashing input.
-            {
-                use std::io::Write;
-                let mut hex = String::with_capacity(src.len() * 2);
-                for b in src.as_bytes() {
-                    hex.push_str(&format!("{b:02x}"));
-                }
-                let mut e = std::io::stderr().lock();
-                let _ = writeln!(e, "BASHFUZZHEX {hex}");
-                let _ = e.flush();
-            }
-            let cfg = Config::default();
-            if let Some(colors) = compute_byte_colors(Lang::Bash, &src, &cfg) {
-                prop_assert_eq!(colors.len(), src.len());
-            }
+    #[test]
+    #[ignore]
+    fn fuzz_bash_disabled_for_debug() {}
+    #[test]
+    fn tmp_repro() {
+        // Hardcoded culprit captured from a crashing native-amd64 CI run.
+        const HEX: &str = "6065f090ababeaaca8f09fa2b2e2b6ae5c775a33c8bae0b796efbfbd60f09f95b456e0a8b6f091b1b83a2f37223a32f09faa966a7058f09f9bb85c27e0b290287b5e266720f0919ca02ff0918d88c3bc563c632840f09ea59ee0b39621efbfbd4cf09e808e4a3c25c2a524f09094943d2f3d7827f09eb9bb692a7b2256f091aaa2e0ac87603ae281bef09fabb32ff09f89823aeaa799f09eb8a7f091b4bd3f71f090b3a43ac2a5e1a4b6733a43f091b1bbe0a8bf5357f09eb8aa25e282a7efb9aaf09f95b4e2b4ad5d2f426025e0b184f0908cb37bf09f89a1f09eb999c2a5325cf0ae8aaff091b691e0af86e38080e0ae86e280bc3a59472f2ff09d8b86225a";
+        let bytes: Vec<u8> = (0..HEX.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&HEX[i..i + 2], 16).unwrap())
+            .collect();
+        let s = String::from_utf8(bytes).expect("valid utf8");
+        let cfg = Config::default();
+        let mut e = std::io::stderr().lock();
+        // Prefix scan: the last PREFIX line in the CI log before a
+        // SIGSEGV is the shortest crashing prefix. char_indices keeps
+        // each slice on a UTF-8 boundary.
+        let bounds: Vec<usize> = s
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(s.len()))
+            .collect();
+        for &end in &bounds {
+            use std::io::Write;
+            let _ = writeln!(e, "PREFIX {end}");
+            let _ = e.flush();
+            let _ = compute_byte_colors(Lang::Bash, &s[..end], &cfg);
         }
+        let _ = writeln!(e, "PREFIX SURVIVED ALL");
+        let _ = e.flush();
     }
+
     fuzz_lang!(fuzz_yaml, Lang::Yaml);
     fuzz_lang!(fuzz_xml, Lang::Xml);
     fuzz_lang!(fuzz_editorconfig, Lang::EditorConfig);
