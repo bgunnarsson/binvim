@@ -2333,8 +2333,12 @@ export function Page() {
             // pinpoints the crashing input.
             {
                 use std::io::Write;
+                let mut hex = String::with_capacity(src.len() * 2);
+                for b in src.as_bytes() {
+                    hex.push_str(&format!("{b:02x}"));
+                }
                 let mut e = std::io::stderr().lock();
-                let _ = writeln!(e, "BASHFUZZ {:?}", src);
+                let _ = writeln!(e, "BASHFUZZHEX {hex}");
                 let _ = e.flush();
             }
             let cfg = Config::default();
