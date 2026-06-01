@@ -693,6 +693,38 @@ impl Perform for VteHandler {
                 self.cur_row = row.min(self.grid.rows.saturating_sub(1));
                 self.pending_wrap = false;
             }
+            '@' => {
+                // ICH — Insert N blank cells at the cursor, shifting
+                // the rest of the row right (cells pushed past the
+                // right margin fall off). zsh's zle uses this to make
+                // room when you type a character in the middle of a
+                // line instead of redrawing the whole tail.
+                let n = (first as usize).max(1);
+                self.insert_chars(n);
+                self.pending_wrap = false;
+            }
+            'P' => {
+                // DCH — Delete N cells at the cursor, shifting the
+                // rest of the row left and blank-filling the right.
+                // This is what zle emits when you backspace / delete a
+                // character in the MIDDLE of a line: it removes the
+                // char at the cursor and pulls the tail in, rather
+                // than rewriting every cell after it. Without this arm
+                // the deletion never lands in the grid, so a mid-line
+                // backspace looked like it erased from the end of the
+                // line instead of at the cursor.
+                let n = (first as usize).max(1);
+                self.delete_chars(n);
+                self.pending_wrap = false;
+            }
+            'X' => {
+                // ECH — Erase N cells from the cursor (overwrite with
+                // blanks, no shift). Some line editors blank the cell
+                // a char used to occupy this way instead of via DCH.
+                let n = (first as usize).max(1);
+                self.erase_chars(n);
+                self.pending_wrap = false;
+            }
             'J' => match first {
                 0 => self.erase_below_cursor(),
                 1 => self.erase_above_cursor(),
@@ -829,6 +861,64 @@ impl VteHandler {
             *cell = Cell::blank();
         }
     }
+    /// DCH — delete `n` cells at the cursor, sliding the remainder of
+    /// the row left and padding the freed right end with blanks. The
+    /// deleted cells inherit no colour; new right-edge cells are plain
+    /// blanks (xterm fills with the default background, not the pen).
+    fn delete_chars(&mut self, n: usize) {
+        let row = self.cur_row;
+        if row >= self.grid.rows {
+            return;
+        }
+        let cols = self.grid.cols;
+        let from = self.cur_col.min(cols);
+        let n = n.min(cols - from);
+        if n == 0 {
+            return;
+        }
+        let line = &mut self.grid.cells[row];
+        line.drain(from..from + n);
+        for _ in 0..n {
+            line.push(Cell::blank());
+        }
+    }
+
+    /// ICH — insert `n` blank cells at the cursor, sliding the
+    /// remainder of the row right. Cells pushed past the right margin
+    /// are discarded so the row stays exactly `cols` wide.
+    fn insert_chars(&mut self, n: usize) {
+        let row = self.cur_row;
+        if row >= self.grid.rows {
+            return;
+        }
+        let cols = self.grid.cols;
+        let at = self.cur_col.min(cols);
+        let n = n.min(cols - at);
+        if n == 0 {
+            return;
+        }
+        let line = &mut self.grid.cells[row];
+        for _ in 0..n {
+            line.insert(at, Cell::blank());
+        }
+        line.truncate(cols);
+    }
+
+    /// ECH — blank `n` cells starting at the cursor without shifting
+    /// the rest of the row.
+    fn erase_chars(&mut self, n: usize) {
+        let row = self.cur_row;
+        if row >= self.grid.rows {
+            return;
+        }
+        let cols = self.grid.cols;
+        let from = self.cur_col.min(cols);
+        let to = (from + n).min(cols);
+        for col in from..to {
+            self.grid.cells[row][col] = Cell::blank();
+        }
+    }
+
     fn erase_below_cursor(&mut self) {
         self.erase_to_eol();
         for row in (self.cur_row + 1)..self.grid.rows {
@@ -1327,6 +1417,39 @@ mod tests {
         let h = parse_bytes(b"\x1b[1;4H\x1b[3dX", 4, 10);
         assert_eq!(h.grid.cells[2][3].ch, 'X');
         assert_eq!((h.cur_row, h.cur_col), (2, 4));
+    }
+
+    #[test]
+    fn dch_deletes_at_cursor_and_shifts_tail_left() {
+        // Regression for a mid-line backspace looking like it erased
+        // from the end of the line. zle deletes the char at the cursor
+        // with DCH (`\e[P`), pulling the rest of the row in. Type
+        // "hello", move the cursor back onto the second 'l' (col 2),
+        // then DCH 1 — the row must become "helo" with a blank tail.
+        let h = parse_bytes(b"hello\x1b[1;3H\x1b[P", 2, 10);
+        assert_eq!(line_text(&h.grid, 0), "helo");
+        assert_eq!(h.grid.cells[0][9].ch, ' ');
+    }
+
+    #[test]
+    fn ich_inserts_blanks_and_shifts_tail_right() {
+        // ICH (`\e[@`) — zle makes room for a typed char mid-line.
+        // From "helo", cursor at col 3 (the 'o'), insert 1 blank then
+        // overwrite it: "hel o" before the new glyph lands.
+        let h = parse_bytes(b"helo\x1b[1;4H\x1b[@", 2, 10);
+        assert_eq!(h.grid.cells[0][3].ch, ' ');
+        assert_eq!(h.grid.cells[0][4].ch, 'o');
+    }
+
+    #[test]
+    fn ech_blanks_in_place_without_shifting() {
+        // ECH (`\e[X`) erases cells under the cursor but leaves the
+        // tail where it is — no left shift, unlike DCH.
+        let h = parse_bytes(b"hello\x1b[1;2H\x1b[2X", 2, 10);
+        assert_eq!(h.grid.cells[0][0].ch, 'h');
+        assert_eq!(h.grid.cells[0][1].ch, ' ');
+        assert_eq!(h.grid.cells[0][2].ch, ' ');
+        assert_eq!(h.grid.cells[0][3].ch, 'l');
     }
 
     #[test]
