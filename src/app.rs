@@ -1417,13 +1417,25 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enable() -> Result<Self> {
         use crossterm::{
-            event::{EnableMouseCapture, KeyboardEnhancementFlags, PushKeyboardEnhancementFlags},
+            event::{
+                EnableBracketedPaste, EnableMouseCapture, KeyboardEnhancementFlags,
+                PushKeyboardEnhancementFlags,
+            },
             execute,
             terminal::{EnterAlternateScreen, enable_raw_mode},
         };
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        // EnableBracketedPaste makes the host terminal deliver a Cmd-V
+        // paste as a single `Event::Paste(text)` instead of a flood of
+        // synthetic keystrokes. Without it a multi-line paste types out
+        // char-by-char and every newline submits the AI panes mid-paste.
+        execute!(
+            stdout,
+            EnterAlternateScreen,
+            EnableMouseCapture,
+            EnableBracketedPaste
+        )?;
         // Kitty keyboard protocol — terminals that support it now report
         // SUPER/META as a modifier (so Cmd-Backspace etc. arrive with the
         // right `KeyModifiers`). Non-supporting terminals silently ignore
@@ -1440,7 +1452,7 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         use crossterm::{
             cursor::{SetCursorStyle, Show},
-            event::{DisableMouseCapture, PopKeyboardEnhancementFlags},
+            event::{DisableBracketedPaste, DisableMouseCapture, PopKeyboardEnhancementFlags},
             execute,
             terminal::{LeaveAlternateScreen, disable_raw_mode},
         };
@@ -1448,6 +1460,7 @@ impl Drop for TerminalGuard {
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(
             stdout,
+            DisableBracketedPaste,
             DisableMouseCapture,
             SetCursorStyle::DefaultUserShape,
             Show,

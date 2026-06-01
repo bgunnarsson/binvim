@@ -416,6 +416,9 @@ impl super::App {
                     Mode::Installer => self.handle_installer_key(k),
                 }
             }
+            crossterm::event::Event::Paste(text) => {
+                self.handle_paste(text);
+            }
             crossterm::event::Event::Mouse(me) => {
                 self.handle_mouse_event(me);
             }
@@ -434,6 +437,69 @@ impl super::App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// A host paste (Cmd-V / middle-click) arrived as one atomic blob
+    /// because `EnableBracketedPaste` is active. Route it by mode rather
+    /// than replaying it as keystrokes — that's the whole point: a
+    /// multi-line paste stays one unit instead of typing out char by
+    /// char (and, in the AI panes, firing one message per newline).
+    pub(super) fn handle_paste(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        match self.mode {
+            // Terminal panes (`:claude` / `:codex` / `:opencode` and the
+            // bottom `:terminal`) get the blob handed to the focused PTY.
+            // `write_paste` re-wraps it in bracketed-paste markers when the
+            // embedded program asked for them, so the tool sees one paste.
+            Mode::Terminal => {
+                let term = match self.terminal_focus {
+                    crate::app::TerminalFocus::Side => self
+                        .active_side_terminal()
+                        .or_else(|| self.active_terminal()),
+                    crate::app::TerminalFocus::Bottom => self.active_terminal(),
+                };
+                if let Some(t) = term {
+                    t.snap_view_to_live();
+                    let _ = t.write_paste(&text);
+                }
+            }
+            // Insert mode: splice the literal text in at the cursor as a
+            // single undo step, bypassing the autopair / snippet dance so
+            // braces and quotes in the pasted source aren't doubled.
+            Mode::Insert => {
+                self.copilot_invalidate_ghost();
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                let idx = self
+                    .buffer
+                    .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                self.buffer.insert_at_idx(idx, &text);
+                self.cursor_to_idx(idx + text.chars().count());
+            }
+            // Command / search / prompt lines are single-line — drop any
+            // interior newlines so a pasted path or pattern doesn't smear
+            // across the (nonexistent) next line or submit early.
+            Mode::Command | Mode::Search { .. } | Mode::Prompt(_) => {
+                for c in text.chars().filter(|c| *c != '\n' && *c != '\r') {
+                    self.cmdline_insert_char_at_cursor(c);
+                }
+            }
+            // Picker query is likewise single-line.
+            Mode::Picker => {
+                if let Some(picker) = self.picker.as_mut() {
+                    for c in text.chars().filter(|c| *c != '\n' && *c != '\r') {
+                        picker.input.push(c);
+                    }
+                    self.refilter_picker();
+                }
+            }
+            // Normal / Visual / and the read-only overlays have no
+            // meaningful "insert pasted text here" target — ignore rather
+            // than guess. The user's own yank registers (`p`) cover
+            // buffer pastes in Normal mode.
+            _ => {}
+        }
     }
 
     fn handle_mouse_event(&mut self, ev: MouseEvent) {

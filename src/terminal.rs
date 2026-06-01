@@ -249,6 +249,14 @@ pub struct VteHandler {
     /// respecting this. Defaults to `true` (visible) so a plain
     /// shell, which never touches DECTCEM, keeps its cursor.
     cursor_visible: bool,
+    /// DEC private mode 2004 — bracketed paste. TUIs that distinguish
+    /// typed input from pasted input (claude / codex / opencode, and
+    /// most shells with a modern readline) request it; when set, a
+    /// paste must be wrapped in `\x1b[200~ … \x1b[201~` so the program
+    /// treats the whole blob as one paste instead of a stream of
+    /// keystrokes — without this, interior newlines read as Enter and
+    /// the AI panes fire one message per line.
+    pub(crate) bracketed_paste: bool,
 }
 
 /// Snapshot of the main screen taken when a TUI enters alt-screen
@@ -290,6 +298,7 @@ impl VteHandler {
             pending_wrap: false,
             saved_main: None,
             cursor_visible: true,
+            bracketed_paste: false,
         }
     }
 
@@ -758,6 +767,7 @@ impl Perform for VteHandler {
                     let n = param.first().copied().unwrap_or(0);
                     match n {
                         25 => self.cursor_visible = enable,
+                        2004 => self.bracketed_paste = enable,
                         1000 => self.mouse_button_mode = enable,
                         1002 => self.mouse_drag_mode = enable,
                         1003 => self.mouse_motion_mode = enable,
@@ -817,6 +827,7 @@ impl Perform for VteHandler {
                 self.saved = None;
                 self.pen = Cell::blank();
                 self.pending_wrap = false;
+                self.bracketed_paste = false;
             }
             _ => {}
         }
@@ -1160,6 +1171,31 @@ impl Terminal {
     pub fn write_bytes(&self, bytes: &[u8]) -> Result<()> {
         let mut w = self.writer.lock().unwrap();
         w.write_all(bytes)?;
+        w.flush()?;
+        Ok(())
+    }
+
+    /// Forward pasted `text` to the PTY. When the embedded program has
+    /// enabled bracketed-paste mode (DECSET 2004) the blob is wrapped in
+    /// `\x1b[200~ … \x1b[201~` so the program sees one atomic paste —
+    /// interior newlines stay literal instead of each firing an Enter.
+    /// When the program hasn't asked for it (a bare shell, a pager) the
+    /// markers would arrive as literal `[200~` junk, so we send the raw
+    /// text and let the child interpret newlines itself.
+    pub fn write_paste(&self, text: &str) -> Result<()> {
+        let bracketed = self
+            .inner
+            .lock()
+            .map(|i| i.handler.bracketed_paste)
+            .unwrap_or(false);
+        let mut w = self.writer.lock().unwrap();
+        if bracketed {
+            w.write_all(b"\x1b[200~")?;
+            w.write_all(text.as_bytes())?;
+            w.write_all(b"\x1b[201~")?;
+        } else {
+            w.write_all(text.as_bytes())?;
+        }
         w.flush()?;
         Ok(())
     }
@@ -1607,6 +1643,17 @@ mod tests {
         assert!(h.alt_screen_active());
         let h = parse_bytes(b"\x1b[?1049h\x1b[?1049l", 3, 10);
         assert!(!h.alt_screen_active());
+    }
+
+    #[test]
+    fn bracketed_paste_flag_tracks_decset_2004() {
+        // Off by default; ?2004h enables, ?2004l disables. This gates
+        // whether write_paste wraps a paste in \x1b[200~ … \x1b[201~.
+        assert!(!parse_bytes(b"", 3, 10).bracketed_paste);
+        assert!(parse_bytes(b"\x1b[?2004h", 3, 10).bracketed_paste);
+        assert!(!parse_bytes(b"\x1b[?2004h\x1b[?2004l", 3, 10).bracketed_paste);
+        // RIS (full reset) clears it.
+        assert!(!parse_bytes(b"\x1b[?2004h\x1bc", 3, 10).bracketed_paste);
     }
 
     #[test]

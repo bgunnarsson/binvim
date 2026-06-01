@@ -292,7 +292,7 @@ impl super::App {
         }
     }
 
-    fn refilter_picker(&mut self) {
+    pub(super) fn refilter_picker(&mut self) {
         let Some(picker) = self.picker.as_mut() else {
             return;
         };
