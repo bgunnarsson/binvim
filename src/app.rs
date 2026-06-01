@@ -1122,6 +1122,23 @@ impl App {
             if !self.terminals.is_empty() {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
+            // Live AI side pane (`:claude` / `:codex` / `:opencode`) —
+            // same reasoning as the `:terminal` overlay. The pane's PTY
+            // echo and streaming output arrive asynchronously and are
+            // drained by `side_terminal_drain_if_open`, not as crossterm
+            // events, so a 100ms poll budget makes the echo of each
+            // keystroke lag a full beat behind the keypress — typing
+            // feels slower than the user types. Cap to 16ms once a pane
+            // is past its loading splash (which keeps its own 150ms
+            // spinner cadence above; capping during loading would burn a
+            // full redraw per 16ms just to repaint the same glyph).
+            if self
+                .side_terminals
+                .iter()
+                .any(|s| !side_terminal_glue::side_terminal_loading(s))
+            {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
             // Active test run — adapter output streams in
             // asynchronously. Same 16ms cap as the DAP / terminal
             // cases so the user watches tests tick by live rather
