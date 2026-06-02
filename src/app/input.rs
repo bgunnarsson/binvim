@@ -208,7 +208,11 @@ fn paste_dbg(msg: impl FnOnce() -> String) {
         return;
     };
     use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
         let _ = writeln!(f, "{}", msg());
     }
 }
@@ -482,7 +486,9 @@ impl super::App {
                     crate::app::TerminalFocus::Bottom => self.active_terminal(),
                 };
                 if let Some(t) = term {
-                    paste_dbg(|| format!("forward to PTY, bracketed={}", t.bracketed_paste_enabled()));
+                    paste_dbg(|| {
+                        format!("forward to PTY, bracketed={}", t.bracketed_paste_enabled())
+                    });
                     t.snap_view_to_live();
                     let _ = t.write_paste(&text);
                 }

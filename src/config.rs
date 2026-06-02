@@ -732,6 +732,15 @@ impl Config {
                 return Some(c);
             }
         }
+        // Exact dotted defaults that must beat the rightmost-segment walk
+        // below. `@variable.builtin` (this / super / document / window) is
+        // red so it anchors `this.el.foo` access chains, but the bare tail
+        // `"builtin"` is shared with `@type.builtin` / `@constant.builtin`
+        // (which must keep their base colour), so it can't live in
+        // `default_capture_color`'s per-segment match.
+        if let Some(c) = default_capture_color_exact(name) {
+            return Some(c);
+        }
         for seg in segments.iter().rev() {
             if let Some(c) = default_capture_color(seg) {
                 return Some(c);
@@ -899,6 +908,21 @@ const CATP_OVERLAY2: Color = Color::Rgb {
     g: 0x99,
     b: 0xb2,
 };
+
+/// Defaults keyed on the *full* dotted capture name, resolved before the
+/// rightmost-segment walk in `color_for_capture`. Only for names whose
+/// bare tail segment collides with a differently-coloured family (see the
+/// `variable.builtin` note).
+fn default_capture_color_exact(name: &str) -> Option<Color> {
+    match name {
+        // `this` / `super` / `document` / `window` / `console` — red, to
+        // match Catppuccin/Neovim. Anchors every `this.el.foo` access
+        // chain; without it the chain is default-fg + Lavender + blue and
+        // washes out.
+        "variable.builtin" => Some(CATP_RED),
+        _ => None,
+    }
+}
 
 fn default_capture_color(head: &str) -> Option<Color> {
     match head {
