@@ -902,6 +902,20 @@ impl super::App {
         if last == self.buffer.version {
             return None;
         }
+        // No client is attached for this buffer — an unsupported file type,
+        // or a configured server that failed to spawn. Nothing will ever
+        // consume the pending sync, so `last_sent_version` never catches up
+        // and this deadline would otherwise sit *permanently in the past*.
+        // The main loop feeds that into `poll_dur.min(due - now)` (→ 0) and
+        // its render gate (`now >= due` → render), so a perpetually-past
+        // deadline pins the poll budget to zero and forces a redraw every
+        // iteration — the editor spins at 100% CPU and feels frozen on any
+        // buffer without a live LSP. Report no deadline when there's no
+        // client; the debounced sync still retries on the next real render,
+        // so a server that attaches later still gets the buffer.
+        if self.lsp.clients_for_path(path).is_empty() {
+            return None;
+        }
         Some(self.last_lsp_sync_at + LSP_SYNC_DEBOUNCE)
     }
 
