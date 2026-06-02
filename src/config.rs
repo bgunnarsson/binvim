@@ -931,22 +931,26 @@ fn default_capture_color(head: &str) -> Option<Color> {
         // defaults, so a token of type "function" with modifier
         // "async" arrives here as just `"async"` after the dotted
         // walk strips the prefix — and a hit here wins over the
-        // base "function" default. This is what produces the
-        // visible delta vs the tree-sitter pass: plain `function`
-        // is still blue (matches tree-sitter exactly, no diff),
-        // but `function.async` paints in lavender, `function.defaultLibrary`
-        // (e.g. `std::println!`) in sapphire, `variable.mutable`
-        // (Rust `let mut`) in red, `variable.constant` / `variable.static`
-        // distinctly from local bindings. Only the visually-loud
-        // modifiers are listed — noisy ones like `declaration`,
-        // `definition`, `documentation`, `abstract` are deliberately
-        // absent so the rightmost-first walk falls through to the
-        // base type for them.
+        // base "function" default. This produces a visible delta vs
+        // the tree-sitter pass: plain `function` stays blue, but
+        // `function.async` paints in lavender and `variable.mutable`
+        // (Rust `let mut`) in red.
+        //
+        // ONLY genuinely-rare modifiers belong here. A modifier that
+        // hits a *large fraction* of tokens floods the file with one
+        // colour, because the rightmost-first walk lets it override
+        // every base type it touches. tsserver tags every standard-
+        // library symbol with `defaultLibrary` and every `const` with
+        // `readonly` — in DOM-heavy TS that's nearly every token, so
+        // those two are deliberately ABSENT: their tokens fall through
+        // to the base type (`method`→blue, `interface`→type→yellow,
+        // `variable`→tree-sitter) instead of collapsing to one tone.
+        // Noisy modifiers like `declaration` / `definition` /
+        // `documentation` / `abstract` / `local` are absent for the
+        // same reason.
         "async" => Some(CATP_LAVENDER),
         "mutable" => Some(CATP_RED),
         "static" => Some(CATP_TEAL),
-        "readonly" => Some(CATP_PEACH),
-        "defaultLibrary" => Some(CATP_SAPPHIRE),
         "deprecated" => Some(CATP_RED),
         "comment" => Some(CATP_OVERLAY1),
         "string" => Some(CATP_GREEN),
@@ -955,10 +959,16 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "keyword" | "include" | "conditional" | "repeat" | "exception" => Some(CATP_MAUVE),
         "function" | "method" => Some(CATP_BLUE),
         "macro" => Some(CATP_PEACH),
-        "type" => Some(CATP_YELLOW),
+        // `type` is the tree-sitter capture; `class` / `interface` /
+        // `enum` / `struct` / `typeParameter` are the LSP semantic-token
+        // type names for the same thing — all yellow so semantic tokens
+        // colour types reliably instead of leaning on the tree-sitter
+        // fallback for every type reference.
+        "type" | "class" | "interface" | "enum" | "struct" | "typeParameter" => Some(CATP_YELLOW),
         "constructor" => Some(CATP_YELLOW),
         "namespace" | "module" => Some(CATP_YELLOW),
-        "constant" | "boolean" | "number" | "float" => Some(CATP_PEACH),
+        // `enumMember` is the LSP semantic-token name for an enum constant.
+        "constant" | "boolean" | "number" | "float" | "enumMember" => Some(CATP_PEACH),
         "operator" => Some(CATP_SKY),
         // HTML attribute names (`class=`, `href=`, JSX `className=`,
         // …) are all `@attribute` from tree-sitter and there are
@@ -990,5 +1000,68 @@ fn default_capture_color(head: &str) -> Option<Color> {
         "text" => None,
         "regex" => Some(CATP_PINK),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression: tsserver tags nearly every DOM symbol with the
+    /// `defaultLibrary` modifier and every `const` with `readonly`. The
+    /// rightmost-first dotted walk used to let those modifiers override the
+    /// base token type, collapsing `console` / `console.error` / `HTMLElement`
+    /// (and every `const`) into one tone — the file flooded with sapphire/peach
+    /// under semantic tokens. Pervasive modifiers must now defer to the base
+    /// type.
+    #[test]
+    fn semantic_token_modifiers_defer_to_base_type() {
+        let cfg = Config::default();
+        // Base types keep their colour regardless of the defaultLibrary modifier.
+        assert_eq!(
+            cfg.color_for_capture("method.defaultLibrary"),
+            Some(CATP_BLUE),
+            "stdlib method should stay blue, not flood to one modifier tone",
+        );
+        assert_eq!(
+            cfg.color_for_capture("function.defaultLibrary"),
+            Some(CATP_BLUE),
+            "stdlib function should stay blue",
+        );
+        assert_eq!(
+            cfg.color_for_capture("interface.defaultLibrary"),
+            Some(CATP_YELLOW),
+            "stdlib type (HTMLElement etc.) should stay yellow",
+        );
+        // `variable.defaultLibrary` (console / document) has no base colour, so
+        // it falls through (None) and the tree-sitter @variable.builtin red wins.
+        assert_eq!(
+            cfg.color_for_capture("variable.defaultLibrary"),
+            None,
+            "stdlib variable should defer to tree-sitter, not the modifier",
+        );
+        // `const` (variable.readonly) must not flood peach.
+        assert_eq!(
+            cfg.color_for_capture("variable.readonly"),
+            None,
+            "const binding should defer to tree-sitter, not flood peach",
+        );
+        // The genuinely-rare loud modifiers still override.
+        assert_eq!(
+            cfg.color_for_capture("function.async"),
+            Some(CATP_LAVENDER),
+            "async remains a loud override",
+        );
+    }
+
+    /// `@variable.builtin` (this / super / document) is red — the exact-name
+    /// default must beat the shared `builtin` tail without dragging
+    /// `type.builtin` / `constant.builtin` along with it.
+    #[test]
+    fn variable_builtin_is_red_without_hijacking_other_builtins() {
+        let cfg = Config::default();
+        assert_eq!(cfg.color_for_capture("variable.builtin"), Some(CATP_RED));
+        assert_eq!(cfg.color_for_capture("type.builtin"), Some(CATP_YELLOW));
+        assert_eq!(cfg.color_for_capture("constant.builtin"), Some(CATP_PEACH));
     }
 }
