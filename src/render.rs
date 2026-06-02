@@ -2136,19 +2136,25 @@ const HEALTH_BANNER: &[&str] = &[
 /// densely-packed section headers (no boxes — boxes added too much
 /// chrome). Esc / `q` / `:q` dismiss (handled in `app/input.rs`).
 fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
-    let total_w = app.width as usize;
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
-    if rows == 0 || total_w < 30 {
+    // Lay the dashboard out inside the editor rect, not the full terminal,
+    // so it scales around any open panes — file tree on the left, AI
+    // terminal on the right, debug / terminal panes on the bottom — rather
+    // than painting underneath them.
+    let area = app.editor_rect();
+    let area_x = area.x as usize;
+    let area_w = area.w as usize;
+    let rows = area.h as usize;
+    let top = area.y as usize;
+    if rows == 0 || area_w < 30 {
         return Ok(());
     }
 
-    // Clear the buffer area first so leftover frame content can't bleed
-    // through.
+    // Clear the editor area first so leftover frame content can't bleed
+    // through. Panes paint over their own columns afterwards.
     let page_bg = app.config.background_color();
-    let blank: String = " ".repeat(total_w);
+    let blank: String = " ".repeat(area_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16))?;
+        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
         if let Some(c) = page_bg {
             queue!(out, SetBackgroundColor(c), Print(&blank))?;
         } else {
@@ -2159,17 +2165,17 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     let snap = app.build_health_snapshot();
     let p = DashboardPalette::from_config(&app.config);
 
-    let left = 2usize;
+    let left = area_x + 2;
     // Reserve the bottom row of the buffer area for the always-on
     // footer so the keybinding hint stays visible while scrolling.
     let viewport_rows = rows.saturating_sub(1);
     // Body width budget — leave a 2-col margin on the right too.
-    let body_w = total_w.saturating_sub(left + 2).max(40);
+    let body_w = area_w.saturating_sub(4).max(40);
 
     // Build the dashboard as a flat list of virtual rows first so we
     // can both measure its total height (for the input handler's
     // clamp) and paint just the slice the user has scrolled to.
-    let banner_fits = total_w >= 50 && rows > 10;
+    let banner_fits = area_w >= 50 && rows > 10;
     let mut rows_buf: Vec<DashRow> = Vec::new();
     build_health_rows(&mut rows_buf, &snap, &p, left, body_w, banner_fits);
 
@@ -2200,7 +2206,7 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(
         out,
         SetForegroundColor(p.overlay0),
-        Print(truncate(footer, total_w.saturating_sub(left))),
+        Print(truncate(footer, area_w.saturating_sub(2))),
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())
@@ -2225,16 +2231,21 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
     let Some(state) = app.installer.as_ref() else {
         return Ok(());
     };
-    let total_w = app.width as usize;
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
-    if rows == 0 || total_w < 30 {
+    // Anchor to the editor rect so the overlay scales around any open
+    // panes (file tree, AI terminal, debug / terminal) instead of
+    // painting full-width underneath them.
+    let area = app.editor_rect();
+    let area_x = area.x as usize;
+    let area_w = area.w as usize;
+    let rows = area.h as usize;
+    let top = area.y as usize;
+    if rows == 0 || area_w < 30 {
         return Ok(());
     }
     let page_bg = app.config.background_color();
-    let blank: String = " ".repeat(total_w);
+    let blank: String = " ".repeat(area_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16))?;
+        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
         if let Some(c) = page_bg {
             queue!(out, SetBackgroundColor(c), Print(&blank))?;
         } else {
@@ -2243,11 +2254,11 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
     }
 
     let p = DashboardPalette::from_config(&app.config);
-    let left = 2usize;
-    let body_w = total_w.saturating_sub(left + 2).max(40);
+    let left = area_x + 2;
+    let body_w = area_w.saturating_sub(4).max(40);
 
     // ── Banner ──
-    let banner_fits = total_w >= 50 && rows > 12;
+    let banner_fits = area_w >= 50 && rows > 12;
     let mut cursor_y = top;
     if banner_fits {
         for line in INSTALL_BANNER {
@@ -2299,6 +2310,8 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
 
     // ── Body ──
     let body_top = cursor_y;
+    // Reserve the bottom row of the area for the always-on footer so the
+    // scroll hint stays visible while the list scrolls.
     let viewport = rows.saturating_sub(cursor_y - top + 1);
     match state.stage {
         InstallerStage::Bundles => {
@@ -2309,6 +2322,7 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
                 &rows_data,
                 state.cursor,
                 &state.checked,
+                left,
                 body_top,
                 body_w,
                 viewport,
@@ -2324,6 +2338,7 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
                 &rows_data,
                 state.cursor,
                 &state.checked,
+                left,
                 body_top,
                 body_w,
                 viewport,
@@ -2333,9 +2348,53 @@ fn draw_install_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
         InstallerStage::Plan => {
             let rows_data = plan_rows(state);
+            // The plan can outgrow the viewport (many bundles, short
+            // terminal, panes open) — make it scrollable. Measure the
+            // per-row screen height (a row with a `target` line is 2 rows
+            // tall), stash the max scroll for the input handler to clamp
+            // against, and paint the slice the user has scrolled to.
+            let heights: Vec<usize> = rows_data
+                .iter()
+                .map(|r| if r.target.is_empty() { 1 } else { 2 })
+                .collect();
+            let total_lines: usize = heights.iter().sum();
+            let footer_rows = if total_lines > viewport { 1 } else { 0 };
+            let plan_viewport = viewport.saturating_sub(footer_rows);
+            let max_scroll = max_plan_scroll(&heights, plan_viewport);
+            state.plan_max_scroll.set(max_scroll);
+            let scroll = state.plan_scroll.min(max_scroll);
             paint_plan_rows(
-                out, app, &rows_data, body_top, body_w, viewport, &p, page_bg,
+                out,
+                app,
+                &rows_data,
+                scroll,
+                left,
+                body_top,
+                body_w,
+                plan_viewport,
+                &p,
+                page_bg,
             )?;
+            if footer_rows == 1 {
+                let has_above = scroll > 0;
+                let has_below = scroll < max_scroll;
+                let footer = match (has_above, has_below) {
+                    (false, true) => "↓ j more below",
+                    (true, false) => "↑ k more above",
+                    (true, true) => "↑ k ↓ j to scroll",
+                    (false, false) => "",
+                };
+                if !footer.is_empty() {
+                    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
+                    apply_buf_bg(out, page_bg)?;
+                    queue!(
+                        out,
+                        SetForegroundColor(p.overlay0),
+                        Print(truncate(footer, area_w.saturating_sub(2))),
+                    )?;
+                    reset_to_buf_bg(out, page_bg)?;
+                }
+            }
         }
     }
     Ok(())
@@ -2348,6 +2407,7 @@ fn paint_checkbox_list(
     rows: &[crate::app::installer::PickerRow],
     cursor: usize,
     checked: &[bool],
+    left: usize,
     top: usize,
     body_w: usize,
     viewport: usize,
@@ -2378,7 +2438,7 @@ fn paint_checkbox_list(
         .enumerate()
     {
         let y = (top + offset) as u16;
-        queue!(out, MoveTo(2, y))?;
+        queue!(out, MoveTo(left as u16, y))?;
         apply_buf_bg(out, page_bg)?;
         let active = i == cursor;
         if active {
@@ -2445,11 +2505,29 @@ fn paint_checkbox_list(
     Ok(())
 }
 
+/// Largest scroll offset (in plan rows) that still keeps the tail of the
+/// list filling the viewport — walks from the end accumulating each row's
+/// screen height until the next row wouldn't fit.
+fn max_plan_scroll(heights: &[usize], viewport: usize) -> usize {
+    let mut used = 0usize;
+    let mut visible_from_end = 0usize;
+    for &h in heights.iter().rev() {
+        if used + h > viewport {
+            break;
+        }
+        used += h;
+        visible_from_end += 1;
+    }
+    heights.len().saturating_sub(visible_from_end)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paint_plan_rows(
     out: &mut impl Write,
     _app: &App,
     rows: &[crate::app::installer::PlanRow],
+    scroll: usize,
+    left: usize,
     top: usize,
     body_w: usize,
     viewport: usize,
@@ -2461,11 +2539,11 @@ fn paint_plan_rows(
         return Ok(());
     }
     let mut y = top;
-    for (idx, row) in rows.iter().enumerate() {
-        if idx >= viewport {
+    for row in rows.iter().skip(scroll) {
+        if (y - top) >= viewport {
             break;
         }
-        queue!(out, MoveTo(2, y as u16))?;
+        queue!(out, MoveTo(left as u16, y as u16))?;
         apply_buf_bg(out, page_bg)?;
         let glyph_color = match row.color {
             PlanRowColor::Green => p.green,
@@ -2490,7 +2568,7 @@ fn paint_plan_rows(
         reset_to_buf_bg(out, page_bg)?;
         y += 1;
         if !row.target.is_empty() && (y - top) < viewport {
-            queue!(out, MoveTo(8, y as u16))?;
+            queue!(out, MoveTo((left + 6) as u16, y as u16))?;
             apply_buf_bg(out, page_bg)?;
             queue!(
                 out,
@@ -3278,16 +3356,21 @@ fn draw_side_loading_splash(
 }
 
 fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
-    let total_w = app.width as usize;
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
-    if rows == 0 || total_w < 30 {
+    // Anchor to the editor rect so the overlay scales around any open
+    // panes (file tree, AI terminal, debug / terminal) rather than
+    // painting full-width underneath them.
+    let area = app.editor_rect();
+    let area_x = area.x as usize;
+    let area_w = area.w as usize;
+    let rows = area.h as usize;
+    let top = area.y as usize;
+    if rows == 0 || area_w < 30 {
         return Ok(());
     }
     let page_bg = app.config.background_color();
-    let blank_row: String = " ".repeat(total_w);
+    let blank_row: String = " ".repeat(area_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16))?;
+        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
         if let Some(c) = page_bg {
             queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
         } else {
@@ -3295,9 +3378,9 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let p = DashboardPalette::from_config(&app.config);
-    let left = 2usize;
+    let left = area_x + 2;
     let viewport_rows = rows.saturating_sub(1);
-    let body_w = total_w.saturating_sub(left + 2).max(40);
+    let body_w = area_w.saturating_sub(4).max(40);
 
     // Header row + one trailing blank.
     let mut lines: Vec<MessageRow> = Vec::new();
@@ -3422,23 +3505,28 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(
         out,
         SetForegroundColor(p.overlay0),
-        Print(truncate(footer, total_w.saturating_sub(left))),
+        Print(truncate(footer, area_w.saturating_sub(2))),
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())
 }
 
 fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
-    let total_w = app.width as usize;
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
-    if rows == 0 || total_w < 30 {
+    // Anchor to the editor rect so the overlay scales around any open
+    // panes (file tree, AI terminal, debug / terminal) rather than
+    // painting full-width underneath them.
+    let area = app.editor_rect();
+    let area_x = area.x as usize;
+    let area_w = area.w as usize;
+    let rows = area.h as usize;
+    let top = area.y as usize;
+    if rows == 0 || area_w < 30 {
         return Ok(());
     }
     let page_bg = app.config.background_color();
-    let blank_row: String = " ".repeat(total_w);
+    let blank_row: String = " ".repeat(area_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16))?;
+        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
         if let Some(c) = page_bg {
             queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
         } else {
@@ -3446,9 +3534,9 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let p = DashboardPalette::from_config(&app.config);
-    let left = 2usize;
+    let left = area_x + 2;
     let viewport_rows = rows.saturating_sub(1);
-    let body_w = total_w.saturating_sub(left + 2).max(40);
+    let body_w = area_w.saturating_sub(4).max(40);
 
     let mut lines: Vec<MessageRow> = Vec::new();
 
@@ -3570,7 +3658,7 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(
         out,
         SetForegroundColor(p.overlay0),
-        Print(truncate(footer, total_w.saturating_sub(left))),
+        Print(truncate(footer, area_w.saturating_sub(2))),
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())
@@ -3685,16 +3773,21 @@ fn format_key_with_mods(c: char, mods: crossterm::event::KeyModifiers) -> String
 }
 
 fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
-    let total_w = app.width as usize;
-    let rows = app.buffer_rows();
-    let top = app.buffer_top();
-    if rows == 0 || total_w < 30 {
+    // Anchor to the editor rect so the overlay scales around any open
+    // panes (file tree, AI terminal, debug / terminal) rather than
+    // painting full-width underneath them.
+    let area = app.editor_rect();
+    let area_x = area.x as usize;
+    let area_w = area.w as usize;
+    let rows = area.h as usize;
+    let top = area.y as usize;
+    if rows == 0 || area_w < 30 {
         return Ok(());
     }
     let page_bg = app.config.background_color();
-    let blank_row: String = " ".repeat(total_w);
+    let blank_row: String = " ".repeat(area_w);
     for row in 0..rows {
-        queue!(out, MoveTo(0, (row + top) as u16))?;
+        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
         if let Some(c) = page_bg {
             queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
         } else {
@@ -3702,9 +3795,9 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
         }
     }
     let p = DashboardPalette::from_config(&app.config);
-    let left = 2usize;
+    let left = area_x + 2;
     let viewport_rows = rows.saturating_sub(1);
-    let body_w = total_w.saturating_sub(left + 2).max(40);
+    let body_w = area_w.saturating_sub(4).max(40);
 
     let mut lines: Vec<MessageRow> = Vec::new();
     let header_text = if app.test.is_running() {
@@ -3892,7 +3985,7 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
     queue!(
         out,
         SetForegroundColor(p.overlay0),
-        Print(truncate(footer, total_w.saturating_sub(left))),
+        Print(truncate(footer, area_w.saturating_sub(2))),
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())

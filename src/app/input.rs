@@ -902,6 +902,8 @@ impl super::App {
                     }
                 } else if self.show_health_page {
                     self.health_scroll_by(-3);
+                } else if self.show_install_page {
+                    self.installer_scroll_by(-3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(-3);
                 } else if self.show_registers_page {
@@ -922,6 +924,8 @@ impl super::App {
                     }
                 } else if self.show_health_page {
                     self.health_scroll_by(3);
+                } else if self.show_install_page {
+                    self.installer_scroll_by(3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(3);
                 } else if self.show_registers_page {

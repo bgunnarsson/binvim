@@ -96,6 +96,14 @@ pub struct InstallerState {
     /// Subtitle text the renderer paints under the banner. Stage-
     /// specific (e.g. counts of items, hint about npm).
     pub subtitle: String,
+    /// Scroll offset (in plan rows) for the Plan stage — the Bundles /
+    /// NodeVersions stages scroll their cursor instead, so this only
+    /// applies once the plan is on screen.
+    pub plan_scroll: usize,
+    /// Largest valid `plan_scroll`, stashed by the renderer each frame
+    /// (it knows the viewport height after laying out the banner / help)
+    /// so the input handler can clamp without re-measuring.
+    pub plan_max_scroll: std::cell::Cell<usize>,
 }
 
 impl InstallerState {
@@ -128,6 +136,8 @@ impl InstallerState {
             binvim_selected: false,
             installed,
             subtitle: bundles_subtitle(kind),
+            plan_scroll: 0,
+            plan_max_scroll: std::cell::Cell::new(0),
         }
     }
 
@@ -242,16 +252,91 @@ impl super::App {
                     }
                 }
             }
-            InstallerStage::Plan => match k.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => self.run_install_plan(),
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Backspace => {
+            InstallerStage::Plan => match (k.code, k.modifiers) {
+                (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => self.run_install_plan(),
+                (KeyCode::Char('n'), m) | (KeyCode::Char('N'), m)
+                    if !m.contains(KeyModifiers::CONTROL) =>
+                {
                     // Go back to the previous stage (Node picker if it
                     // was visited, else bundle picker).
                     self.installer_go_back();
                 }
+                (KeyCode::Backspace, _) => self.installer_go_back(),
+                // The plan can outgrow the viewport — scroll it. j/k by a
+                // row, Ctrl-d/u by half a page, PgDn/PgUp / Ctrl-f/b by a
+                // page, g/G to the ends.
+                (KeyCode::Char('j'), _) | (KeyCode::Down, _) => self.installer_plan_scroll_by(1),
+                (KeyCode::Char('k'), _) | (KeyCode::Up, _) => self.installer_plan_scroll_by(-1),
+                (KeyCode::Char('d'), m) if m.contains(KeyModifiers::CONTROL) => {
+                    let step = (self.buffer_rows() / 2).max(1) as isize;
+                    self.installer_plan_scroll_by(step);
+                }
+                (KeyCode::Char('u'), m) if m.contains(KeyModifiers::CONTROL) => {
+                    let step = (self.buffer_rows() / 2).max(1) as isize;
+                    self.installer_plan_scroll_by(-step);
+                }
+                (KeyCode::Char('f'), m) if m.contains(KeyModifiers::CONTROL) => {
+                    let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                    self.installer_plan_scroll_by(step);
+                }
+                (KeyCode::Char('b'), m) if m.contains(KeyModifiers::CONTROL) => {
+                    let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                    self.installer_plan_scroll_by(-step);
+                }
+                (KeyCode::PageDown, _) => {
+                    let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                    self.installer_plan_scroll_by(step);
+                }
+                (KeyCode::PageUp, _) => {
+                    let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
+                    self.installer_plan_scroll_by(-step);
+                }
+                (KeyCode::Char('g'), _) | (KeyCode::Home, _) => {
+                    if let Some(s) = self.installer.as_mut() {
+                        s.plan_scroll = 0;
+                    }
+                }
+                (KeyCode::Char('G'), _) | (KeyCode::End, _) => {
+                    if let Some(s) = self.installer.as_mut() {
+                        s.plan_scroll = s.plan_max_scroll.get();
+                    }
+                }
                 _ => {}
             },
         }
+    }
+
+    /// Mouse-wheel scroll for the overlay. On the Plan stage it scrolls
+    /// the plan; on the checkbox stages it walks the cursor (which the
+    /// renderer keeps visible), so the wheel feels the same everywhere.
+    pub(super) fn installer_scroll_by(&mut self, delta: isize) {
+        let Some(state) = self.installer.as_mut() else {
+            return;
+        };
+        match state.stage {
+            InstallerStage::Plan => {
+                let max = state.plan_max_scroll.get();
+                let next = (state.plan_scroll as isize + delta).max(0) as usize;
+                state.plan_scroll = next.min(max);
+            }
+            InstallerStage::Bundles | InstallerStage::NodeVersions => {
+                let last = state.checked.len().saturating_sub(1);
+                let next = (state.cursor as isize + delta).max(0) as usize;
+                state.cursor = next.min(last);
+            }
+        }
+    }
+
+    /// Move the Plan-stage viewport by `delta` rows, clamping to
+    /// `[0, plan_max_scroll]` (the renderer stashes the max each frame).
+    /// Negative deltas scroll up.
+    fn installer_plan_scroll_by(&mut self, delta: isize) {
+        let Some(state) = self.installer.as_mut() else {
+            return;
+        };
+        let max = state.plan_max_scroll.get();
+        let next = (state.plan_scroll as isize + delta).max(0) as usize;
+        state.plan_scroll = next.min(max);
     }
 
     fn advance_from_bundles(&mut self) {
@@ -350,6 +435,7 @@ impl super::App {
         };
         state.stage = InstallerStage::Plan;
         state.cursor = 0;
+        state.plan_scroll = 0;
         let count = state.plan.len() + state.binvim_selected as usize;
         state.subtitle = format!(
             "plan — {count} items · press y to {}, n to go back, q to cancel",
