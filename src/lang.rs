@@ -375,23 +375,31 @@ impl Lang {
             // captures). Combine with the tree-sitter-javascript query for
             // full coverage. *Pure* TypeScript's grammar has no JSX nodes,
             // so the JSX overlay would fail `Query::new` and wipe the cache.
+            // `JS_MEMBER_OVERRIDE` trails so data member-access drops to the
+            // default fg — see the const for why.
             Lang::TypeScript => format!(
-                "{}\n{}",
-                tree_sitter_javascript::HIGHLIGHT_QUERY,
-                tree_sitter_typescript::HIGHLIGHTS_QUERY,
-            ),
-            // TSX + JS both have JSX nodes — layer the JSX overlay so HTML
-            // tags get `@tag` and component-style tags get `@constructor`
-            // instead of the bundled query's catch-all `@variable`.
-            Lang::Tsx => format!(
                 "{}\n{}\n{}",
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
                 tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                JS_MEMBER_OVERRIDE,
+            ),
+            // TSX + JS both have JSX nodes — layer the JSX overlay so HTML
+            // tags get `@tag` and component-style tags get `@constructor`
+            // instead of the bundled query's catch-all `@variable`. The
+            // member-access override sits *before* the JSX overlay so the
+            // overlay's `<Foo.Bar>` component captures (also member_expression
+            // nodes) still win on JSX element names.
+            Lang::Tsx => format!(
+                "{}\n{}\n{}\n{}",
+                tree_sitter_javascript::HIGHLIGHT_QUERY,
+                tree_sitter_typescript::HIGHLIGHTS_QUERY,
+                JS_MEMBER_OVERRIDE,
                 JSX_OVERLAY_QUERY,
             ),
             Lang::JavaScript => format!(
-                "{}\n{}",
+                "{}\n{}\n{}",
                 tree_sitter_javascript::HIGHLIGHT_QUERY,
+                JS_MEMBER_OVERRIDE,
                 JSX_OVERLAY_QUERY,
             ),
             // Replace the bundled tree-sitter-json query — its pattern
@@ -680,6 +688,30 @@ const SCSS_QUERY_OVERLAY: &str = r##"
 (arguments
   (variable) @variable.parameter)
 "##;
+
+// tree-sitter-javascript 0.23 captures *every* `.foo` member access as
+// `@property` (lavender), the same capture CSS uses for `color:` /
+// `margin:`. In property-heavy JS/TS — `this.el.favoriteButtons.length`
+// chains everywhere — lavender sits in the same soft blue family as the
+// default fg and the `@function.method` blue, so the whole file reads as
+// one low-contrast wash. This override drops *data* member-access to the
+// default fg (`@variable.member` resolves to None), leaving the calm
+// identifiers as ground and the real accents — method *calls* (blue),
+// keywords (mauve), types (yellow), strings (green) — as figure. Two
+// rules, order-sensitive: the blanket comes first, then the call-site
+// re-capture re-wins `@function.method` on `x.foo()` (later pattern wins,
+// see `compute_byte_colors`). Object-literal keys and JSX attribute names
+// are *not* member_expression nodes, so they keep their existing tone.
+// CSS / editorconfig keep `@property` untouched — this only ever appends
+// to the JS-family queries.
+const JS_MEMBER_OVERRIDE: &str = r#"
+(member_expression
+  property: (property_identifier) @variable.member)
+
+(call_expression
+  function: (member_expression
+    property: (property_identifier) @function.method))
+"#;
 
 const JSX_OVERLAY_QUERY: &str = r#"
 ; HTML-style tag names (lowercase) — open + close + self-closing.
@@ -2100,6 +2132,53 @@ export function Page() {
         assert!(
             colors[src.find("<div").unwrap() + 1].is_some(),
             "JSX `<div>` should be coloured"
+        );
+    }
+
+    /// `JS_MEMBER_OVERRIDE` pulls *data* member-access (`this.el.favoriteButtons`)
+    /// down to the default fg so property-heavy TS stops reading as one
+    /// blue-family wash, while method *calls* keep `@function.method` (blue)
+    /// and object-literal keys keep their `@property` tint. Member access
+    /// and CSS property names share the `@property` capture upstream, so the
+    /// disambiguation has to live in the query, not the palette.
+    #[test]
+    fn ts_member_access_is_distinct_from_method_calls_and_keys() {
+        let src = "const o = {\n  el: 1,\n  run() {\n    this.el.items.forEach(x => x);\n    return this.el.length;\n  },\n};\n";
+        let cfg = Config::default();
+        let colors = compute_byte_colors(Lang::TypeScript, src, &cfg).expect("ts highlight cache");
+        let blue = Color::Rgb {
+            r: 0x89,
+            g: 0xb4,
+            b: 0xfa,
+        };
+        let lavender = Color::Rgb {
+            r: 0xb4,
+            g: 0xbe,
+            b: 0xfe,
+        };
+        // `el:` object-literal key keeps its property tint.
+        assert_eq!(
+            colors[src.find("el:").unwrap()],
+            Some(lavender),
+            "object-literal key should stay Lavender",
+        );
+        // `.items` data member-access drops to default fg.
+        assert_eq!(
+            colors[src.find(".items").unwrap() + 1],
+            None,
+            "data member-access should render as plain text",
+        );
+        // `.length` (member-access, not a call) drops to default fg too.
+        assert_eq!(
+            colors[src.find(".length").unwrap() + 1],
+            None,
+            "non-call member-access should render as plain text",
+        );
+        // `.forEach(...)` is a call — re-captured back to method blue.
+        assert_eq!(
+            colors[src.find("forEach").unwrap()],
+            Some(blue),
+            "method call should stay blue",
         );
     }
 
