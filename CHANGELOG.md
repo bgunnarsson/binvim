@@ -6,7 +6,68 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.8] - 2026-06-02
+
 ### Fixed
+- **Full-screen overlays now scale around open panes.** The installer,
+  health, and other full-screen overlays measured themselves against the
+  whole terminal, so with a side pane (terminal / AI / DAP) open they
+  overflowed or clipped. They now lay out within the editor region that
+  remains after the open panes are accounted for.
+
+## [0.5.7] - 2026-06-02
+
+### Fixed
+- **Stop the 100% CPU spin on buffers without a live LSP.** A buffer with
+  no attached language server still drove the per-version request hooks
+  (inlay hints, semantic tokens, documentHighlight) on every render, busy-
+  looping the event loop. The hooks now short-circuit when there is no
+  live client for the buffer.
+
+## [0.5.6] - 2026-06-02
+
+### Fixed
+- **TypeScript / JavaScript highlighting no longer washes out to one
+  colour.** Three related fixes: LSP semantic tokens could flood the
+  tree-sitter layer with a single token type and overwrite the richer
+  syntax colours; property-heavy TS/JS read as one blue wash; and the
+  scheme now matches Neovim / Catppuccin — a red `this` anchors access
+  chains. Also added an env-gated bracketed-paste probe for diagnosing
+  paste issues.
+
+## [0.5.5] - 2026-06-01
+
+### Fixed
+- **`:terminal` handles `DCH` / `ICH` / `ECH` so mid-line edits land in the
+  grid.** The vt100 parser dropped delete-character, insert-character, and
+  erase-character, so programs that edited in place mangled the line.
+- **Bracketed paste lands as one atomic blob.** Cmd-V (and other bracketed
+  pastes) are now handled as a single insert rather than a stream of
+  keystrokes, so auto-pairing / auto-indent don't mangle pasted text.
+- **Live AI side panes keep up with typing.** The side-terminal poll budget
+  is capped at 16ms so a busy AI pane can't starve keystroke handling.
+
+### Changed
+- Bumped `tree-sitter-bash` 0.23 → 0.25, fixing a Linux SIGSEGV in the
+  highlight fuzz scanner. Bash-backed fuzz grammars are restricted to ASCII
+  to dodge the remaining upstream scanner crash.
+
+## [0.5.4] - 2026-05-31
+
+### Added
+- **`openclaw` and `hermes` in the `<leader>j` AI menu.** Both join the AI
+  splits menu; the redundant "(new tab)" suffix is dropped from the labels.
+- **Start page dismisses onto the first tab on any key when tabs are open.**
+
+## [0.5.3] - 2026-05-30
+
+### Added
+- **`openclaw` and `hermes` AI splits.**
+- **Double-click word select + word-drag in terminal / AI / DAP panes.**
+
+### Fixed
+- **Terminal-pane selection now highlights every covered cell.**
+- **Scrolling + cursor behaviour in the AI side panels.**
 - **`:terminal` now honours `CPL` / `CNL` / `VPA` cursor moves.** The vt100
   parser silently dropped `CSI nF` (cursor previous line), `CSI nE` (cursor
   next line), and `CSI nd` (vertical position absolute). The .NET MSBuild
@@ -14,6 +75,17 @@ follows [Semantic Versioning](https://semver.org/).
   each frame before redrawing, so without it a `dotnet build` timer printed
   every tick (`(0.0s)`, `(0.1s)`, …) on a fresh line instead of overwriting
   in place. All three are now handled.
+
+### Changed
+- README now leads with "the first vim IDE" positioning, adds comparison
+  links, and an ASCII banner at the top.
+
+## [0.5.2] - 2026-05-28
+
+### Added
+- **DAP Console tab upgrades.** The Console tab now honours ANSI colour
+  escapes, cycles its category filter with `f`, supports keyboard yank +
+  clear, and offers `/` search with `n` / `N` navigation.
 
 ## [0.5.1] - 2026-05-28
 
