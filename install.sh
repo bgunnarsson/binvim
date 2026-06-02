@@ -4,7 +4,7 @@
 #   curl -fsSL https://binvim.dev/install.sh | sh
 #
 # Optional environment overrides:
-#   BINVIM_VERSION=v0.1.0       pin to a specific tag (default: latest release)
+#   BINVIM_VERSION=v0.5.8       pin to a specific tag (default: latest release)
 #   BINVIM_INSTALL_DIR=/opt/bin override install directory (default: $HOME/.local/bin)
 #
 # macOS users: use Homebrew instead — `brew install bgunnarsson/binvim/binvim`.
