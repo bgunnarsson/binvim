@@ -1182,6 +1182,15 @@ impl Terminal {
     /// When the program hasn't asked for it (a bare shell, a pager) the
     /// markers would arrive as literal `[200~` junk, so we send the raw
     /// text and let the child interpret newlines itself.
+    /// Whether the embedded program currently has bracketed-paste mode
+    /// (DECSET 2004) enabled — i.e. whether `write_paste` will wrap.
+    pub fn bracketed_paste_enabled(&self) -> bool {
+        self.inner
+            .lock()
+            .map(|i| i.handler.bracketed_paste)
+            .unwrap_or(false)
+    }
+
     pub fn write_paste(&self, text: &str) -> Result<()> {
         let bracketed = self
             .inner

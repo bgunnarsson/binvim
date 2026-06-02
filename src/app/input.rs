@@ -198,9 +198,30 @@ fn should_split_pair_on_enter(
     prev_non_ws == Some('>') && next_non_ws == Some('<') && next_next == Some('/')
 }
 
+/// Temporary paste diagnostics — appends one line to the file named in
+/// `$BINVIM_PASTE_DEBUG` when that env var is set, otherwise a no-op
+/// (the closure isn't even evaluated). Used to see whether a Cmd-V
+/// arrives as `Event::Paste` or a keystroke flood, and whether the
+/// embedded PTY had bracketed paste enabled at the time.
+fn paste_dbg(msg: impl FnOnce() -> String) {
+    let Ok(path) = std::env::var("BINVIM_PASTE_DEBUG") else {
+        return;
+    };
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "{}", msg());
+    }
+}
+
 impl super::App {
     pub(super) fn handle_event(&mut self) -> anyhow::Result<()> {
-        match crossterm::event::read()? {
+        let ev = crossterm::event::read()?;
+        paste_dbg(|| match &ev {
+            crossterm::event::Event::Paste(t) => format!("Paste({} chars): {:?}", t.len(), t),
+            crossterm::event::Event::Key(k) => format!("Key {:?} mods={:?}", k.code, k.modifiers),
+            other => format!("{other:?}"),
+        });
+        match ev {
             crossterm::event::Event::Key(k)
                 if matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
             {
@@ -461,6 +482,7 @@ impl super::App {
                     crate::app::TerminalFocus::Bottom => self.active_terminal(),
                 };
                 if let Some(t) = term {
+                    paste_dbg(|| format!("forward to PTY, bracketed={}", t.bracketed_paste_enabled()));
                     t.snap_view_to_live();
                     let _ = t.write_paste(&text);
                 }
