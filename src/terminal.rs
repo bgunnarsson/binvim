@@ -948,6 +948,15 @@ impl VteHandler {
     }
 }
 
+/// Bytes one `Terminal::drain()` call will parse before yielding back
+/// to the event loop. Sized so normal interactive output drains fully
+/// in a single tick, while a multi-megabyte burst (a streaming AI
+/// response, a `cat`'d build log) splits across a handful of ticks
+/// instead of freezing input for the whole parse. vte parses this in
+/// ~1ms, so the per-tick cost stays well under the threshold of
+/// perception even with a render on top.
+const DRAIN_BUDGET_BYTES: usize = 256 * 1024;
+
 /// One running PTY-backed terminal session. Wraps the master
 /// half of the PTY pair, a reader thread that funnels child output
 /// into a channel, and the vte parser + grid that consume it.
@@ -1212,9 +1221,22 @@ impl Terminal {
     /// Pull any pending PTY output off the channel and feed it to
     /// the vte parser. Cheap when nothing's queued. Call once per
     /// frame (or whenever `try_recv` would have something to give).
-    /// Returns the number of bytes processed — main loop uses this
-    /// to decide whether to re-render.
-    pub fn drain(&self) -> usize {
+    /// Returns `(bytes_processed, more_pending)`. The main loop uses
+    /// the byte count to decide whether to re-render, and `more_pending`
+    /// to decide whether to keep spinning instead of idling on the poll
+    /// timeout.
+    ///
+    /// The drain is **budget-capped** per call. A heavy TUI (opencode,
+    /// a streaming build log) can queue megabytes of output between
+    /// ticks; parsing the entire backlog in one call pins the main
+    /// thread long enough that crossterm input piles up unread in the
+    /// tty buffer — the user sees the editor freeze, then "replay"
+    /// every queued keystroke at once when we finally poll again.
+    /// Capping the work per tick keeps input responsive: leftover
+    /// bytes drain on the following ticks, interleaved with input
+    /// handling, so the pane catches up without ever starving the
+    /// event loop.
+    pub fn drain(&self) -> (usize, bool) {
         let mut total = 0;
         let mut inner = self.inner.lock().unwrap();
         while let Ok(chunk) = self.rx.try_recv() {
@@ -1228,8 +1250,16 @@ impl Terminal {
             } = &mut *inner;
             parser.advance(handler, &chunk);
             total += chunk.len();
+            if total >= DRAIN_BUDGET_BYTES {
+                // Budget hit — yield to the event loop. The channel may
+                // be empty now (we just consumed the last chunk) or
+                // still backed up; either way reporting `more = true`
+                // costs at most one extra cheap tick that drains zero
+                // bytes, which is far better than risking a freeze.
+                return (total, true);
+            }
         }
-        total
+        (total, false)
     }
 
     pub fn grid(&self) -> std::sync::MutexGuard<'_, TerminalInner> {

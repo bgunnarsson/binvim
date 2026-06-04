@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Heavy terminal/AI panes no longer freeze input then "replay" it.** A
+  chatty TUI in a `:terminal` or AI side pane (e.g. opencode) can queue
+  megabytes of output between ticks; the drain parsed the entire backlog
+  in one main-loop pass, blocking the event loop long enough that
+  keystrokes piled up unread and then fired in a burst once it finished.
+  PTY drains are now budget-capped per tick, so leftover output catches
+  up across the following ticks while input stays responsive.
+
 ## [0.5.8] - 2026-06-02
 
 ### Fixed

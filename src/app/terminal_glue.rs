@@ -186,19 +186,24 @@ impl super::App {
     }
 
     /// Drain pending PTY output into every terminal's grid. Called
-    /// once per render loop. Returns `true` if any bytes were
-    /// processed so the caller can mark the frame dirty. Background
-    /// tabs drain too — that's the whole point of multi-tab
-    /// terminals (`pnpm dev`'s output keeps accumulating while
-    /// focus is on a sibling tab).
-    pub(super) fn terminal_drain_if_open(&self) -> bool {
+    /// once per render loop. Returns `(dirty, more)`: `dirty` is true
+    /// if any bytes were processed so the caller can mark the frame
+    /// dirty; `more` is true if any tab hit its per-tick drain budget
+    /// with output still queued, so the caller can keep spinning to
+    /// catch up. Background tabs drain too — that's the whole point of
+    /// multi-tab terminals (`pnpm dev`'s output keeps accumulating
+    /// while focus is on a sibling tab).
+    pub(super) fn terminal_drain_if_open(&self) -> (bool, bool) {
         let mut any = false;
+        let mut more = false;
         for t in &self.terminals {
-            if t.drain() > 0 {
+            let (bytes, term_more) = t.drain();
+            if bytes > 0 {
                 any = true;
             }
+            more |= term_more;
         }
-        any
+        (any, more)
     }
 
     /// `Mode::Terminal` key dispatch. Two escape hatches:

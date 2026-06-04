@@ -508,21 +508,26 @@ impl super::App {
     }
 
     /// Drain pending PTY output into every side terminal's grid.
-    /// Returns `true` if any bytes were processed so the caller can
-    /// mark the frame dirty. Background tabs drain too. Each tab
-    /// stamps `last_byte_at` whenever its drain produces output, so
-    /// the render-side loading-splash check can ask "have we been
-    /// quiet long enough to drop the splash?"
-    pub(super) fn side_terminal_drain_if_open(&self) -> bool {
+    /// Returns `(dirty, more)`: `dirty` is true if any bytes were
+    /// processed so the caller can mark the frame dirty; `more` is true
+    /// if any tab hit its per-tick drain budget with output still
+    /// queued, so the caller can keep spinning to catch up. Background
+    /// tabs drain too. Each tab stamps `last_byte_at` whenever its
+    /// drain produces output, so the render-side loading-splash check
+    /// can ask "have we been quiet long enough to drop the splash?"
+    pub(super) fn side_terminal_drain_if_open(&self) -> (bool, bool) {
         let mut any = false;
+        let mut more = false;
         let now = Instant::now();
         for s in &self.side_terminals {
-            if s.terminal.drain() > 0 {
+            let (bytes, term_more) = s.terminal.drain();
+            if bytes > 0 {
                 s.last_byte_at.set(now);
                 any = true;
             }
+            more |= term_more;
         }
-        any
+        (any, more)
     }
 
     /// Make sure every side terminal's PTY grid matches the rows /

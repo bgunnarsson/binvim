@@ -1056,6 +1056,11 @@ impl App {
         self.refresh_editorconfig();
         self.refresh_git_hunks();
         let mut needs_render = true;
+        // Set when a PTY drain hit its per-tick byte budget with output
+        // still queued. Carried into the next iteration's poll budget so
+        // we come straight back to finish draining instead of idling —
+        // see the poll-budget block below.
+        let mut pty_backlog = false;
         while !self.should_quit {
             if needs_render {
                 self.maybe_reload_from_disk();
@@ -1201,6 +1206,15 @@ impl App {
             if lens_retry_due {
                 poll_dur = poll_dur.min(Duration::from_millis(250));
             }
+            // A PTY drain hit its byte budget last iteration with bytes
+            // still queued. Don't idle on the poll timeout — come right
+            // back to finish draining. poll(0) still returns instantly
+            // when a key is pending, so input stays responsive while the
+            // pane catches up across ticks instead of freezing for the
+            // whole burst.
+            if pty_backlog {
+                poll_dur = Duration::from_millis(0);
+            }
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
@@ -1322,9 +1336,11 @@ impl App {
             // the bottom and side panes drain every tick — background
             // tabs included, so a long-running `pnpm dev` or `claude`
             // session keeps absorbing output while focus is elsewhere.
-            if self.terminal_drain_if_open() {
+            let (term_dirty, term_more) = self.terminal_drain_if_open();
+            if term_dirty {
                 needs_render = true;
             }
+            pty_backlog = term_more;
             // Watch labelled (task) tabs for exit — first time we
             // notice the child is gone, scrape the visible grid +
             // scrollback for `path:line:col` errors and feed them
@@ -1339,9 +1355,11 @@ impl App {
             // the side terminals' PTY size with what `buffer_rows()`
             // currently allows. Cheap no-op when nothing changed.
             self.sync_side_terminal_geometry();
-            if self.side_terminal_drain_if_open() {
+            let (side_dirty, side_more) = self.side_terminal_drain_if_open();
+            if side_dirty {
                 needs_render = true;
             }
+            pty_backlog |= side_more;
             // After draining, give any side terminal whose loading
             // splash just flipped off the chance to write its
             // pending `@<path>` prefix into the freshly-ready
