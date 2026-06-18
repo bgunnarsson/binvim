@@ -618,6 +618,42 @@ impl super::App {
                 };
                 let _ = (grid_rows, grid_cols);
                 match ev.kind {
+                    // Mouse wheel for a program that does NOT track the
+                    // mouse. opencode enables DECSET mouse tracking, so
+                    // its wheel events fall through the guard to the
+                    // xterm-forward arm below and it scrolls its own
+                    // view. claude / codex don't — they render on the
+                    // normal screen via in-place repaint, with their
+                    // committed history scrolling into binvim's own
+                    // grid scrollback. There's nothing downstream to
+                    // forward to, so we page that scrollback ourselves
+                    // — the same fallback the bottom `:terminal` pane
+                    // already has, which the side pane was missing. A
+                    // hypothetical alt-screen pager without tracking
+                    // gets the wheel translated to arrow keys (xterm
+                    // "alternate scroll") since alt-screen has no
+                    // scrollback to page.
+                    MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                        if self
+                            .active_side_terminal()
+                            .map(|t| !t.mouse_state().any)
+                            .unwrap_or(false) =>
+                    {
+                        let up = matches!(ev.kind, MouseEventKind::ScrollUp);
+                        if let Some(term) = self.active_side_terminal() {
+                            if term.alt_screen_active() {
+                                let seq: &[u8] = if up {
+                                    b"\x1b[A\x1b[A\x1b[A"
+                                } else {
+                                    b"\x1b[B\x1b[B\x1b[B"
+                                };
+                                let _ = term.write_bytes(seq);
+                            } else {
+                                term.scroll_view_by(if up { 3 } else { -3 });
+                            }
+                        }
+                        return;
+                    }
                     MouseEventKind::Drag(MouseButton::Left)
                         if !ev.modifiers.contains(KeyModifiers::SHIFT) =>
                     {

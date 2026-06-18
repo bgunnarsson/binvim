@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **The mouse wheel now scrolls the AI side panes (`:claude`, `:codex`).**
+  The side pane forwarded the wheel to the embedded tool only when the tool
+  had enabled DECSET mouse tracking, and otherwise dropped the event. Claude
+  and Codex render on the normal screen via in-place repaint and never turn
+  mouse tracking on, so their committed history scrolled into binvim's own
+  grid scrollback with no way to reach it. The wheel now pages that scrollback
+  directly — the same fallback the bottom `:terminal` pane already had — while
+  mouse-tracking tools (opencode) keep getting the wheel forwarded, and an
+  alt-screen pager without tracking has the wheel translated to arrow keys.
+
 ## [0.5.12] - 2026-06-18
 
 ### Fixed
