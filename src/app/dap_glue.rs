@@ -726,6 +726,17 @@ impl super::App {
                 self.dap_cycle_tab(false);
                 true
             }
+            // Shift-Left/Right scroll the active tab horizontally; these
+            // must precede the unshifted cycle arms below, or the catch-all
+            // Left/Right would shadow them and the shift bindings never fire.
+            KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.dap_tab_h_scroll_by(-10);
+                true
+            }
+            KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.dap_tab_h_scroll_by(10);
+                true
+            }
             KeyCode::Right => {
                 self.dap_cycle_tab(true);
                 true
@@ -774,14 +785,6 @@ impl super::App {
                     1
                 };
                 self.dap_tab_h_scroll_by(step);
-                true
-            }
-            KeyCode::Left if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.dap_tab_h_scroll_by(-10);
-                true
-            }
-            KeyCode::Right if key.modifiers.contains(KeyModifiers::SHIFT) => {
-                self.dap_tab_h_scroll_by(10);
                 true
             }
             KeyCode::Char('0') if !ctrl => {

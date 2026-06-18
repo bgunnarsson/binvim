@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::lang::Lang;
 use crate::lsp::Severity;
-use crate::mode::{Mode, VisualKind};
+use crate::mode::Mode;
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, MoveTo, MoveToColumn, SetCursorStyle, Show},
@@ -6634,7 +6634,6 @@ fn draw_debug_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // "stopped — breakpoint") has moved to the editor status line
     // so the header stays minimal.
     let pane_bg = app.config.chrome_bg();
-    let header_fg = app.config.theme_fg();
     let body_bg = pane_bg;
     let muted = app.config.theme_dim();
     let active_bg = app.config.debug_active_tab_bg();

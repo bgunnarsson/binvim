@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Shift-Left / Shift-Right now scroll the debug pane horizontally again.**
+  The shifted arrow bindings sat below the unshifted Left/Right tab-cycle
+  arms in the match, so they were unreachable and never fired. They now
+  precede the cycle arms and scroll long stack-frame paths / console lines
+  as intended.
+
 ## [0.5.9] - 2026-06-18
 
 ### Added
