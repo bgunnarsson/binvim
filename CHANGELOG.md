@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.12]
+## [0.5.12] - 2026-06-18
 
 ### Fixed
 - **Terminal and AI panes are now reachable from the start page.** The
