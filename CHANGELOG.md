@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.9]
+## [0.5.9] - 2026-06-18
 
 ### Added
 - **`.slnx` solutions are recognised as a .NET workspace root.** The .NET 10
