@@ -12,6 +12,17 @@ follows [Semantic Versioning](https://semver.org/).
   arms in the match, so they were unreachable and never fired. They now
   precede the cycle arms and scroll long stack-frame paths / console lines
   as intended.
+- **The status line now shows a modified marker (`●`) for unsaved
+  buffers.** The marker slot after the file path had two identical
+  branches, so it rendered a blank space whether or not the buffer was
+  dirty; it now paints a dot when there are unsaved changes.
+
+### Changed
+- Internal clippy cleanup pass — no behavioural change. Mechanical
+  lint fixes across the tree (idiomatic `abs_diff` / `div_ceil` /
+  `eq_ignore_ascii_case`, redundant `.max(0)` removals, dead-code
+  pruning) plus scoped `#[allow]`s where the lint's rewrite would hurt
+  readability.
 
 ## [0.5.9] - 2026-06-18
 

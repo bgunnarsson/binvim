@@ -1220,9 +1220,9 @@ fn apply_razor_overlay(source: &[u8], colors: &mut [Option<Color>], config: &Con
 
     let paint = |colors: &mut [Option<Color>], s: usize, e: usize, c: Option<Color>| {
         if let Some(c) = c {
-            for k in s..e {
-                if colors[k].is_none() {
-                    colors[k] = Some(c);
+            for color in colors.iter_mut().take(e).skip(s) {
+                if color.is_none() {
+                    *color = Some(c);
                 }
             }
         }

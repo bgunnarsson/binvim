@@ -1095,7 +1095,7 @@ fn wrap_notification(msg: &str, width: usize) -> Vec<String> {
 fn cmdline_box_layout(app: &App) -> (usize, usize, usize) {
     let total_w = app.width as usize;
     let total_h = app.height as usize;
-    let box_w = total_w.saturating_sub(20).min(60).max(24);
+    let box_w = total_w.saturating_sub(20).clamp(24, 60);
     let left = total_w.saturating_sub(box_w) / 2;
     let top = (total_h * 4 / 10).max(2);
     (left, top, box_w)
@@ -1568,8 +1568,7 @@ fn picker_layout(app: &App) -> PickerLayout {
     // Bias slightly above centre so the popup doesn't visually fight the
     // status line.
     let bottom_chrome = 2;
-    let top =
-        rect.y as usize + (area_h.saturating_sub(bottom_chrome).saturating_sub(box_h) / 2).max(0);
+    let top = rect.y as usize + area_h.saturating_sub(bottom_chrome).saturating_sub(box_h) / 2;
 
     let prompt_row = top + 2;
     let footer_row = top + box_h - 2;
@@ -1860,6 +1859,7 @@ fn draw_padding_row(
 /// Paint one picker entry inside the body band. Splits at the last `/` so
 /// the directory part renders dim and the basename pops bright. Returns
 /// the number of chars written (so the caller can fill the trailing pad).
+#[allow(clippy::too_many_arguments)]
 fn paint_picker_row(
     out: &mut impl Write,
     display: &str,
@@ -2759,8 +2759,8 @@ fn draw_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
                 continue;
             };
             let line_cols = line.len().min(grid_cols);
-            for col in 0..line_cols {
-                let mut cell = line[col];
+            for (col, &orig_cell) in line.iter().enumerate().take(line_cols) {
+                let mut cell = orig_cell;
                 // Wide-char continuation cells are tagged with `\0`
                 // by the vte handler. The host terminal already
                 // painted the right half of the wide glyph when we
@@ -2914,9 +2914,7 @@ fn draw_file_tree_pane(out: &mut impl Write, app: &App) -> Result<()> {
     // frame matches whatever the cursor has done since last paint.
     let body_top = top + 2;
     let body_rows = pane_rows.saturating_sub(2);
-    let scroll = if body_rows == 0 {
-        0
-    } else if tree.entries.len() <= body_rows {
+    let scroll = if body_rows == 0 || tree.entries.len() <= body_rows {
         0
     } else {
         let half = body_rows / 2;
@@ -3214,8 +3212,8 @@ fn draw_side_terminal_pane(out: &mut impl Write, app: &App) -> Result<()> {
             let mut painted = 0usize;
             if let Some(line) = grid.visible_row(row) {
                 let line_cols = line.len().min(grid_cols);
-                for col in 0..line_cols {
-                    let mut cell = line[col];
+                for (col, &orig_cell) in line.iter().enumerate().take(line_cols) {
+                    let mut cell = orig_cell;
                     if cell.ch == '\0' {
                         continue;
                     }
@@ -3713,10 +3711,7 @@ fn preview_macro_keys(keys: &[crossterm::event::KeyEvent], max_chars: usize) -> 
     let mut count = 0usize;
     for k in keys {
         let rendered = match k.code {
-            KeyCode::Char(c) => {
-                let with_mods = format_key_with_mods(c, k.modifiers);
-                with_mods
-            }
+            KeyCode::Char(c) => format_key_with_mods(c, k.modifiers),
             KeyCode::Enter => "<CR>".into(),
             KeyCode::Esc => "<Esc>".into(),
             KeyCode::Tab => "<Tab>".into(),
@@ -4683,6 +4678,7 @@ impl DashRow {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_box_top<W: Write>(
     out: &mut W,
     x: usize,
@@ -5612,11 +5608,7 @@ fn draw_buffer(
             // anchor on it; other rows stay the muted Overlay0.
             let (label, label_color) =
                 if app.config.line_numbers.relative && line_idx != win.cursor.line {
-                    let dist = if line_idx > win.cursor.line {
-                        line_idx - win.cursor.line
-                    } else {
-                        win.cursor.line - line_idx
-                    };
+                    let dist = line_idx.abs_diff(win.cursor.line);
                     (
                         format!("{:>width$} ", dist, width = gutter - 3),
                         app.config.theme_dim(),
@@ -5680,6 +5672,7 @@ fn draw_buffer(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_line_with_selection(
     out: &mut impl Write,
     app: &App,
@@ -6270,7 +6263,7 @@ fn draw_line_with_selection(
     // Multi-cursor anchored at end-of-line (col == chars.len()) — paint a
     // Lavender block so the user can see the cursor sitting past the
     // last char.
-    if !clipped_right && multi_cursors.contains(&chars.len()) && visual_used + 1 <= avail {
+    if !clipped_right && multi_cursors.contains(&chars.len()) && visual_used < avail {
         queue!(
             out,
             SetBackgroundColor(app.config.multi_cursor_bg()),
@@ -6316,7 +6309,7 @@ fn draw_line_with_selection(
     // edge, and the marker wouldn't be at the line's actual end anyway.
     // Suppressed inside code-fence rows so the dark slab isn't broken by
     // a chrome glyph rendered with the terminal-default bg.
-    if show_hidden && !clipped_right && visual_used + 1 <= avail && code_block_bg.is_none() {
+    if show_hidden && !clipped_right && visual_used < avail && code_block_bg.is_none() {
         queue!(out, SetForegroundColor(dim_color), Print('¬'))?;
         reset_to_buf_bg(out, buf_bg)?;
     }
@@ -6852,6 +6845,7 @@ impl DapTabPart {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paint_dap_row(
     out: &mut impl Write,
     row: &DapTabRow,
@@ -7531,7 +7525,7 @@ fn starts_with_ci(chars: &[char], i: usize, prefix: &str) -> bool {
         return false;
     }
     for (k, p) in pchars.iter().enumerate() {
-        if chars[i + k].to_ascii_lowercase() != p.to_ascii_lowercase() {
+        if !chars[i + k].eq_ignore_ascii_case(p) {
             return false;
         }
     }
@@ -7686,7 +7680,6 @@ fn no_session_note() -> &'static str {
 /// Mirrors the editor's syntax palette so variable names / values
 /// / types read consistently between source and pane.
 struct DebugPalette {
-    base: Color,
     text: Color,
     /// Subtext0 — readable but distinctly less prominent than text.
     /// Used for type chips and `=` separators where "this is
@@ -7696,7 +7689,6 @@ struct DebugPalette {
     /// disappeared into the bg.
     subtle: Color,
     muted: Color,
-    accent: Color,
     blue: Color,
     lavender: Color,
     green: Color,
@@ -7708,11 +7700,9 @@ struct DebugPalette {
 impl DebugPalette {
     pub fn from_config(config: &crate::config::Config) -> Self {
         Self {
-            base: config.theme_chip_fg(),
             text: config.theme_fg(),
             subtle: config.theme_fg(),
             muted: config.theme_dim(),
-            accent: config.theme_accent(),
             blue: config.theme_info(),
             lavender: config.theme_emphasis(),
             green: config.theme_accent_secondary(),
@@ -7727,15 +7717,6 @@ impl Default for DebugPalette {
     fn default() -> Self {
         Self::from_config(&crate::config::Config::default())
     }
-}
-
-/// Pad the current row out to `target` columns by writing spaces. `written`
-/// is how many character columns have already been printed for this row.
-fn pad_right(out: &mut impl Write, written: usize, target: usize) -> Result<()> {
-    if target > written {
-        queue!(out, Print(" ".repeat(target - written)))?;
-    }
-    Ok(())
 }
 
 fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
@@ -7784,7 +7765,7 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
             format!(" {} {}{} ", NF_BRANCH, b, stats)
         })
         .unwrap_or_default();
-    let dirty = if app.buffer.dirty { " " } else { " " };
+    let dirty = if app.buffer.dirty { "●" } else { " " };
     let path = app.buffer.path.as_deref();
     let lang = path.and_then(Lang::detect);
     let right_text = match lang {

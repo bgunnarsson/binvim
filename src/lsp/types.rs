@@ -146,7 +146,9 @@ pub struct InlayHint {
     pub label: String,
     /// LSP `InlayHintKind`: 1 = Type, 2 = Parameter. Parameter hints
     /// render in a slightly warmer tone than type hints so the two
-    /// categories scan apart on a line that mixes both.
+    /// categories scan apart on a line that mixes both. Parsed and
+    /// retained for that future kind-aware tint; not consulted yet.
+    #[allow(dead_code)]
     pub kind: u8,
 }
 
@@ -234,8 +236,8 @@ pub enum LspEvent {
         lens_index: usize,
         command: Option<LspCommand>,
     },
-    /// Copilot `checkStatus` reply — used to drive `App.lsp.copilot_status`
-    /// + the status-line indicator. `kind` is the raw protocol string
+    /// Copilot `checkStatus` reply — drives `App.lsp.copilot_status` and
+    /// the status-line indicator. `kind` is the raw protocol string
     /// (`"OK"`, `"NotSignedIn"`, `"NotAuthorized"`, `"NoTelemetryConsent"`,
     /// …); the App normalises it into a `CopilotStatus`.
     CopilotStatus {

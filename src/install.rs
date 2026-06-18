@@ -113,7 +113,7 @@ impl Installer {
             Installer::BrewCask(p) => format!("brew install --cask {p}"),
             Installer::Apt(p) => format!("sudo apt-get install -y {p}"),
             Installer::Npm(pkgs) => format!("npm install -g {}", pkgs.join(" ")),
-            Installer::Cargo(p, extra) if extra.is_empty() => format!("cargo install {p}"),
+            Installer::Cargo(p, []) => format!("cargo install {p}"),
             Installer::Cargo(p, extra) => format!("cargo install {p} {}", extra.join(" ")),
             Installer::Rustup(c) => format!("rustup component add {c}"),
             Installer::Go(m) => format!("go install {m}"),

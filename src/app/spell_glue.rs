@@ -166,7 +166,7 @@ impl super::App {
             end += 1;
         }
         let captured: String = chars[start..end].iter().collect();
-        if captured.to_ascii_lowercase() != word.to_ascii_lowercase() {
+        if !captured.eq_ignore_ascii_case(word) {
             self.status_msg = "spell: word at cursor changed; re-run `z=`".into();
             return;
         }

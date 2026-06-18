@@ -765,13 +765,17 @@ pub struct SemanticTokensCache {
 }
 
 /// Cached `textDocument/documentHighlight` ranges for one buffer.
-/// The anchor (cursor position + buffer version when the request fired)
-/// gates rendering — the highlights only paint while the live cursor
-/// + buffer version still match, so a stale response doesn't smear
-/// yesterday's highlights over today's code.
+/// `anchor_version` gates rendering — the highlights only paint while
+/// the buffer version still matches and the live cursor falls inside one
+/// of the ranges (see `line_document_highlights`), so a stale response
+/// doesn't smear yesterday's highlights over today's code. The request's
+/// `anchor_line`/`anchor_col` are echoed back for diagnostics but no
+/// longer feed the gate.
 #[derive(Debug, Clone)]
 pub struct DocumentHighlightCache {
+    #[allow(dead_code)]
     pub anchor_line: usize,
+    #[allow(dead_code)]
     pub anchor_col: usize,
     pub anchor_version: u64,
     pub ranges: Vec<crate::lsp::DocumentHighlightRange>,

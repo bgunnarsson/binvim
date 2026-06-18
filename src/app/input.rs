@@ -234,10 +234,8 @@ impl super::App {
                     self.status_msg_at = None;
                 }
                 // Hover popup intercepts scroll keys; everything else dismisses it.
-                if self.hover.is_some() {
-                    if self.try_scroll_hover(&k) {
-                        return Ok(());
-                    }
+                if self.hover.is_some() && self.try_scroll_hover(&k) {
+                    return Ok(());
                 }
                 self.hover = None;
                 self.whichkey = None;
@@ -814,7 +812,7 @@ impl super::App {
                 let body_start = self.buffer_top() + 2;
                 let mut clicked_entry: Option<usize> = None;
                 if row >= body_start {
-                    let body_row = (row - body_start) as usize;
+                    let body_row = row - body_start;
                     let body_rows = self.buffer_rows().saturating_sub(2);
                     if let Some(state) = self.file_tree.as_mut() {
                         let scroll = if body_rows == 0 || state.entries.len() <= body_rows {
@@ -1310,6 +1308,11 @@ impl super::App {
         }
     }
 
+    // The arrow-key arms keep their bound checks as in-body `if`s so all
+    // four (Left/Right/Up/Down) read the same shape — Right/Down can't
+    // collapse to a guard (they compute a length first), so collapsing
+    // only Left/Up would split the block stylistically.
+    #[allow(clippy::collapsible_match)]
     pub(super) fn handle_insert_key(&mut self, key: KeyEvent) {
         let is_esc = matches!(key.code, KeyCode::Esc);
         // Every Insert-mode keystroke resets the Copilot idle timer.

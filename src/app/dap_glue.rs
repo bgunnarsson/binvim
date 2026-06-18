@@ -133,6 +133,7 @@ impl super::App {
     ///      tabs + focus on a hit.
     ///   3. Body — focus the pane and (for clickable tabs) move
     ///      `dap_pane_cursor` to the clicked row.
+    ///
     /// Scroll wheel inside the pane pages the active tab.
     pub(super) fn handle_debug_pane_mouse_event(
         &mut self,
@@ -202,10 +203,9 @@ impl super::App {
         if matches!(self.dap_pane_tab, crate::app::DapPaneTab::Console)
             && row >= body_top
             && row < pane_bottom
+            && self.handle_console_mouse(ev, row, col, body_top)
         {
-            if self.handle_console_mouse(ev, row, col, body_top) {
-                return true;
-            }
+            return true;
         }
 
         // Pull focus on any click anywhere in the pane. Subsequent
@@ -1599,7 +1599,7 @@ impl super::App {
     /// - 0 runnable profiles → start without overrides (framework default
     ///   port, no extra env).
     /// - 1 runnable profile → use it directly.
-    /// - >1 runnable profiles → stash the project + profile list on the
+    /// - `>1` runnable profiles → stash the project + profile list on the
     ///   App and open the profile picker. The accept path routes back
     ///   through `dap_start_session_with_profile`.
     pub(super) fn dap_start_session_with_project(&mut self, project: std::path::PathBuf) {
@@ -1693,7 +1693,7 @@ impl super::App {
         let project_label = project
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or_else(|| "project");
+            .unwrap_or("project");
         self.status_msg = if profile_label.is_empty() {
             format!("debug: {} ({})", adapter.key, project_label)
         } else {

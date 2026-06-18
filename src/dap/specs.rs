@@ -344,8 +344,8 @@ pub fn find_go_main_dirs(workspace_root: &Path) -> Vec<PathBuf> {
                         if t.is_empty() || t.starts_with("//") {
                             continue;
                         }
-                        if t.starts_with("package ") {
-                            let rest = t[8..].trim();
+                        if let Some(rest) = t.strip_prefix("package ") {
+                            let rest = rest.trim();
                             if rest == "main" || rest.starts_with("main") {
                                 has_main_pkg = true;
                             }
@@ -661,9 +661,9 @@ pub fn find_rust_bin_targets(workspace_root: &Path) -> Vec<RustBinTarget> {
             for entry in entries.flatten() {
                 let p = entry.path();
                 let Some(stem) = p.file_stem().and_then(|s| s.to_str()) else { continue };
-                if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("rs") {
-                    bins_in_this_manifest.push(stem.to_string());
-                } else if p.is_dir() && p.join("main.rs").is_file() {
+                let is_rs_file =
+                    p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("rs");
+                if is_rs_file || (p.is_dir() && p.join("main.rs").is_file()) {
                     bins_in_this_manifest.push(stem.to_string());
                 }
             }

@@ -601,7 +601,7 @@ impl super::App {
             let last = self.buffer.line_count().saturating_sub(1);
             self.window.cursor.line = sb.line.min(last);
             let line_len = self.buffer.line_len(self.window.cursor.line);
-            self.window.cursor.col = sb.col.min(line_len.saturating_sub(1).max(0));
+            self.window.cursor.col = sb.col.min(line_len.saturating_sub(1));
             self.window.cursor.want_col = self.window.cursor.col;
             self.window.view_top = sb.view_top.min(last);
             // Restore jumplist — clamp each entry against the current

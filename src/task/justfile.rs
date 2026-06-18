@@ -128,7 +128,7 @@ fn recipe_name(line: &str) -> Option<String> {
     }
     // Reserved words `just` ships with that mustn't be picker-runnable.
     const RESERVED: &[&str] = &["alias", "set", "export", "import", "mod"];
-    if RESERVED.iter().any(|r| *r == name) {
+    if RESERVED.contains(&name) {
         return None;
     }
     Some(name.to_string())

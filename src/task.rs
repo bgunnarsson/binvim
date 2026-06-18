@@ -9,7 +9,7 @@
 //! Sub-module map:
 //! - [`types`]: `Task`, `TaskSource`
 //! - [`specs`]: workspace walk + per-source discovery dispatch
-//! - [`npm_scripts`]: `package.json:scripts` (npm / pnpm / yarn picker)
+//! - [`npm_scripts`]: `package.json` scripts (npm / pnpm / yarn picker)
 //! - [`justfile`]: Justfile recipe extraction
 //! - [`cargo_aliases`]: `.cargo/config.toml` aliases + builtin verbs
 //! - [`makefile`]: top-level Makefile target scrape
@@ -24,4 +24,7 @@ pub mod specs;
 pub mod types;
 
 pub use specs::discover_all;
+// TaskSource is re-exported for the test module; a plain `cargo clippy`
+// (no --tests) sees no non-test consumer and flags it, hence the allow.
+#[allow(unused_imports)]
 pub use types::{Task, TaskSource};

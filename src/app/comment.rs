@@ -11,6 +11,9 @@
 //! preserving content unchanged in between.
 
 use crate::lang::Lang;
+// VisualKind is only referenced from the test module, which a plain
+// `cargo clippy` (no --tests) doesn't compile — hence the allow.
+#[allow(unused_imports)]
 use crate::mode::{Mode, VisualKind};
 
 impl super::App {

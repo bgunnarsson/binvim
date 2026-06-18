@@ -410,12 +410,6 @@ impl super::App {
         Some((s, e.min(line_len)))
     }
 
-    /// Char-column ranges of search-highlight matches on `line` of the
-    /// active buffer.
-    pub fn line_search_matches(&self, line: usize) -> Vec<(usize, usize)> {
-        self.line_search_matches_in(&self.buffer, line)
-    }
-
     /// Char-column ranges of search-highlight matches on `line` of an
     /// arbitrary buffer — used by the renderer when drawing inactive
     /// panes so each pane's own buffer is searched against the global
@@ -541,7 +535,7 @@ impl super::App {
                 continue;
             }
             let len = raw.chars().count();
-            let segs = (len + max_inner - 1) / max_inner;
+            let segs = len.div_ceil(max_inner);
             rows += segs;
             widest = widest.max(len.min(max_inner));
         }

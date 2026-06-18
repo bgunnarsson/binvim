@@ -407,7 +407,12 @@ pub struct BufferState<'a> {
     pub folds: &'a [FoldRange],
     pub closed_folds: &'a std::collections::HashSet<usize>,
     pub git_hunks: &'a [crate::git::GitHunk],
+    // Plumbed per-pane for parity with the other gutter data, but the
+    // blame stripe still reads `App.blame`/`App.blame_visible` directly,
+    // so these aren't consulted yet.
+    #[allow(dead_code)]
     pub blame: &'a [crate::git::BlameLine],
+    #[allow(dead_code)]
     pub blame_visible: bool,
     pub markdown_meta: Option<&'a MarkdownMetaCache>,
     /// True when the renderer should apply markdown concealed-render

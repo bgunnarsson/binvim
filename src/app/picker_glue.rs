@@ -110,6 +110,10 @@ impl super::App {
         self.mode = Mode::Picker;
     }
 
+    // The Tab arm keeps its `if picker.kind == …` as an in-body check
+    // rather than a match guard: the guard would extend `picker`'s mutable
+    // borrow across the `self.pkg_toggle_prerelease()` call in the body.
+    #[allow(clippy::collapsible_match)]
     pub(super) fn handle_picker_key(&mut self, key: KeyEvent) {
         let Some(picker) = self.picker.as_mut() else {
             self.mode = Mode::Normal;

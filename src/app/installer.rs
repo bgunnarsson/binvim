@@ -621,10 +621,8 @@ impl super::App {
 fn handle_picker_keys(state: &mut InstallerState, k: crossterm::event::KeyEvent) {
     use crossterm::event::KeyCode;
     match k.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            if state.cursor + 1 < state.checked.len() {
-                state.cursor += 1;
-            }
+        KeyCode::Char('j') | KeyCode::Down if state.cursor + 1 < state.checked.len() => {
+            state.cursor += 1;
         }
         KeyCode::Char('k') | KeyCode::Up => {
             state.cursor = state.cursor.saturating_sub(1);
@@ -644,9 +642,9 @@ fn handle_picker_keys(state: &mut InstallerState, k: crossterm::event::KeyEvent)
     }
 }
 
-/// Renderer-side helpers — small enough not to warrant their own module.
-/// Each returns owned `PickerRow`s because the renderer borrows immutably and
-/// we'd otherwise be juggling lifetimes against `App.installer`.
+// Renderer-side helpers — small enough not to warrant their own module.
+// Each returns owned `PickerRow`s because the renderer borrows immutably and
+// we'd otherwise be juggling lifetimes against `App.installer`.
 
 /// One row in a checkbox picker: a name plus a summary the renderer paints
 /// to its right.

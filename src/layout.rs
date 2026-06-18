@@ -143,7 +143,8 @@ impl Layout {
         None
     }
 
-    /// Collect every window id present in the tree.
+    /// Collect every window id present in the tree. Test-only helper.
+    #[allow(dead_code)]
     pub fn ids(&self) -> Vec<WindowId> {
         let mut out = Vec::new();
         Self::collect_ids(&self.root, &mut out);

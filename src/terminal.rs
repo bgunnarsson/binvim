@@ -643,8 +643,8 @@ impl Perform for VteHandler {
         match c {
             // CUP — Cursor Position. Both args 1-based per spec, 0 == 1.
             'H' | 'f' => {
-                let row = (first as usize).saturating_sub(1).max(0);
-                let col = (second as usize).saturating_sub(1).max(0);
+                let row = (first as usize).saturating_sub(1);
+                let col = (second as usize).saturating_sub(1);
                 self.move_to(row, col);
             }
             'A' => {
@@ -804,14 +804,10 @@ impl Perform for VteHandler {
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
         match byte {
             b'D' => self.line_feed(), // IND
-            b'M' => {
-                // RI — Reverse Index. Move cursor up; if at top,
-                // scroll down (we don't implement scroll-down so
-                // just stay put — rare in real shells).
-                if self.cur_row > 0 {
-                    self.cur_row -= 1;
-                }
-            }
+            // RI — Reverse Index. Move cursor up; if at top, scroll down
+            // (we don't implement scroll-down so just stay put — rare in
+            // real shells).
+            b'M' if self.cur_row > 0 => self.cur_row -= 1,
             b'7' => self.saved = Some((self.cur_row, self.cur_col)),
             b'8' => {
                 if let Some((r, c)) = self.saved {
@@ -1014,8 +1010,8 @@ impl Terminal {
         Self::spawn_program(rows, cols, &shell_cmd, &[])
     }
 
-    /// Spawn `program` with `args` in a `rows × cols` PTY. Same env
-    /// + cwd treatment as `spawn`. Used by the side-pane AI launcher
+    /// Spawn `program` with `args` in a `rows × cols` PTY. Same env and
+    /// cwd treatment as `spawn`. Used by the side-pane AI launcher
     /// to start the user's shell with `-l -i -c "exec <tool>"` so
     /// the shell sources its rc files (login + interactive), picks
     /// up nvm / asdf / direnv shims, and then `exec`s into the tool

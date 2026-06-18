@@ -201,7 +201,7 @@ fn split_identifier(token: &str) -> Vec<String> {
         return Vec::new();
     }
     // First pass: split on `_` / `-` boundaries.
-    let parts_initial: Vec<&str> = token.split(|c: char| c == '_' || c == '-').collect();
+    let parts_initial: Vec<&str> = token.split(['_', '-']).collect();
     let mut out: Vec<String> = Vec::new();
     for chunk in parts_initial {
         if chunk.is_empty() {

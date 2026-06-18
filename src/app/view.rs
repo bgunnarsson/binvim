@@ -426,7 +426,7 @@ impl super::App {
         let target = 30usize;
         let editor_floor = 40usize.saturating_add(self.side_pane_cols());
         let max = total.saturating_sub(editor_floor);
-        target.min(max).max(0)
+        target.min(max)
     }
 
     /// Width in cells of the right-side terminal pane (`:claude`,
@@ -607,16 +607,6 @@ impl super::App {
         }
     }
 
-    /// Hunk kind covering `line` (0-indexed), if any. Linear scan over the
-    /// active buffer's `git_hunks` — typical hunk counts are well under
-    /// 100, and we call this per-visible-row at render time only.
-    pub fn git_hunk_kind_at(&self, line: usize) -> Option<crate::git::GitHunkKind> {
-        self.git_hunks
-            .iter()
-            .find(|h| line >= h.start_line && line <= h.end_line)
-            .map(|h| h.kind)
-    }
-
     /// Recompute fold ranges if the buffer's version moved past the
     /// cached snapshot. Cheap on small buffers (single linear pass).
     pub(super) fn ensure_folds(&mut self) {
@@ -690,12 +680,6 @@ impl super::App {
         self.buffer_state(self.active).line_is_folded(line)
     }
 
-    /// True if `line` is the start of a closed fold (rendered as the
-    /// `… N lines` placeholder).
-    pub fn line_is_fold_start(&self, line: usize) -> bool {
-        self.buffer_state(self.active).line_is_fold_start(line)
-    }
-
     /// Return the innermost fold (smallest range) containing `line`.
     #[allow(dead_code)]
     fn innermost_fold_at(&self, line: usize) -> Option<&FoldRange> {
@@ -721,12 +705,6 @@ impl super::App {
             .filter(|f| !self.closed_folds.contains(&f.start_line))
             .min_by_key(|f| f.end_line - f.start_line)
             .cloned()
-    }
-
-    /// Number of lines `line` represents on screen — 1 normally, the full
-    /// fold span when this is the start of a closed fold.
-    pub fn folded_line_span(&self, line: usize) -> usize {
-        self.buffer_state(self.active).folded_line_span(line)
     }
 
     /// True when the renderer should fold markdown's syntax markers
@@ -961,9 +939,7 @@ pub(super) fn compute_markdown_meta(
     buffer: &Buffer,
     prev: Option<crate::app::state::MarkdownMetaCache>,
 ) -> Option<crate::app::state::MarkdownMetaCache> {
-    let Some(path) = buffer.path.clone() else {
-        return None;
-    };
+    let path = buffer.path.clone()?;
     if !matches!(
         crate::lang::Lang::detect(&path),
         Some(crate::lang::Lang::Markdown)

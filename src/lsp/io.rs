@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use super::client::{InitState, SemanticTokensLegend};
 use super::types::{Diagnostic, DiagnosticsMessage, LspIncoming, MessageSeverity, Severity};
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn reader_loop(
     stdout: impl Read + Send + 'static,
     stdin: Arc<Mutex<ChildStdin>>,
@@ -58,6 +59,7 @@ pub(super) fn reader_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dispatch(
     msg: Value,
     stdin: &Arc<Mutex<ChildStdin>>,

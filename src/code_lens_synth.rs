@@ -171,10 +171,8 @@ fn first_string_literal_text(args: Node, src: &[u8]) -> Option<String> {
             // resolve to a stable name (e.g. `it(`when X happens`, …)`).
             // Only accept it when it has no `template_substitution`
             // children — we don't try to interpret interpolation.
-            "template_string" => {
-                if !has_template_substitution(child) {
-                    return decode_template_string(child, src);
-                }
+            "template_string" if !has_template_substitution(child) => {
+                return decode_template_string(child, src);
             }
             _ => {}
         }

@@ -179,7 +179,7 @@ pub fn parse_unified_diff(diff: &str) -> Vec<GitHunk> {
                 // line *before* the missing block, so we attach to that
                 // 0-indexed line (clamped to 0 if the deletion was at
                 // the very top of the file).
-                let line = new_start.saturating_sub(1).max(0);
+                let line = new_start.saturating_sub(1);
                 out.push(GitHunk {
                     start_line: line,
                     end_line: line,
@@ -298,7 +298,7 @@ pub fn unidiff_zero_hunk_for_line(
         // For pure deletions new_count == 0 — treat target_line == new_start
         // as a hit so the user can reset a deletion they're standing on.
         let in_range = if new_count == 0 {
-            target_line == new_start || target_line == new_start.saturating_sub(1).max(0)
+            target_line == new_start || target_line == new_start.saturating_sub(1)
         } else {
             target_line >= new_start && target_line < new_start + new_count
         };
@@ -405,8 +405,8 @@ pub fn blame(path: &Path) -> Option<Vec<BlameLine>> {
         std::collections::HashMap::new();
     let mut current_sha: Option<String> = None;
     let mut lines: Vec<BlameLine> = Vec::new();
-    let mut iter = text.lines();
-    while let Some(line) = iter.next() {
+    let iter = text.lines();
+    for line in iter {
         // Header lines look like `<sha> <orig-line> <final-line>[ <count>]`.
         // Any other key/value lines come after — `author Foo Bar`,
         // `author-time 1700000000`, etc. The body line itself is

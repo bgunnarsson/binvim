@@ -826,6 +826,10 @@ fn is_plain_prose(line: &str) -> bool {
 /// Walk the line looking for inline markers. `body_start` lets the
 /// blockquote prefix opt out of being re-scanned (so `> **bold**`
 /// works without the leading `>` confusing the bold detector).
+// The opener/closer guards read as "not whitespace, and not the
+// underscore-intraword case" — De Morgan'ing them (as clippy suggests)
+// would obscure that intent, so keep the explicit double-negation.
+#[allow(clippy::nonminimal_bool)]
 fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
     let n = chars.len();
     let mut i = body_start;
@@ -1033,7 +1037,8 @@ fn scan_inline(chars: &[char], body_start: usize, meta: &mut MarkdownLineMeta) {
             // Paired tags — `<strong>`, `<em>`, `<i>`, `<u>`, `<code>`.
             // Each entry: (open, close, bold, italic, underline, color).
             // First match wins.
-            const PAIRS: &[(&str, &str, bool, bool, bool, Option<Color>)] = &[
+            type TagPair = (&'static str, &'static str, bool, bool, bool, Option<Color>);
+            const PAIRS: &[TagPair] = &[
                 ("<strong>", "</strong>", true, false, false, None),
                 ("<b>", "</b>", true, false, false, None),
                 ("<em>", "</em>", false, true, false, None),

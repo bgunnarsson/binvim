@@ -382,12 +382,10 @@ impl super::App {
                     // existing list and re-filter together. Otherwise this
                     // is a fresh request — replace.
                     let mut merged_items = items;
-                    let preserve = match self.completion.as_ref() {
-                        Some(c) if c.anchor_line == anchor_line && c.anchor_col == anchor_col => {
-                            true
-                        }
-                        _ => false,
-                    };
+                    let preserve = matches!(
+                        self.completion.as_ref(),
+                        Some(c) if c.anchor_line == anchor_line && c.anchor_col == anchor_col
+                    );
                     if preserve {
                         if let Some(existing) = self.completion.take() {
                             merged_items.extend(existing.items);
@@ -1343,16 +1341,6 @@ impl super::App {
         }
     }
 
-    /// Diagnostics for `line` of the active buffer. Convenience for
-    /// callers that only ever want the focused buffer's reports;
-    /// inactive panes call `line_diagnostics_for` with their own path.
-    pub fn line_diagnostics(&self, line: usize) -> Vec<&Diagnostic> {
-        let Some(path) = self.buffer.path.as_ref() else {
-            return Vec::new();
-        };
-        self.line_diagnostics_for(path, line)
-    }
-
     /// Diagnostics for `line` of whichever buffer has `path`. Used by
     /// the renderer when drawing an inactive pane — diagnostics are
     /// keyed by path on `LspManager`, so any buffer's reports can be
@@ -1362,13 +1350,6 @@ impl super::App {
             return Vec::new();
         };
         diags.iter().filter(|d| d.line == line).collect()
-    }
-
-    pub fn worst_diagnostic(&self, line: usize) -> Option<Severity> {
-        let Some(path) = self.buffer.path.as_ref() else {
-            return None;
-        };
-        self.worst_diagnostic_for(path, line)
     }
 
     pub fn worst_diagnostic_for(&self, path: &std::path::Path, line: usize) -> Option<Severity> {
@@ -1620,7 +1601,7 @@ impl super::App {
                 concrete.push((s_idx, e_idx, e.new_text.clone()));
             }
             // Apply in reverse position order so earlier edits don't shift later offsets.
-            concrete.sort_by(|a, b| b.0.cmp(&a.0));
+            concrete.sort_by_key(|c| std::cmp::Reverse(c.0));
             for (s, e, text) in &concrete {
                 if *e > *s {
                     self.buffer.delete_range(*s, *e);
@@ -2337,8 +2318,7 @@ pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent:
         return text.to_string();
     }
     let mut out = String::with_capacity(text.len() + indent.len() * 4);
-    let mut i = 0usize;
-    for c in text.chars() {
+    for (i, c) in text.chars().enumerate() {
         out.push(c);
         if c == '\n' {
             for stop in stops.iter_mut() {
@@ -2348,7 +2328,6 @@ pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent:
             }
             out.push_str(indent);
         }
-        i += 1;
     }
     out
 }

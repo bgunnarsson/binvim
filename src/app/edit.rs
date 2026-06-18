@@ -252,7 +252,7 @@ impl super::App {
                     let line_start = self.buffer.rope.line_to_char(line);
                     let col = *pos - line_start;
                     let len = self.buffer.line_len(line);
-                    if col < len && *pos + 1 <= total {
+                    if col < len && *pos < total {
                         *pos += 1;
                     }
                 }
@@ -324,7 +324,7 @@ impl super::App {
             buf.push(ch);
         }
         self.buffer.insert_at_idx(start, &buf);
-        self.window.cursor.col = self.window.cursor.col + actual.saturating_sub(1);
+        self.window.cursor.col += actual.saturating_sub(1);
         self.window.cursor.want_col = self.window.cursor.col;
         self.clamp_cursor_normal();
     }
@@ -598,8 +598,8 @@ impl super::App {
                 break;
             }
         }
-        for i in here_col..chars.len() {
-            if chars[i] == target {
+        for (i, &c) in chars.iter().enumerate().skip(here_col) {
+            if c == target {
                 right = Some(i);
                 break;
             }
@@ -881,7 +881,7 @@ fn find_number_on_line(chars: &[char], from_col: usize) -> Option<ParsedNumber> 
         }
         let digits: String = chars[digits_start..end].iter().collect();
         let parsed = match base {
-            NumberBase::Dec => i64::from_str_radix(&digits, 10).ok(),
+            NumberBase::Dec => digits.parse().ok(),
             NumberBase::Hex => i64::from_str_radix(&digits, 16).ok(),
             NumberBase::Oct => i64::from_str_radix(&digits, 8).ok(),
             NumberBase::Bin => i64::from_str_radix(&digits, 2).ok(),

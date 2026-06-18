@@ -132,10 +132,8 @@ fn run_multi_select(
             match (code, modifiers) {
                 (KeyCode::Char('q'), _) | (KeyCode::Esc, _) => return Ok(None),
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => return Ok(None),
-                (KeyCode::Char('j'), _) | (KeyCode::Down, _) => {
-                    if state.cursor + 1 < items.len() {
-                        state.cursor += 1;
-                    }
+                (KeyCode::Char('j'), _) | (KeyCode::Down, _) if state.cursor + 1 < items.len() => {
+                    state.cursor += 1;
                 }
                 (KeyCode::Char('k'), _) | (KeyCode::Up, _) => {
                     state.cursor = state.cursor.saturating_sub(1);

@@ -1387,6 +1387,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     }
 
     // Digits → counts. `0` is a digit only if a count is already in progress.
+    // Kept as the literal "digit, but not a leading 0" guard — clippy's
+    // De Morgan rewrite reads further from that intent.
+    #[allow(clippy::nonminimal_bool)]
     if ch.is_ascii_digit() && !(ch == '0' && !state.slot_in_progress()) {
         let d = ch.to_digit(10).unwrap() as usize;
         state.push_digit(d);

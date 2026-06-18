@@ -74,7 +74,7 @@ impl History {
         tmp.set_extension("tmp");
         let serialized = match serde_json::to_vec(&stored) {
             Ok(v) => v,
-            Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e)),
+            Err(e) => return Err(std::io::Error::other(e)),
         };
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(&serialized)?;

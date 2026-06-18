@@ -116,7 +116,7 @@ pub fn build_run_command(req: &TestRunRequest) -> Result<ResolvedCommand, String
             // Otherwise wrap as `FullyQualifiedName~<filter>` for a
             // substring match, which is what `:testnearest` /
             // `:testfile` produce.
-            if filter.contains(|c: char| c == '=' || c == '!' || c == '~' || c == '|' || c == '&') {
+            if filter.contains(['=', '!', '~', '|', '&']) {
                 args.push(filter.clone());
             } else {
                 args.push(format!("FullyQualifiedName~{filter}"));
@@ -276,8 +276,8 @@ pub fn filter_for_nearest(buffer_text: &str, cursor_line: usize) -> Option<Strin
     for i in (0..=cursor).rev() {
         if is_test_attribute(lines[i]) {
             let end = (i + 8).min(lines.len());
-            for j in i..end {
-                if let Some(name) = parse_method_decl(lines[j]) {
+            for &line in &lines[i..end] {
+                if let Some(name) = parse_method_decl(line) {
                     return Some(name);
                 }
             }
@@ -289,11 +289,7 @@ pub fn filter_for_nearest(buffer_text: &str, cursor_line: usize) -> Option<Strin
 fn is_test_attribute(line: &str) -> bool {
     let stripped = line.trim_start();
     let attr = stripped.trim_start_matches('[').trim_end();
-    let head = attr
-        .split(|c: char| c == '(' || c == ']')
-        .next()
-        .unwrap_or("")
-        .trim();
+    let head = attr.split(['(', ']']).next().unwrap_or("").trim();
     matches!(head, "Fact" | "Theory" | "Test" | "TestMethod" | "TestCase")
 }
 
