@@ -264,15 +264,7 @@ impl super::App {
                 // navigate away from it. A pending leader chord (e.g. the
                 // `e` after `<space>`) is also allowed so multi-key shortcuts
                 // resolve normally.
-                let leader_pending = self.pending.awaiting_leader
-                    || self.pending.awaiting_buffer_leader
-                    || self.pending.awaiting_debug_leader
-                    || self.pending.awaiting_hunk_leader
-                    || self.pending.awaiting_git_leader
-                    || self.pending.awaiting_task_leader
-                    || self.pending.awaiting_ai_leader
-                    || self.pending.awaiting_package_leader
-                    || self.pending.awaiting_android_leader;
+                let leader_pending = self.pending.any_leader_pending();
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
@@ -1288,17 +1280,7 @@ impl super::App {
             ParseResult::Action(a) => self.apply_action(a),
         }
         // Track any prefix that's awaiting its next key — drives the which-key timer.
-        let prefix_active = self.pending.awaiting_leader
-            || self.pending.awaiting_buffer_leader
-            || self.pending.awaiting_debug_leader
-            || self.pending.awaiting_hunk_leader
-            || self.pending.awaiting_git_leader
-            || self.pending.awaiting_task_leader
-            || self.pending.awaiting_terminal_leader
-            || self.pending.awaiting_test_leader
-            || self.pending.awaiting_ai_leader
-            || self.pending.awaiting_package_leader
-            || self.pending.awaiting_android_leader;
+        let prefix_active = self.pending.any_leader_pending();
         if prefix_active {
             if self.leader_pressed_at.is_none() {
                 self.leader_pressed_at = Some(std::time::Instant::now());

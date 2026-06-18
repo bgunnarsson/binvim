@@ -548,6 +548,30 @@ impl PendingCmd {
         *self = PendingCmd::default();
     }
 
+    /// True when a `<leader>`-prefixed chord is mid-flight — i.e. the
+    /// leader (or one of its sub-menus: buffer / debug / hunk / git /
+    /// task / terminal / test / ai / package / android) has been pressed
+    /// and the parser is waiting on the next key. Drives the which-key
+    /// timer AND lets follow-up keys survive the start-page input guard,
+    /// so `<leader>t…` / `<leader>s…` chords aren't swallowed on the
+    /// dashboard. Window-leader (`<C-w>`) is intentionally excluded — it
+    /// isn't reached from `<space>` and has its own start-page handling.
+    /// Kept here, next to the fields, so the two call sites can't drift
+    /// out of sync the way the hand-maintained copies used to.
+    pub fn any_leader_pending(&self) -> bool {
+        self.awaiting_leader
+            || self.awaiting_buffer_leader
+            || self.awaiting_debug_leader
+            || self.awaiting_hunk_leader
+            || self.awaiting_git_leader
+            || self.awaiting_task_leader
+            || self.awaiting_terminal_leader
+            || self.awaiting_test_leader
+            || self.awaiting_ai_leader
+            || self.awaiting_package_leader
+            || self.awaiting_android_leader
+    }
+
     /// True when no operator / count / leader prefix is in flight. Used
     /// by `handle_keyboard` to decide whether bare `<CR>` can shortcut
     /// straight to a code-lens invocation (only safe when the parser
@@ -1828,6 +1852,54 @@ mod tests {
             parse(&mut state, key('i'), ParseCtx::Normal),
             ParseResult::Action(Action::PackageInstall)
         ));
+    }
+
+    // Regression: the start-page input guard lets a key through only
+    // while `any_leader_pending()` is true. The terminal (`<leader>t…`)
+    // and test (`<leader>s…`) sub-leaders were once omitted from that
+    // check, so the follow-up key of those chords was swallowed on the
+    // dashboard and the terminal / AI panes couldn't be opened with
+    // nothing else on screen. Assert every sub-leader keeps the flag set
+    // mid-chord so a future hand-edit can't drop one again.
+    #[test]
+    fn sub_leaders_keep_any_leader_pending_mid_chord() {
+        // (leader entry key, human label) — covers all `<space>X` menus.
+        for (entry, label) in [
+            ('b', "buffer"),
+            ('d', "debug"),
+            ('h', "hunk"),
+            ('g', "git"),
+            ('m', "task"),
+            ('t', "terminal"),
+            ('s', "test"),
+            ('j', "ai"),
+            ('p', "package"),
+            ('A', "android"),
+        ] {
+            let mut state = PendingCmd::default();
+            assert!(
+                matches!(
+                    parse(&mut state, key(' '), ParseCtx::Normal),
+                    ParseResult::Pending
+                ),
+                "{label}: leader (<space>) should be pending"
+            );
+            assert!(
+                state.any_leader_pending(),
+                "{label}: any_leader_pending() must be true after <space>"
+            );
+            assert!(
+                matches!(
+                    parse(&mut state, key(entry), ParseCtx::Normal),
+                    ParseResult::Pending
+                ),
+                "{label}: <space>{entry} should enter the sub-menu (pending)"
+            );
+            assert!(
+                state.any_leader_pending(),
+                "{label}: any_leader_pending() must stay true inside the <space>{entry} sub-menu"
+            );
+        }
     }
 
     #[test]
