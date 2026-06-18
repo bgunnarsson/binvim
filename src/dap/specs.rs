@@ -115,7 +115,7 @@ const DOTNET: DapAdapterSpec = DapAdapterSpec {
     adapter_id: "coreclr",
     cmd_candidates: &["netcoredbg"],
     args: &["--interpreter=vscode"],
-    root_markers: &["*.csproj", "*.sln", "*.fsproj"],
+    root_markers: &["*.csproj", "*.sln", "*.slnx", "*.fsproj"],
     prelaunch: dotnet_prelaunch,
     build_launch_args: dotnet_launch_args,
 };
@@ -715,19 +715,19 @@ fn find_cargo_target_dir(start: &Path) -> Option<PathBuf> {
 // ---------------------------------------------------------------------------
 
 /// Walk up from `start` looking for the most-enclosing workspace
-/// container: a `.sln` directory first, then a `.git` directory. Falls
-/// back to the directory containing any matching root marker (the
+/// container: a `.sln`/`.slnx` directory first, then a `.git` directory.
+/// Falls back to the directory containing any matching root marker (the
 /// previous behaviour). Used to widen the search so a buffer inside
 /// `repo/MyProject/Foo.cs` resolves to `repo/` instead of `repo/MyProject/`
 /// when there are sibling projects worth picking from.
 pub fn find_dotnet_workspace_root(start: &Path) -> PathBuf {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    // First pass: .sln or .git. Take the closest of either as the
-    // workspace root, preferring .sln when both are present in the same
-    // ancestor.
+    // First pass: solution file or .git. Take the closest as the workspace
+    // root, preferring a solution when both are present in the same ancestor.
+    // `.slnx` is the .NET 10 XML solution format (alongside the classic `.sln`).
     let mut dir: &Path = canon.as_path();
     loop {
-        if dir_contains_extension(dir, "sln") {
+        if dir_contains_extension(dir, "sln") || dir_contains_extension(dir, "slnx") {
             return dir.to_path_buf();
         }
         if dir.join(".git").exists() {
@@ -738,8 +738,8 @@ pub fn find_dotnet_workspace_root(start: &Path) -> PathBuf {
             _ => break,
         }
     }
-    // No .sln / .git — fall back to the immediate-.csproj directory.
-    let markers: Vec<String> = ["*.csproj", "*.fsproj", "*.vbproj", "*.sln"]
+    // No solution / .git — fall back to the immediate-.csproj directory.
+    let markers: Vec<String> = ["*.csproj", "*.fsproj", "*.vbproj", "*.sln", "*.slnx"]
         .iter()
         .map(|s| s.to_string())
         .collect();
@@ -793,6 +793,46 @@ pub fn find_dotnet_projects(dir: &Path) -> Vec<PathBuf> {
     walk(dir, &mut out, 0);
     out.sort();
     out
+}
+
+/// Heuristic: does this project produce a runnable executable rather than a
+/// class library? Used to keep the debug launch picker to projects you can
+/// actually start (so a library you happen to have open isn't offered, then
+/// fails at runtime with a missing `runtimeconfig.json`).
+///
+/// An explicit `<OutputType>` wins. Otherwise the Web and Worker SDKs default
+/// to an executable, while the plain `Microsoft.NET.Sdk` defaults to a
+/// library. Conservative: anything we can't read or classify is treated as
+/// non-runnable, but callers fall back to the full list when nothing looks
+/// runnable, so detection gaps never strand a launch.
+pub fn is_runnable_dotnet_project(csproj: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(csproj) else {
+        return false;
+    };
+    let lower = text.to_ascii_lowercase();
+    if let Some(output_type) = lower
+        .split_once("<outputtype>")
+        .and_then(|(_, rest)| rest.split_once("</outputtype>"))
+        .map(|(value, _)| value.trim().to_string())
+    {
+        return output_type == "exe" || output_type == "winexe";
+    }
+    // No explicit OutputType — infer from the project SDK.
+    lower.contains("microsoft.net.sdk.web") || lower.contains("microsoft.net.sdk.worker")
+}
+
+/// Like [`find_dotnet_projects`], but limited to projects that produce a
+/// runnable executable — what the debugger can actually launch. Falls back to
+/// the full list when none look runnable, so detection gaps never leave the
+/// picker empty.
+pub fn find_runnable_dotnet_projects(dir: &Path) -> Vec<PathBuf> {
+    let all = find_dotnet_projects(dir);
+    let runnable: Vec<PathBuf> = all
+        .iter()
+        .filter(|p| is_runnable_dotnet_project(p))
+        .cloned()
+        .collect();
+    if runnable.is_empty() { all } else { runnable }
 }
 
 /// Parsed `Properties/launchSettings.json`. We surface every profile
@@ -1114,5 +1154,81 @@ mod tests {
             stem, "sh",
             "expected resolved path whose file stem is `sh`, got {s}"
         );
+    }
+
+    #[test]
+    fn workspace_root_recognizes_slnx() {
+        let tmp = std::env::temp_dir().join("binvim_dap_test_slnx");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("src").join("App")).unwrap();
+        fs::write(tmp.join("Sln.slnx"), "<Solution/>").unwrap();
+        fs::write(tmp.join("src").join("App").join("App.csproj"), "<Project/>").unwrap();
+        // A buffer deep inside a project resolves up to the .slnx root.
+        let root = find_dotnet_workspace_root(&tmp.join("src").join("App"));
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            tmp.canonicalize().unwrap(),
+            "should resolve to the .slnx directory, not the project dir"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn runnable_filter_keeps_only_executables() {
+        let tmp = std::env::temp_dir().join("binvim_dap_test_runnable");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        // Explicit console exe.
+        fs::write(
+            tmp.join("Cli.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup></Project>",
+        )
+        .unwrap();
+        // Web SDK — executable with no explicit OutputType.
+        fs::write(
+            tmp.join("Api.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk.Web\"></Project>",
+        )
+        .unwrap();
+        // Plain library.
+        fs::write(
+            tmp.join("Lib.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+        )
+        .unwrap();
+
+        assert!(is_runnable_dotnet_project(&tmp.join("Cli.csproj")));
+        assert!(is_runnable_dotnet_project(&tmp.join("Api.csproj")));
+        assert!(!is_runnable_dotnet_project(&tmp.join("Lib.csproj")));
+
+        let runnable = find_runnable_dotnet_projects(&tmp);
+        assert_eq!(runnable.len(), 2, "only Cli + Api are runnable");
+        assert!(runnable.iter().all(|p| p.file_stem().unwrap() != "Lib"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn runnable_filter_falls_back_when_none_runnable() {
+        let tmp = std::env::temp_dir().join("binvim_dap_test_all_libs");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(
+            tmp.join("A.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+        )
+        .unwrap();
+        fs::write(
+            tmp.join("B.csproj"),
+            "<Project Sdk=\"Microsoft.NET.Sdk\"></Project>",
+        )
+        .unwrap();
+        // No runnable project → don't strand the launch; return everything.
+        let projects = find_runnable_dotnet_projects(&tmp);
+        assert_eq!(
+            projects.len(),
+            2,
+            "fall back to all projects when none runnable"
+        );
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

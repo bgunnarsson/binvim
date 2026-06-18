@@ -1174,11 +1174,14 @@ impl super::App {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             });
         let workspace_root = crate::dap::find_dotnet_workspace_root(&start_dir);
-        let projects = crate::dap::find_dotnet_projects(&workspace_root);
+        // Only offer projects that produce a runnable executable — never a
+        // class library (which would build, then fail at launch with a missing
+        // runtimeconfig.json). Falls back to all projects if none look runnable.
+        let projects = crate::dap::find_runnable_dotnet_projects(&workspace_root);
         match projects.len() {
             0 => {
                 self.status_msg = format!(
-                    "debug: no .csproj/.fsproj/.vbproj under {}",
+                    "debug: no runnable .csproj/.fsproj/.vbproj under {}",
                     workspace_root.display()
                 );
             }

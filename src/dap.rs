@@ -26,7 +26,8 @@ pub use manager::{DapManager, DapSession, StepKind, flat_locals_view};
 pub use specs::{
     DapAdapterSpec, LaunchContext, LaunchProfile, PrelaunchCommand, RustBinTarget,
     adapter_for_workspace, find_dotnet_projects, find_dotnet_workspace_root, find_go_main_dirs,
-    find_python_entry_scripts, find_rust_bin_targets, find_workspace_root, load_launch_profiles,
+    find_python_entry_scripts, find_runnable_dotnet_projects, find_rust_bin_targets,
+    find_workspace_root, load_launch_profiles,
 };
 #[allow(unused_imports)]
 pub use types::{
