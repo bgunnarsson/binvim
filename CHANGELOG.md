@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.13]
+## [0.5.13] - 2026-06-18
 
 ### Fixed
 - **The mouse wheel now scrolls the AI side panes (`:claude`, `:codex`).**
