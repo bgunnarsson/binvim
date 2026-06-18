@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.10]
+
 ### Fixed
 - **Shift-Left / Shift-Right now scroll the debug pane horizontally again.**
   The shifted arrow bindings sat below the unshifted Left/Right tab-cycle
