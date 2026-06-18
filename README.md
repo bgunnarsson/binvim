@@ -294,17 +294,18 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
 | `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
 | `<space>jc` / `<space>jC` | Spawn a new Claude tab in the right-side pane — uppercase variant additionally pre-types `@<active-buffer cwd-relative path>` into the input once the tool is ready. Same shift-pair pattern for `<space>jx` / `<space>jX` (Codex) and `<space>jo` / `<space>jO` (opencode). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. |
-| `<space>pi` | Package manager — manage installed packages: pick a project manifest (`.csproj` / `package.json` / `Cargo.toml` / `go.mod`), pick an installed package, then a version to change to. The installed version is highlighted; `Tab` toggles prereleases; type to narrow the version list. |
+| `<space>pi` | Package manager — manage installed packages: pick a project manifest (`.csproj` / `package.json` / `Cargo.toml` / `go.mod` / `requirements.txt`), pick an installed package, then a version to change to. The installed version is highlighted; `Tab` toggles prereleases; type to narrow the version list. |
 | `<space>ps` | Package manager — search & add: pick a manifest, type to search the registry, pick a package, then a version to add. |
 
-The package manager detects the ecosystem from the active buffer's workspace. Four backends are wired up:
+The package manager detects the ecosystem from the active buffer's workspace. Five backends are wired up:
 
 - **.NET / NuGet** — requires the `dotnet` SDK on `PATH` (`dotnet package search` needs SDK 8.0.4xx+; the full per-version list is reliable on the .NET 10 SDK).
 - **npm** — requires `npm` on `PATH` (`npm view` / `npm search` / `npm install`, honouring a project-local `.npmrc` for private registries).
 - **Cargo / crates.io** — requires `cargo` on `PATH` for search & add; the version list is fetched from the crates.io API (so it needs `curl` and network access).
 - **Go modules** — requires `go` on `PATH` for the version list & add; search scrapes pkg.go.dev (so it needs `curl` and network access).
+- **Python / PyPI** — no Python tooling required at all; it reads and edits `requirements.txt` directly (so `add` just rewrites the pin — it never runs `pip`, sidestepping which-virtualenv ambiguity) and pulls the version list from PyPI's JSON API. Because PyPI retired package search (its search page is now bot-walled), "search" resolves an exact package name instead. Needs `curl` and network access.
 
-`pip` is not yet supported — PyPI disabled package search, so it needs a different approach. The Cargo and Go backends shell out to `curl` for the one step their toolchain can't do (crates.io has no `cargo` command for listing all versions; the Go toolchain has no search), so `curl` must be on `PATH` for those.
+The Cargo, Go, and Python backends shell out to `curl` for the steps their toolchain can't do (crates.io has no `cargo` command for listing all versions; the Go toolchain has no search; PyPI is HTTP-only), so `curl` must be on `PATH` for those.
 
 Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>p` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 

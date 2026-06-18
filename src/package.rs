@@ -2,13 +2,17 @@
 //! single keybinding detects the ecosystem from the active buffer's workspace
 //! and drives an add/upgrade flow; the per-ecosystem CLI plumbing lives here.
 //!
-//! .NET (NuGet, via the `dotnet` CLI) and npm (via the `npm` CLI) are
-//! implemented. cargo / go / pip slot in as additional `PackageEcosystem`
-//! variants with match arms in the dispatch fns below — no caller changes —
-//! the same way `lsp/specs.rs` and `dap/specs.rs` hard-wire one spec per
-//! language. There is no plugin system. Those three each need an HTTP fallback
-//! for the one step their CLI can't do (cargo version-list, go search, pip
-//! search), which is why they're deliberately not here yet.
+//! .NET (NuGet, via `dotnet`), npm, Cargo, Go, and Python (PyPI) are all
+//! implemented as `PackageEcosystem` variants with match arms in the dispatch
+//! fns below — no caller changes — the same way `lsp/specs.rs` and
+//! `dap/specs.rs` hard-wire one spec per language. There is no plugin system.
+//! Several backends need an HTTP fallback for the one step their CLI can't do
+//! (crates.io for Cargo's version list, pkg.go.dev for Go search, PyPI's JSON
+//! API for Python's version list + exact-name lookup); that goes through
+//! `http_get`, which shells out to `curl`. The Python backend is manifest-only:
+//! it reads and edits
+//! `requirements.txt` and never shells out to `pip`, sidestepping the
+//! "which virtualenv?" ambiguity that `pip install` would introduce.
 //!
 //! The `App`-side flow (picker chaining + the background-thread channel) lives
 //! in `app/package_glue.rs`; everything here is pure CLI invocation + parsing,
@@ -31,6 +35,12 @@ pub enum PackageEcosystem {
     /// Go — `go.mod` manifests; `go` for the version list/add, pkg.go.dev's
     /// search page (scraped) for search (the toolchain has no search command).
     Go,
+    /// Python — `requirements.txt` manifests, edited in place; PyPI's JSON API
+    /// for the version list and exact-name lookup (the search page is bot-walled,
+    /// so "search" resolves an exact package name). No `pip` shell-out — `add`
+    /// rewrites the requirement line directly so there's no guesswork about which
+    /// interpreter / virtualenv to install into.
+    Pip,
 }
 
 impl PackageEcosystem {
@@ -40,6 +50,7 @@ impl PackageEcosystem {
             PackageEcosystem::Npm => "npm",
             PackageEcosystem::Cargo => "Cargo",
             PackageEcosystem::Go => "Go",
+            PackageEcosystem::Pip => "PyPI",
         }
     }
 }
@@ -98,6 +109,7 @@ pub fn detect(buffer_path: Option<&Path>, start_dir: &Path) -> Option<(PackageEc
         PackageEcosystem::Npm,
         PackageEcosystem::Cargo,
         PackageEcosystem::Go,
+        PackageEcosystem::Pip,
     ] {
         let root = workspace_root(eco, start_dir);
         if !find_manifests(eco, &root).is_empty() {
@@ -123,6 +135,7 @@ fn eco_from_extension(buffer_path: Option<&Path>) -> Option<PackageEcosystem> {
     match p.file_name().and_then(|s| s.to_str()) {
         Some("Cargo.toml") => return Some(PackageEcosystem::Cargo),
         Some("go.mod") => return Some(PackageEcosystem::Go),
+        Some("requirements.txt") => return Some(PackageEcosystem::Pip),
         _ => {}
     }
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -141,6 +154,7 @@ fn eco_from_extension(buffer_path: Option<&Path>) -> Option<PackageEcosystem> {
     match ext {
         "rs" => Some(PackageEcosystem::Cargo),
         "go" => Some(PackageEcosystem::Go),
+        "py" | "pyi" => Some(PackageEcosystem::Pip),
         _ => None,
     }
 }
@@ -152,6 +166,7 @@ pub fn workspace_root(eco: PackageEcosystem, start_dir: &Path) -> PathBuf {
         PackageEcosystem::Npm => find_root_by_marker(start_dir, "package.json"),
         PackageEcosystem::Cargo => find_root_by_marker(start_dir, "Cargo.toml"),
         PackageEcosystem::Go => find_root_by_marker(start_dir, "go.mod"),
+        PackageEcosystem::Pip => find_root_by_marker(start_dir, "requirements.txt"),
     }
 }
 
@@ -164,6 +179,7 @@ pub fn find_manifests(eco: PackageEcosystem, workspace_root: &Path) -> Vec<Manif
         PackageEcosystem::Npm => find_manifests_named(workspace_root, "package.json"),
         PackageEcosystem::Cargo => find_manifests_named(workspace_root, "Cargo.toml"),
         PackageEcosystem::Go => find_manifests_named(workspace_root, "go.mod"),
+        PackageEcosystem::Pip => find_manifests_named(workspace_root, "requirements.txt"),
     };
     paths
         .into_iter()
@@ -287,6 +303,14 @@ pub fn list_installed(
                 .map_err(|e| format!("read {}: {e}", manifest.display()))?;
             parse_gomod_installed(&text)
         }
+        // requirements.txt is line-based and declarative, so — like Cargo/Go —
+        // read it directly. A `pip freeze`-style pin (`pkg==1.2.3`) resolves to
+        // that exact version; looser specs leave `resolved` blank.
+        PackageEcosystem::Pip => {
+            let text = std::fs::read_to_string(manifest)
+                .map_err(|e| format!("read {}: {e}", manifest.display()))?;
+            Ok(parse_requirements_installed(&text))
+        }
     }
 }
 
@@ -349,6 +373,15 @@ pub fn list_versions(
             )?;
             parse_go_versions(&out)
         }
+        // PyPI's per-project JSON endpoint lists every release under `releases`
+        // as an unordered map, so unlike crates.io/go we sort it ourselves with
+        // a PEP 440 comparator. Releases with no live files (fully yanked) are
+        // dropped; prereleases (a/b/rc/dev) are tagged for the picker toggle.
+        PackageEcosystem::Pip => {
+            let url = format!("https://pypi.org/pypi/{}/json", urlencode(id));
+            let json = http_get(&url)?;
+            parse_pypi_versions_json(&json)
+        }
     }
 }
 
@@ -398,6 +431,19 @@ pub fn search(
             let html = http_get(&url)?;
             Ok(parse_godev_search_html(&html))
         }
+        // PyPI retired its search API and now serves the search *page* behind a
+        // bot challenge, so neither an API call nor a scrape is viable. Resolve
+        // the query as an exact (PEP 503) package name via the reliable JSON
+        // endpoint instead — in an add flow you almost always know the name.
+        // An unknown package surfaces as "no matches" rather than an error.
+        PackageEcosystem::Pip => {
+            let url = format!("https://pypi.org/pypi/{}/json", urlencode(query.trim()));
+            match http_get(&url) {
+                Ok(json) => Ok(parse_pypi_search_json(&json)),
+                Err(e) if e.contains("curl not found") => Err(e),
+                Err(_) => Ok(Vec::new()),
+            }
+        }
     }
 }
 
@@ -431,6 +477,16 @@ pub fn add(eco: PackageEcosystem, manifest: &Path, id: &str, version: &str) -> R
         PackageEcosystem::Go => {
             let spec = format!("{id}@{version}");
             run_capture("go", &["get", &spec], manifest_dir(manifest), &[]).map(|_| ())
+        }
+        // No `pip` shell-out: rewrite the requirement line in place (or append
+        // it) and let the user re-`pip install -r` on their own terms. Keeps
+        // the edit deterministic and never touches an interpreter / virtualenv.
+        PackageEcosystem::Pip => {
+            let text = std::fs::read_to_string(manifest)
+                .map_err(|e| format!("read {}: {e}", manifest.display()))?;
+            let updated = requirements_set_version(&text, id, version);
+            std::fs::write(manifest, updated)
+                .map_err(|e| format!("write {}: {e}", manifest.display()))
         }
     }
 }
@@ -955,6 +1011,329 @@ fn clean_version(spec: &str) -> String {
     core.to_string()
 }
 
+// ─── Python / pip backend ──────────────────────────────────────────────────
+
+/// The structured parts of one `requirements.txt` requirement line, split out
+/// so `add` can preserve the original name casing / extras / environment marker
+/// and rewrite only the version specifier.
+struct ReqParts {
+    /// Distribution name as written (original casing preserved for round-trips).
+    name: String,
+    /// The `[extra1,extra2]` group, brackets included, or empty.
+    extras: String,
+    /// The version specifier as written (`==1.2.3`, `>=2,<3`, or empty).
+    spec: String,
+    /// The PEP 508 environment marker after `;`, without the leading `;`.
+    marker: Option<String>,
+}
+
+/// Trim a trailing `# comment` off a requirements line. A `#` only opens a
+/// comment at the start of the line or after whitespace (so a `#` embedded in
+/// a token isn't mistaken for one); VCS/URL lines that legitimately carry `#`
+/// are filtered earlier by `split_requirement`.
+fn strip_requirement_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] == b'#' && (i == 0 || bytes[i - 1].is_ascii_whitespace()) {
+            return &line[..i];
+        }
+    }
+    line
+}
+
+/// PEP 503 name normalisation — lowercase, and collapse any run of `-`, `_`,
+/// `.` to a single `-`. `Flask`, `flask`, `FLASK`, `fl_ask` all normalise to the
+/// same key, which is how pip itself decides two requirements name the same
+/// distribution. Used for dedup + matching an existing line in `add`.
+fn normalize_pkg_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut prev_sep = false;
+    for c in name.chars() {
+        if matches!(c, '-' | '_' | '.') {
+            if !prev_sep {
+                out.push('-');
+                prev_sep = true;
+            }
+        } else {
+            out.push(c.to_ascii_lowercase());
+            prev_sep = false;
+        }
+    }
+    out
+}
+
+/// Split one raw requirements line into its parts, or `None` for lines we don't
+/// manage: blanks, `# comments`, option lines (`-r`, `-e`, `--hash`, …), and
+/// VCS/URL requirements (no clean PyPI name to pin a version against).
+fn split_requirement(raw: &str) -> Option<ReqParts> {
+    let line = strip_requirement_comment(raw).trim();
+    if line.is_empty() || line.starts_with('-') || line.contains("://") {
+        return None;
+    }
+    // Peel the environment marker (`; python_version < "3.8"`) off the tail.
+    let (head, marker) = match line.split_once(';') {
+        Some((h, m)) => (h.trim(), Some(m.trim().to_string())),
+        None => (line, None),
+    };
+    let name_end = head
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')))
+        .unwrap_or(head.len());
+    let name = &head[..name_end];
+    if name.is_empty() {
+        return None;
+    }
+    let rest = head[name_end..].trim_start();
+    // Optional `[extras]` come between the name and the version specifier.
+    let (extras, after_extras) = match (rest.starts_with('['), rest.find(']')) {
+        (true, Some(end)) => (rest[..=end].to_string(), rest[end + 1..].trim_start()),
+        _ => (String::new(), rest),
+    };
+    Some(ReqParts {
+        name: name.to_string(),
+        extras,
+        spec: after_extras.trim().to_string(),
+        marker,
+    })
+}
+
+/// The single concrete version a specifier pins to, or empty when there isn't
+/// one. Only an exact-equality clause (`==1.2.3` / `===1.2.3`) with no second
+/// clause resolves; ranges (`>=1,<2`) and floors (`>=1`) leave it blank — the
+/// picker only marks a row when a single installed version is known.
+fn pinned_version(spec: &str) -> String {
+    let s = spec.trim();
+    if s.contains(',') {
+        return String::new();
+    }
+    for op in ["===", "=="] {
+        if let Some(v) = s.strip_prefix(op) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return v.to_string();
+            }
+        }
+    }
+    String::new()
+}
+
+/// Parse a `requirements.txt` into its top-level requirements. Comments, option
+/// lines, and VCS/URL entries are skipped; duplicates (by normalised name) keep
+/// the first. Sorted by name so the picker order is stable.
+pub fn parse_requirements_installed(text: &str) -> Vec<InstalledPackage> {
+    let mut out: Vec<InstalledPackage> = Vec::new();
+    for raw in text.lines() {
+        let Some(req) = split_requirement(raw) else {
+            continue;
+        };
+        let norm = normalize_pkg_name(&req.name);
+        if out.iter().any(|e| normalize_pkg_name(&e.id) == norm) {
+            continue;
+        }
+        let resolved = pinned_version(&req.spec);
+        out.push(InstalledPackage {
+            id: req.name,
+            requested: req.spec,
+            resolved,
+        });
+    }
+    out.sort_by_key(|p| p.id.to_lowercase());
+    out
+}
+
+/// Rewrite `text` so `id` is pinned to `version`. If a line already names `id`
+/// (matched by PEP 503 normalisation), its specifier is replaced with
+/// `==version` while preserving the original name casing, extras, and
+/// environment marker; otherwise a `id==version` line is appended. Only the
+/// first matching line is rewritten. The file's trailing-newline state is
+/// preserved.
+pub fn requirements_set_version(text: &str, id: &str, version: &str) -> String {
+    let target = normalize_pkg_name(id);
+    let had_trailing_newline = text.ends_with('\n');
+    let mut found = false;
+    let mut lines: Vec<String> = Vec::new();
+    for raw in text.lines() {
+        if !found {
+            if let Some(req) = split_requirement(raw) {
+                if normalize_pkg_name(&req.name) == target {
+                    let marker = req.marker.map(|m| format!(" ; {m}")).unwrap_or_default();
+                    lines.push(format!("{}{}=={}{}", req.name, req.extras, version, marker));
+                    found = true;
+                    continue;
+                }
+            }
+        }
+        lines.push(raw.to_string());
+    }
+    if !found {
+        lines.push(format!("{id}=={version}"));
+    }
+    let mut joined = lines.join("\n");
+    if had_trailing_newline {
+        joined.push('\n');
+    }
+    joined
+}
+
+/// A comparable PEP 440 sort key: `(epoch, release, milestone, milestone_num,
+/// dev_flag, dev_num)`. The milestone orders dev < pre < final < post within a
+/// release; `dev_flag` (0 when a `.dev` segment is present) sinks dev variants
+/// below their non-dev sibling at the same milestone. Tuple ordering does the
+/// rest.
+type Pep440Key = (i64, Vec<i64>, i64, i64, i64, i64);
+
+/// Parsed PEP 440 version. `pre` is `(stage, n)` with stage 0/1/2 = a/b/rc.
+struct Pep440 {
+    epoch: i64,
+    release: Vec<i64>,
+    pre: Option<(i64, i64)>,
+    post: Option<i64>,
+    dev: Option<i64>,
+}
+
+/// Parse a PEP 440 version (`1!2.3.4a1.post2.dev3+local`). Returns `None` for
+/// strings that don't fit the grammar, so the caller can fall back to a looser
+/// heuristic and a sink sort key.
+fn pep440_parse(v: &str) -> Option<Pep440> {
+    // Single per-call compile is fine at picker volumes; the parsers elsewhere
+    // (godev/cargo) build their regex the same way.
+    let re = regex::Regex::new(
+        r"(?i)^\s*v?(?:(\d+)!)?(\d+(?:\.\d+)*)(?:[-_.]?(a|b|c|rc|alpha|beta|pre|preview)[-_.]?(\d*))?(?:[-_.]?(?:post|rev|r)[-_.]?(\d*))?(?:[-_.]?dev[-_.]?(\d*))?(?:\+[a-z0-9][a-z0-9.\-_]*)?\s*$",
+    )
+    .ok()?;
+    let caps = re.captures(v.trim())?;
+    let epoch = caps
+        .get(1)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    let release: Vec<i64> = caps
+        .get(2)?
+        .as_str()
+        .split('.')
+        .filter_map(|s| s.parse().ok())
+        .collect();
+    if release.is_empty() {
+        return None;
+    }
+    // Each numeric segment defaults to 0 when the keyword carries no digits
+    // (`1.0.dev` ≡ `1.0.dev0`); the keyword for post is non-capturing, so the
+    // presence of group 5/6 alone marks a post / dev release.
+    let num = |m: regex::Match| m.as_str().parse().ok().unwrap_or(0);
+    let pre = caps.get(3).map(|m| {
+        let stage = match m.as_str().to_ascii_lowercase().as_str() {
+            "a" | "alpha" => 0,
+            "b" | "beta" => 1,
+            _ => 2, // c, rc, pre, preview
+        };
+        (stage, caps.get(4).map(num).unwrap_or(0))
+    });
+    let post = caps.get(5).map(num);
+    let dev = caps.get(6).map(num);
+    Some(Pep440 {
+        epoch,
+        release,
+        pre,
+        post,
+        dev,
+    })
+}
+
+/// Build the sort key described on [`Pep440Key`].
+fn pep440_sort_key(p: &Pep440) -> Pep440Key {
+    let (milestone, num) = if let Some((stage, n)) = p.pre {
+        (10 + stage, n) // a=10, b=11, rc=12
+    } else if let Some(n) = p.post {
+        (30, n) // post-releases sort above the plain release
+    } else if p.dev.is_some() {
+        (0, 0) // a bare .dev release sits below any pre-release
+    } else {
+        (20, 0) // final release
+    };
+    let dev_flag = i64::from(p.dev.is_none()); // dev sinks below non-dev peers
+    (
+        p.epoch,
+        p.release.clone(),
+        milestone,
+        num,
+        dev_flag,
+        p.dev.unwrap_or(0),
+    )
+}
+
+/// Parse PyPI's `…/<pkg>/json` response into a newest-first version list.
+/// `releases` is an unordered map of version → file list, so we sort with the
+/// PEP 440 comparator. Releases with no installable file (empty list or every
+/// file yanked) are dropped; `a`/`b`/`rc`/`.dev` releases are tagged so the
+/// picker can hide them behind the prerelease toggle.
+pub fn parse_pypi_versions_json(json: &str) -> Result<Vec<PackageVersion>, String> {
+    let v: Value = serde_json::from_str(json).map_err(|e| format!("parse PyPI versions: {e}"))?;
+    let releases = v
+        .get("releases")
+        .and_then(|r| r.as_object())
+        .ok_or("PyPI response has no `releases` map")?;
+    let mut items: Vec<(Pep440Key, PackageVersion)> = Vec::new();
+    for (ver, files) in releases {
+        if ver.is_empty() {
+            continue;
+        }
+        // No installable artefact → not a version the user can pick.
+        if let Some(arr) = files.as_array() {
+            let all_yanked = arr
+                .iter()
+                .all(|f| f.get("yanked").and_then(|y| y.as_bool()).unwrap_or(false));
+            if arr.is_empty() || all_yanked {
+                continue;
+            }
+        }
+        let parsed = pep440_parse(ver);
+        let prerelease = parsed
+            .as_ref()
+            .map(|p| p.pre.is_some() || p.dev.is_some())
+            .unwrap_or_else(|| is_prerelease(ver));
+        // Unparseable versions sink to the bottom of the newest-first list.
+        let key =
+            parsed
+                .as_ref()
+                .map(pep440_sort_key)
+                .unwrap_or((i64::MIN, Vec::new(), 0, 0, 0, 0));
+        items.push((
+            key,
+            PackageVersion {
+                version: ver.clone(),
+                prerelease,
+            },
+        ));
+    }
+    items.sort_by(|a, b| b.0.cmp(&a.0));
+    Ok(items.into_iter().map(|(_, v)| v).collect())
+}
+
+/// Turn a PyPI `…/<pkg>/json` response into a single search hit — the canonical
+/// distribution name (`info.name`) and its latest release (`info.version`).
+/// Returns empty for a body that isn't a package document, so a 404 (already an
+/// `Err` from `http_get`) and a malformed response both read as "no matches".
+pub fn parse_pypi_search_json(json: &str) -> Vec<SearchHit> {
+    let Ok(v) = serde_json::from_str::<Value>(json) else {
+        return Vec::new();
+    };
+    let Some(info) = v.get("info") else {
+        return Vec::new();
+    };
+    let id = info
+        .get("name")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    if id.is_empty() {
+        return Vec::new();
+    }
+    let latest = info
+        .get("version")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    vec![SearchHit { id, latest }]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1314,5 +1693,153 @@ require github.com/baz/qux v2.0.0
         assert_eq!(urlencode("github.com/foo/bar"), "github.com%2Ffoo%2Fbar");
         assert_eq!(urlencode("hello world"), "hello%20world");
         assert_eq!(urlencode("serde_json-1.0"), "serde_json-1.0");
+    }
+
+    #[test]
+    fn parses_requirements_installed_with_comments_extras_markers() {
+        let txt = "# top comment\n\
+                   requests==2.31.0\n\
+                   Flask>=3.0  # inline comment\n\
+                   httpx\n\
+                   django[argon2]==5.0 ; python_version >= \"3.10\"\n\
+                   -r dev-requirements.txt\n\
+                   -e .\n\
+                   git+https://github.com/x/y.git#egg=z\n\
+                   requests==1.0\n";
+        let pkgs = parse_requirements_installed(txt);
+        // requests deduped (first wins); options + VCS lines skipped.
+        assert_eq!(pkgs.len(), 4);
+        // sorted case-insensitively by name.
+        assert_eq!(
+            pkgs.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            ["django", "Flask", "httpx", "requests"]
+        );
+        let req = pkgs.iter().find(|p| p.id == "requests").unwrap();
+        assert_eq!(req.requested, "==2.31.0");
+        assert_eq!(req.resolved, "2.31.0"); // exact pin resolves
+        let flask = pkgs.iter().find(|p| p.id == "Flask").unwrap();
+        assert_eq!(flask.requested, ">=3.0");
+        assert_eq!(flask.resolved, ""); // a floor isn't a single version
+        let httpx = pkgs.iter().find(|p| p.id == "httpx").unwrap();
+        assert_eq!(httpx.requested, "");
+        let django = pkgs.iter().find(|p| p.id == "django").unwrap();
+        assert_eq!(django.resolved, "5.0"); // extras + marker stripped off the spec
+    }
+
+    #[test]
+    fn requirements_set_version_updates_existing_preserving_extras_and_marker() {
+        let txt = "requests==2.0\n\
+                   django[argon2]==4.0 ; python_version >= \"3.8\"\n";
+        let out = requirements_set_version(txt, "django", "5.0");
+        assert_eq!(
+            out,
+            "requests==2.0\n\
+             django[argon2]==5.0 ; python_version >= \"3.8\"\n"
+        );
+    }
+
+    #[test]
+    fn requirements_set_version_matches_by_normalized_name() {
+        // `Flask-Login` and `flask_login` are the same distribution per PEP 503.
+        let out = requirements_set_version("Flask-Login==0.6\n", "flask_login", "0.7");
+        assert_eq!(out, "Flask-Login==0.7\n"); // original casing preserved
+    }
+
+    #[test]
+    fn requirements_set_version_appends_when_absent() {
+        assert_eq!(
+            requirements_set_version("requests==2.0\n", "flask", "3.0"),
+            "requests==2.0\nflask==3.0\n"
+        );
+        // No trailing newline in → none added, new line still separated.
+        assert_eq!(
+            requirements_set_version("requests==2.0", "flask", "3.0"),
+            "requests==2.0\nflask==3.0"
+        );
+        // Empty file → just the new pin.
+        assert_eq!(requirements_set_version("", "flask", "3.0"), "flask==3.0");
+    }
+
+    #[test]
+    fn parses_pypi_versions_newest_first_skipping_yanked_and_empty() {
+        let json = r#"{"releases":{
+            "1.0.0":[{"yanked":false}],
+            "2.0.0":[{"yanked":false}],
+            "2.0.0rc1":[{"yanked":false}],
+            "1.5.0":[{"yanked":true}],
+            "1.9.0":[{"yanked":false}],
+            "1.10.0":[{"yanked":false}],
+            "0.0.0":[]
+        }}"#;
+        let vs = parse_pypi_versions_json(json).unwrap();
+        // 1.5.0 (all yanked) and 0.0.0 (no files) dropped.
+        assert_eq!(
+            vs.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(),
+            ["2.0.0", "2.0.0rc1", "1.10.0", "1.9.0", "1.0.0"]
+        );
+        // numeric ordering, not lexical: 1.10.0 sorts above 1.9.0.
+        let rc = vs.iter().find(|v| v.version == "2.0.0rc1").unwrap();
+        assert!(rc.prerelease);
+        let final_ = vs.iter().find(|v| v.version == "2.0.0").unwrap();
+        assert!(!final_.prerelease);
+    }
+
+    #[test]
+    fn pep440_orders_dev_pre_final_post_within_a_release() {
+        let json = r#"{"releases":{
+            "1.0.dev1":[{"yanked":false}],
+            "1.0a1":[{"yanked":false}],
+            "1.0a1.dev1":[{"yanked":false}],
+            "1.0":[{"yanked":false}],
+            "1.0.post1":[{"yanked":false}]
+        }}"#;
+        let vs = parse_pypi_versions_json(json).unwrap();
+        assert_eq!(
+            vs.iter().map(|v| v.version.as_str()).collect::<Vec<_>>(),
+            ["1.0.post1", "1.0", "1.0a1", "1.0a1.dev1", "1.0.dev1"]
+        );
+        // post-release is not a prerelease; the dev/pre variants are.
+        assert!(
+            !vs.iter()
+                .find(|v| v.version == "1.0.post1")
+                .unwrap()
+                .prerelease
+        );
+        assert!(
+            vs.iter()
+                .find(|v| v.version == "1.0.dev1")
+                .unwrap()
+                .prerelease
+        );
+    }
+
+    #[test]
+    fn pypi_search_resolves_exact_name_from_json() {
+        // Shape from `https://pypi.org/pypi/<pkg>/json` — `info` carries the
+        // canonical name + latest version.
+        let json = r#"{"info":{"name":"Flask","version":"3.1.3"},"releases":{}}"#;
+        let hits = parse_pypi_search_json(json);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "Flask"); // canonical casing
+        assert_eq!(hits[0].latest, "3.1.3");
+    }
+
+    #[test]
+    fn pypi_search_empty_for_non_package_body() {
+        assert!(parse_pypi_search_json("not json").is_empty());
+        assert!(parse_pypi_search_json(r#"{"message":"Not Found"}"#).is_empty());
+    }
+
+    #[test]
+    fn detects_pip_from_buffer_extension_and_basename() {
+        use std::path::Path;
+        assert_eq!(
+            eco_from_extension(Some(Path::new("/proj/app.py"))),
+            Some(PackageEcosystem::Pip)
+        );
+        assert_eq!(
+            eco_from_extension(Some(Path::new("/proj/requirements.txt"))),
+            Some(PackageEcosystem::Pip)
+        );
     }
 }

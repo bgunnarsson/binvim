@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Python / PyPI package backend for `<leader>p`.** The package manager now
+  recognises Python projects (`.py` buffers / `requirements.txt`) alongside
+  .NET, npm, Cargo, and Go. It reads `requirements.txt` for installed packages,
+  lists every release from PyPI's JSON API (sorted newest-first with a PEP 440
+  comparator, prereleases behind the `Tab` toggle), and `add` rewrites the
+  requirement line in place — it never shells out to `pip`, so there's no
+  guesswork about which interpreter or virtualenv to touch. Because PyPI
+  retired package search, the search flow resolves an exact package name via
+  the JSON API instead. Needs `curl` on `PATH`.
+
 ## [0.5.10] - 2026-06-18
 
 ### Fixed
