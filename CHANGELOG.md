@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.9]
+
+### Added
+- **`.slnx` solutions are recognised as a .NET workspace root.** The .NET 10
+  XML solution format now anchors workspace-root discovery alongside the
+  classic `.sln`, so a buffer deep inside a project resolves to the solution
+  directory instead of the project directory.
+
 ### Fixed
 - **Heavy terminal/AI panes no longer freeze input then "replay" it.** A
   chatty TUI in a `:terminal` or AI side pane (e.g. opencode) can queue
@@ -14,6 +22,12 @@ follows [Semantic Versioning](https://semver.org/).
   keystrokes piled up unread and then fired in a burst once it finished.
   PTY drains are now budget-capped per tick, so leftover output catches
   up across the following ticks while input stays responsive.
+- **The .NET debug picker no longer offers class libraries.** Launching the
+  debugger listed every project, including class libraries that build then
+  fail at launch with a missing `runtimeconfig.json`. The picker now filters
+  to projects that produce a runnable executable (explicit `OutputType`
+  `Exe`/`WinExe`, or the Web/Worker SDK), falling back to the full list when
+  nothing looks runnable so detection gaps never strand a launch.
 
 ## [0.5.8] - 2026-06-02
 
