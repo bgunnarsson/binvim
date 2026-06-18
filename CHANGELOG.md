@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.11]
+
 ### Added
 - **Python / PyPI package backend for `<leader>p`.** The package manager now
   recognises Python projects (`.py` buffers / `requirements.txt`) alongside
