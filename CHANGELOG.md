@@ -6,6 +6,19 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.12]
+
+### Fixed
+- **Terminal and AI panes are now reachable from the start page.** The
+  start-page input guard only lets a key through while a `<leader>` chord
+  is mid-flight, but its hand-maintained list of in-progress sub-leaders
+  had dropped the terminal (`<leader>t…`) and test (`<leader>s…`) menus.
+  With nothing else open, the follow-up key of those chords was swallowed,
+  so `<leader>tt` / `<leader>tf` never opened or focused a terminal — the
+  AI menu only worked because its flag happened to still be listed. The
+  guard and the which-key timer now share a single `any_leader_pending()`
+  check, so the two lists can't drift apart again.
+
 ## [0.5.11] - 2026-06-18
 
 ### Added
