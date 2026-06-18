@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.11]
+## [0.5.11] - 2026-06-18
 
 ### Added
 - **Python / PyPI package backend for `<leader>p`.** The package manager now

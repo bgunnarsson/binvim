@@ -1,6 +1,6 @@
 [package]
 name = "binvim"
-version = "0.5.10"
+version = "0.5.11"
 edition = "2024"
 rust-version = "1.85"
 description = "Vim-grammar TUI editor with batteries included — tree-sitter, multi-server LSP, DAP, multi-cursor, sessions, single binary, no plugin system."
