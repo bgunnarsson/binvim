@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.10]
+## [0.5.10] - 2026-06-18
 
 ### Fixed
 - **Shift-Left / Shift-Right now scroll the debug pane horizontally again.**
