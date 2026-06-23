@@ -1222,6 +1222,19 @@ impl App {
             if crossterm::event::poll(poll_dur)? {
                 self.handle_event()?;
                 needs_render = true;
+                // Coalesce an input burst into a single render. Each event
+                // otherwise forces a full-screen redraw + flush, so a fast
+                // trackpad/wheel scroll over a pane — which the OS delivers
+                // as a flood of ScrollUp/Down events — backs up dozens of
+                // frames and the editor visibly lags catching up after the
+                // gesture ends. Drain everything already queued (poll(0) is
+                // instant) and draw once at the loop top. The cap stops a
+                // continuous event stream from starving the PTY drains below.
+                let mut batched = 0;
+                while batched < 256 && crossterm::event::poll(Duration::from_millis(0))? {
+                    self.handle_event()?;
+                    batched += 1;
+                }
             }
             // Poll timed out and a lens retry is due — force a render
             // tick so the `if_due` hook actually fires the request.
