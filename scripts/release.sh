@@ -307,12 +307,23 @@ if [[ "$SKIP_CI_WAIT" -eq 1 ]]; then
     step "Skipping CI wait (--skip-ci-wait)"
 else
     step "Waiting for release workflow to complete"
-    # The release workflow triggers off the tag push. Give GitHub a moment
-    # to register the run, then watch it.
-    sleep 5
-    RUN_ID="$(gh run list --workflow=release.yml --limit=1 --json databaseId --jq='.[0].databaseId' 2>/dev/null || true)"
+    # The release workflow triggers off the tag push. Scope the lookup to
+    # THIS tag's run with `--branch=$TAG` (tag-triggered runs carry the tag
+    # name as their head branch). A bare `--limit=1` grabs whichever run is
+    # newest, which is the *previous* version's already-finished run until
+    # GitHub registers the new one — watching that returns instantly and the
+    # asset check + notes update downstream then both see a stale/empty
+    # release. Poll until the run for this tag actually appears (registration
+    # lags the push by a few seconds), up to ~60s.
+    RUN_ID=""
+    for _ in $(seq 1 20); do
+        RUN_ID="$(gh run list --workflow=release.yml --branch="$TAG" --limit=1 \
+            --json databaseId --jq='.[0].databaseId' 2>/dev/null || true)"
+        [[ -n "$RUN_ID" ]] && break
+        sleep 3
+    done
     if [[ -z "$RUN_ID" ]]; then
-        echo "  Could not find release.yml run. Skipping wait." >&2
+        echo "  Could not find a release.yml run for ${TAG} after ~60s. Skipping wait." >&2
     else
         echo "  Watching run ${RUN_ID}..."
         if ! gh run watch "$RUN_ID" --exit-status; then
