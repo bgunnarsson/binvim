@@ -238,6 +238,13 @@ impl PickerState {
 /// Returns `None` if not all query chars appear in order. Returns
 /// `Some((score, positions))` where `positions` is the char indices in
 /// `item` where query chars matched — the renderer bolds those.
+///
+/// Uses a Needleman-Wunsch-style DP rather than greedy left-to-right matching:
+/// a greedy walk binds each query char to its *first* occurrence, which scatters
+/// the highlight (matching `footer` across `Features/Footer` instead of the
+/// contiguous trailing `Footer`). The DP maximises the bonus total, so the
+/// best-scoring alignment — and the positions it highlights — favours
+/// consecutive runs at word boundaries.
 fn fuzzy_match(query: &str, item: &str) -> Option<(i64, Vec<usize>)> {
     if query.is_empty() {
         return Some((0, Vec::new()));
@@ -245,36 +252,94 @@ fn fuzzy_match(query: &str, item: &str) -> Option<(i64, Vec<usize>)> {
     let q: Vec<char> = query.to_lowercase().chars().collect();
     let item_lower = item.to_lowercase();
     let i_chars: Vec<char> = item_lower.chars().collect();
-    let mut qi = 0;
-    let mut score: i64 = 0;
-    let mut last_idx: i64 = -2;
-    let mut positions = Vec::with_capacity(q.len());
-    for (idx, c) in i_chars.iter().enumerate() {
-        if qi < q.len() && *c == q[qi] {
-            // Bonuses
-            if last_idx + 1 == idx as i64 {
-                score += 6; // consecutive
+    let n = i_chars.len();
+    let m = q.len();
+    if m > n {
+        return None;
+    }
+
+    // Bonus for matching a query char at item position `idx` (base hit + boundary).
+    let pos_bonus = |idx: usize| -> i64 {
+        let mut b = 1; // base hit
+        if idx == 0 {
+            b += 4; // start of string
+        } else {
+            let prev = i_chars[idx - 1];
+            if prev == '/' || prev == '\\' || prev == '_' || prev == '-' || prev == '.' {
+                b += 5; // path separator / word boundary
             }
-            if idx == 0 {
-                score += 4; // start of string
-            } else {
-                let prev = i_chars[idx - 1];
-                if prev == '/' || prev == '\\' || prev == '_' || prev == '-' || prev == '.' {
-                    score += 5; // path separator / word boundary
+        }
+        b
+    };
+
+    const NEG: i64 = i64::MIN / 4;
+    // `prev_row[j]` = best score for matching q[0..=i] with q[i] placed at item
+    // position j (NEG = unreachable). `parent[i][j]` = the item position q[i-1]
+    // was matched at on that best path, for backtracking.
+    let mut prev_row = vec![NEG; n];
+    let mut parent: Vec<Vec<usize>> = Vec::with_capacity(m);
+
+    for i in 0..m {
+        let mut cur = vec![NEG; n];
+        let mut par = vec![usize::MAX; n];
+        // Running max of prev_row[k] over k < j, plus its argmax.
+        let mut best_prev = NEG;
+        let mut best_prev_k = usize::MAX;
+        for j in 0..n {
+            if i_chars[j] == q[i] {
+                if i == 0 {
+                    cur[j] = pos_bonus(j);
+                } else {
+                    let mut score = NEG;
+                    let mut from = usize::MAX;
+                    if best_prev > NEG {
+                        score = best_prev + pos_bonus(j);
+                        from = best_prev_k;
+                    }
+                    // Consecutive bonus when q[i-1] sat immediately before j.
+                    if j > 0 && prev_row[j - 1] > NEG {
+                        let consec = prev_row[j - 1] + pos_bonus(j) + 6;
+                        if consec > score {
+                            score = consec;
+                            from = j - 1;
+                        }
+                    }
+                    if score > NEG {
+                        cur[j] = score;
+                        par[j] = from;
+                    }
                 }
             }
-            score += 1; // base hit
-            last_idx = idx as i64;
-            positions.push(idx);
-            qi += 1;
+            // Fold prev_row[j] into the running best for the next column (k < j+1).
+            if prev_row[j] > best_prev {
+                best_prev = prev_row[j];
+                best_prev_k = j;
+            }
+        }
+        parent.push(par);
+        prev_row = cur;
+    }
+
+    // Pick the best end position for the final query char, then backtrack.
+    let mut best = NEG;
+    let mut best_j = usize::MAX;
+    for j in 0..n {
+        if prev_row[j] > best {
+            best = prev_row[j];
+            best_j = j;
         }
     }
-    if qi == q.len() {
-        // Length penalty so shorter matches rank higher.
-        Some((score - (i_chars.len() as i64 / 8), positions))
-    } else {
-        None
+    if best_j == usize::MAX {
+        return None;
     }
+    let mut positions = vec![0usize; m];
+    let mut j = best_j;
+    for i in (0..m).rev() {
+        positions[i] = j;
+        j = parent[i][j];
+    }
+    // Length penalty so shorter matches rank higher.
+    Some((best - (n as i64 / 8), positions))
 }
 
 /// Replace a picker's items with fresh results — used for Grep, where the candidate
@@ -378,4 +443,49 @@ pub fn enumerate_files(root: &std::path::Path, max: usize) -> Vec<(String, Picke
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fuzzy_match;
+
+    #[test]
+    fn highlights_contiguous_trailing_run() {
+        // Greedy matching would scatter "footer.cshtml" across the path; the DP
+        // should bind it to the contiguous trailing "Footer.cshtml".
+        let item = "Vettvangur.Site/Views/Partials/KH/Features/Footer/Footer.cshtml";
+        let (_, pos) = fuzzy_match("footer.cshtml", item).expect("should match");
+        let matched: String = pos.iter().map(|&i| item.chars().nth(i).unwrap()).collect();
+        assert_eq!(matched.to_lowercase(), "footer.cshtml");
+        // The run must be contiguous (consecutive char indices).
+        assert!(
+            pos.windows(2).all(|w| w[1] == w[0] + 1),
+            "positions not contiguous: {pos:?}"
+        );
+        // And it must be the *last* "Footer", i.e. starts after the final '/'.
+        let last_slash = item.rfind('/').unwrap();
+        assert!(pos[0] > last_slash);
+    }
+
+    #[test]
+    fn no_match_when_chars_missing() {
+        assert!(fuzzy_match("zzz", "footer.cshtml").is_none());
+    }
+
+    #[test]
+    fn empty_query_matches_with_no_positions() {
+        let (score, pos) = fuzzy_match("", "anything").unwrap();
+        assert_eq!(score, 0);
+        assert!(pos.is_empty());
+    }
+
+    #[test]
+    fn prefers_word_boundary_over_earlier_occurrence() {
+        // "foo" appears mid-word in "scaffolder" and at a boundary in "/foo".
+        let item = "scaffolder/foo";
+        let (_, pos) = fuzzy_match("foo", item).expect("should match");
+        let matched: String = pos.iter().map(|&i| item.chars().nth(i).unwrap()).collect();
+        assert_eq!(matched, "foo");
+        assert_eq!(pos[0], item.find("/foo").unwrap() + 1);
+    }
 }
