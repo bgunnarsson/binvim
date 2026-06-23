@@ -300,10 +300,12 @@ impl super::App {
     }
 
     /// Replace the visual selection with the contents of a register
-    /// (`p`/`P` in Visual mode). The replaced text overwrites the unnamed
-    /// register — matching Vim's default — but the paste itself uses the
-    /// register snapshot taken before the delete, so back-to-back visual
-    /// pastes of the same content keep working.
+    /// (`p`/`P` in Visual mode). Unlike Vim's default, the replaced text is
+    /// **not** copied into the unnamed register — the register keeps holding
+    /// the original yank so the user can paste it over line after line. (Vim
+    /// stuffs the deleted selection into the unnamed register, which makes the
+    /// second paste replay whatever you just pasted over; that behaviour is a
+    /// frequent complaint, so we intentionally diverge.)
     pub(super) fn apply_visual_put(&mut self, register: Option<char>) {
         let kind = match self.mode {
             Mode::Visual(k) => k,
@@ -322,11 +324,9 @@ impl super::App {
             self.exit_visual();
             return;
         }
-        let removed = self.buffer.rope.slice(start..end).to_string();
-        // Overwrite the unnamed register with the deleted selection so a
-        // follow-up `yy`/`p` cycle behaves like in Vim. The paste below uses
-        // the snapshot taken above, not the register's new contents.
-        self.write_register(None, removed, linewise_selection);
+        // Leave the unnamed register alone — the deleted selection is dropped,
+        // not yanked, so the register keeps the content being pasted and the
+        // next `p` repeats the same text.
         self.buffer.delete_range(start, end);
         let to_insert = if reg.linewise && !linewise_selection {
             // Pasting a linewise yank over a charwise selection — drop the
@@ -357,26 +357,10 @@ impl super::App {
         let l2 = anchor.line.max(self.window.cursor.line);
         let c1 = anchor.col.min(self.window.cursor.col);
         let c2 = anchor.col.max(self.window.cursor.col);
-        // Collect the rectangle's text for the unnamed register, then strip
-        // it from the buffer bottom-up so the upper rows' indices stay valid.
-        let mut chunks: Vec<String> = Vec::with_capacity(l2 - l1 + 1);
-        for line in l1..=l2 {
-            let line_len = self.buffer.line_len(line);
-            let start = c1.min(line_len);
-            let end = (c2 + 1).min(line_len);
-            if end <= start {
-                chunks.push(String::new());
-                continue;
-            }
-            let line_start = self.buffer.line_start_idx(line);
-            chunks.push(
-                self.buffer
-                    .rope
-                    .slice((line_start + start)..(line_start + end))
-                    .to_string(),
-            );
-        }
-        self.write_register(None, chunks.join("\n"), false);
+        // Strip the rectangle from the buffer bottom-up so the upper rows'
+        // indices stay valid. The removed cells are dropped, not yanked into
+        // the unnamed register, so a follow-up paste replays the register's
+        // original content (see `apply_visual_put`).
         for line in (l1..=l2).rev() {
             let line_len = self.buffer.line_len(line);
             let start = c1.min(line_len);
@@ -499,5 +483,52 @@ impl super::App {
         let end_idx = range.end.saturating_sub(1).max(range.start);
         self.cursor_to_idx(end_idx);
         self.window.visual_anchor = Some(anchor);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::buffer::Buffer;
+    use crate::mode::{Mode, VisualKind};
+    use std::path::PathBuf;
+
+    fn app_with(path: &str, content: &str) -> crate::app::App {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer = Buffer {
+            rope: ropey::Rope::from_str(content),
+            path: Some(PathBuf::from(path)),
+            ..Buffer::default()
+        };
+        app
+    }
+
+    fn text(app: &crate::app::App) -> String {
+        app.buffer.rope.to_string()
+    }
+
+    // Visual-line paste must NOT clobber the register with the replaced
+    // line, so the same yank can be pasted over line after line.
+    #[test]
+    fn visual_put_preserves_register_for_repeat() {
+        let mut app = app_with("a.txt", "foo\nbar\nbaz\nend\n");
+        // Pretend the user did `yy` on "keep\n".
+        app.write_register(None, "keep\n".to_string(), true);
+
+        // Visual-line select line 0 ("foo") and paste over it.
+        app.window.cursor.line = 0;
+        app.window.cursor.col = 0;
+        app.window.visual_anchor = Some(app.window.cursor);
+        app.mode = Mode::Visual(VisualKind::Line);
+        app.apply_visual_put(None);
+        assert_eq!(text(&app), "keep\nbar\nbaz\nend\n");
+
+        // The register still holds "keep" — a second visual paste over
+        // "bar" replays it instead of pasting the previously-replaced line.
+        app.window.cursor.line = 1;
+        app.window.cursor.col = 0;
+        app.window.visual_anchor = Some(app.window.cursor);
+        app.mode = Mode::Visual(VisualKind::Line);
+        app.apply_visual_put(None);
+        assert_eq!(text(&app), "keep\nkeep\nbaz\nend\n");
     }
 }
