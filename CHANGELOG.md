@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.14]
+## [0.5.14] - 2026-06-23
 
 ### Fixed
 - **Pasting over a Visual selection no longer clobbers the register.** Visual-mode
