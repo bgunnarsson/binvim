@@ -6,6 +6,34 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.14]
+
+### Fixed
+- **Pasting over a Visual selection no longer clobbers the register.** Visual-mode
+  `p` / `P` copied the replaced text into the unnamed register (Vim's default), so
+  pasting a yank over one line and then over the next replayed the line you had just
+  overwritten instead of the original yank. The replaced selection is now dropped
+  rather than yanked, so the register keeps the pasted content and the same yank can
+  be put down over line after line.
+- **The Files picker highlights the best-scoring fuzzy match, not a greedy one.**
+  The matcher bound each query character to its first occurrence left-to-right, which
+  scattered the highlight across a path (matching `footer.cshtml` over `Features/Footer`
+  instead of the contiguous trailing `Footer.cshtml`). A dynamic-programming pass now
+  finds the alignment that maximises the bonus total, so the highlighted characters
+  track the run a human would pick — contiguous, at word boundaries.
+- **The DAP Console tab scrolls in the same direction as the rest of the UI.**
+
+### Performance
+- **Input bursts coalesce into a single render.** The event loop redrew the whole
+  editor once per input event, so a fast trackpad/wheel scroll over a pane — delivered
+  by the OS as a flood of scroll events — backed up dozens of full-screen frames and
+  the editor visibly lagged catching up after the gesture. This was most painful with
+  an AI side pane open: scroll events forwarded to the embedded tool triggered output
+  floods, and a click to return focus to the code sat behind the whole backlog, so the
+  cursor took a beat to reappear. The loop now drains everything already queued before
+  drawing once, collapsing a burst to one frame (capped so a continuous stream can't
+  starve the PTY drains).
+
 ## [0.5.13] - 2026-06-18
 
 ### Fixed
