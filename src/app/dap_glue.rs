@@ -979,12 +979,24 @@ impl super::App {
         self.dap_tab_scrolls.get(&tab).copied().unwrap_or(0)
     }
 
-    /// Adjust the active tab's scroll offset. For `Console` the
-    /// offset counts lines hidden BELOW the bottom (so 0 sticks to
-    /// the latest line, matching the old right-column behaviour);
-    /// every other tab uses lines hidden ABOVE the top.
+    /// Adjust the active tab's scroll offset. `delta` is a *screen*
+    /// direction — negative scrolls toward earlier content (wheel-up /
+    /// `Ctrl-y`), positive toward later content (wheel-down / `Ctrl-e`),
+    /// matching every other scrollable surface in the editor.
+    ///
+    /// For `Console` the stored offset counts lines hidden BELOW the
+    /// bottom (so 0 sticks to the latest line, matching the old
+    /// right-column behaviour); every other tab uses lines hidden ABOVE
+    /// the top. The Console's offset therefore runs opposite to screen
+    /// direction, so we flip the delta for it — without this, the wheel
+    /// scrolls Console backwards relative to the rest of the UI.
     pub(super) fn dap_tab_scroll_by(&mut self, delta: i32) {
         let tab = self.dap_pane_tab;
+        let delta = if matches!(tab, crate::app::DapPaneTab::Console) {
+            -delta
+        } else {
+            delta
+        };
         let body_rows = self.dap_body_rows();
         let total = self.dap_active_tab_row_count();
         let max = total.saturating_sub(body_rows);
