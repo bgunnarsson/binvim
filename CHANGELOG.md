@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.15]
+
 ### Added
 - **First-run toolchain setup.** Open a file whose language is missing its LSP
   or formatter and binvim now says so — a popup (the same overlay style as the
