@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **First-run toolchain setup.** Open a file whose language is missing its LSP
+  or formatter and binvim now says so — a one-line hint names what's missing and
+  points at the new `<leader>i`, which opens `:install` preselected to that
+  language's bundle so you review the plan and confirm with `y`. The hint fires
+  at most once per language per session, skips large files and languages that
+  can't be auto-installed (Razor's OmniSharp), and never nags about DAP adapters
+  — only the LSP + formatter that make a language feel set up. `<leader>i` works
+  on demand regardless. Silence the hint with `[install] prompt_on_open = false`.
+
 ## [0.5.14] - 2026-06-23
 
 ### Fixed

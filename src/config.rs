@@ -24,6 +24,36 @@ pub struct Config {
     pub lsp: LspConfig,
     #[serde(default)]
     pub file_explorer: FileExplorerConfig,
+    #[serde(default)]
+    pub install: InstallConfig,
+}
+
+/// First-run toolchain setup. When `prompt_on_open` is on (the default),
+/// opening a file whose language is missing its LSP or formatter surfaces a
+/// one-line hint pointing at `<leader>i`, which opens `:install` preselected to
+/// that language's bundle. The hint fires at most once per language per
+/// session. Turn it off entirely with:
+///
+/// ```toml
+/// [install]
+/// prompt_on_open = false
+/// ```
+#[derive(Debug, Deserialize)]
+pub struct InstallConfig {
+    #[serde(default = "default_install_prompt_on_open")]
+    pub prompt_on_open: bool,
+}
+
+fn default_install_prompt_on_open() -> bool {
+    true
+}
+
+impl Default for InstallConfig {
+    fn default() -> Self {
+        Self {
+            prompt_on_open: true,
+        }
+    }
 }
 
 /// LSP feature toggles. All default on — semantic tokens layer
@@ -201,6 +231,7 @@ impl Default for Config {
             copilot: CopilotConfig::default(),
             lsp: LspConfig::default(),
             file_explorer: FileExplorerConfig::default(),
+            install: InstallConfig::default(),
         }
     }
 }

@@ -452,6 +452,9 @@ pub enum Action {
     /// `<leader>ps` — open the package manager in search mode (pick a
     /// manifest, search the registry, then a version to add).
     PackageSearch,
+    /// `<leader>i` — open `:install` preselected to the current buffer's
+    /// language bundle (the first-run toolchain-setup shortcut).
+    InstallToolchain,
     /// `<leader>Al` — list the defined AVDs and launch the chosen emulator.
     AndroidLaunchAvd,
     /// `<leader>Ac` — create a new AVD (pick a system image, then name it).
@@ -1079,6 +1082,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'R' => Some(Action::ReplaceAllInBuffer),
             'f' => Some(Action::Format),
             'l' => Some(Action::LspExecuteCodeLens),
+            'i' => Some(Action::InstallToolchain),
             '/' => Some(Action::ToggleComment),
             _ => None,
         };

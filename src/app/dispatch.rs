@@ -378,6 +378,7 @@ impl super::App {
                 self.package_begin(crate::app::state::PackageFlowKind::Install)
             }
             Action::PackageSearch => self.package_begin(crate::app::state::PackageFlowKind::Search),
+            Action::InstallToolchain => self.install_toolchain_for_current(),
             Action::AndroidLaunchAvd => self.android_list_avds(),
             Action::AndroidCreateAvd => self.android_create_avd(),
             Action::AndroidDevices => self.android_list_devices(),

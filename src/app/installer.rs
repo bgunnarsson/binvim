@@ -23,12 +23,53 @@
 
 use std::collections::HashSet;
 
+use crate::lang::Lang;
 use crate::mode::Mode;
 use binvim::install::{
     BUNDLES, BinvimUpdate, Choice, NodeVersion, PlanItem, build_plan, build_update_plan,
-    detect_binvim_update, detect_managers, discover_node_versions, on_path, plan_needs_node,
-    run_binvim_update, run_plan,
+    bundle_index_by_name, detect_binvim_update, detect_managers, discover_node_versions,
+    missing_core_tools, on_path, plan_needs_node, run_binvim_update, run_plan,
 };
+
+/// Map a detected [`Lang`] to the index of its `BUNDLES` entry, so the
+/// first-run flow can preselect exactly the toolchain the buffer under the
+/// cursor needs. The name table lives here (not in the shared `install`
+/// library) because `Lang` is editor-only; resolution is by bundle name so
+/// reordering the catalog can't mis-point the preselection.
+///
+/// Languages with no auto-installable bundle (JSON — biome formats it but no
+/// JSON LSP ships in a bundle; XML / `.editorconfig` / `.gitignore` — no
+/// server at all) return `None`: the caller stays quiet.
+fn bundle_for_lang(lang: Lang) -> Option<usize> {
+    let name = match lang {
+        Lang::Rust => "Rust",
+        Lang::TypeScript | Lang::Tsx | Lang::JavaScript => "TypeScript / JavaScript",
+        Lang::Go => "Go",
+        Lang::Python => "Python",
+        Lang::C | Lang::Cpp => "C / C++",
+        Lang::CSharp => "C#",
+        Lang::Razor => "Razor / .cshtml",
+        Lang::Bash => "Bash / Shell",
+        Lang::Yaml => "YAML",
+        Lang::Lua => "Lua",
+        Lang::Svelte => "Svelte",
+        Lang::Markdown => "Markdown",
+        Lang::Toml => "TOML",
+        Lang::Ruby => "Ruby",
+        Lang::Php => "PHP",
+        Lang::Java => "Java",
+        Lang::Zig => "Zig",
+        Lang::Nix => "Nix",
+        Lang::Elixir => "Elixir",
+        Lang::Kotlin => "Kotlin",
+        Lang::Dockerfile => "Docker",
+        Lang::Sql => "SQL",
+        Lang::Css | Lang::Scss => "CSS / SCSS / Less",
+        Lang::Html => "HTML",
+        Lang::Json | Lang::Xml | Lang::EditorConfig | Lang::GitIgnore => return None,
+    };
+    bundle_index_by_name(name)
+}
 
 /// State machine for the overlay. `App.installer` is `Some` while the
 /// overlay is up and `None` once it's dismissed; this enum tracks the
@@ -214,6 +255,66 @@ impl super::App {
         self.show_install_page = false;
         if matches!(self.mode, Mode::Installer) {
             self.mode = Mode::Normal;
+        }
+    }
+
+    /// First-run nudge: called after a buffer attaches its LSP. If the active
+    /// file's language is missing its primary LSP or formatter and we haven't
+    /// already said so this session, drop a one-line hint pointing at
+    /// `<leader>i`. Gated behind `[install] prompt_on_open` (default on) and
+    /// skipped for large files (which never attach a server anyway).
+    pub(super) fn maybe_prompt_toolchain(&mut self) {
+        if !self.config.install.prompt_on_open || self.buffer.is_large() {
+            return;
+        }
+        let Some(path) = self.buffer.path.as_deref() else {
+            return;
+        };
+        let Some(lang) = crate::lang::Lang::detect(path) else {
+            return;
+        };
+        let Some(bundle_idx) = bundle_for_lang(lang) else {
+            return;
+        };
+        // Once per language per session — don't re-nag on every buffer switch.
+        if self.toolchain_prompted.contains(&bundle_idx) {
+            return;
+        }
+        let missing = missing_core_tools(bundle_idx);
+        if missing.is_empty() {
+            return;
+        }
+        self.toolchain_prompted.insert(bundle_idx);
+        let names = missing
+            .iter()
+            .map(|t| t.label)
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.status_msg = format!(
+            "{} not installed — press <leader>i to set up this language",
+            names
+        );
+    }
+
+    /// `<leader>i` — open `:install` preselected to the current buffer's
+    /// language bundle so the user lands on exactly the toolchain they need,
+    /// reviews it, and confirms. Falls back to the plain installer when the
+    /// buffer has no language-specific bundle (JSON, XML, a `[No Name]`
+    /// scratch buffer).
+    pub(super) fn install_toolchain_for_current(&mut self) {
+        let bundle_idx = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(crate::lang::Lang::detect)
+            .and_then(bundle_for_lang);
+        self.open_installer(InstallerKind::Install);
+        if let (Some(idx), Some(state)) = (bundle_idx, self.installer.as_mut()) {
+            let row = idx + state.binvim_offset();
+            if let Some(slot) = state.checked.get_mut(row) {
+                *slot = true;
+                state.cursor = row;
+            }
         }
     }
 
@@ -831,4 +932,40 @@ pub enum PlanRowColor {
     Red,
     /// Muted — used for `:update`'s "not installed" rows.
     Subtle,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bundle_for_lang_points_at_the_named_bundle() {
+        // Spot-check the non-obvious many-to-one mappings and confirm the
+        // resolved index really is the bundle we expect.
+        let cases = [
+            (Lang::Rust, "Rust"),
+            (Lang::Tsx, "TypeScript / JavaScript"),
+            (Lang::JavaScript, "TypeScript / JavaScript"),
+            (Lang::C, "C / C++"),
+            (Lang::Cpp, "C / C++"),
+            (Lang::CSharp, "C#"),
+            (Lang::Scss, "CSS / SCSS / Less"),
+            (Lang::Css, "CSS / SCSS / Less"),
+            (Lang::Dockerfile, "Docker"),
+        ];
+        for (lang, name) in cases {
+            let idx = bundle_for_lang(lang).expect("lang should map to a bundle");
+            assert_eq!(BUNDLES[idx].name, name, "{lang:?} mis-mapped");
+        }
+    }
+
+    #[test]
+    fn bundle_for_lang_stays_quiet_for_bundleless_langs() {
+        // JSON has no LSP bundle (biome formats it via the TS bundle, but we
+        // don't want to nag "typescript-language-server missing" on a .json
+        // file); XML / editorconfig / gitignore have no server at all.
+        for lang in [Lang::Json, Lang::Xml, Lang::EditorConfig, Lang::GitIgnore] {
+            assert_eq!(bundle_for_lang(lang), None, "{lang:?} should be bundleless");
+        }
+    }
 }

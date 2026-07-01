@@ -564,6 +564,42 @@ pub fn bundle_summary(b: &Bundle) -> String {
         .join(" · ")
 }
 
+/// Index of the `BUNDLES` entry with this exact `name`. The first-run flow
+/// resolves a language to its bundle by name (not a hardcoded index) so
+/// reordering the catalog can't silently mis-point the preselection. The
+/// `Lang` → name table lives editor-side (`app/installer.rs`) because `Lang`
+/// isn't part of this shared install library.
+pub fn bundle_index_by_name(name: &str) -> Option<usize> {
+    BUNDLES.iter().position(|b| b.name == name)
+}
+
+/// The bundle's primary LSP + primary formatter that are *missing from `$PATH`
+/// and automatically installable*. This is deliberately narrow: only the first
+/// `Lsp` and first `Formatter` tool are considered (not the fallback prettier
+/// or the shared emmet-ls that ride along in the markup bundles), and any tool
+/// whose only path is `Installer::Manual` is skipped — the first-run prompt
+/// should never nag about something it can't set up for you (OmniSharp,
+/// netcoredbg). An empty result means "this language is ready to go."
+pub fn missing_core_tools(bundle_idx: usize) -> Vec<&'static Tool> {
+    let Some(bundle) = BUNDLES.get(bundle_idx) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for role in [Role::Lsp, Role::Formatter] {
+        let Some(tool) = bundle.tools.iter().find(|t| t.role == role) else {
+            continue;
+        };
+        let auto_installable = tool
+            .installers
+            .iter()
+            .any(|i| !matches!(i, Installer::Manual(_)));
+        if auto_installable && !on_path(tool.bin) {
+            out.push(tool);
+        }
+    }
+    out
+}
+
 // ─── PATH / package-manager detection ──────────────────────────────────────
 
 pub fn on_path(name: &str) -> bool {
@@ -1243,6 +1279,53 @@ pub fn run_binvim_update(update: &BinvimUpdate) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundle_index_by_name_resolves_and_rejects() {
+        // Every name maps to the bundle actually at that index.
+        for (i, b) in BUNDLES.iter().enumerate() {
+            assert_eq!(bundle_index_by_name(b.name), Some(i));
+        }
+        assert_eq!(bundle_index_by_name("nonexistent-language"), None);
+    }
+
+    #[test]
+    fn missing_core_tools_ignores_dap_and_tool_roles() {
+        // Whatever's on the test host's PATH, missing_core_tools only ever
+        // reports Lsp/Formatter tools — never a Dap adapter or an editor Tool.
+        for i in 0..BUNDLES.len() {
+            for t in missing_core_tools(i) {
+                assert!(
+                    matches!(t.role, Role::Lsp | Role::Formatter),
+                    "{} surfaced a {:?} tool",
+                    BUNDLES[i].name,
+                    t.role
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_core_tools_never_reports_manual_only_tools() {
+        // The first-run prompt must not nag about things it can't install:
+        // Razor's OmniSharp (Manual LSP) and C#'s netcoredbg (Manual DAP).
+        let razor = bundle_index_by_name("Razor / .cshtml").unwrap();
+        // Razor's only core tool is a Manual LSP with no formatter — so
+        // regardless of PATH there is never anything to auto-install.
+        assert!(missing_core_tools(razor).is_empty());
+        for i in 0..BUNDLES.len() {
+            for t in missing_core_tools(i) {
+                assert!(
+                    t.installers
+                        .iter()
+                        .any(|inst| !matches!(inst, Installer::Manual(_))),
+                    "{} surfaced Manual-only tool {}",
+                    BUNDLES[i].name,
+                    t.bin
+                );
+            }
+        }
+    }
 
     #[test]
     fn upgrade_display_uses_manager_upgrade_verbs() {

@@ -243,6 +243,10 @@ impl super::App {
         self.touch_recent();
         if large {
             self.status_msg = "large file — tree-sitter + LSP disabled".into();
+        } else {
+            // First-run nudge if this language's LSP/formatter isn't set up.
+            // After the large-file branch so it can't clobber that notice.
+            self.maybe_prompt_toolchain();
         }
         // Strip the phantom `[No Name]` seed that App::new() seeds at
         // index 0 — only on the transition from "fresh launch" (one

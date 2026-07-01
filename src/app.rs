@@ -266,6 +266,10 @@ pub struct App {
     /// alongside `history_cursor`.
     pub history_draft: Option<String>,
     pub status_msg: String,
+    /// Bundle indices whose "toolchain missing — press `<leader>i`" hint has
+    /// already fired this session. Keyed by `install::BUNDLES` index so the
+    /// first-run nudge shows at most once per language until binvim restarts.
+    pub toolchain_prompted: std::collections::HashSet<usize>,
     /// When the current `status_msg` was first observed non-empty.
     /// Drives the 10-second auto-dismiss timer; cleared whenever the
     /// message itself is cleared (either by the next keypress, the
@@ -882,6 +886,7 @@ impl App {
             history_cursor: None,
             history_draft: None,
             status_msg: String::new(),
+            toolchain_prompted: std::collections::HashSet::new(),
             status_msg_at: None,
             width: w,
             height: h,
@@ -1057,6 +1062,10 @@ impl App {
             self.status_msg = "large file — tree-sitter + LSP disabled".into();
         }
         self.lsp_attach_active();
+        // Same first-run toolchain nudge open_buffer fires, for the
+        // CLI-launched buffer that never went through it. No-op on the
+        // start page / restored session (no path) and on large files.
+        self.maybe_prompt_toolchain();
         self.refresh_editorconfig();
         self.refresh_git_hunks();
         let mut needs_render = true;
