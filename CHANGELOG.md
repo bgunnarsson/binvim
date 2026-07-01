@@ -10,8 +10,9 @@ follows [Semantic Versioning](https://semver.org/).
 - **First-run toolchain setup.** Open a file whose language is missing its LSP
   or formatter and binvim now says so — a popup (the same overlay style as the
   file picker, so a competing notice like Copilot sign-in can't paint over it)
-  lists what's missing; `Enter` opens `:install` preselected to that language's
-  bundle so you review the plan and confirm with `y`, `Esc` dismisses. The new
+  leads with an "Install all missing dependencies" action and itemises what
+  that covers; `Enter` opens `:install` preselected to that language's bundle so
+  you review the plan and confirm with `y`, `Esc` dismisses. The new
   `<leader>i` opens the same preselected installer on demand. The popup fires at
   most once per language per session, skips large files and languages that can't
   be auto-installed (Razor's OmniSharp), won't open over another overlay or

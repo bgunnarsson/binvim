@@ -299,32 +299,45 @@ impl super::App {
 
     /// Build + show the missing-toolchain picker for one bundle. Each row is a
     /// missing tool (label + role); they all route to the same bundle, so
-    /// accepting any one opens the installer preselected to it.
+    /// accepting any one opens `:install` preselected to that language's
+    /// bundle. The first row is the primary "install everything missing for
+    /// this language" action (same as `:install` on the bundle); the rows below
+    /// itemise what that covers. Every row routes to the same bundle install —
+    /// the installer is language-granular — so picking a specific tool still
+    /// sets up the whole language, with the review overlay as the confirm step.
     fn open_toolchain_picker(&mut self, bundle_idx: usize, missing: &[&'static Tool]) {
-        let items: Vec<(String, PickerPayload)> = missing
-            .iter()
-            .map(|t| {
-                let role = match t.role {
-                    Role::Lsp => "LSP",
-                    Role::Formatter => "formatter",
-                    Role::Dap => "debugger",
-                    Role::Tool => "tool",
-                };
-                (
-                    format!("{}  ·  {role}", t.label),
-                    PickerPayload::InstallToolchain { bundle_idx },
-                )
-            })
-            .collect();
         let name = BUNDLES
             .get(bundle_idx)
             .map(|b| b.name)
             .unwrap_or("this language");
+        // Row 0: the "install all" action. Rows 1..N: the individual missing
+        // tools, for context. All carry the same bundle payload.
+        let mut items: Vec<(String, PickerPayload)> = Vec::with_capacity(missing.len() + 1);
+        items.push((
+            format!("Install all missing dependencies ({})", missing.len()),
+            PickerPayload::InstallToolchain { bundle_idx },
+        ));
+        for t in missing {
+            let role = match t.role {
+                Role::Lsp => "LSP",
+                Role::Formatter => "formatter",
+                Role::Dap => "debugger",
+                Role::Tool => "tool",
+            };
+            items.push((
+                format!("{}  ·  {role}", t.label),
+                PickerPayload::InstallToolchain { bundle_idx },
+            ));
+        }
         let title = format!(
             "Set up {name} — {} not installed (Enter to install · Esc to skip)",
             missing.len()
         );
-        self.picker = Some(PickerState::new(PickerKind::InstallToolchain, title, items));
+        let mut state = PickerState::new(PickerKind::InstallToolchain, title, items);
+        // Accent the "install all" row so it reads as the primary action even
+        // when the cursor moves down onto an itemised tool.
+        state.marked = Some(0);
+        self.picker = Some(state);
         self.mode = Mode::Picker;
     }
 
