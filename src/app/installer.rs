@@ -25,10 +25,12 @@ use std::collections::HashSet;
 
 use crate::lang::Lang;
 use crate::mode::Mode;
+use crate::picker::{PickerKind, PickerPayload, PickerState};
 use binvim::install::{
-    BUNDLES, BinvimUpdate, Choice, NodeVersion, PlanItem, build_plan, build_update_plan,
-    bundle_index_by_name, detect_binvim_update, detect_managers, discover_node_versions,
-    missing_core_tools, on_path, plan_needs_node, run_binvim_update, run_plan,
+    BUNDLES, BinvimUpdate, Choice, NodeVersion, PlanItem, Role, Tool, build_plan,
+    build_update_plan, bundle_index_by_name, detect_binvim_update, detect_managers,
+    discover_node_versions, missing_core_tools, on_path, plan_needs_node, run_binvim_update,
+    run_plan,
 };
 
 /// Map a detected [`Lang`] to the index of its `BUNDLES` entry, so the
@@ -260,11 +262,18 @@ impl super::App {
 
     /// First-run nudge: called after a buffer attaches its LSP. If the active
     /// file's language is missing its primary LSP or formatter and we haven't
-    /// already said so this session, drop a one-line hint pointing at
-    /// `<leader>i`. Gated behind `[install] prompt_on_open` (default on) and
-    /// skipped for large files (which never attach a server anyway).
+    /// already said so this session, pop a small picker listing what's missing
+    /// (accept → `:install` preselected, `Esc` → dismiss). A popup rather than
+    /// a `status_msg` so a competing notification — Copilot sign-in, an LSP
+    /// message — can't paint over it. Gated behind `[install] prompt_on_open`
+    /// (default on), skipped for large files (which never attach a server), and
+    /// never opened over an existing overlay or a non-Normal context.
     pub(super) fn maybe_prompt_toolchain(&mut self) {
         if !self.config.install.prompt_on_open || self.buffer.is_large() {
+            return;
+        }
+        // Don't hijack an active picker/overlay or an in-progress edit.
+        if self.picker.is_some() || !matches!(self.mode, Mode::Normal) {
             return;
         }
         let Some(path) = self.buffer.path.as_deref() else {
@@ -285,15 +294,38 @@ impl super::App {
             return;
         }
         self.toolchain_prompted.insert(bundle_idx);
-        let names = missing
+        self.open_toolchain_picker(bundle_idx, &missing);
+    }
+
+    /// Build + show the missing-toolchain picker for one bundle. Each row is a
+    /// missing tool (label + role); they all route to the same bundle, so
+    /// accepting any one opens the installer preselected to it.
+    fn open_toolchain_picker(&mut self, bundle_idx: usize, missing: &[&'static Tool]) {
+        let items: Vec<(String, PickerPayload)> = missing
             .iter()
-            .map(|t| t.label)
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.status_msg = format!(
-            "{} not installed — press <leader>i to set up this language",
-            names
+            .map(|t| {
+                let role = match t.role {
+                    Role::Lsp => "LSP",
+                    Role::Formatter => "formatter",
+                    Role::Dap => "debugger",
+                    Role::Tool => "tool",
+                };
+                (
+                    format!("{}  ·  {role}", t.label),
+                    PickerPayload::InstallToolchain { bundle_idx },
+                )
+            })
+            .collect();
+        let name = BUNDLES
+            .get(bundle_idx)
+            .map(|b| b.name)
+            .unwrap_or("this language");
+        let title = format!(
+            "Set up {name} — {} not installed (Enter to install · Esc to skip)",
+            missing.len()
         );
+        self.picker = Some(PickerState::new(PickerKind::InstallToolchain, title, items));
+        self.mode = Mode::Picker;
     }
 
     /// `<leader>i` — open `:install` preselected to the current buffer's
@@ -302,15 +334,25 @@ impl super::App {
     /// buffer has no language-specific bundle (JSON, XML, a `[No Name]`
     /// scratch buffer).
     pub(super) fn install_toolchain_for_current(&mut self) {
-        let bundle_idx = self
+        match self
             .buffer
             .path
             .as_deref()
             .and_then(crate::lang::Lang::detect)
-            .and_then(bundle_for_lang);
+            .and_then(bundle_for_lang)
+        {
+            Some(idx) => self.open_installer_for_bundle(idx),
+            None => self.open_installer(InstallerKind::Install),
+        }
+    }
+
+    /// Open the installer overlay with one bundle preselected (its row checked
+    /// and the cursor parked on it). Shared by `<leader>i` and the accept path
+    /// of the missing-toolchain picker.
+    pub(super) fn open_installer_for_bundle(&mut self, bundle_idx: usize) {
         self.open_installer(InstallerKind::Install);
-        if let (Some(idx), Some(state)) = (bundle_idx, self.installer.as_mut()) {
-            let row = idx + state.binvim_offset();
+        if let Some(state) = self.installer.as_mut() {
+            let row = bundle_idx + state.binvim_offset();
             if let Some(slot) = state.checked.get_mut(row) {
                 *slot = true;
                 state.cursor = row;

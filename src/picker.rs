@@ -58,6 +58,12 @@ pub enum PickerKind {
     /// `<leader>Ad` — running devices / emulators (`adb devices`). Selection
     /// is informational today; in a debug flow it picks the attach target.
     AndroidDevice,
+    /// First-run toolchain nudge — auto-opened when a buffer's language is
+    /// missing its LSP / formatter. Rows list the missing tools; accepting any
+    /// opens `:install` preselected to that language's bundle. A popup (rather
+    /// than a status-line notification) so a competing notice — Copilot
+    /// sign-in, an LSP message — can't paint over it.
+    InstallToolchain,
 }
 
 pub struct PickerState {
@@ -167,6 +173,13 @@ pub enum PickerPayload {
     /// A running device / emulator serial (`adb` `-s` target).
     AndroidDevice {
         serial: String,
+    },
+    /// A missing-toolchain row. `bundle_idx` is the `install::BUNDLES` index
+    /// for the current buffer's language; every row in the picker carries the
+    /// same index (accepting any one sets up the whole language), so the
+    /// payload only needs to route to the installer.
+    InstallToolchain {
+        bundle_idx: usize,
     },
 }
 

@@ -240,6 +240,9 @@ impl super::App {
                         PickerPayload::AndroidDevice { serial } => {
                             self.android_pick_device(serial);
                         }
+                        PickerPayload::InstallToolchain { bundle_idx } => {
+                            self.open_installer_for_bundle(bundle_idx);
+                        }
                     }
                 }
             }
@@ -321,7 +324,9 @@ impl super::App {
             // Android AVD / system-image / device lists filter locally too.
             | PickerKind::AndroidAvd
             | PickerKind::AndroidSystemImage
-            | PickerKind::AndroidDevice => picker.refilter(),
+            | PickerKind::AndroidDevice
+            // Missing-toolchain rows are a short static list — filter locally.
+            | PickerKind::InstallToolchain => picker.refilter(),
             PickerKind::PackageSearch => {
                 // Network search — don't filter locally. Mark the query dirty;
                 // the debounced `pkg_search_tick` fires the request.
