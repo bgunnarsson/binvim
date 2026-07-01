@@ -1449,7 +1449,15 @@ mod tests {
 
     #[test]
     fn detects_ecosystem_from_buffer_extension() {
-        let tmp = std::env::temp_dir();
+        // Hermetic root: an empty temp subdir, not the shared `temp_dir()`.
+        // The marker-fallback branch of `detect` scans `start_dir` recursively
+        // for manifests, so pointing it at the process-wide temp dir races any
+        // sibling test that drops a `Cargo.toml` / `go.mod` there — the dap
+        // fixtures (`binvim_dap_test_*`) do exactly that, which intermittently
+        // made the generic `.json` case resolve to `Some(Cargo)`.
+        let tmp = std::env::temp_dir().join("binvim_pkg_detect_ext");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
         let eco = |p: &str| detect(Some(Path::new(p)), &tmp).map(|(e, _)| e);
         assert_eq!(eco("/x/Foo.cs"), Some(PackageEcosystem::DotNet));
         assert_eq!(eco("/x/Foo.csproj"), Some(PackageEcosystem::DotNet));
@@ -1462,6 +1470,7 @@ mod tests {
         assert_eq!(eco("/x/go.mod"), Some(PackageEcosystem::Go));
         // A generic `.json` is too broad to claim for npm by extension alone.
         assert_eq!(eco("/x/appsettings.json"), None);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
