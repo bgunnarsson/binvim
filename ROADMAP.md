@@ -78,11 +78,39 @@ literally.
   (`:claude` / `:codex`) and DAP-across-four-runtimes. Polish them into headline
   features, not footnotes.
 
+## Windows: first-class parity  (cross-cutting, lands across 0.6–1.0)
+
+The Windows port is mostly shipped — WS1–8 are done, the editor builds, tests, and
+runs on `x86_64-pc-windows-msvc`, and CI exercises every push against
+`windows-latest` alongside ubuntu + macos. The detailed tracker lives in
+[`WINDOWS.md`](WINDOWS.md); the roadmap-level commitment is to close the gap
+between "compiles and unit-tests pass in CI" and "a Windows developer gets the
+same zero-config IDE a macOS developer does." Three tiers of remaining work:
+
+- **On-device verification (0.6).** CI proves compilation, not behaviour. Exercise
+  `install.ps1` end-to-end on a fresh Windows 10/11 VM, then LSP discovery, DAP
+  launch, `:terminal` (ConPTY), and CRLF round-trip on real hardware. Anything
+  that fails here is a first-run bounce on the second-biggest developer platform.
+- **Feature parity (0.7).** Ship the flows that assume a POSIX shell: per-shell
+  dispatch for the **task runner** and **AI side panes** (`/C` for cmd.exe,
+  `-Command` for pwsh, untouched for bash), the cmd.exe variant of `shell_quote`,
+  native **winget / scoop / choco** support in `binvim-install` + `:install`
+  (three `Installer` variants + `detect_managers` probes), and full SCSS
+  highlighting once `tree-sitter-scss` cuts a release with the MSVC fix.
+- **Distribution & trust (0.8–1.0).** winget submission to `microsoft/winget-pkgs`,
+  and **code-signing the Windows binary** so SmartScreen stops warning on first
+  run — the single biggest trust bounce for a new Windows user. MSI/MSIX,
+  PowerShell-as-default-shell, and WSL path translation stay deferred until asked.
+
+Zero-config depth has to mean *on Windows too*, or the adoption pitch has an
+asterisk. Windows parity is therefore part of the 1.0 quality bar, not a nice-to-have.
+
 ## 1.0 — the quality bar
 
 1.0 ships when: first run installs and works with zero manual config for the
 supported stacks; no known data-loss path; the correctness + terminal matrices
-are green; the performance budget is met and published; and clippy is a hard gate.
+are green; the performance budget is met and published; clippy is a hard gate; and
+Windows reaches feature parity (see the Windows workstream above).
 
 ---
 
@@ -102,7 +130,7 @@ are green; the performance budget is met and published; and clippy is a hard gat
 
 | Version | Theme | Ships when |
 |---------|-------|------------|
-| 0.6 | First-run setup | Contextual toolchain install, prescriptive `:health`, `:config` live-reload + validation |
-| 0.7 | Hardening | Crash/data-loss audit clean, correctness suite green, terminal matrix documented |
-| 0.8–0.9 | Perf & proof | Published benchmarks, demo assets, migration guides, `winget`/AUR/apt |
-| 1.0 | Quality bar | Zero-config first run, no data-loss path, matrices green, perf budget met, clippy gated |
+| 0.6 | First-run setup | Contextual toolchain install, prescriptive `:health`, `:config` live-reload + validation; Windows on-device verification |
+| 0.7 | Hardening | Crash/data-loss audit clean, correctness suite green, terminal matrix documented; Windows feature parity (task runner, AI panes, winget/scoop/choco) |
+| 0.8–0.9 | Perf & proof | Published benchmarks, demo assets, migration guides, `winget`/AUR/apt; winget submission + Windows code-signing |
+| 1.0 | Quality bar | Zero-config first run, no data-loss path, matrices green, perf budget met, clippy gated, Windows at parity |
