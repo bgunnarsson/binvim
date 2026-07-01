@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.15]
+## [0.5.15] - 2026-07-01
 
 ### Added
 - **First-run toolchain setup.** Open a file whose language is missing its LSP
