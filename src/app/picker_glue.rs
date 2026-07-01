@@ -247,8 +247,10 @@ impl super::App {
                 }
             }
             KeyCode::Backspace => {
-                picker.input.pop();
-                self.refilter_picker();
+                if picker.searchable() {
+                    picker.input.pop();
+                    self.refilter_picker();
+                }
             }
             KeyCode::Up => picker.move_up(),
             KeyCode::Down => picker.move_down(),
@@ -291,10 +293,19 @@ impl super::App {
                 'G' => picker.move_by(i64::MAX / 2),
                 _ => {}
             },
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if picker.searchable() => {
                 picker.input.push(c);
                 self.refilter_picker();
             }
+            // Fixed-list picker (no search input): vim-style navigation
+            // instead of typing into a filter.
+            KeyCode::Char(c) => match c {
+                'j' => picker.move_down(),
+                'k' => picker.move_up(),
+                'g' => picker.move_by(i64::MIN / 2),
+                'G' => picker.move_by(i64::MAX / 2),
+                _ => {}
+            },
             _ => {}
         }
     }

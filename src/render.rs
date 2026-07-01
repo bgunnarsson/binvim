@@ -1536,6 +1536,10 @@ struct PickerLayout {
     prompt_row: usize,
     footer_row: usize,
     bottom_row: usize,
+    /// Whether the `›` search input row is shown. False for fixed-list
+    /// pickers (the first-run toolchain picker), which reclaim the prompt +
+    /// separator rows for the list.
+    show_prompt: bool,
 }
 
 /// Number of list rows the picker can display in its current geometry.
@@ -1570,10 +1574,14 @@ fn picker_layout(app: &App) -> PickerLayout {
     let bottom_chrome = 2;
     let top = rect.y as usize + area_h.saturating_sub(bottom_chrome).saturating_sub(box_h) / 2;
 
+    let show_prompt = app.picker.as_ref().map(|p| p.searchable()).unwrap_or(true);
     let prompt_row = top + 2;
     let footer_row = top + box_h - 2;
     let bottom_row = top + box_h - 1;
-    let list_top = top + 4;
+    // With a search input the list starts below the prompt + separator
+    // (top+4); without it, the list begins right after the top padding
+    // (top+2), reclaiming those two rows.
+    let list_top = if show_prompt { top + 4 } else { top + 2 };
     let list_h = footer_row.saturating_sub(list_top + 1);
 
     PickerLayout {
@@ -1585,6 +1593,7 @@ fn picker_layout(app: &App) -> PickerLayout {
         prompt_row,
         footer_row,
         bottom_row,
+        show_prompt,
     }
 }
 
@@ -1642,33 +1651,35 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
     // ── Top padding row (blank inside borders) ─────────────────────────
     draw_padding_row(out, &layout, layout.top + 1, bg, border)?;
 
-    // ── Prompt row: ` › <input>` ───────────────────────────────────────
-    let input_chars: String = picker
-        .input
-        .chars()
-        .take(layout.inner_w.saturating_sub(4))
-        .collect();
-    let input_w = input_chars.chars().count();
-    let prompt_pad = layout.inner_w.saturating_sub(3 + input_w);
-    queue!(
-        out,
-        MoveTo(layout.left as u16, layout.prompt_row as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('│'),
-        Print(' '),
-        SetForegroundColor(prompt_fg),
-        Print('›'),
-        Print(' '),
-        SetForegroundColor(input_fg),
-        Print(&input_chars),
-        Print(" ".repeat(prompt_pad)),
-        SetForegroundColor(border),
-        Print('│'),
-    )?;
+    // ── Prompt row: ` › <input>` ─── (skipped for fixed-list pickers) ──
+    if layout.show_prompt {
+        let input_chars: String = picker
+            .input
+            .chars()
+            .take(layout.inner_w.saturating_sub(4))
+            .collect();
+        let input_w = input_chars.chars().count();
+        let prompt_pad = layout.inner_w.saturating_sub(3 + input_w);
+        queue!(
+            out,
+            MoveTo(layout.left as u16, layout.prompt_row as u16),
+            SetBackgroundColor(bg),
+            SetForegroundColor(border),
+            Print('│'),
+            Print(' '),
+            SetForegroundColor(prompt_fg),
+            Print('›'),
+            Print(' '),
+            SetForegroundColor(input_fg),
+            Print(&input_chars),
+            Print(" ".repeat(prompt_pad)),
+            SetForegroundColor(border),
+            Print('│'),
+        )?;
 
-    // ── Separator below prompt ─────────────────────────────────────────
-    draw_padding_row(out, &layout, layout.top + 3, bg, border)?;
+        // ── Separator below prompt ─────────────────────────────────────
+        draw_padding_row(out, &layout, layout.top + 3, bg, border)?;
+    }
 
     // ── List rows ──────────────────────────────────────────────────────
     let start = if picker.selected >= layout.list_h {

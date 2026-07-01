@@ -200,6 +200,13 @@ impl PickerState {
         }
     }
 
+    /// Whether this picker shows a fuzzy-search input line. Most do; the
+    /// first-run toolchain picker is a fixed short list, so it renders without
+    /// the `›` prompt and navigates with plain `j`/`k` instead of typing.
+    pub fn searchable(&self) -> bool {
+        !matches!(self.kind, PickerKind::InstallToolchain)
+    }
+
     pub fn refilter(&mut self) {
         if self.input.is_empty() {
             self.filtered = (0..self.items.len()).collect();
