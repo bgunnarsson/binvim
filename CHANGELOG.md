@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **Full-screen TUIs no longer smear inside the `:terminal` pane.** The embedded
+  terminal now honours scroll regions (DECSTBM, `CSI r`), line insert/delete
+  (IL/DL, `CSI L`/`M`), scroll-down (SD, `CSI T`), and the ANSI.SYS
+  save/restore-cursor pair (`CSI s`/`u`), with `LF`/`RI`/`SU` confined to the
+  active margins. Programs that pin a header or input box outside a scrolling
+  region — Claude Code's fullscreen mode, `less`, and similar — previously
+  scrolled the whole grid on every update, dragging the pinned chrome up into the
+  transcript and corrupting the frame.
+
 ## [0.5.15] - 2026-07-01
 
 ### Added

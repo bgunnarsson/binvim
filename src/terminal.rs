@@ -257,6 +257,16 @@ pub struct VteHandler {
     /// keystrokes — without this, interior newlines read as Enter and
     /// the AI panes fire one message per line.
     pub(crate) bracketed_paste: bool,
+    /// DECSTBM scroll region — the top / bottom rows (0-based,
+    /// inclusive) that LF / RI / IL / DL / SU / SD operate within.
+    /// Full screen by default (`0 ..= rows-1`). Full-screen TUIs
+    /// (claude's fullscreen mode, vim, less) set a region with
+    /// `\x1b[top;bottomr` so they can scroll a transcript pane while
+    /// a header / input box stays pinned outside the margins. Without
+    /// honouring it, every scroll moved the whole grid and dragged the
+    /// pinned chrome up into the scrolling area, smearing the frame.
+    scroll_top: usize,
+    scroll_bottom: usize,
 }
 
 /// Snapshot of the main screen taken when a TUI enters alt-screen
@@ -299,6 +309,57 @@ impl VteHandler {
             saved_main: None,
             cursor_visible: true,
             bracketed_paste: false,
+            scroll_top: 0,
+            scroll_bottom: rows.saturating_sub(1),
+        }
+    }
+
+    /// Reset the scroll region to the full grid height. Called on
+    /// resize / RIS / alt-screen swap — any of which invalidates a
+    /// previously-set DECSTBM margin.
+    fn reset_scroll_region(&mut self) {
+        self.scroll_top = 0;
+        self.scroll_bottom = self.grid.rows.saturating_sub(1);
+    }
+
+    /// Scroll the DECSTBM region up by `n` lines: content within
+    /// `[scroll_top, scroll_bottom]` moves up, blank lines fill in at
+    /// the bottom margin. When the region spans the whole grid the
+    /// evicted top rows go into scrollback (the ordinary shell-output
+    /// path); a partial region discards them, since a TUI's transient
+    /// pane content isn't history worth keeping.
+    fn scroll_region_up(&mut self, n: usize) {
+        let top = self.scroll_top;
+        let bottom = self.scroll_bottom.min(self.grid.rows.saturating_sub(1));
+        if top > bottom {
+            return;
+        }
+        let full = top == 0 && bottom == self.grid.rows.saturating_sub(1);
+        let cols = self.grid.cols;
+        for _ in 0..n {
+            if full {
+                self.grid.scroll_up();
+            } else {
+                self.grid.cells.remove(top);
+                self.grid.cells.insert(bottom, vec![Cell::blank(); cols]);
+            }
+        }
+    }
+
+    /// Scroll the DECSTBM region down by `n` lines: content moves down,
+    /// blank lines fill in at the top margin, rows pushed past the
+    /// bottom margin fall off. No scrollback interaction — scrolling
+    /// down never evicts history.
+    fn scroll_region_down(&mut self, n: usize) {
+        let top = self.scroll_top;
+        let bottom = self.scroll_bottom.min(self.grid.rows.saturating_sub(1));
+        if top > bottom {
+            return;
+        }
+        let cols = self.grid.cols;
+        for _ in 0..n {
+            self.grid.cells.remove(bottom);
+            self.grid.cells.insert(top, vec![Cell::blank(); cols]);
         }
     }
 
@@ -324,6 +385,9 @@ impl VteHandler {
         self.cur_col = 0;
         self.pen = Cell::blank();
         self.pending_wrap = false;
+        // A TUI gets a fresh full-height canvas; a DECSTBM margin it
+        // set on the main screen must not leak into the alt buffer.
+        self.reset_scroll_region();
     }
 
     /// Exit alt-screen: restore the snapshot taken on entry. No-op if
@@ -362,6 +426,9 @@ impl VteHandler {
         // to assumes a visible cursor, so force it back on rather than
         // leave the user with no caret if the TUI was sloppy.
         self.cursor_visible = true;
+        // The shell we're swapping back to assumes the full grid is
+        // scrollable — drop whatever margin the TUI left set.
+        self.reset_scroll_region();
     }
 
     /// True when a TUI has switched us into alt-screen mode. Used by
@@ -383,9 +450,12 @@ impl VteHandler {
     /// wrap — once we've explicitly moved down, the "still on last
     /// col" state is gone.
     fn line_feed(&mut self) {
-        if self.cur_row + 1 >= self.grid.rows {
-            self.grid.scroll_up();
-        } else {
+        if self.cur_row == self.scroll_bottom {
+            // At the bottom margin — scroll the region rather than
+            // moving the cursor. For a full-screen region this evicts
+            // the top row into scrollback exactly as before.
+            self.scroll_region_up(1);
+        } else if self.cur_row + 1 < self.grid.rows {
             self.cur_row += 1;
         }
         self.pending_wrap = false;
@@ -746,11 +816,69 @@ impl Perform for VteHandler {
                 2 => self.erase_line(),
                 _ => {}
             },
-            'S' => {
-                // SU — Scroll Up.
+            'L' => {
+                // IL — Insert N blank lines at the cursor row, pushing
+                // the rest of the scroll region down. Full-screen TUIs
+                // scroll a sub-region this way (claude's transcript pane
+                // opening room for a new message above a pinned input).
                 let n = (first as usize).max(1);
-                for _ in 0..n {
-                    self.grid.scroll_up();
+                self.insert_lines(n);
+                self.pending_wrap = false;
+            }
+            'M' => {
+                // DL — Delete N lines at the cursor row, pulling the rest
+                // of the scroll region up and blank-filling the bottom
+                // margin. The counterpart to IL.
+                let n = (first as usize).max(1);
+                self.delete_lines(n);
+                self.pending_wrap = false;
+            }
+            'S' => {
+                // SU — Scroll the region up N lines.
+                let n = (first as usize).max(1);
+                self.scroll_region_up(n);
+            }
+            'T' if params.iter().count() <= 1 => {
+                // SD — Scroll the region down N lines. (The 5-parameter
+                // form of `T` is xterm highlight-mouse-tracking, which
+                // no real program uses — guard on the param count so a
+                // bare SD still works.)
+                let n = (first as usize).max(1);
+                self.scroll_region_down(n);
+            }
+            'r' if intermediates.is_empty() => {
+                // DECSTBM — Set Top and Bottom Margins. `\x1b[t;br` sets
+                // the scroll region to rows t..=b (1-based); `\x1b[r`
+                // with no params resets to the full grid. Either way the
+                // cursor homes to (0,0). A region is only accepted when
+                // top < bottom and both fit the grid — a degenerate
+                // request resets to full screen, matching xterm.
+                let rows = self.grid.rows;
+                let top = (first as usize).saturating_sub(1);
+                let bottom = if second == 0 {
+                    rows.saturating_sub(1)
+                } else {
+                    (second as usize).saturating_sub(1)
+                };
+                if top < bottom && bottom < rows {
+                    self.scroll_top = top;
+                    self.scroll_bottom = bottom;
+                } else {
+                    self.reset_scroll_region();
+                }
+                self.cur_row = 0;
+                self.cur_col = 0;
+                self.pending_wrap = false;
+            }
+            's' if intermediates.is_empty() => {
+                // SCOSC — save cursor (ANSI.SYS shape, distinct from
+                // DECSC's `\x1b7`). Ink-based TUIs emit this form too.
+                self.saved = Some((self.cur_row, self.cur_col));
+            }
+            'u' if intermediates.is_empty() => {
+                // SCORC — restore the SCOSC cursor.
+                if let Some((r, c)) = self.saved {
+                    self.move_to(r, c);
                 }
             }
             'm' => self.apply_sgr(params),
@@ -804,10 +932,16 @@ impl Perform for VteHandler {
     fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, byte: u8) {
         match byte {
             b'D' => self.line_feed(), // IND
-            // RI — Reverse Index. Move cursor up; if at top, scroll down
-            // (we don't implement scroll-down so just stay put — rare in
-            // real shells).
-            b'M' if self.cur_row > 0 => self.cur_row -= 1,
+            // RI — Reverse Index. Move cursor up; at the top margin,
+            // scroll the region down instead (full-screen pagers redraw
+            // upward this way).
+            b'M' => {
+                if self.cur_row == self.scroll_top {
+                    self.scroll_region_down(1);
+                } else if self.cur_row > 0 {
+                    self.cur_row -= 1;
+                }
+            }
             b'7' => self.saved = Some((self.cur_row, self.cur_col)),
             b'8' => {
                 if let Some((r, c)) = self.saved {
@@ -824,6 +958,7 @@ impl Perform for VteHandler {
                 self.pen = Cell::blank();
                 self.pending_wrap = false;
                 self.bracketed_paste = false;
+                self.reset_scroll_region();
             }
             _ => {}
         }
@@ -909,6 +1044,44 @@ impl VteHandler {
             line.insert(at, Cell::blank());
         }
         line.truncate(cols);
+    }
+
+    /// IL — insert `n` blank lines at the cursor row, sliding the rest
+    /// of the scroll region down; rows pushed past the bottom margin
+    /// fall off. No-op when the cursor sits outside the region. Per
+    /// xterm the cursor also snaps to the left margin.
+    fn insert_lines(&mut self, n: usize) {
+        if self.cur_row < self.scroll_top || self.cur_row > self.scroll_bottom {
+            return;
+        }
+        let bottom = self.scroll_bottom.min(self.grid.rows.saturating_sub(1));
+        let n = n.min(bottom - self.cur_row + 1);
+        let cols = self.grid.cols;
+        for _ in 0..n {
+            self.grid.cells.remove(bottom);
+            self.grid
+                .cells
+                .insert(self.cur_row, vec![Cell::blank(); cols]);
+        }
+        self.cur_col = 0;
+    }
+
+    /// DL — delete `n` lines at the cursor row, pulling the rest of the
+    /// scroll region up and blank-filling the bottom margin. No-op when
+    /// the cursor sits outside the region; cursor snaps to the left
+    /// margin like IL.
+    fn delete_lines(&mut self, n: usize) {
+        if self.cur_row < self.scroll_top || self.cur_row > self.scroll_bottom {
+            return;
+        }
+        let bottom = self.scroll_bottom.min(self.grid.rows.saturating_sub(1));
+        let n = n.min(bottom - self.cur_row + 1);
+        let cols = self.grid.cols;
+        for _ in 0..n {
+            self.grid.cells.remove(self.cur_row);
+            self.grid.cells.insert(bottom, vec![Cell::blank(); cols]);
+        }
+        self.cur_col = 0;
     }
 
     /// ECH — blank `n` cells starting at the cursor without shifting
@@ -1352,6 +1525,10 @@ impl Terminal {
             .context("pty resize failed")?;
         let mut inner = self.inner.lock().unwrap();
         inner.handler.grid.resize(rows as usize, cols as usize);
+        // A resize invalidates any DECSTBM margin (the old bottom row
+        // may not exist anymore); reset to the full new height and let
+        // the TUI re-establish its region on the next repaint.
+        inner.handler.reset_scroll_region();
         // Clamp the cursor in case the resize shrank under it.
         let max_row = inner.handler.grid.rows.saturating_sub(1);
         let max_col = inner.handler.grid.cols.saturating_sub(1);
@@ -1887,6 +2064,98 @@ mod tests {
         // print at (0,0) → save → move → write → restore → write at
         // saved position.
         let h = parse_bytes(b"\x1b7\x1b[3;4HX\x1b8Y", 5, 10);
+        assert_eq!(h.grid.cells[2][3].ch, 'X');
+        assert_eq!(h.grid.cells[0][0].ch, 'Y');
+    }
+
+    #[test]
+    fn decstbm_confines_scroll_to_the_region() {
+        // 5 rows. Set region to rows 2..=4 (1-based → `\x1b[2;4r`),
+        // leaving rows 0 and 4 pinned. Fill each region row, then LF
+        // off the bottom margin: only rows 1..=3 shift, the pinned
+        // header (row 0) and footer (row 4) stay put. This is the
+        // fullscreen-TUI contract that used to smear the input box.
+        let h = parse_bytes(
+            b"HEADER\x1b[5;1HFOOTER\x1b[2;4r\x1b[2;1Ha\r\nb\r\nc\r\nd",
+            5,
+            10,
+        );
+        assert_eq!(line_text(&h.grid, 0), "HEADER");
+        assert_eq!(line_text(&h.grid, 4), "FOOTER");
+        // Region held rows 1..3; after four lines through a 3-row
+        // region the visible tail is "b","c","d".
+        assert_eq!(line_text(&h.grid, 1), "b");
+        assert_eq!(line_text(&h.grid, 2), "c");
+        assert_eq!(line_text(&h.grid, 3), "d");
+    }
+
+    #[test]
+    fn decstbm_partial_region_does_not_touch_scrollback() {
+        // A TUI scrolling a sub-region is transient redraw, not
+        // history — a partial region must never push into scrollback.
+        let h = parse_bytes(b"\x1b[1;3r\x1b[3;1Ha\r\nb\r\nc\r\nd", 5, 10);
+        assert!(h.grid.scrollback.is_empty());
+    }
+
+    #[test]
+    fn decstbm_reset_restores_full_screen_scrollback() {
+        // Set a region, then reset with a bare `\x1b[r`. A full-screen
+        // scroll after the reset must resume evicting into scrollback.
+        let h = parse_bytes(b"\x1b[2;4r\x1b[ra\r\nb\r\nc\r\nd\r\ne\r\nf", 5, 5);
+        assert!(!h.grid.scrollback.is_empty());
+        assert_eq!(line_text(&h.grid, 4), "f");
+    }
+
+    #[test]
+    fn il_inserts_lines_within_region() {
+        // 4 rows, full screen. Fill four rows, home to row 1, insert
+        // one blank line: rows 1..3 slide down, the old row 3 falls
+        // off, row 1 becomes blank.
+        let h = parse_bytes(b"a\r\nb\r\nc\r\nd\x1b[2;1H\x1b[L", 4, 5);
+        assert_eq!(line_text(&h.grid, 0), "a");
+        assert_eq!(line_text(&h.grid, 1), "");
+        assert_eq!(line_text(&h.grid, 2), "b");
+        assert_eq!(line_text(&h.grid, 3), "c");
+    }
+
+    #[test]
+    fn dl_deletes_lines_within_region() {
+        // Inverse of IL: delete the second line, tail pulls up, bottom
+        // row blanks.
+        let h = parse_bytes(b"a\r\nb\r\nc\r\nd\x1b[2;1H\x1b[M", 4, 5);
+        assert_eq!(line_text(&h.grid, 0), "a");
+        assert_eq!(line_text(&h.grid, 1), "c");
+        assert_eq!(line_text(&h.grid, 2), "d");
+        assert_eq!(line_text(&h.grid, 3), "");
+    }
+
+    #[test]
+    fn sd_scrolls_region_down_and_ri_at_top_margin() {
+        // RI at the top margin scrolls the region down, opening a blank
+        // row at the top while the bottom row falls off.
+        let h = parse_bytes(b"a\r\nb\r\nc\x1b[1;1H\x1bM", 3, 5);
+        assert_eq!(line_text(&h.grid, 0), "");
+        assert_eq!(line_text(&h.grid, 1), "a");
+        assert_eq!(line_text(&h.grid, 2), "b");
+    }
+
+    #[test]
+    fn full_screen_lf_still_evicts_into_scrollback() {
+        // Regression guard: the default region spans the whole grid, so
+        // scrolling off the bottom must still feed scrollback exactly
+        // as before the DECSTBM rework.
+        let h = parse_bytes(b"a\r\nb\r\nc\r\nd\r\ne", 4, 5);
+        assert_eq!(line_text(&h.grid, 0), "b");
+        assert_eq!(line_text(&h.grid, 3), "e");
+        assert_eq!(h.grid.scrollback.len(), 1);
+        assert_eq!(h.grid.scrollback[0][0].ch, 'a');
+    }
+
+    #[test]
+    fn scosc_scorc_cursor_roundtrip() {
+        // ANSI.SYS save/restore (`\x1b[s` / `\x1b[u`), the non-DECSC
+        // shape Ink-based TUIs emit.
+        let h = parse_bytes(b"\x1b[s\x1b[3;4HX\x1b[uY", 5, 10);
         assert_eq!(h.grid.cells[2][3].ch, 'X');
         assert_eq!(h.grid.cells[0][0].ch, 'Y');
     }
