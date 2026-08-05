@@ -1584,7 +1584,7 @@ impl super::App {
 
     /// Open the project picker — one row per discovered `.csproj`,
     /// displayed as the path relative to the workspace root so the user
-    /// can tell `Vettvangur.Site` from `Vettvangur.Core` at a glance.
+    /// can tell e.g. `App.Api` from `App.Worker` at a glance.
     fn open_debug_project_picker(&mut self, projects: Vec<std::path::PathBuf>) {
         use crate::picker::{PickerKind, PickerPayload, PickerState};
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));

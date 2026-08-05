@@ -1533,24 +1533,58 @@ mod tests {
         }
     }
 
-    /// End-to-end smoke: load the user's actual file from disk via the
-    /// same path the editor takes (`Buffer::from_path`, which strips CRLF)
-    /// and verify that the resulting highlight cache colours the tag and
-    /// attribute names. Skipped on machines that don't have the project.
-    /// MMSHeader.cshtml has a BOM and class attribute values that include
-    /// `[12px]` brackets — both push the Razor grammar into long ERROR
-    /// regions, so `<div class="…">` openers and the `else` / `if`
-    /// keywords inside `@if/else` bodies never become proper tokens.
-    /// The byte-level overlay should still paint them.
-    #[test]
-    fn razor_e2e_mmsheader_broken_regions() {
-        let p = std::path::Path::new(
-            "/Users/bgunnarsson/Development/mms-namsefni/Vettvangur.Site/Views/Partials/MMS/Components/Header/MMSHeader.cshtml",
-        );
-        if !p.exists() {
-            return;
+    /// Write `body` to a uniquely-named temp `.cshtml`, optionally with a
+    /// UTF-8 BOM and CRLF line endings — the two things a real-world
+    /// Windows-authored Razor view carries that a `&str` literal doesn't.
+    /// Returns the path; the caller loads it through `Buffer::from_path`
+    /// so the test covers the same decode path the editor uses.
+    fn write_cshtml_fixture(name: &str, body: &str, bom: bool, crlf: bool) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "binvim_razor_{}_{}_{}.cshtml",
+            name,
+            std::process::id(),
+            body.len(),
+        ));
+        let text = if crlf {
+            body.replace('\n', "\r\n")
+        } else {
+            body.to_string()
+        };
+        let mut bytes: Vec<u8> = Vec::new();
+        if bom {
+            bytes.extend_from_slice(&[0xEF, 0xBB, 0xBF]);
         }
-        let buf = crate::buffer::Buffer::from_path(p.to_path_buf()).expect("load");
+        bytes.extend_from_slice(text.as_bytes());
+        std::fs::write(&path, bytes).expect("write fixture");
+        path
+    }
+
+    /// End-to-end: load a Razor view from disk the way the editor does
+    /// (`Buffer::from_path`, which strips the BOM and CRLFs) and verify
+    /// the highlight cache still colours tag names, attribute names, and
+    /// C# keywords inside regions the grammar can't parse.
+    ///
+    /// The fixture reproduces the shape that breaks the Razor grammar:
+    /// Tailwind-style bracket values (`px-[12px]`) in a `class=` attribute
+    /// on an element that also wraps a `@{}` block. That combination
+    /// throws an ERROR region long enough that the `<div` / `<a` openers,
+    /// their attribute names, and the `if` / `else` keywords never become
+    /// tokens the highlights query can capture. Every byte asserted below
+    /// resolves to `None` if `apply_razor_overlay` is skipped — that
+    /// overlay is exactly what this test guards, so it can't quietly
+    /// decay into a re-test of ordinary tree-sitter highlighting.
+    #[test]
+    fn razor_e2e_broken_regions_from_disk() {
+        const VIEW: &str = r#"<div class="site-header px-[12px] pt-[60px]">
+    <a class="brand" href="/">Home</a>
+@{
+    if (showFallback) { RenderEmpty(); } else { RenderList(); }
+}
+</div>
+"#;
+        let p = write_cshtml_fixture("broken", VIEW, true, true);
+        let buf = crate::buffer::Buffer::from_path(p.clone()).expect("load");
+        let _ = std::fs::remove_file(&p);
         let cfg = Config::default();
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
@@ -1570,8 +1604,8 @@ mod tests {
             b: 0xf7,
         };
 
-        // The first broken `<div class="…px-[12px]…">` opener.
-        let div_idx = source.find("<div class=\"mms-header px-").unwrap() + 1;
+        // The broken `<div class="…px-[12px]…">` opener.
+        let div_idx = source.find("<div class=").expect("div opener") + 1;
         assert_eq!(
             cache.byte_colors.get(div_idx).copied().flatten(),
             Some(pink),
@@ -1584,37 +1618,52 @@ mod tests {
             "broken `class` attribute name should be Yellow",
         );
 
-        // `else` inside @if/else body — bare token, no parent node.
-        // The repo's indentation can be either tabs or spaces depending on
-        // whether the user's editorconfig has re-indented since the last
-        // save, so search for the `else` keyword by content rather than
-        // matching a specific leading-whitespace run.
+        // The nested `<a …>` opener, inside the same broken region.
+        let a_idx = source.find("<a class=").expect("anchor opener") + 1;
+        assert_eq!(
+            cache.byte_colors.get(a_idx).copied().flatten(),
+            Some(pink),
+            "broken `<a` tag name should be Pink",
+        );
+        let href_idx = source.find("href=").expect("href attribute");
+        assert_eq!(
+            cache.byte_colors.get(href_idx).copied().flatten(),
+            Some(yellow),
+            "broken `href` attribute name should be Yellow",
+        );
+
+        // C# keywords in the `@{}` block the broken element swallowed —
+        // bare tokens the query never sees.
+        let if_idx = source.find("if (showFallback").expect("if keyword");
+        assert_eq!(
+            cache.byte_colors.get(if_idx).copied().flatten(),
+            Some(mauve),
+            "C# `if` in a broken region should be keyword Mauve",
+        );
         let else_idx = find_word(&source, "else").expect("else keyword");
         assert_eq!(
             cache.byte_colors.get(else_idx).copied().flatten(),
             Some(mauve),
-            "Razor `else` should pick up keyword Mauve via the byte-level fallback",
-        );
-
-        // C# `if` inside the else body — find the `if (organization` site
-        // specifically so we don't pick up the @if at the top.
-        let if_idx = source.find("if (organization").expect("if (organization");
-        assert_eq!(
-            cache.byte_colors.get(if_idx).copied().flatten(),
-            Some(mauve),
-            "C# `if` in broken region should also be Mauve",
+            "C# `else` in a broken region should be keyword Mauve",
         );
     }
 
+    /// The same from-disk path on a view the grammar parses cleanly —
+    /// tag and attribute names come from real tokens here, not the
+    /// byte-level fallback, so this pins the ordinary case.
     #[test]
-    fn razor_e2e_real_cshtml() {
-        let p = std::path::Path::new(
-            "/Users/bgunnarsson/Development/mms-namsefni/Vettvangur.Site/Views/ProductCategory.cshtml",
-        );
-        if !p.exists() {
-            return;
-        }
-        let buf = crate::buffer::Buffer::from_path(p.to_path_buf()).expect("load");
+    fn razor_e2e_clean_view_from_disk() {
+        const VIEW: &str = r#"@{
+    Layout = "Master.cshtml";
+}
+
+<section class="category">
+    <div class="wrapper">@Model.Title</div>
+</section>
+"#;
+        let p = write_cshtml_fixture("clean", VIEW, true, true);
+        let buf = crate::buffer::Buffer::from_path(p.clone()).expect("load");
+        let _ = std::fs::remove_file(&p);
         let cfg = Config::default();
         let cache = compute_highlights(Lang::Razor, &buf, &cfg).expect("highlight");
         let source = buf.rope.to_string();
@@ -1628,13 +1677,13 @@ mod tests {
             g: 0xe2,
             b: 0xaf,
         };
-        let section_idx = source.find("<section").unwrap() + 1;
+        let section_idx = source.find("<section").expect("section tag") + 1;
         assert_eq!(
             cache.byte_colors.get(section_idx).copied().flatten(),
             Some(pink),
             "tag name `section` should be Pink",
         );
-        let class_idx = source.find(" class=").unwrap() + 1;
+        let class_idx = source.find(" class=").expect("class attribute") + 1;
         assert_eq!(
             cache.byte_colors.get(class_idx).copied().flatten(),
             Some(yellow),
@@ -1654,7 +1703,7 @@ mod tests {
 
 <section class="store-category pt-[60px]">
     <div class="wrapper">
-        <partial name="MMS/Components/Headline" />
+        <partial name="Shared/Components/Headline" />
     </div>
 </section>
 "#;

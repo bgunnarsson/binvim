@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.16]
+
 ### Fixed
 - **`p`/`P` over a `Ctrl-N` multi-selection now pastes at every selection.**
   Selecting a word, adding occurrences with `Ctrl-N`, then pasting replaced only

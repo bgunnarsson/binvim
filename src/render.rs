@@ -5161,7 +5161,7 @@ mod tests {
     fn display_lsp_root_trims_to_tail_segments_when_too_wide() {
         // 60-char input, 25-char budget — keeps the last two segments
         // behind a `…/` so the project context survives the trim.
-        let long = "file:///Users/bg/Development/bgunnarsson/comp/packages/ui-apps/src";
+        let long = "file:///Users/bg/Development/acme/monorepo/packages/ui-apps/src";
         let out = display_lsp_root(long, 25);
         assert!(
             out.starts_with("…/"),

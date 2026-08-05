@@ -473,7 +473,7 @@ mod tests {
     fn highlights_contiguous_trailing_run() {
         // Greedy matching would scatter "footer.cshtml" across the path; the DP
         // should bind it to the contiguous trailing "Footer.cshtml".
-        let item = "Vettvangur.Site/Views/Partials/KH/Features/Footer/Footer.cshtml";
+        let item = "App.Site/Views/Partials/Shared/Features/Footer/Footer.cshtml";
         let (_, pos) = fuzzy_match("footer.cshtml", item).expect("should match");
         let matched: String = pos.iter().map(|&i| item.chars().nth(i).unwrap()).collect();
         assert_eq!(matched.to_lowercase(), "footer.cshtml");
