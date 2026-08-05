@@ -7,6 +7,11 @@ follows [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- **`p`/`P` over a `Ctrl-N` multi-selection now pastes at every selection.**
+  Selecting a word, adding occurrences with `Ctrl-N`, then pasting replaced only
+  the last occurrence — the paste path ignored the extra selections that `d`,
+  `c`, and `y` already fan out across. Each pasted site also becomes a cursor
+  afterwards, so a follow-up Normal-mode edit still hits all of them.
 - **Full-screen TUIs no longer smear inside the `:terminal` pane.** The embedded
   terminal now honours scroll regions (DECSTBM, `CSI r`), line insert/delete
   (IL/DL, `CSI L`/`M`), scroll-down (SD, `CSI T`), and the ANSI.SYS

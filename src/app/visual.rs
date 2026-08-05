@@ -319,6 +319,12 @@ impl super::App {
             self.apply_block_put(reg);
             return;
         }
+        // Multi-selection (Ctrl-N): paste over every selection, not just
+        // the primary — same fan-out d/c/y already get.
+        if !self.additional_selections.is_empty() {
+            self.apply_multi_selection_put(kind, reg);
+            return;
+        }
         let (start, end, linewise_selection) = self.visual_range_chars(kind);
         if end <= start {
             self.exit_visual();
@@ -342,6 +348,73 @@ impl super::App {
         } else {
             self.cursor_to_idx(start);
         }
+        self.clamp_cursor_normal();
+        self.exit_visual();
+    }
+
+    /// Replace *every* Ctrl-N selection with the register contents. Same
+    /// register discipline as `apply_visual_put`: the replaced text is
+    /// dropped rather than yanked, so the register survives for the next
+    /// paste. Edits run bottom-up so the lower ranges' indices stay valid,
+    /// and each paste site becomes a cursor afterwards (mirroring what
+    /// `apply_multi_selection_operate` does for d/c) so a follow-up
+    /// Normal-mode edit still hits every site.
+    fn apply_multi_selection_put(&mut self, kind: VisualKind, reg: super::state::Register) {
+        let (p_start, p_end, linewise_selection) = self.visual_range_chars(kind);
+        let mut ranges: Vec<(usize, usize)> = vec![(p_start, p_end)];
+        for r in &self.additional_selections {
+            if r.0 != p_start || r.1 != p_end {
+                ranges.push(*r);
+            }
+        }
+        ranges.sort_by_key(|r| r.0);
+        ranges.dedup();
+        // Drop overlaps — keep the leftmost-starting one, so a paste can't
+        // land inside a range another paste already rewrote.
+        let mut keep: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+        let mut last_end = 0usize;
+        for &r in &ranges {
+            if r.1 > r.0 && (keep.is_empty() || r.0 >= last_end) {
+                keep.push(r);
+                last_end = r.1;
+            }
+        }
+        let ranges = keep;
+        if ranges.is_empty() {
+            self.exit_visual();
+            return;
+        }
+
+        let to_insert = if reg.linewise && !linewise_selection {
+            reg.text.trim_end_matches('\n').to_string()
+        } else {
+            reg.text.clone()
+        };
+        let inserted_chars = to_insert.chars().count();
+
+        for &(s, e) in ranges.iter().rev() {
+            self.buffer.delete_range(s, e);
+            self.buffer.insert_at_idx(s, &to_insert);
+        }
+
+        // Each site slides by the net length change of every earlier one:
+        //   final = s + sum(inserted - (e_j - s_j) for j < self)
+        let mut landings: Vec<usize> = Vec::with_capacity(ranges.len());
+        let mut delta: isize = 0;
+        for &(s, e) in &ranges {
+            let at = (s as isize + delta).max(0) as usize;
+            landings.push(if inserted_chars > 0 {
+                at + inserted_chars - 1
+            } else {
+                at
+            });
+            delta += inserted_chars as isize - (e - s) as isize;
+        }
+        landings.sort();
+        landings.dedup();
+
+        self.cursor_to_idx(landings[0]);
+        self.additional_cursors = landings.into_iter().skip(1).collect();
         self.clamp_cursor_normal();
         self.exit_visual();
     }
@@ -530,5 +603,52 @@ mod tests {
         app.mode = Mode::Visual(VisualKind::Line);
         app.apply_visual_put(None);
         assert_eq!(text(&app), "keep\nkeep\nbaz\nend\n");
+    }
+
+    // Ctrl-N multi-selection + `p`/`P` must paste over every selection,
+    // not just the primary (which after Ctrl-N is the *last* occurrence).
+    #[test]
+    fn visual_put_replaces_every_ctrl_n_selection() {
+        let mut app = app_with("a.txt", "foo bar foo baz foo\n");
+        // Named register: the unnamed one round-trips through the OS
+        // clipboard, which would make this test racy.
+        app.write_register(Some('z'), "qux".to_string(), false);
+
+        // Select the first "foo", then Ctrl-N twice to pick up the other two.
+        app.window.cursor.line = 0;
+        app.window.cursor.col = 0;
+        app.window.visual_anchor = Some(app.window.cursor);
+        app.mode = Mode::Visual(VisualKind::Char);
+        app.window.cursor.col = 2;
+        app.add_next_occurrence_selection();
+        app.add_next_occurrence_selection();
+        assert_eq!(app.additional_selections.len(), 2);
+
+        app.apply_visual_put(Some('z'));
+        assert_eq!(text(&app), "qux bar qux baz qux\n");
+        // A cursor lands on the last char of each pasted site.
+        assert_eq!(app.window.cursor.col, 2);
+        assert_eq!(app.additional_cursors, vec![10, 18]);
+    }
+
+    // Replacement text longer than the selection shifts later sites; the
+    // landing positions have to account for the net delta, not just the
+    // deleted length.
+    #[test]
+    fn visual_multi_put_handles_longer_replacement() {
+        let mut app = app_with("a.txt", "ab cd ab\n");
+        app.write_register(Some('z'), "xyzw".to_string(), false);
+
+        app.window.cursor.line = 0;
+        app.window.cursor.col = 0;
+        app.window.visual_anchor = Some(app.window.cursor);
+        app.mode = Mode::Visual(VisualKind::Char);
+        app.window.cursor.col = 1;
+        app.add_next_occurrence_selection();
+
+        app.apply_visual_put(Some('z'));
+        assert_eq!(text(&app), "xyzw cd xyzw\n");
+        assert_eq!(app.window.cursor.col, 3);
+        assert_eq!(app.additional_cursors, vec![11]);
     }
 }
