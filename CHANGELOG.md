@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.16]
+## [0.5.16] - 2026-08-05
 
 ### Fixed
 - **`p`/`P` over a `Ctrl-N` multi-selection now pastes at every selection.**
