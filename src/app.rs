@@ -31,6 +31,7 @@ mod dispatch;
 mod edit;
 mod file_tree;
 mod git_glue;
+mod grep_glue;
 mod health;
 mod input;
 pub(crate) mod installer;
@@ -51,6 +52,7 @@ pub(crate) mod state;
 mod task_glue;
 mod terminal_glue;
 mod test_glue;
+mod update_glue;
 mod view;
 mod visual;
 mod windows;
@@ -720,6 +722,14 @@ pub struct App {
     /// channel and the active create-AVD flow. Drained per tick like
     /// `package`; results advance the flow in `handle_android_events`.
     pub android: state::AndroidState,
+    /// Grep picker search state — background-thread channel, debounce timer,
+    /// and a handle on the in-flight ripgrep child. Drained per tick like
+    /// `package`; `grep_tick` fires the search once typing settles.
+    pub grep: state::GrepState,
+    /// Startup "is a newer binvim out?" check — its background-thread channel
+    /// plus the version it found. Drained per tick like `grep`; the start page
+    /// and `:health` read `available` directly.
+    pub update: state::UpdateState,
     /// Debug-attach context captured between `AndroidEvent::DebugReady` (adb
     /// forward done) and the jdtls `JavaDebugSession` reply that hands back the
     /// DAP port — at which point we attach and clear this.
@@ -1018,6 +1028,8 @@ impl App {
             test: crate::test::TestManager::new(),
             package: state::PackageState::new(),
             android: state::AndroidState::new(),
+            grep: state::GrepState::new(),
+            update: state::UpdateState::new(),
             pending_android_debug: None,
             show_test_results_page: false,
             show_install_page: false,
@@ -1068,6 +1080,10 @@ impl App {
         self.maybe_prompt_toolchain();
         self.refresh_editorconfig();
         self.refresh_git_hunks();
+        // Ask crates.io whether we're behind. Backgrounded and gated on
+        // `[update] check`; a cached answer (the common case) needs no
+        // network and lands on the first tick, in time for the start page.
+        self.update_spawn_check();
         let mut needs_render = true;
         // Set when a PTY drain hit its per-tick byte budget with output
         // still queued. Carried into the next iteration's poll budget so
@@ -1173,6 +1189,12 @@ impl App {
             // An Android SDK op (list / create / launch) is in flight on a
             // background thread — same tightening so its result lands promptly.
             if self.android.busy {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
+            // A grep is running, or one is waiting out its debounce — tighten
+            // so results paint as they land and the pending search fires on
+            // time rather than on the next keystroke.
+            if self.grep.busy || self.grep.dirty_at.is_some() {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
             // A live yank flash needs us to wake up at its deadline so the
@@ -1350,6 +1372,19 @@ impl App {
                 needs_render = true;
             }
             if self.pkg_search_tick() {
+                needs_render = true;
+            }
+            // Grep results come back on their own background channel; the
+            // debounce tick fires ripgrep once the query has settled.
+            if self.handle_grep_events() {
+                needs_render = true;
+            }
+            if self.grep_tick() {
+                needs_render = true;
+            }
+            // The startup update check's result, plus the deferred flush of
+            // its notification once the status line is free.
+            if self.handle_update_events() {
                 needs_render = true;
             }
             // Android SDK results (AVD list / device list / system images /

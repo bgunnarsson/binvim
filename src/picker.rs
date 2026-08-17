@@ -1,5 +1,7 @@
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)] // DocumentSymbols / WorkspaceSymbols / CodeActions are wired in upcoming commits
@@ -373,59 +375,119 @@ pub fn replace_items(picker: &mut PickerState, items: Vec<(String, PickerPayload
     picker.selected = 0;
 }
 
-/// Run ripgrep with the given query in `cwd`. Empty query returns no results so the
+/// Per-file match cap handed to ripgrep. This does *not* bound the run — a
+/// short query matches in nearly every file, so 200-per-file over a large tree
+/// is still hundreds of megabytes. The `max` row cap below is what stops it.
+const RG_MAX_COUNT: usize = 200;
+
+/// Widest match line we ask ripgrep for. Bundled / minified files are single
+/// multi-megabyte lines; without this one match can outweigh the entire rest
+/// of the result set, and the picker can't render it anyway.
+const RG_MAX_COLUMNS: usize = 200;
+
+/// Run ripgrep for `query` in `cwd`, streaming its output and stopping the
+/// moment `max` rows have been parsed. Empty query returns no results so the
 /// picker shows nothing until the user has typed something to search for.
-pub fn run_ripgrep(query: &str, cwd: &Path, max: usize) -> Vec<(String, PickerPayload)> {
-    if query.is_empty() {
+///
+/// Reading incrementally is the whole point: `Command::output()` buffers the
+/// child's entire stdout before returning, so a two-character query over a
+/// large workspace pulls hundreds of megabytes into memory (and a lossy UTF-8
+/// copy doubles it) just to keep the first `max` rows. Here the child is
+/// killed as soon as the cap is hit, so cost is bounded by `max` rather than
+/// by how much the query happens to match.
+///
+/// `child_slot` publishes the spawned child so another thread can cancel a
+/// superseded query mid-scan; the lock is never held across a read. The
+/// canceller only calls `kill` — reaping stays here, on the thread that owns
+/// the child, so a cancel can never block on `wait`.
+pub fn run_ripgrep(
+    query: &str,
+    cwd: &Path,
+    max: usize,
+    child_slot: &Mutex<Option<Child>>,
+) -> Vec<(String, PickerPayload)> {
+    if query.is_empty() || max == 0 {
         return Vec::new();
     }
-    let output = Command::new("rg")
+    let spawned = Command::new("rg")
         .arg("--vimgrep")
         .arg("--no-heading")
         .arg("--color=never")
         .arg("--smart-case")
-        .arg(format!("--max-count={}", 200))
+        .arg("--no-messages")
+        .arg(format!("--max-count={RG_MAX_COUNT}"))
+        .arg(format!("--max-columns={RG_MAX_COLUMNS}"))
         .arg("--")
         .arg(query)
         .arg(".")
         .current_dir(cwd)
-        .output();
-    let Ok(out) = output else {
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(mut child) = spawned else {
         return Vec::new();
     };
-    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Take the pipe before publishing the child, so the reader owns stdout
+    // outright and a concurrent canceller only ever touches `kill`.
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Vec::new();
+    };
+    match child_slot.lock() {
+        Ok(mut slot) => *slot = Some(child),
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Vec::new();
+        }
+    }
+
     let mut results = Vec::new();
-    for line in stdout.lines() {
-        if results.len() >= max {
-            break;
+    for line in BufReader::new(stdout).lines() {
+        // A cancel kills the child, which closes the pipe — the iterator then
+        // ends (or errors) and we fall out of the loop here.
+        let Ok(line) = line else { break };
+        if let Some(item) = parse_vimgrep_line(&line, cwd) {
+            results.push(item);
+            if results.len() >= max {
+                break;
+            }
         }
-        // Format: path:line:col:text
-        let parts: Vec<&str> = line.splitn(4, ':').collect();
-        if parts.len() != 4 {
-            continue;
-        }
-        let rel = parts[0];
-        let line_no: usize = match parts[1].parse() {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-        let col_no: usize = match parts[2].parse() {
-            Ok(n) => n,
-            Err(_) => continue,
-        };
-        let text = parts[3].trim_start();
-        let display = format!("{}:{}: {}", rel, line_no, text);
-        let path = cwd.join(rel);
-        results.push((
-            display,
-            PickerPayload::Location {
-                path,
-                line: line_no,
-                col: col_no,
-            },
-        ));
+    }
+    // Kill unconditionally: on the `max` break ripgrep is still scanning, and
+    // on natural EOF it's a no-op against an already-exited child. Either way
+    // `wait` reaps it, so a burst of typing can't leave a trail of zombies.
+    if let Ok(mut slot) = child_slot.lock()
+        && let Some(mut child) = slot.take()
+    {
+        let _ = child.kill();
+        let _ = child.wait();
     }
     results
+}
+
+/// Parse one `--vimgrep` row (`path:line:col:text`) into a picker item.
+/// Rows that don't split into four parts (ripgrep's own notices, stray output)
+/// are skipped rather than surfaced.
+fn parse_vimgrep_line(line: &str, cwd: &Path) -> Option<(String, PickerPayload)> {
+    let parts: Vec<&str> = line.splitn(4, ':').collect();
+    if parts.len() != 4 {
+        return None;
+    }
+    let rel = parts[0];
+    let line_no: usize = parts[1].parse().ok()?;
+    let col_no: usize = parts[2].parse().ok()?;
+    let text = parts[3].trim_start();
+    Some((
+        format!("{rel}:{line_no}: {text}"),
+        PickerPayload::Location {
+            path: cwd.join(rel),
+            line: line_no,
+            col: col_no,
+        },
+    ))
 }
 
 pub fn enumerate_files(root: &std::path::Path, max: usize) -> Vec<(String, PickerPayload)> {
@@ -467,7 +529,88 @@ pub fn enumerate_files(root: &std::path::Path, max: usize) -> Vec<(String, Picke
 
 #[cfg(test)]
 mod tests {
-    use super::fuzzy_match;
+    use super::{PickerPayload, fuzzy_match, parse_vimgrep_line, run_ripgrep};
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
+
+    #[test]
+    fn parses_vimgrep_row() {
+        let (display, payload) =
+            parse_vimgrep_line("src/app.rs:42:7:    let x = 1;", Path::new("/work"))
+                .expect("well-formed row should parse");
+        assert_eq!(display, "src/app.rs:42: let x = 1;");
+        match payload {
+            PickerPayload::Location { path, line, col } => {
+                assert_eq!(path, PathBuf::from("/work/src/app.rs"));
+                assert_eq!(line, 42);
+                assert_eq!(col, 7);
+            }
+            _ => panic!("expected a Location payload"),
+        }
+    }
+
+    #[test]
+    fn keeps_colons_in_match_text() {
+        // `splitn(4, ':')` matters here — a match containing colons (a Windows
+        // path, a ternary, a CSS rule) must survive into the display text
+        // rather than being cut at the fourth colon.
+        let (display, _) = parse_vimgrep_line("a.css:1:1:color: red; width: 2px;", Path::new("/w"))
+            .expect("row should parse");
+        assert_eq!(display, "a.css:1: color: red; width: 2px;");
+    }
+
+    #[test]
+    fn rejects_non_vimgrep_rows() {
+        let cwd = Path::new("/w");
+        // ripgrep notices and stray output have no line:col pair.
+        assert!(parse_vimgrep_line("some plain text", cwd).is_none());
+        assert!(parse_vimgrep_line("a.rs:notanumber:1:x", cwd).is_none());
+        assert!(parse_vimgrep_line("a.rs:1:notanumber:x", cwd).is_none());
+        assert!(parse_vimgrep_line("a.rs:1:2", cwd).is_none());
+    }
+
+    /// The freeze this cap exists to prevent: a query that matches nearly every
+    /// line used to be read to completion (hundreds of MB) just to keep the
+    /// first `max` rows. `run_ripgrep` must stop at `max` regardless of how
+    /// much more ripgrep would have produced.
+    #[test]
+    fn stops_at_the_row_cap() {
+        if std::process::Command::new("rg")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_err()
+        {
+            return; // ripgrep is an optional install — nothing to assert.
+        }
+        let dir = std::env::temp_dir().join(format!("binvim-grep-cap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let body = "needle\n".repeat(5_000);
+        for i in 0..5 {
+            std::fs::write(dir.join(format!("f{i}.txt")), &body).expect("fixture write");
+        }
+
+        let slot = Mutex::new(None);
+        let items = run_ripgrep("needle", &dir, 10, &slot);
+        assert_eq!(
+            items.len(),
+            10,
+            "must stop at max, not read all 25k matches"
+        );
+        // The child is reaped by the same call that spawned it.
+        assert!(slot.lock().unwrap().is_none(), "child should be reaped");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_query_never_spawns() {
+        let slot = Mutex::new(None);
+        assert!(run_ripgrep("", Path::new("."), 100, &slot).is_empty());
+        assert!(slot.lock().unwrap().is_none());
+    }
 
     #[test]
     fn highlights_contiguous_trailing_run() {

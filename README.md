@@ -501,6 +501,9 @@ document_highlight = true  # Surface2 bg on every occurrence of the symbol under
 
 [install]
 prompt_on_open = true      # Hint (once/language/session) when a file's LSP or formatter is missing.
+
+[update]
+check = true               # Ask crates.io once a day whether a newer binvim is out.
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. The section drives both **chrome** and **syntax** colouring.
@@ -533,6 +536,8 @@ prompt_on_open = true      # Hint (once/language/session) when a file's LSP or f
 **`[lsp]`** — both toggles default `true`. `semantic_tokens = false` gates the `textDocument/semanticTokens/full` request and the highlight-cache overlay off entirely (no wire traffic, no render delta). `document_highlight = false` gates `textDocument/documentHighlight` similarly. Useful if your LSP's semantic-token output collides badly with the tree-sitter pass, or if the on-every-cursor-settle highlight echo is more distracting than useful for your workflow.
 
 **`[install]`** — `prompt_on_open = true` (the default) is the first-run toolchain nudge: when you open a file whose language is missing its primary LSP or formatter (probed on `$PATH`), a popup (the same overlay style as the file picker, so a competing notification like Copilot sign-in can't paint over it) lists what's missing — `Enter` opens `:install` preselected to that language's bundle so you review and confirm with `y`, `Esc` dismisses. It fires at most once per language per session, is skipped for large files (which don't attach a server anyway) and for languages binvim can't auto-install (Razor's OmniSharp), never opens over another overlay or mid-edit, and never nags about DAP adapters — only the LSP + formatter that make a language feel "set up." Set `prompt_on_open = false` to silence it; `<leader>i` still works on demand.
+
+**`[update]`** — `check = true` (the default) asks crates.io on launch whether a newer binvim has been published. The result is cached in `~/.cache/binvim/update-check.json` for 24 hours, so the network call happens at most once a day no matter how often you launch; every other launch answers from the cache file. When a newer version exists it shows up in three places: a notification on startup, a line under the start-page logo (`▲ update available — binvim x.y.z (you have a.b.c)`), and the `version` row in `:health`. Nothing is uploaded — it's a plain GET for the crate's published version list, via `curl` (same as the `<space>p` package manager; no HTTP client is linked in). Failures are silent: offline, no `curl`, or a flaky network leaves the editor exactly as it was. Set `check = false` to skip it entirely.
 
 **`[file_explorer]`** — `tree = false` (the default) keeps `<leader>e` as the yazi shell-out. Setting `tree = true` switches it to a built-in left-side sidebar tree pane: `j` / `k` navigate, `Enter` / `l` opens a file (or expands a folder), `h` collapses (or jumps to the parent), `g` / `G` top / bottom, `r` rebuilds after external file changes, `<space>e` from inside the pane closes it. Three-state `<leader>e` toggle from the editor: closed → focused → unfocused-but-visible → closed, so clicking into a buffer drops focus without losing the pane. The file currently open in the focused window renders in the accent colour + bold so it stays identifiable even after the j/k cursor moves elsewhere; double-click in the pane opens a file. No file operations (create / delete / rename) yet.
 

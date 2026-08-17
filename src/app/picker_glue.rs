@@ -42,7 +42,12 @@ impl super::App {
                 }
                 PickerState::new(PickerKind::Recents, "Recents".into(), items)
             }
-            PickerLeader::Grep => PickerState::new(PickerKind::Grep, "Grep".into(), Vec::new()),
+            PickerLeader::Grep => {
+                // Clear state left by a previous grep so a result still in
+                // flight from the last one can't land in this picker.
+                self.grep_cancel();
+                PickerState::new(PickerKind::Grep, self.grep_empty_title(), Vec::new())
+            }
             PickerLeader::Buffers => {
                 let mut items: Vec<(String, PickerPayload)> = Vec::new();
                 for (i, stash) in self.buffers.iter().enumerate() {
@@ -133,6 +138,9 @@ impl super::App {
                 if self.package.flow.take().is_some() {
                     self.package.epoch += 1;
                 }
+                // Kill a running ripgrep rather than letting it scan on for a
+                // picker that no longer exists.
+                self.grep_cancel();
             }
             KeyCode::Enter => {
                 let payload = picker.current().cloned();
@@ -154,6 +162,7 @@ impl super::App {
                 };
                 self.picker = None;
                 self.mode = Mode::Normal;
+                self.grep_cancel();
                 if let Some(state) = qf_snapshot {
                     self.quickfix = Some(state);
                 }
@@ -344,14 +353,10 @@ impl super::App {
                 self.pkg_mark_search_dirty();
             }
             PickerKind::Grep => {
-                if picker.input.len() < 2 {
-                    picker::replace_items(picker, Vec::new());
-                    return;
-                }
-                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-                let query = picker.input.clone();
-                let results = picker::run_ripgrep(&query, &cwd, 500);
-                picker::replace_items(picker, results);
+                // Never search inline — ripgrep runs on a background thread
+                // behind a debounce. Mark the query dirty; `grep_tick` fires
+                // it from the main loop once typing settles.
+                self.grep_mark_dirty();
             }
             PickerKind::WorkspaceSymbols => {
                 let query = picker.input.clone();

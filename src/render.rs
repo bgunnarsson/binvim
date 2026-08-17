@@ -2115,7 +2115,22 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
     if block_w == 0 || block_w > area_w {
         return Ok(());
     }
-    let block_h = lines.len();
+    // The update banner is part of the centred block, so a blank spacer row
+    // plus its own row are added to the height before the vertical centring —
+    // otherwise the logo would sit centred and the banner hang below it.
+    let banner = app.update.available.as_ref().map(|latest| {
+        format!(
+            "▲ update available — binvim {latest} (you have {})",
+            crate::update::current()
+        )
+    });
+    // Too narrow, or too short to hold logo + spacer + banner: drop the banner
+    // rather than the whole start page — the logo is what the user launched to
+    // see, and `:health` still carries the news.
+    let banner = banner
+        .filter(|b| b.chars().count() <= area_w)
+        .filter(|_| lines.len() + 2 <= rows);
+    let block_h = lines.len() + if banner.is_some() { 2 } else { 0 };
     if block_h > rows {
         return Ok(());
     }
@@ -2127,6 +2142,18 @@ fn draw_start_page(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, MoveTo(left as u16, (top + logo_top + i) as u16))?;
         apply_buf_bg(out, page_bg)?;
         queue!(out, SetForegroundColor(blue), Print(line))?;
+        reset_to_buf_bg(out, page_bg)?;
+    }
+    if let Some(banner) = banner {
+        let left = left_off + (area_w.saturating_sub(banner.chars().count())) / 2;
+        let y = top + logo_top + lines.len() + 1;
+        queue!(out, MoveTo(left as u16, y as u16))?;
+        apply_buf_bg(out, page_bg)?;
+        queue!(
+            out,
+            SetForegroundColor(app.config.theme_warning()),
+            Print(&banner),
+        )?;
         reset_to_buf_bg(out, page_bg)?;
     }
     Ok(())
@@ -4072,12 +4099,16 @@ fn build_health_rows(
         (None, Some(pct)) => format!("{pct:.1} %"),
         (None, None) => "—".into(),
     };
+    let mut version_parts = vec![
+        ("version  ".into(), p.subtext1),
+        (snap.version.to_string(), p.text),
+    ];
+    if let Some(latest) = snap.update_available.as_ref() {
+        version_parts.push((format!("  ({latest} available)"), p.yellow));
+    }
     let process_lines = vec![
         SectionLine::Custom {
-            parts: vec![
-                ("version  ".into(), p.subtext1),
-                (snap.version.to_string(), p.text),
-            ],
+            parts: version_parts,
         },
         SectionLine::Custom {
             parts: vec![

@@ -566,7 +566,7 @@ fn run_capture(
 /// other backend, adds no compile-time dependency, and these calls already run
 /// off the main thread. `-f` turns HTTP errors (404 / 5xx) into a non-zero exit
 /// so they surface as `Err`; crates.io requires a non-empty User-Agent.
-fn http_get(url: &str) -> Result<String, String> {
+pub(crate) fn http_get(url: &str) -> Result<String, String> {
     run_capture(
         "curl",
         &[

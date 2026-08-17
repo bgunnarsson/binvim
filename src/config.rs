@@ -26,6 +26,33 @@ pub struct Config {
     pub file_explorer: FileExplorerConfig,
     #[serde(default)]
     pub install: InstallConfig,
+    #[serde(default)]
+    pub update: UpdateConfig,
+}
+
+/// Update check. When `check` is on (the default), binvim asks crates.io once
+/// a day whether a newer release exists and, if so, says so once per launch —
+/// a notification plus a line under the start-page logo. Nothing is uploaded;
+/// it's a plain GET for the crate's published version list. Turn it off with:
+///
+/// ```toml
+/// [update]
+/// check = false
+/// ```
+#[derive(Debug, Deserialize)]
+pub struct UpdateConfig {
+    #[serde(default = "default_update_check")]
+    pub check: bool,
+}
+
+fn default_update_check() -> bool {
+    true
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self { check: true }
+    }
 }
 
 /// First-run toolchain setup. When `prompt_on_open` is on (the default),
@@ -232,6 +259,7 @@ impl Default for Config {
             lsp: LspConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             install: InstallConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }

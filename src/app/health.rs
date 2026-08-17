@@ -17,6 +17,9 @@ use crate::lsp::{ActiveBufferLspStatus, LspHealth, Severity};
 /// `ps` shell-out for resource stats.
 pub struct HealthSnapshot {
     pub version: &'static str,
+    /// Newer published release, when the startup check found one. `None` when
+    /// we're current, the check is off, or it hasn't landed yet.
+    pub update_available: Option<String>,
     pub pid: u32,
     pub cwd: String,
     pub config_path: String,
@@ -335,6 +338,7 @@ impl super::App {
 
         HealthSnapshot {
             version: env!("CARGO_PKG_VERSION"),
+            update_available: self.update.available.clone(),
             pid,
             cwd,
             config_path,

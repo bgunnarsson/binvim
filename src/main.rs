@@ -33,6 +33,7 @@ mod terminal;
 mod test;
 mod text_object;
 mod undo;
+mod update;
 mod window;
 
 fn main() -> Result<()> {

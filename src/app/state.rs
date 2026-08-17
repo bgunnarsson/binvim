@@ -4,7 +4,9 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
+use std::process::Child;
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::buffer::Buffer;
@@ -696,6 +698,55 @@ impl PackageState {
     }
 }
 
+/// One finished ripgrep run, delivered from a background search thread back to
+/// the main loop. `epoch` is stamped at spawn time so results for a query the
+/// user has already typed past are dropped on arrival rather than flashing into
+/// the picker behind the current input.
+pub struct GrepEvent {
+    pub epoch: u64,
+    pub query: String,
+    pub items: Vec<(String, crate::picker::PickerPayload)>,
+}
+
+/// Owns the channel between background grep threads and the main loop, plus the
+/// debounce timer and a handle on the in-flight ripgrep child.
+///
+/// The grep picker re-searches on every keystroke, so both guards matter: the
+/// debounce keeps a burst of typing from spawning a child per character, and
+/// `child` lets a superseded query kill the scan it started instead of letting
+/// it run to completion in the background.
+pub struct GrepState {
+    pub tx: Sender<GrepEvent>,
+    pub rx: Receiver<GrepEvent>,
+    /// True while a search thread is running — tightens the main-loop poll so
+    /// results land promptly instead of waiting on the next keystroke.
+    pub busy: bool,
+    /// Bumped whenever the query changes or the picker closes; stamped onto
+    /// spawned events so a superseded result is discarded.
+    pub epoch: u64,
+    /// Last time the grep picker's input changed. `grep_tick` fires the search
+    /// once it has been still for `GREP_DEBOUNCE`; `None` when nothing pending.
+    pub dirty_at: Option<Instant>,
+    /// The in-flight ripgrep child, shared with the thread reading its output.
+    /// The main thread only ever calls `kill` through this — the search thread
+    /// owns the `wait`, so cancelling can't block the editor.
+    pub child: Option<Arc<Mutex<Option<Child>>>>,
+}
+
+impl GrepState {
+    pub fn new() -> Self {
+        let (tx, rx) = channel();
+        Self {
+            tx,
+            rx,
+            busy: false,
+            epoch: 0,
+            dirty_at: None,
+            child: None,
+        }
+    }
+}
+
 /// One result delivered from a background Android SDK thread back to the main
 /// loop, stamped with the flow `epoch` so a result from a cancelled flow is
 /// dropped (same staleness guard as [`PackageEvent`]).
@@ -760,6 +811,39 @@ impl AndroidState {
             busy: false,
             epoch: 0,
             flow: None,
+        }
+    }
+}
+
+/// Outcome of the once-per-launch update check. `Some(version)` is a release
+/// newer than ours; `None` covers both "we're current" and "the check failed"
+/// — a check the user never asked for has no business reporting its errors.
+pub struct UpdateEvent(pub Option<String>);
+
+/// Owns the channel between the update-check thread and the main loop, plus
+/// the result it delivered. One check per launch, so there's no epoch / busy
+/// bookkeeping here — a stale result is impossible.
+pub struct UpdateState {
+    pub tx: Sender<UpdateEvent>,
+    pub rx: Receiver<UpdateEvent>,
+    /// Newest published version, once we know it's ahead of ours. Read by the
+    /// start page, which keeps showing it after the notification times out.
+    pub available: Option<String>,
+    /// Notification text waiting for a free status line. The check lands a few
+    /// ticks into startup, by which point a launch message ("large file …",
+    /// an LSP error) may already be up — this holds the notice until that one
+    /// clears rather than painting over it.
+    pub pending_notice: Option<String>,
+}
+
+impl UpdateState {
+    pub fn new() -> Self {
+        let (tx, rx) = channel();
+        Self {
+            tx,
+            rx,
+            available: None,
+            pending_notice: None,
         }
     }
 }
