@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.17]
+## [0.5.17] - 2026-08-17
 
 ### Added
 - **binvim tells you when a newer version is out.** On launch it asks crates.io
