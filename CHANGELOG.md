@@ -6,6 +6,29 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.17]
+
+### Added
+- **binvim tells you when a newer version is out.** On launch it asks crates.io
+  whether a newer release has been published and, if so, says so in three
+  places: a startup notification, a line under the start-page logo
+  (`▲ update available — binvim x.y.z (you have a.b.c)`), and the `version` row
+  in `:health`. The answer is cached in `~/.cache/binvim/update-check.json` for
+  24 hours, so the network call happens at most once a day no matter how often
+  you launch — every other launch reads the file. Nothing is uploaded; it's a
+  plain GET for the crate's published version list, over `curl` (no HTTP client
+  is linked in). Failures are silent: offline, no `curl`, or a flaky network
+  leaves the editor exactly as it was. Turn it off with `[update] check = false`.
+
+### Fixed
+- **The grep picker no longer freezes the editor on a broad query.** `<leader>fg`
+  searched synchronously on every keystroke, so a two-character query over a
+  large workspace locked the UI for as long as ripgrep took, with no repaint and
+  no way to cancel. The search now waits for a 350 ms pause in typing, runs on a
+  background thread, needs at least 3 characters, stops at 500 rows (the title
+  says so when it does), and kills the in-flight scan the moment you type past
+  the query that started it.
+
 ## [0.5.16] - 2026-08-05
 
 ### Fixed
