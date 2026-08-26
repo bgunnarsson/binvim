@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.18]
+## [0.5.18] - 2026-08-26
 
 ### Changed
 - **The built-in sidebar tree is now the default file explorer.** `<leader>e`
