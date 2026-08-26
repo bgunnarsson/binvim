@@ -36,9 +36,11 @@ set -euo pipefail
 #      install.sh in for binvim.dev/install.sh, commit, push.
 #   8. Print a short summary with the release URL.
 #
-# Expected sibling layout (override with BINVIM_TAP_DIR / BINVIM_WEB_DIR):
-#   ../homebrew/binvim     — Homebrew tap clone (homebrew-binvim)
-#   ../binvim-web          — binvim.dev source repo
+# Sibling repos (Homebrew tap + binvim.dev source) are located by
+# searching a list of known layouts, first match wins:
+#   ../homebrew/binvim        ../binvim-web          — flat siblings
+#   ../../../homebrew/binvim  ../../sites/binvim-web — binlab layout
+# BINVIM_TAP_DIR / BINVIM_WEB_DIR override the search entirely.
 
 # ─── Argument parsing ─────────────────────────────────────────────
 
@@ -89,11 +91,33 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 cd "$ROOT"
 
-# Sibling-repo locations. The defaults assume the layout documented
-# above; BINVIM_TAP_DIR / BINVIM_WEB_DIR override them for checkouts
-# that don't sit side by side with this repo.
-TAP_DIR="${BINVIM_TAP_DIR:-$(cd "${ROOT}/.." 2>/dev/null && pwd)/homebrew/${REPO}}"
-WEB_DIR="${BINVIM_WEB_DIR:-$(cd "${ROOT}/.." 2>/dev/null && pwd)/binvim-web}"
+# Sibling-repo lookup. The tap and the web repo don't live at a fixed
+# offset from this checkout — under the binlab layout the repo sits at
+# <dev>/binlab/projects/binvim while the tap is <dev>/homebrew/binvim
+# and the site is <dev>/binlab/sites/binvim-web. Rather than pin one
+# layout, try each known location and take the first that's a git repo.
+# Falls back to the first candidate so the pre-flight error message
+# still names a sensible path to clone into.
+find_sibling() {
+    # find_sibling <candidate>... — echoes the first candidate that is
+    # a git checkout, else the first candidate. `-e` rather than `-d`
+    # on `.git`: a linked worktree's `.git` is a file, not a directory.
+    local c
+    for c in "$@"; do
+        [[ -e "$c/.git" ]] && { (cd "$c" && pwd); return; }
+    done
+    echo "$1"
+}
+
+PARENT="$(cd "${ROOT}/.." 2>/dev/null && pwd)"
+DEV_ROOT="$(cd "${ROOT}/../../.." 2>/dev/null && pwd)"
+
+TAP_DIR="${BINVIM_TAP_DIR:-$(find_sibling \
+    "${PARENT}/homebrew/${REPO}" \
+    "${DEV_ROOT}/homebrew/${REPO}")}"
+WEB_DIR="${BINVIM_WEB_DIR:-$(find_sibling \
+    "${PARENT}/${REPO}-web" \
+    "${ROOT}/../../sites/${REPO}-web")}"
 
 # ─── Helpers ──────────────────────────────────────────────────────
 
