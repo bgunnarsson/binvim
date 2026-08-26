@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.18]
+
 ### Changed
 - **The built-in sidebar tree is now the default file explorer.** `<leader>e`
   opens the tree pane out of the box; the yazi shell-out is opt-in via

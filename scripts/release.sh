@@ -36,7 +36,7 @@ set -euo pipefail
 #      install.sh in for binvim.dev/install.sh, commit, push.
 #   8. Print a short summary with the release URL.
 #
-# Expected sibling layout:
+# Expected sibling layout (override with BINVIM_TAP_DIR / BINVIM_WEB_DIR):
 #   ../homebrew/binvim     — Homebrew tap clone (homebrew-binvim)
 #   ../binvim-web          — binvim.dev source repo
 
@@ -89,8 +89,11 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
 cd "$ROOT"
 
-TAP_DIR="$(cd "${ROOT}/.." 2>/dev/null && pwd)/homebrew/${REPO}"
-WEB_DIR="$(cd "${ROOT}/.." 2>/dev/null && pwd)/binvim-web"
+# Sibling-repo locations. The defaults assume the layout documented
+# above; BINVIM_TAP_DIR / BINVIM_WEB_DIR override them for checkouts
+# that don't sit side by side with this repo.
+TAP_DIR="${BINVIM_TAP_DIR:-$(cd "${ROOT}/.." 2>/dev/null && pwd)/homebrew/${REPO}}"
+WEB_DIR="${BINVIM_WEB_DIR:-$(cd "${ROOT}/.." 2>/dev/null && pwd)/binvim-web}"
 
 # ─── Helpers ──────────────────────────────────────────────────────
 
