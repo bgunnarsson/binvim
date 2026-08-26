@@ -1,7 +1,7 @@
-//! Built-in sidebar tree file explorer. Enabled via
-//! `[file_explorer] tree = true` in `~/.config/binvim/config.toml`;
-//! when enabled, `<leader>e` toggles this pane instead of shelling
-//! out to yazi. The pane sits flush against the left edge of the
+//! Built-in sidebar tree file explorer — what `<leader>e` toggles
+//! by default. Setting `[file_explorer] yazi = true` in
+//! `~/.config/binvim/config.toml` shells out to yazi instead of
+//! opening this pane. The pane sits flush against the left edge of the
 //! editor band; `editor_rect()` trims width from the left so the
 //! buffer panes (and the right-side AI terminal pane, if open) sit
 //! cleanly to its right.
@@ -169,7 +169,7 @@ fn is_hidden(name: &str) -> bool {
 }
 
 impl super::App {
-    /// Entry point for `<leader>e` when `[file_explorer] tree = true`.
+    /// Entry point for `<leader>e` unless `[file_explorer] yazi = true`.
     /// Three-state cycle: closed → open + focused → open but editor
     /// focused → closed. Lets a click into the editor drop focus
     /// without losing the tree, and `<leader>e` then pulls focus

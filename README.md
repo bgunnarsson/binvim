@@ -256,7 +256,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 | `<space>?`  | Recent files                          |
 | `<space>G`  | Live grep                             |
 | `<space>gg` | Open lazygit — suspends the editor, hands the terminal to lazygit, refreshes every buffer's git gutter on exit (same as `:lazygit` / `:lg`) |
-| `<space>e`  | File explorer — yazi by default; opens the built-in sidebar tree instead when `[file_explorer] tree = true` |
+| `<space>e`  | File explorer — built-in sidebar tree by default; shells out to yazi instead when `[file_explorer] yazi = true` |
 | `<space>a`  | Code actions                          |
 | `<space>r`  | Rename (LSP-aware) — opens a modal preview overlay (per-edit checkboxes, before/after snippet per occurrence) before anything touches disk. `j`/`k` move, `<Space>` toggles, `a`/`n` flip all on/off, `o` jumps to the edit site (cancels), `<Enter>` applies only the enabled edits, `<Esc>` cancels |
 | `<space>R`  | Replace all (literal-string in buffer)|
@@ -435,7 +435,7 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `lldb-dap`                      | Rust / C / C++ debug adapter (DAP)       | Ships with LLVM 18+: `brew install llvm` (then add `$(brew --prefix llvm)/bin` to `$PATH`). Falls back to the legacy `lldb-vscode` if `lldb-dap` isn't present. |
 | `java-debug` (jdtls plugin)     | Android Java / Kotlin debug adapter (DAP) | Download `com.microsoft.java.debug.plugin-*.jar` from [github.com/microsoft/java-debug](https://github.com/microsoft/java-debug/releases) into `~/.cache/binvim/java-debug/`; jdtls loads it for `<leader>ab` attach debugging. |
 | `rg`                            | Live grep backend                        | `brew install ripgrep`                                                   |
-| `yazi`                          | `<space>e` file manager — optional; built-in sidebar tree via `[file_explorer] tree = true` doesn't need it | `brew install yazi`                                                      |
+| `yazi`                          | `<space>e` file manager — optional; only needed with `[file_explorer] yazi = true`, the built-in sidebar tree is the default | `brew install yazi`                                                      |
 | `sdkmanager` / `avdmanager`     | Android SDK command-line tools — emulator management (`<leader>a`), no Android Studio | `brew install --cask android-commandlinetools`, then `sdkmanager --licenses` |
 | `adb`                           | Android platform-tools (device bridge)   | `brew install --cask android-platform-tools` / `apt install android-tools-adb` |
 | `emulator`                      | Android emulator runtime                 | `sdkmanager emulator` — binvim locates it under `$ANDROID_HOME/emulator` |
@@ -493,7 +493,7 @@ relative = true   # cursor row shows absolute, others show distance. On by defau
 enabled = false   # GitHub Copilot via copilot-language-server (npm). Off by default.
 
 [file_explorer]
-tree = false      # `<space>e` opens yazi by default; set true for the built-in sidebar tree.
+yazi = false      # `<space>e` opens the built-in sidebar tree by default; set true to shell out to yazi.
 
 [lsp]
 semantic_tokens = true     # `textDocument/semanticTokens/full` layered over tree-sitter.
@@ -539,7 +539,7 @@ check = true               # Ask crates.io once a day whether a newer binvim is 
 
 **`[update]`** — `check = true` (the default) asks crates.io on launch whether a newer binvim has been published. The result is cached in `~/.cache/binvim/update-check.json` for 24 hours, so the network call happens at most once a day no matter how often you launch; every other launch answers from the cache file. When a newer version exists it shows up in three places: a notification on startup, a line under the start-page logo (`▲ update available — binvim x.y.z (you have a.b.c)`), and the `version` row in `:health`. Nothing is uploaded — it's a plain GET for the crate's published version list, via `curl` (same as the `<space>p` package manager; no HTTP client is linked in). Failures are silent: offline, no `curl`, or a flaky network leaves the editor exactly as it was. Set `check = false` to skip it entirely.
 
-**`[file_explorer]`** — `tree = false` (the default) keeps `<leader>e` as the yazi shell-out. Setting `tree = true` switches it to a built-in left-side sidebar tree pane: `j` / `k` navigate, `Enter` / `l` opens a file (or expands a folder), `h` collapses (or jumps to the parent), `g` / `G` top / bottom, `r` rebuilds after external file changes, `<space>e` from inside the pane closes it. Three-state `<leader>e` toggle from the editor: closed → focused → unfocused-but-visible → closed, so clicking into a buffer drops focus without losing the pane. The file currently open in the focused window renders in the accent colour + bold so it stays identifiable even after the j/k cursor moves elsewhere; double-click in the pane opens a file. No file operations (create / delete / rename) yet.
+**`[file_explorer]`** — `yazi = false` (the default) points `<leader>e` at the built-in left-side sidebar tree pane; setting `yazi = true` switches it to the yazi shell-out. In the tree pane: `j` / `k` navigate, `Enter` / `l` opens a file (or expands a folder), `h` collapses (or jumps to the parent), `g` / `G` top / bottom, `r` rebuilds after external file changes, `<space>e` from inside the pane closes it. Three-state `<leader>e` toggle from the editor: closed → focused → unfocused-but-visible → closed, so clicking into a buffer drops focus without losing the pane. The file currently open in the focused window renders in the accent colour + bold so it stays identifiable even after the j/k cursor moves elsewhere; double-click in the pane opens a file. No file operations (create / delete / rename) yet.
 
 **`[copilot]`** — `enabled = true` opts into GitHub Copilot. binvim attaches `copilot-language-server` (npm package `@github/copilot-language-server`, install with `npm i -g @github/copilot-language-server`) as an auxiliary LSP for every buffer. Authentication happens through the language server itself: on first launch the server emits a device-flow prompt with a verification URL + user code, which binvim surfaces in the status line. Visit the URL, enter the code, and the token persists at `~/.config/github-copilot/hosts.json` for the next session. The status auto-polls every 3 s while you complete the device flow so the editor flips to "signed in" within seconds of you clicking through. binvim itself doesn't carry an HTTP client or talk to GitHub directly — the language server handles all networking and auth. Once signed in, ghost completions appear inline as muted italic text after the cursor in Insert mode (~250 ms idle pause to trigger). Accept / dismiss split: `<Tab>` accepts the Copilot ghost (it wins over the LSP popup when both are visible — the popup auto-closes on accept), `<Enter>` accepts the LSP completion popup item, any other key dismisses the ghost. Default is `enabled = false`.
 

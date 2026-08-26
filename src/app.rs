@@ -758,9 +758,9 @@ pub struct App {
     /// Reset to true on every new run start.
     pub test_results_at_tail: bool,
     /// Active sidebar file-tree state. `Some` whenever the pane is
-    /// open; `None` closes the pane. Gated on
-    /// `config.file_explorer.tree` — `<leader>e` falls back to the
-    /// yazi shell-out when the tree explorer is disabled.
+    /// open; `None` closes the pane. This is what `<leader>e` opens
+    /// by default — `config.file_explorer.yazi` swaps it for the
+    /// yazi shell-out.
     pub file_tree: Option<file_tree::FileTreeState>,
 }
 

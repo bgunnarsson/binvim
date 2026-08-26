@@ -304,11 +304,11 @@ impl super::App {
             Action::JumpBack => self.jump_back(),
             Action::JumpForward => self.jump_forward(),
             Action::OpenPicker { kind } => self.open_picker(kind),
-            Action::OpenYazi => {
-                if self.config.file_explorer.tree {
-                    self.toggle_file_tree();
-                } else {
+            Action::OpenFileExplorer => {
+                if self.config.file_explorer.yazi {
                     self.open_yazi();
+                } else {
+                    self.toggle_file_tree();
                 }
             }
             Action::LspGotoDefinition => self.lsp_request_goto(),

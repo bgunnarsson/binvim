@@ -6,6 +6,17 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The built-in sidebar tree is now the default file explorer.** `<leader>e`
+  opens the tree pane out of the box; the yazi shell-out is opt-in via
+  `[file_explorer] yazi = true` in `~/.config/binvim/config.toml`. This is the
+  reverse of the previous default, and it drops yazi from the set of tools you
+  need on `$PATH` for a stock install to feel complete. The old
+  `[file_explorer] tree` key is gone — a config that still sets `tree = true`
+  is harmlessly ignored and lands on the tree anyway, which is what it asked
+  for; `tree = false` now gets the tree too, and needs `yazi = true` to go back
+  to yazi.
+
 ## [0.5.17] - 2026-08-17
 
 ### Added

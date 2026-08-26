@@ -215,7 +215,7 @@ pub enum Action {
     OpenPicker {
         kind: PickerLeader,
     },
-    OpenYazi,
+    OpenFileExplorer,
     LspGotoDefinition,
     LspFindReferences,
     LspRename,
@@ -1069,7 +1069,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'G' => Some(Action::OpenPicker {
                 kind: PickerLeader::Grep,
             }),
-            'e' => Some(Action::OpenYazi),
+            'e' => Some(Action::OpenFileExplorer),
             // Doc-symbol / workspace-symbol pickers moved under
             // `<leader>d` so the debug sub-menu collects every
             // "navigate around code while debugging" action in one

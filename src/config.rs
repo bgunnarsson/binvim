@@ -228,18 +228,18 @@ pub struct CopilotConfig {
     pub enabled: bool,
 }
 
-/// File-explorer selection. `<leader>e` shells out to `yazi` by
-/// default; setting `tree = true` switches it to the built-in
-/// sidebar tree explorer instead:
+/// File-explorer selection. `<leader>e` opens the built-in sidebar
+/// tree explorer by default; setting `yazi = true` shells out to
+/// `yazi` instead:
 ///
 /// ```toml
 /// [file_explorer]
-/// tree = true
+/// yazi = true
 /// ```
 #[derive(Debug, Default, Deserialize)]
 pub struct FileExplorerConfig {
     #[serde(default)]
-    pub tree: bool,
+    pub yazi: bool,
 }
 
 fn default_schema() -> u32 {
