@@ -4,15 +4,20 @@ set -euo pipefail
 # One script, end-to-end release flow. Replaces the prior
 # do-release.sh / release.sh / pkg-homebrew.sh / pkg-web.sh quartet.
 #
-# Usage: ./scripts/release.sh <version> [--skip-ci-wait] [--yes]
+# Usage: ./scripts/release.sh <version> [--skip-ci-wait] [--yes] [--notes-only]
 #   <version>       semver string, with or without leading `v` (e.g. 0.4.5 or v0.4.5)
 #   --skip-ci-wait  don't block waiting for the GitHub Actions release build
 #   --yes           non-interactive: auto-confirm Homebrew + web push prompts
+#   --notes-only    push the CHANGELOG section to an already-published
+#                   GitHub Release and exit. Nothing else runs: no verify,
+#                   no bump, no publish, no tag, no tap. For finishing a
+#                   release whose notes step was skipped (e.g. the CI wait
+#                   timed out during an Actions outage). Idempotent.
 #
 # What it does, in order:
 #   1. Pre-flight checks (clean tree, on main, CHANGELOG entry exists,
-#      tag absent, sibling repos present, gh CLI available,
-#      crates.io credentials available).
+#      tag absent, sibling repos present, gh CLI available, crates.io
+#      token present AND accepted by the registry).
 #   2. Local verification (cargo fmt --check, cargo test, cargo clippy,
 #      cargo build --release) so a broken commit never gets tagged.
 #   3. Stamp today's date on the CHANGELOG entry, bump Cargo.toml +
@@ -47,13 +52,15 @@ set -euo pipefail
 VERSION=""
 SKIP_CI_WAIT=0
 ASSUME_YES=0
+NOTES_ONLY=0
 
 for arg in "$@"; do
     case "$arg" in
         --skip-ci-wait) SKIP_CI_WAIT=1 ;;
         --yes|-y)       ASSUME_YES=1 ;;
+        --notes-only)   NOTES_ONLY=1 ;;
         -h|--help)
-            sed -n '3,30p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '4,47p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         -*)
@@ -71,7 +78,7 @@ for arg in "$@"; do
 done
 
 if [[ -z "$VERSION" ]]; then
-    echo "Usage: $0 <version> [--skip-ci-wait] [--yes]" >&2
+    echo "Usage: $0 <version> [--skip-ci-wait] [--yes] [--notes-only]" >&2
     exit 1
 fi
 
@@ -169,6 +176,57 @@ extract_changelog_section() {
     ' CHANGELOG.md
 }
 
+# Overwrite the GitHub Release notes with the curated CHANGELOG
+# section. The release workflow publishes with `generate_release_notes:
+# true`, which leaves a commit-message dump; this replaces it with
+# prose a human wrote.
+#
+# push_release_notes <soft|strict> — `soft` treats a missing Release as
+# "CI hasn't finished yet" and returns 0 so the rest of the release can
+# continue; `strict` (the --notes-only path) treats it as the thing the
+# caller asked for and fails. Re-running is safe either way: the notes
+# are overwritten wholesale, not appended.
+push_release_notes() {
+    local mode="$1"
+    local tmp
+    tmp="$(mktemp)"
+    extract_changelog_section "$VERSION" > "$tmp"
+
+    if [[ ! -s "$tmp" ]]; then
+        rm -f "$tmp"
+        if [[ "$mode" == "strict" ]]; then
+            echo "  CHANGELOG has no body under ## [${VERSION}] — nothing to push." >&2
+            return 1
+        fi
+        echo "  CHANGELOG section empty — leaving auto-generated notes in place."
+        return 0
+    fi
+
+    if ! gh release view "$TAG" >/dev/null 2>&1; then
+        rm -f "$tmp"
+        if [[ "$mode" == "strict" ]]; then
+            echo "  No published Release for ${TAG}." >&2
+            echo "  Check the build with: gh run list --workflow=release.yml --branch=${TAG}" >&2
+            return 1
+        fi
+        echo "  Release ${TAG} not yet published (CI still building?). Skipping notes update." >&2
+        echo "  Finish later with: ${BASH_SOURCE[0]} ${VERSION} --notes-only" >&2
+        return 0
+    fi
+
+    if gh release edit "$TAG" --notes-file "$tmp" >/dev/null 2>&1; then
+        echo "  Updated release notes from CHANGELOG."
+        rm -f "$tmp"
+        return 0
+    fi
+
+    rm -f "$tmp"
+    echo "  WARNING: gh release edit failed. Edit manually:" >&2
+    echo "    gh release edit ${TAG}" >&2
+    [[ "$mode" == "strict" ]] && return 1
+    return 0
+}
+
 # Verify a sibling repo is on a clean working tree and current with
 # origin (fast-forwardable). Aborts the release if not. The Homebrew
 # tap and binvim-web both get this treatment so a stale clone or
@@ -193,6 +251,30 @@ ensure_sibling_clean_and_current() {
         fi
     )
 }
+
+# ─── 0. --notes-only short circuit ────────────────────────────────
+
+# Deliberately ahead of the pre-flight: this path publishes nothing and
+# touches no repo, so a dirty tree or a not-on-main checkout is none of
+# its business. The tag existing is a precondition here, the opposite of
+# what the full flow demands.
+if [[ "$NOTES_ONLY" -eq 1 ]]; then
+    step "Push CHANGELOG section as GitHub Release notes (--notes-only)"
+
+    if ! command -v gh >/dev/null 2>&1; then
+        echo "gh CLI not found. Install with: brew install gh" >&2
+        exit 1
+    fi
+    if ! grep -Eq "^## \[?${VERSION}\]?" CHANGELOG.md; then
+        echo "CHANGELOG.md has no entry for ${VERSION}." >&2
+        exit 1
+    fi
+
+    push_release_notes strict || exit 1
+    echo
+    echo "  https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}"
+    exit 0
+fi
 
 # ─── 1. Pre-flight ────────────────────────────────────────────────
 
@@ -251,14 +333,90 @@ fi
 # `cargo login` that left a token in ~/.cargo/credentials.toml.
 # Fail loudly here rather than at step 3b — we don't want to push
 # the bump commit to main and then blow up on the publish step.
-if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]] \
-    && [[ ! -f "${CARGO_HOME:-$HOME/.cargo}/credentials.toml" ]] \
-    && [[ ! -f "${CARGO_HOME:-$HOME/.cargo}/credentials" ]]; then
+CARGO_CREDS_FILE=""
+for f in "${CARGO_HOME:-$HOME/.cargo}/credentials.toml" "${CARGO_HOME:-$HOME/.cargo}/credentials"; do
+    [[ -f "$f" ]] && { CARGO_CREDS_FILE="$f"; break; }
+done
+
+if [[ -z "${CARGO_REGISTRY_TOKEN:-}" ]] && [[ -z "$CARGO_CREDS_FILE" ]]; then
     echo "No crates.io credentials found." >&2
     echo "  Set CARGO_REGISTRY_TOKEN=<token> or run \`cargo login\` first." >&2
-    echo "  Get a token at https://crates.io/me." >&2
+    echo "  Get a token at https://crates.io/settings/tokens." >&2
     exit 1
 fi
+
+# A token being *present* isn't the same as it being *valid* — crates.io
+# tokens expire, and `cargo publish --dry-run` won't catch that because
+# it never authenticates. Ask the registry directly. Without this the
+# first sign of a stale token is a 403 at step 3b, by which point the
+# bump commit is already pushed to main.
+#
+# The token is only ever passed to curl through this variable; nothing
+# echoes it. Non-auth failures (offline, crates.io 5xx, no curl) warn
+# and continue rather than block — publish will surface those anyway,
+# and a flaky network shouldn't veto a release.
+probe_crates_token() {
+    local token="${CARGO_REGISTRY_TOKEN:-}"
+    if [[ -z "$token" ]]; then
+        # `token = "..."` under [registry]; the first match is the
+        # crates.io entry in every file cargo writes itself.
+        token="$(perl -ne 'if (/^\s*token\s*=\s*"([^"]+)"/) { print $1; exit }' "$CARGO_CREDS_FILE")"
+    fi
+    if [[ -z "$token" ]]; then
+        echo "  WARNING: could not read a token out of ${CARGO_CREDS_FILE}." >&2
+        return 0
+    fi
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "  crates.io token: present (no curl — can't verify)"
+        return 0
+    fi
+
+    # There is no read-only crates.io endpoint that an API token can
+    # authenticate against — /api/v1/me and friends are session-only and
+    # answer 403 to *every* token. But the 403 body distinguishes the two
+    # cases, and that's all we need:
+    #
+    #   valid token   → "this action can only be performed on the
+    #                    crates.io website"   (auth passed, wrong credential
+    #                                          type for this endpoint)
+    #   invalid token → "authentication failed"  (the exact error a stale
+    #                                             token gives `cargo publish`)
+    #
+    # Matching on an error string is fragile, so the fragility points the
+    # safe way: ONLY the explicit "authentication failed" is fatal. Any
+    # other response — a reworded error, a 5xx, an offline box, a curl
+    # that never connects — falls through to a warning and lets the
+    # release proceed. Worst case we're back to the old behaviour of
+    # finding out at the publish step; we never block a good token.
+    #
+    # crates.io rejects requests without a User-Agent.
+    local resp code body
+    resp="$(curl -s -w '\n%{http_code}' --max-time 15 \
+        -H "Authorization: ${token}" \
+        -H "User-Agent: binvim-release-script (github.com/${OWNER}/${REPO})" \
+        https://crates.io/api/v1/me 2>/dev/null || true)"
+    code="$(printf '%s' "$resp" | tail -n1)"
+    body="$(printf '%s' "$resp" | sed '$d')"
+
+    if [[ "$code" == "200" ]] || [[ "$body" == *"only be performed on the crates.io website"* ]]; then
+        echo "  crates.io token: valid"
+        return 0
+    fi
+
+    if [[ "$body" == *"authentication failed"* ]]; then
+        echo "crates.io rejected the token (HTTP ${code}): authentication failed." >&2
+        echo "  It's expired or revoked. Mint a new one at" >&2
+        echo "  https://crates.io/settings/tokens (scope: publish-update), then:" >&2
+        echo "    cargo login" >&2
+        return 1
+    fi
+
+    echo "  WARNING: couldn't verify the crates.io token (HTTP ${code:-000})." >&2
+    echo "  Continuing — the publish step will surface any real problem." >&2
+    return 0
+}
+
+probe_crates_token || exit 1
 
 echo "  branch:       main"
 echo "  version:      ${VERSION}  (tag ${TAG})"
@@ -379,26 +537,7 @@ fi
 
 step "Push CHANGELOG section as GitHub Release notes"
 
-# The workflow publishes the Release with `generate_release_notes:
-# true`, which produces a commit-message dump. Overwrite that with
-# the curated CHANGELOG section so the user-facing page actually
-# reads like release notes.
-NOTES_TMP="$(mktemp)"
-extract_changelog_section "$VERSION" > "$NOTES_TMP"
-if [[ ! -s "$NOTES_TMP" ]]; then
-    echo "  CHANGELOG section empty — leaving auto-generated notes in place."
-elif gh release view "$TAG" >/dev/null 2>&1; then
-    if gh release edit "$TAG" --notes-file "$NOTES_TMP" >/dev/null 2>&1; then
-        echo "  Updated release notes from CHANGELOG."
-    else
-        echo "  WARNING: gh release edit failed. Edit manually:" >&2
-        echo "    gh release edit ${TAG}" >&2
-    fi
-else
-    echo "  Release ${TAG} not yet published (CI still building?). Skipping notes update." >&2
-    echo "  Update later with: gh release edit ${TAG} --notes-file <(awk ...)" >&2
-fi
-rm -f "$NOTES_TMP"
+push_release_notes soft
 
 # ─── 6. Update Homebrew tap ───────────────────────────────────────
 
