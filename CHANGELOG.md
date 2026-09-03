@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.19]
+
 ### Fixed
 - **The file explorer follows symlinks.** A symlinked directory used to render
   as a file and refuse to expand, because the sidebar classified entries by the
