@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.19]
+## [0.5.19] - 2026-09-03
 
 ### Fixed
 - **The file explorer follows symlinks.** A symlinked directory used to render
