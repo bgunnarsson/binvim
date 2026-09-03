@@ -25,11 +25,21 @@ use crate::mode::Mode;
 /// in `FileTreeState.expanded` (keyed by canonical path) so two
 /// passes of `rebuild` over the same set of expansions yield the
 /// same flat list.
+///
+/// `is_dir` is what the entry *resolves to*, so a symlink pointing
+/// at a directory expands like one. `is_symlink` is kept alongside
+/// because the two differ where it matters: deleting a link must
+/// unlink the link, never recurse into what it points at.
 #[derive(Debug, Clone)]
 pub struct TreeEntry {
     pub path: PathBuf,
     pub depth: usize,
     pub is_dir: bool,
+    pub is_symlink: bool,
+    /// Symlink whose target doesn't resolve. Rendered in the error
+    /// colour and refused on open — following it would otherwise
+    /// hand the user an empty buffer at a path that can't be saved.
+    pub is_broken: bool,
 }
 
 #[derive(Debug)]
@@ -60,8 +70,14 @@ pub enum FileTreePendingOp {
     /// for `from` (kept in the same parent dir).
     Rename { from: PathBuf },
     /// Awaiting in-pane confirm (`y`/`Y`) before unlinking `target`.
-    /// `is_dir` toggles `remove_dir_all` vs `remove_file`.
-    DeleteConfirm { target: PathBuf, is_dir: bool },
+    /// `recursive` toggles `remove_dir_all` vs unlinking a single
+    /// entry — false for symlinks even when they point at a
+    /// directory, so `d` on a link never touches the link's target.
+    DeleteConfirm {
+        target: PathBuf,
+        recursive: bool,
+        is_symlink: bool,
+    },
 }
 
 impl FileTreeState {
@@ -107,7 +123,12 @@ impl FileTreeState {
     /// don't watch for those today — `R` rebuilds on demand).
     pub fn rebuild(&mut self) {
         let mut out = Vec::new();
-        push_children(&self.root, 0, &self.expanded, &mut out);
+        // The chain carries the canonical path of every directory on
+        // the recursion stack, so a symlink pointing back at one of
+        // its own ancestors can be spotted before it descends forever.
+        let root_canon = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let mut chain = vec![root_canon];
+        push_children(&self.root, 0, &self.expanded, &mut chain, &mut out);
         self.entries = out;
         if self.cursor >= self.entries.len() {
             self.cursor = self.entries.len().saturating_sub(1);
@@ -124,11 +145,17 @@ impl FileTreeState {
     }
 }
 
-fn push_children(dir: &Path, depth: usize, expanded: &HashSet<PathBuf>, out: &mut Vec<TreeEntry>) {
+fn push_children(
+    dir: &Path,
+    depth: usize,
+    expanded: &HashSet<PathBuf>,
+    chain: &mut Vec<PathBuf>,
+    out: &mut Vec<TreeEntry>,
+) {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return;
     };
-    let mut items: Vec<(PathBuf, bool, String)> = Vec::new();
+    let mut items: Vec<(TreeEntry, String)> = Vec::new();
     for e in rd.flatten() {
         let path = e.path();
         let name = match path.file_name().and_then(|n| n.to_str()) {
@@ -138,25 +165,82 @@ fn push_children(dir: &Path, depth: usize, expanded: &HashSet<PathBuf>, out: &mu
         if is_hidden(&name) {
             continue;
         }
-        let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        items.push((path, is_dir, name));
+        let link_type = e.file_type().ok();
+        let is_symlink = link_type.map(|t| t.is_symlink()).unwrap_or(false);
+        // `DirEntry::file_type` describes the link, not its target, so
+        // a symlinked directory would classify as a file and refuse to
+        // expand. Stat through the link instead; a stat that fails is
+        // the definition of a broken link.
+        let target = if is_symlink {
+            std::fs::metadata(&path).ok()
+        } else {
+            None
+        };
+        let is_dir = if is_symlink {
+            target.as_ref().map(|m| m.is_dir()).unwrap_or(false)
+        } else {
+            link_type.map(|t| t.is_dir()).unwrap_or(false)
+        };
+        items.push((
+            TreeEntry {
+                path,
+                depth,
+                is_dir,
+                is_symlink,
+                is_broken: is_symlink && target.is_none(),
+            },
+            name,
+        ));
     }
     // Directories first, then files, each group alphabetised.
-    items.sort_by(|a, b| match (a.1, b.1) {
+    items.sort_by(|a, b| match (a.0.is_dir, b.0.is_dir) {
         (true, false) => std::cmp::Ordering::Less,
         (false, true) => std::cmp::Ordering::Greater,
-        _ => a.2.to_lowercase().cmp(&b.2.to_lowercase()),
+        _ => a.1.to_lowercase().cmp(&b.1.to_lowercase()),
     });
-    for (path, is_dir, _) in items {
-        out.push(TreeEntry {
-            path: path.clone(),
-            depth,
-            is_dir,
-        });
-        if is_dir && expanded.contains(&path) {
-            push_children(&path, depth + 1, expanded, out);
+    for (entry, name) in items {
+        let (path, is_dir, is_symlink) = (entry.path.clone(), entry.is_dir, entry.is_symlink);
+        out.push(entry);
+        if !is_dir || !expanded.contains(&path) {
+            continue;
+        }
+        // A real subdirectory can't be its own ancestor, so its
+        // canonical path is just the parent's plus the basename — no
+        // syscall. Only a link needs resolving, and only a link can
+        // point back up the chain and loop.
+        let canon = if is_symlink {
+            let Ok(target) = std::fs::canonicalize(&path) else { continue };
+            if chain.iter().any(|c| c.starts_with(&target)) {
+                continue;
+            }
+            target
+        } else {
+            chain
+                .last()
+                .map(|c| c.join(&name))
+                .unwrap_or_else(|| path.clone())
+        };
+        chain.push(canon);
+        push_children(&path, depth + 1, expanded, chain, out);
+        chain.pop();
+    }
+}
+
+/// Unlink a symlink without following it. Windows keeps directory
+/// links in the directory namespace — `remove_file` refuses them
+/// there — while every unix removes either kind with `unlink`.
+fn remove_symlink(path: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        let is_dir_link = std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink_dir())
+            .unwrap_or(false);
+        if is_dir_link {
+            return std::fs::remove_dir(path);
         }
     }
+    std::fs::remove_file(path)
 }
 
 fn is_hidden(name: &str) -> bool {
@@ -310,19 +394,28 @@ impl super::App {
     }
 
     /// Snapshot of the active delete-confirm, if one is armed —
-    /// `(basename, is_dir)`. Used by the renderer to populate the
+    /// `(basename, recursive)`. Used by the renderer to populate the
     /// confirmation popup without exposing the private
-    /// `FileTreePendingOp` enum across the module boundary.
+    /// `FileTreePendingOp` enum across the module boundary. A symlink
+    /// gets the `ls -F` `@` suffix and `recursive: false`, so the
+    /// popup reads as "unlink this link", which is what `y` does.
     pub fn file_tree_pending_delete(&self) -> Option<(String, bool)> {
         let state = self.file_tree.as_ref()?;
         match &state.pending_op {
-            Some(FileTreePendingOp::DeleteConfirm { target, is_dir }) => {
-                let name = target
+            Some(FileTreePendingOp::DeleteConfirm {
+                target,
+                recursive,
+                is_symlink,
+            }) => {
+                let mut name = target
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("?")
                     .to_string();
-                Some((name, *is_dir))
+                if *is_symlink {
+                    name.push('@');
+                }
+                Some((name, *recursive))
             }
             _ => None,
         }
@@ -339,12 +432,16 @@ impl super::App {
     pub(super) fn start_file_tree_delete(&mut self) {
         let Some(state) = self.file_tree.as_mut() else { return };
         let Some(target) = state.cursor_path() else { return };
-        let is_dir = state
-            .entries
-            .get(state.cursor)
-            .map(|e| e.is_dir)
-            .unwrap_or(false);
-        state.pending_op = Some(FileTreePendingOp::DeleteConfirm { target, is_dir });
+        let entry = state.entries.get(state.cursor);
+        let is_symlink = entry.map(|e| e.is_symlink).unwrap_or(false);
+        // Only a real directory recurses. A link to one is unlinked
+        // whole, leaving the directory it points at alone.
+        let recursive = entry.map(|e| e.is_dir).unwrap_or(false) && !is_symlink;
+        state.pending_op = Some(FileTreePendingOp::DeleteConfirm {
+            target,
+            recursive,
+            is_symlink,
+        });
     }
 
     /// Commit a Create prompt. Trailing `/` selects directory; an
@@ -487,8 +584,12 @@ impl super::App {
     /// pending op either way; only `y`/`Y` actually unlinks.
     pub(super) fn finish_file_tree_delete(&mut self, confirmed: bool) {
         let Some(state) = self.file_tree.as_mut() else { return };
-        let (target, is_dir) = match state.pending_op.take() {
-            Some(FileTreePendingOp::DeleteConfirm { target, is_dir }) => (target, is_dir),
+        let (target, recursive, is_symlink) = match state.pending_op.take() {
+            Some(FileTreePendingOp::DeleteConfirm {
+                target,
+                recursive,
+                is_symlink,
+            }) => (target, recursive, is_symlink),
             other => {
                 state.pending_op = other;
                 return;
@@ -498,7 +599,9 @@ impl super::App {
             self.status_msg = "delete: cancelled".into();
             return;
         }
-        let result = if is_dir {
+        let result = if is_symlink {
+            remove_symlink(&target)
+        } else if recursive {
             std::fs::remove_dir_all(&target)
         } else {
             std::fs::remove_file(&target)
@@ -551,6 +654,15 @@ impl super::App {
                 state.expanded.insert(entry.path.clone());
             }
             state.rebuild();
+            return;
+        }
+        if entry.is_broken {
+            let name = entry
+                .path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?");
+            self.status_msg = format!("{name}: broken symlink");
             return;
         }
         // File — open it in the active editor window. Close the
@@ -612,5 +724,123 @@ fn seed_cursor_on_path(state: &mut FileTreeState, target: &Path) {
     state.rebuild();
     if let Some(idx) = state.entries.iter().position(|e| e.path == target) {
         state.cursor = idx;
+    }
+}
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    /// Fresh empty dir under the system temp dir, named after the
+    /// test + pid so parallel runs don't collide.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("binvim-tree-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn row<'a>(state: &'a FileTreeState, name: &str) -> &'a TreeEntry {
+        state
+            .entries
+            .iter()
+            .find(|e| e.path.file_name().and_then(|s| s.to_str()) == Some(name))
+            .unwrap_or_else(|| panic!("no row named {name}"))
+    }
+
+    #[test]
+    fn symlink_to_dir_is_a_dir_and_expands() {
+        let root = scratch("dirlink");
+        std::fs::create_dir(root.join("real")).unwrap();
+        std::fs::write(root.join("real/inner.txt"), b"hi").unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+
+        let mut state = FileTreeState::new(root.clone());
+        let link = row(&state, "link");
+        assert!(link.is_dir);
+        assert!(link.is_symlink);
+        assert!(!link.is_broken);
+
+        state.expanded.insert(root.join("link"));
+        state.rebuild();
+        assert!(
+            state
+                .entries
+                .iter()
+                .any(|e| e.path == root.join("link/inner.txt"))
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn symlink_to_file_is_a_file() {
+        let root = scratch("filelink");
+        std::fs::write(root.join("real.txt"), b"hi").unwrap();
+        symlink(root.join("real.txt"), root.join("link.txt")).unwrap();
+
+        let state = FileTreeState::new(root.clone());
+        let link = row(&state, "link.txt");
+        assert!(!link.is_dir);
+        assert!(link.is_symlink);
+        assert!(!link.is_broken);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dangling_symlink_is_flagged_broken() {
+        let root = scratch("broken");
+        symlink(root.join("gone.txt"), root.join("link.txt")).unwrap();
+
+        let state = FileTreeState::new(root.clone());
+        let link = row(&state, "link.txt");
+        assert!(link.is_symlink);
+        assert!(link.is_broken);
+        assert!(!link.is_dir);
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn symlink_pointing_at_an_ancestor_does_not_recurse() {
+        let root = scratch("loop");
+        std::fs::create_dir(root.join("sub")).unwrap();
+        symlink(&root, root.join("sub/up")).unwrap();
+
+        let mut state = FileTreeState::new(root.clone());
+        state.expanded.insert(root.join("sub"));
+        state.expanded.insert(root.join("sub/up"));
+        state.expanded.insert(root.join("sub/up/sub"));
+        state.rebuild();
+
+        assert!(row(&state, "up").is_dir);
+        // The loop is cut at the link: it lists as an expandable dir
+        // but contributes no children.
+        let link = root.join("sub/up");
+        assert!(
+            !state
+                .entries
+                .iter()
+                .any(|e| e.path != link && e.path.starts_with(&link))
+        );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_dir_symlink_unlinks_only_the_link() {
+        let root = scratch("unlink");
+        std::fs::create_dir(root.join("real")).unwrap();
+        std::fs::write(root.join("real/keep.txt"), b"hi").unwrap();
+        symlink(root.join("real"), root.join("link")).unwrap();
+
+        remove_symlink(&root.join("link")).unwrap();
+        assert!(!root.join("link").exists());
+        assert!(root.join("real/keep.txt").exists());
+
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

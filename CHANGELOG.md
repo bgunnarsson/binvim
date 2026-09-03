@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **The file explorer follows symlinks.** A symlinked directory used to render
+  as a file and refuse to expand, because the sidebar classified entries by the
+  link itself rather than what it points at. Links now resolve to their target:
+  a link to a directory expands like one, a link to a file opens like one, and
+  every link carries a trailing `@` (the `ls -F` convention) so it stays
+  distinguishable from the real thing. A dangling link is drawn in the error
+  colour and says `broken symlink` instead of opening an empty buffer. Deleting
+  a link unlinks the link and leaves its target alone, and a link that points
+  back at one of its own ancestors is not descended into, so a self-referencing
+  tree can't be expanded forever.
+
 ## [0.5.18] - 2026-08-26
 
 ### Changed

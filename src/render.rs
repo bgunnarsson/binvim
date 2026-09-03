@@ -3015,11 +3015,24 @@ fn draw_file_tree_pane(out: &mut impl Write, app: &App) -> Result<()> {
         };
         // Two cells of indent per depth level.
         let indent = "  ".repeat(entry.depth);
-        let icon_fg = if entry.is_dir { dir_fg } else { file_fg };
+        let icon_fg = if entry.is_broken {
+            app.config.theme_error()
+        } else if entry.is_dir {
+            dir_fg
+        } else {
+            file_fg
+        };
         // Filename colour: the active open file shines in the accent
         // colour (and bold) so it stays visible even when the j/k
-        // hover sits elsewhere. Non-active rows just use file_fg.
-        let name_fg = if is_active { accent } else { file_fg };
+        // hover sits elsewhere. A dangling link burns red so it's
+        // obvious before you try to open it. Everything else is file_fg.
+        let name_fg = if entry.is_broken {
+            app.config.theme_error()
+        } else if is_active {
+            accent
+        } else {
+            file_fg
+        };
 
         // Print indent + icon (icon keeps its file-type colour),
         // then a separator space, then the name (accent + bold when
@@ -3033,8 +3046,16 @@ fn draw_file_tree_pane(out: &mut impl Write, app: &App) -> Result<()> {
             SetForegroundColor(icon_fg),
             Print(&prefix_chars),
         )?;
+        // `ls -F` convention: a trailing `@` marks a symlink, so a
+        // directory link still reads as a directory while staying
+        // distinguishable from the real thing.
+        let label = if entry.is_symlink {
+            format!("{name}@")
+        } else {
+            name.to_string()
+        };
         let name_budget = content_cols.saturating_sub(prefix_w);
-        let name_chars: String = name.chars().take(name_budget).collect();
+        let name_chars: String = label.chars().take(name_budget).collect();
         let name_w = name_chars.chars().count();
         queue!(out, SetForegroundColor(name_fg))?;
         if is_active {
