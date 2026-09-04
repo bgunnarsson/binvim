@@ -1841,6 +1841,47 @@ mod tests {
         }
     }
 
+    // The count in front of a text object reaches the action. It always did —
+    // `total_count` multiplies the pre- and post-operator counts, so `2d3aw` is
+    // six — but dispatch dropped it on the floor, which made `d2aw` behave as
+    // `daw`. Assert the parser's half so a regression there is caught here
+    // rather than in the editor.
+    #[test]
+    fn d2aw_carries_its_count_to_the_action() {
+        let mut state = PendingCmd::default();
+        for c in ['d', '2', 'a'] {
+            assert!(matches!(
+                parse(&mut state, key(c), ParseCtx::Normal),
+                ParseResult::Pending
+            ));
+        }
+        match parse(&mut state, key('w'), ParseCtx::Normal) {
+            ParseResult::Action(Action::OperateTextObject {
+                op: Operator::Delete,
+                obj: TextObjectVerb::Word { inner: false },
+                count,
+                ..
+            }) => assert_eq!(count, 2),
+            other => panic!("d2aw produced {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn counts_either_side_of_the_operator_multiply() {
+        // vim: `2d3aw` deletes six around-words.
+        let mut state = PendingCmd::default();
+        for c in ['2', 'd', '3', 'a'] {
+            assert!(matches!(
+                parse(&mut state, key(c), ParseCtx::Normal),
+                ParseResult::Pending
+            ));
+        }
+        match parse(&mut state, key('w'), ParseCtx::Normal) {
+            ParseResult::Action(Action::OperateTextObject { count, .. }) => assert_eq!(count, 6),
+            other => panic!("2d3aw produced {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
     #[test]
     fn leader_p_i_emits_package_install() {
         let mut state = PendingCmd::default();

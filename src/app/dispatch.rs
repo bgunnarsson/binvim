@@ -399,11 +399,11 @@ impl super::App {
         &mut self,
         op: Operator,
         obj: TextObjectVerb,
-        _count: usize,
+        count: usize,
         target: Option<char>,
     ) {
-        // TODO: count > 1 should expand the object (e.g. d2aw = delete 2 around-words).
-        let range = match text_object::compute(&self.buffer, self.window.cursor, obj) {
+        let range = match text_object::compute_counted(&self.buffer, self.window.cursor, obj, count)
+        {
             Some(r) => r,
             None => return,
         };

@@ -37,6 +37,112 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
     }
 }
 
+/// A text object with a count in front of it — `d2aw`, `c3i(`.
+///
+/// The count does not mean the same thing to every object, and vim is the
+/// reference here:
+///
+/// - **Words** extend *forward*. `2aw` is two words and their trailing
+///   whitespace. `2iw` is two `iw` objects, and a run of whitespace is one of
+///   those — so on `foo bar` it takes `foo ` rather than `foo bar`. That is
+///   vim's rule and it is the one that surprises people, so it is spelled out.
+/// - **Pairs** expand *outward*. `2i(` is the second enclosing pair, not two
+///   sibling ones.
+/// - **Quotes** ignore the count entirely, as vim does. There is no sensible
+///   second `i"` to reach for.
+///
+/// `count` of 0 or 1 is the plain object. Words are line-scoped in this
+/// implementation, so a count that would run past the end of the line stops
+/// there rather than continuing onto the next one.
+pub fn compute_counted(
+    buf: &Buffer,
+    cur: Cursor,
+    obj: TextObjectVerb,
+    count: usize,
+) -> Option<TextRange> {
+    let first = compute(buf, cur, obj)?;
+    if count <= 1 {
+        return Some(first);
+    }
+
+    match obj {
+        TextObjectVerb::Word { inner } => extend_words(buf, cur, first, inner, false, count),
+        TextObjectVerb::BigWord { inner } => extend_words(buf, cur, first, inner, true, count),
+        // Vim ignores a count on a quote object.
+        TextObjectVerb::Quotes { .. } => Some(first),
+        TextObjectVerb::Pair { open, close, inner } => {
+            expand_pairs(buf, first, open, close, inner, count)
+        }
+    }
+}
+
+/// Repeat a word object forward `count - 1` more times, taking each next object
+/// from where the previous one ended. Stops at the end of the line.
+fn extend_words(
+    buf: &Buffer,
+    cur: Cursor,
+    first: TextRange,
+    inner: bool,
+    big: bool,
+    count: usize,
+) -> Option<TextRange> {
+    let line_start = buf.line_start_idx(cur.line);
+    let line_end = line_start + buf.line_len(cur.line);
+    let mut range = first;
+
+    for _ in 1..count {
+        if range.end >= line_end {
+            break;
+        }
+        let next_cursor = Cursor {
+            line: cur.line,
+            col: range.end - line_start,
+            want_col: 0,
+        };
+        match word(buf, next_cursor, inner, big) {
+            // A next object that does not actually move us forward would loop.
+            Some(next) if next.end > range.end => range.end = next.end,
+            _ => break,
+        }
+    }
+    Some(range)
+}
+
+/// Walk outward to the `count`-th enclosing pair. Each step restarts the search
+/// from the character before the previous opening delimiter, which is outside
+/// it — so the next match is the pair that contains it.
+fn expand_pairs(
+    buf: &Buffer,
+    first: TextRange,
+    open: char,
+    close: char,
+    inner: bool,
+    count: usize,
+) -> Option<TextRange> {
+    let mut range = first;
+
+    for _ in 1..count {
+        // The opening delimiter, whether or not this range includes it.
+        let open_idx = if inner {
+            range.start.checked_sub(1)?
+        } else {
+            range.start
+        };
+        // One character outside it, so the backward walk cannot match it again.
+        let outside = open_idx.checked_sub(1)?;
+        let line = buf.rope.char_to_line(outside);
+        let probe = Cursor {
+            line,
+            col: outside - buf.line_start_idx(line),
+            want_col: 0,
+        };
+        // No enclosing pair left — vim fails the whole operation rather than
+        // acting on the smaller one, and so do we.
+        range = pair(buf, probe, open, close, inner)?;
+    }
+    Some(range)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
     Whitespace,
@@ -283,6 +389,121 @@ mod tests {
         let r = compute(&b, cur(0, 8), TextObjectVerb::Word { inner: false }).unwrap();
         assert_eq!(r.start, 5); // includes space before
         assert_eq!(r.end, 11);
+    }
+
+    // ---------------------------------------------------------------------
+    // Counted objects — `d2aw`, `c3i(`. Before these, the count was parsed and
+    // then dropped, so `d2aw` silently behaved as `daw`.
+    // ---------------------------------------------------------------------
+
+    #[test]
+    fn count_one_is_the_plain_object() {
+        let b = buf("one two three\n");
+        let plain = compute(&b, cur(0, 0), TextObjectVerb::Word { inner: false }).unwrap();
+        for n in [0, 1] {
+            let r =
+                compute_counted(&b, cur(0, 0), TextObjectVerb::Word { inner: false }, n).unwrap();
+            assert_eq!((r.start, r.end), (plain.start, plain.end));
+        }
+    }
+
+    #[test]
+    fn two_aw_takes_two_words_and_their_whitespace() {
+        // `d2aw` on `one two three` at `o` should leave `three`.
+        let b = buf("one two three\n");
+        let r = compute_counted(&b, cur(0, 0), TextObjectVerb::Word { inner: false }, 2).unwrap();
+        assert_eq!(r.start, 0);
+        assert_eq!(r.end, 8); // "one two "
+    }
+
+    #[test]
+    fn two_iw_counts_the_whitespace_run_as_an_object() {
+        // vim's rule, and the one that surprises: `iw` treats a run of
+        // whitespace as an object of its own, so `2iw` on `one two` is
+        // `one` plus the space — not `one two`.
+        let b = buf("one two three\n");
+        let r = compute_counted(&b, cur(0, 0), TextObjectVerb::Word { inner: true }, 2).unwrap();
+        assert_eq!(r.start, 0);
+        assert_eq!(r.end, 4); // "one "
+
+        let r = compute_counted(&b, cur(0, 0), TextObjectVerb::Word { inner: true }, 3).unwrap();
+        assert_eq!(r.end, 7); // "one two"
+    }
+
+    #[test]
+    fn a_count_past_the_end_of_the_line_stops_there() {
+        // Words are line-scoped here, so `d9aw` takes the rest of the line
+        // rather than running on into the next one.
+        let b = buf("one two\nthree\n");
+        let r = compute_counted(&b, cur(0, 0), TextObjectVerb::Word { inner: false }, 9).unwrap();
+        assert_eq!(r.start, 0);
+        assert_eq!(r.end, 7); // "one two", not into line 2
+    }
+
+    #[test]
+    fn two_aw_on_big_words_spans_the_punctuation() {
+        // `aW` treats `a.b` as one word, so `2aW` reaches past `c.d`.
+        let b = buf("a.b c.d e\n");
+        let r =
+            compute_counted(&b, cur(0, 0), TextObjectVerb::BigWord { inner: false }, 2).unwrap();
+        assert_eq!(r.start, 0);
+        assert_eq!(r.end, 8); // "a.b c.d "
+    }
+
+    #[test]
+    fn two_i_paren_is_the_second_enclosing_pair() {
+        //            0123456789
+        let b = buf("f(g(x) y)\n");
+        // Cursor on `x`, inside both pairs.
+        let inner = TextObjectVerb::Pair {
+            open: '(',
+            close: ')',
+            inner: true,
+        };
+        let one = compute_counted(&b, cur(0, 4), inner, 1).unwrap();
+        assert_eq!((one.start, one.end), (4, 5)); // "x"
+        let two = compute_counted(&b, cur(0, 4), inner, 2).unwrap();
+        assert_eq!((two.start, two.end), (2, 8)); // "g(x) y"
+    }
+
+    #[test]
+    fn two_a_paren_is_the_second_enclosing_pair_with_its_delimiters() {
+        let b = buf("f(g(x) y)\n");
+        let around = TextObjectVerb::Pair {
+            open: '(',
+            close: ')',
+            inner: false,
+        };
+        let one = compute_counted(&b, cur(0, 4), around, 1).unwrap();
+        assert_eq!((one.start, one.end), (3, 6)); // "(x)"
+        let two = compute_counted(&b, cur(0, 4), around, 2).unwrap();
+        assert_eq!((two.start, two.end), (1, 9)); // "(g(x) y)"
+    }
+
+    #[test]
+    fn a_pair_count_with_nothing_left_to_expand_into_fails() {
+        // vim refuses the whole operation rather than acting on the smaller
+        // pair, so `d3i(` inside two levels of nesting does nothing.
+        let b = buf("f(g(x) y)\n");
+        let inner = TextObjectVerb::Pair {
+            open: '(',
+            close: ')',
+            inner: true,
+        };
+        assert!(compute_counted(&b, cur(0, 4), inner, 3).is_none());
+    }
+
+    #[test]
+    fn a_count_on_a_quote_object_is_ignored() {
+        // As in vim — there is no sensible second `i"` to reach for.
+        let b = buf("a \"x\" b \"y\" c\n");
+        let obj = TextObjectVerb::Quotes {
+            ch: '"',
+            inner: true,
+        };
+        let one = compute_counted(&b, cur(0, 3), obj, 1).unwrap();
+        let two = compute_counted(&b, cur(0, 3), obj, 2).unwrap();
+        assert_eq!((one.start, one.end), (two.start, two.end));
     }
 
     #[test]
