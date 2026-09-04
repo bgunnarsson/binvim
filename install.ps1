@@ -3,7 +3,7 @@
 #   iwr https://binvim.dev/install.ps1 -UseBasicParsing | iex
 #
 # Optional environment overrides:
-#   $env:BINVIM_VERSION = 'v0.4.7'  # pin to a specific tag (default: latest)
+#   $env:BINVIM_VERSION = 'v0.5.19' # pin to a specific tag (default: latest)
 #   $env:BINVIM_INSTALL_DIR = 'C:\bin'  # override install dir
 #       (default: $env:LOCALAPPDATA\binvim\bin)
 
