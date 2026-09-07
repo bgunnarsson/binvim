@@ -714,7 +714,10 @@ impl super::App {
                                 };
                                 self.side_terminal_selection = Some(s);
                                 if !copied.is_empty() {
-                                    super::registers::set_system_clipboard(&copied);
+                                    super::registers::set_system_clipboard(
+                                        &copied,
+                                        self.config.clipboard.osc52,
+                                    );
                                     let n = copied.chars().count();
                                     self.status_msg = format!("ai: copied {n} chars");
                                 }
@@ -762,7 +765,10 @@ impl super::App {
                                 self.side_terminal_selection = Some(sel);
                                 self.side_click.word_drag = Some((grid_row, s, e));
                                 if !copied.is_empty() {
-                                    super::registers::set_system_clipboard(&copied);
+                                    super::registers::set_system_clipboard(
+                                        &copied,
+                                        self.config.clipboard.osc52,
+                                    );
                                     let n = copied.chars().count();
                                     self.status_msg = format!("ai: copied {n} chars");
                                 }

@@ -504,6 +504,9 @@ prompt_on_open = true      # Hint (once/language/session) when a file's LSP or f
 
 [update]
 check = true               # Ask crates.io once a day whether a newer binvim is out.
+
+[clipboard]
+osc52 = true               # Also emit OSC 52 so a remote (SSH) yank reaches the local clipboard.
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. The section drives both **chrome** and **syntax** colouring.
@@ -532,6 +535,8 @@ check = true               # Ask crates.io once a day whether a newer binvim is 
 **`[whitespace]`** — `show = true` (the default) renders every space as `·`, every tab as `→` plus space-fill to the tab width, every non-breaking space (U+00A0) as `⎵`, and the end-of-line as `¬`. All in the muted overlay colour. Set `show = false` to disable.
 
 **`[line_numbers]`** — `relative = true` (the default) renders the gutter Vim-style: the cursor's row shows its absolute (1-indexed) line in a brighter Subtext1 tone, every other row shows the count of lines away from the cursor. Pairs naturally with count-prefixed motions like `5j` / `12k` / `3dd`. Set `relative = false` to fall back to plain 1-indexed numbering on every row.
+
+**`[clipboard]`** — `osc52 = true` (the default) additionally emits the terminal OSC 52 sequence whenever binvim writes to the system clipboard, alongside the usual `arboard` call. arboard reaches only the machine binvim runs on; the OSC 52 sequence lets the *terminal* write to the **local** clipboard, so a `yy` inside a binvim running over SSH lands in your own desktop's clipboard. Running locally it's harmless — the terminal either sets the clipboard to the same text or ignores the sequence. Set `osc52 = false` to disable the sequence (some very minimal terminals may echo it).
 
 **`[lsp]`** — both toggles default `true`. `semantic_tokens = false` gates the `textDocument/semanticTokens/full` request and the highlight-cache overlay off entirely (no wire traffic, no render delta). `document_highlight = false` gates `textDocument/documentHighlight` similarly. Useful if your LSP's semantic-token output collides badly with the tree-sitter pass, or if the on-every-cursor-settle highlight echo is more distracting than useful for your workflow.
 
