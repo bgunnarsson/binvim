@@ -17,7 +17,7 @@ impl super::App {
         // y/d/c land in other apps. Explicit named registers (`"ay`) stay
         // local — that's what users reach for when they want a side stash.
         if mirrors_to_system_clipboard(target) {
-            set_system_clipboard(&text);
+            set_system_clipboard(&text, self.config.clipboard.osc52);
         }
         let r = Register { text, linewise };
         self.registers.insert('"', r.clone());
@@ -38,7 +38,7 @@ impl super::App {
             return;
         }
         if mirrors_to_system_clipboard(target) {
-            set_system_clipboard(&text);
+            set_system_clipboard(&text, self.config.clipboard.osc52);
         }
         let r = Register { text, linewise };
         self.registers.insert('"', r.clone());
@@ -257,13 +257,80 @@ pub fn mirrors_to_system_clipboard(target: Option<char>) -> bool {
     }
 }
 
-/// Best-effort write of `text` to the OS clipboard. A failure (no display
-/// server, no clipboard access on the platform) is swallowed — the editor
-/// still has the text in its in-memory unnamed register.
-pub fn set_system_clipboard(text: &str) {
+/// OSC 52 payloads above this many bytes are skipped: terminals commonly cap
+/// the sequence length and silently truncate oversized payloads, and a
+/// blocking write of a large base64 blob would stall the single-threaded event
+/// loop over a slow SSH link. `arboard` (local) and the in-memory register are
+/// unaffected by the skip.
+const MAX_OSC52_BYTES: usize = 64 * 1024;
+
+/// Best-effort write of `text` to the OS clipboard. `arboard` hits the
+/// local machine's clipboard; when `osc52` is set we *also* emit the OSC 52
+/// terminal sequence so a remote binvim (over SSH) can push the yank into the
+/// local terminal's clipboard. Failures are swallowed — the editor still has
+/// the text in its in-memory unnamed register. Running locally the OSC 52
+/// emission is a harmless no-op: the terminal either sets the clipboard to
+/// the same text or ignores the sequence.
+///
+/// The sequence is emitted only when the payload is non-empty, under
+/// `MAX_OSC52_BYTES`, and stdout is actually a terminal — a bare `ESC]52;c;`
+/// (empty payload) has terminal-dependent side effects (some treat it as a
+/// clipboard *read* request), and control characters don't belong on a
+/// redirected stream.
+pub fn set_system_clipboard(text: &str, osc52: bool) {
+    use std::io::IsTerminal;
     if let Ok(mut cb) = arboard::Clipboard::new() {
         let _ = cb.set_text(text.to_string());
     }
+    if osc52 && osc52_payload_accepted(text) && std::io::stdout().is_terminal() {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(osc52_sequence(text).as_bytes());
+        let _ = out.flush();
+    }
+}
+
+/// Whether an OSC 52 payload is worth emitting: non-empty (a bare `ESC]52;c;`
+/// has terminal-dependent side effects, e.g. some terminals treat it as a
+/// read request) and under `MAX_OSC52_BYTES` (terminals cap/truncate oversized
+/// sequences, and a huge blocking write would stall the event loop).
+fn osc52_payload_accepted(text: &str) -> bool {
+    !text.is_empty() && text.len() <= MAX_OSC52_BYTES
+}
+
+/// The OSC 52 clipboard sequence for `text`: `ESC ] 52 ; c ; <base64> BEL`.
+/// `c` selects the clipboard; the BEL terminator is the oldest, most widely
+/// accepted form (ESC\ also works). The terminal performs the actual write to
+/// the *local* clipboard, which is what lets a remote SSH session's yank
+/// reach the user's own desktop.
+fn osc52_sequence(text: &str) -> String {
+    format!("\x1b]52;c;{}\x07", base64_encode(text.as_bytes()))
+}
+
+/// Minimal base64 encoder (no new dependency) for OSC 52 payloads — standard
+/// alphabet, NUL-free, with `=` padding, exactly what terminals expect.
+fn base64_encode(data: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            TABLE[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            TABLE[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
 }
 
 /// Best-effort read of the OS clipboard as UTF-8. Returns `None` when the
@@ -332,4 +399,55 @@ fn clipboard_fallback_read() -> Option<String> {
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn clipboard_fallback_read() -> Option<String> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The inlined encoder must match the RFC 4648 standard base64 that
+    /// terminals expect — including the `=` padding edge cases.
+    #[test]
+    fn base64_encode_matches_standard() {
+        assert_eq!(base64_encode(b""), "");
+        assert_eq!(base64_encode(b"f"), "Zg==");
+        assert_eq!(base64_encode(b"fo"), "Zm8=");
+        assert_eq!(base64_encode(b"foo"), "Zm9v");
+        assert_eq!(base64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
+        // Non-ASCII UTF-8 round-trips through the byte stream.
+        assert_eq!(
+            base64_encode("binvim 修改键".as_bytes()),
+            "YmludmltIOS/ruaUuemUrg=="
+        );
+    }
+
+    /// The OSC 52 sequence is well-formed: `ESC ] 52 ; c ; <base64> BEL`.
+    #[test]
+    fn osc52_sequence_payload_is_base64_of_text() {
+        let seq = osc52_sequence("hello");
+        assert!(seq.starts_with("\x1b]52;c;"));
+        assert!(seq.ends_with('\x07'), "BEL terminator");
+        assert_eq!(seq, "\x1b]52;c;aGVsbG8=\x07");
+    }
+
+    /// An empty payload is rejected (a bare `ESC]52;c;` is ambiguous across
+    /// terminals) and oversized payloads are skipped so a huge blocking write
+    /// can't stall the event loop or exceed a terminal's OSC 52 cap.
+    #[test]
+    fn osc52_payload_accepted_rejects_empty_and_oversized() {
+        let big = "x".repeat(MAX_OSC52_BYTES + 1);
+        assert!(!osc52_payload_accepted(""), "empty rejected");
+        assert!(
+            !osc52_payload_accepted(&big),
+            "over the cap rejected: {} bytes",
+            big.len()
+        );
+        assert!(osc52_payload_accepted("hello"), "normal payload accepted");
+        assert!(
+            osc52_payload_accepted(&"x".repeat(MAX_OSC52_BYTES)),
+            "at the cap accepted"
+        );
+    }
 }

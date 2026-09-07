@@ -28,6 +28,8 @@ pub struct Config {
     pub install: InstallConfig,
     #[serde(default)]
     pub update: UpdateConfig,
+    #[serde(default)]
+    pub clipboard: ClipboardConfig,
 }
 
 /// Update check. When `check` is on (the default), binvim asks crates.io once
@@ -242,6 +244,35 @@ pub struct FileExplorerConfig {
     pub yazi: bool,
 }
 
+/// OS clipboard behaviour. binvim mirrors yank/delete/change into the
+/// system clipboard via `arboard` (the machine binvim runs on) by default;
+/// `osc52` additionally emits the terminal OSC 52 sequence so a *remote*
+/// binvim over SSH can push a yank into the **local** terminal's clipboard.
+///
+/// Running locally it's harmless — the terminal either sets the clipboard to
+/// the same text or ignores the sequence. On by default; turn off the
+/// sequence with `osc52 = false`:
+///
+/// ```toml
+/// [clipboard]
+/// osc52 = false
+/// ```
+#[derive(Debug, Deserialize)]
+pub struct ClipboardConfig {
+    #[serde(default = "default_clipboard_osc52")]
+    pub osc52: bool,
+}
+
+fn default_clipboard_osc52() -> bool {
+    true
+}
+
+impl Default for ClipboardConfig {
+    fn default() -> Self {
+        Self { osc52: true }
+    }
+}
+
 fn default_schema() -> u32 {
     1
 }
@@ -260,6 +291,7 @@ impl Default for Config {
             file_explorer: FileExplorerConfig::default(),
             install: InstallConfig::default(),
             update: UpdateConfig::default(),
+            clipboard: ClipboardConfig::default(),
         }
     }
 }

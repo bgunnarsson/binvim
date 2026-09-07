@@ -508,7 +508,10 @@ impl super::App {
                             self.terminal_selection = Some(s);
                             if !copied.is_empty() {
                                 let n = copied.chars().count();
-                                super::registers::set_system_clipboard(&copied);
+                                super::registers::set_system_clipboard(
+                                    &copied,
+                                    self.config.clipboard.osc52,
+                                );
                                 self.status_msg = format!("terminal: copied {n} chars");
                             }
                             return true;
@@ -554,7 +557,10 @@ impl super::App {
                             self.term_click.word_drag = Some((body_row, s, e));
                             if !copied.is_empty() {
                                 let n = copied.chars().count();
-                                super::registers::set_system_clipboard(&copied);
+                                super::registers::set_system_clipboard(
+                                    &copied,
+                                    self.config.clipboard.osc52,
+                                );
                                 self.status_msg = format!("terminal: copied {n} chars");
                             }
                         } else {
