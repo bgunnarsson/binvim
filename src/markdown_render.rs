@@ -1186,8 +1186,7 @@ pub fn visual_col_for_buffer_col(
             }
         }
         let c = chars[col];
-        let w = if c == '\t' { tab_width } else { 1 };
-        visual += w;
+        visual += crate::render::char_width(c, tab_width);
         col += 1;
     }
     visual
@@ -1228,7 +1227,7 @@ pub fn buffer_col_for_visual_col(
             }
         }
         let c = chars[col];
-        let w = if c == '\t' { tab_width } else { 1 };
+        let w = crate::render::char_width(c, tab_width);
         if visual + w > target_visual {
             return col;
         }

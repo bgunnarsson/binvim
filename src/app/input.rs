@@ -117,11 +117,10 @@ fn visual_col_to_char_col_with_hints(
             }
             visual += hw;
         }
-        let w = if c == '\t' {
-            crate::render::TAB_WIDTH
-        } else {
-            1
-        };
+        // Mirror of the renderer's advance: tabs expand to TAB_WIDTH cells, CJK /
+        // wide glyphs are two cells. Matching the render walk is what makes a
+        // click land on the character the user is actually pointing at.
+        let w = crate::render::char_width(c, crate::render::TAB_WIDTH);
         if visual >= visual_col {
             break;
         }
@@ -1125,8 +1124,9 @@ impl super::App {
         // buffer char column. Tabs render at `TAB_WIDTH` cols but are still
         // a single buffer char, so a naive `raw_col` calculation lands the
         // cursor several chars past tab-indented text. We replay the same
-        // width rule the renderer uses (tab = TAB_WIDTH, everything else
-        // = 1) walking the line until we've consumed `visual_col` cells.
+        // width rule the renderer uses (tab = TAB_WIDTH, everything else = its
+        // terminal display width) walking the line until we've consumed
+        // `visual_col` cells.
         let visual_col = pane_col.saturating_sub(gutter) + self.window.view_left;
         let buf_col = visual_col_to_char_col(self, buf_line, visual_col, line_len);
 
@@ -2469,6 +2469,45 @@ mod tests {
         assert_eq!(
             visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], true),
             6
+        );
+    }
+
+    #[test]
+    fn visual_col_to_char_col_wide_chars() {
+        // Regression: clicking into CJK text must land on the character
+        // the cursor cell points at, matching the 2-cell terminal width.
+        // "你好世界" — each char is 2 cells wide.
+        let b = buf("\u{4F60}\u{597D}\u{4E16}\u{754C}\n");
+        // First cell of each wide char snaps to that char.
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 0, 4, &[], false),
+            0
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 2, 4, &[], false),
+            1
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 4, 4, &[], false),
+            2
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 6, 4, &[], false),
+            3
+        );
+        // Second cell of a wide char stays on the same char.
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 1, 4, &[], false),
+            0
+        );
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 7, 4, &[], false),
+            3
+        );
+        // Past EOL in Normal mode clamps to the last char (col 3).
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 40, 4, &[], false),
+            3
         );
     }
 
