@@ -16,6 +16,20 @@ use std::io::Write;
 
 pub const TAB_WIDTH: usize = 4;
 
+/// Terminal cell width of a character, in the renderer's far-east-aware sense:
+/// tabs expand to a caller-supplied tab stop, CJK and other wide glyphs are
+/// two cells, and control chars (which report no width) fall back to 1. The
+/// draw walk, cursor walk, click walk, markdown walk, and overlays must all
+/// use this so they agree on where a wide char starts and ends — the exact
+/// class of drift this module keeps fixed.
+pub(crate) fn char_width(c: char, tab_width: usize) -> usize {
+    if c == '\t' {
+        tab_width
+    } else {
+        unicode_width::UnicodeWidthChar::width(c).unwrap_or(1)
+    }
+}
+
 /// Reset SGR state and immediately re-apply the optional theme background so
 /// subsequent unstyled `Print` calls land on the theme bg instead of the
 /// terminal's default. When `buf_bg` is `None` (no `background` set in
@@ -869,8 +883,13 @@ fn paint_code_line(
             if written >= max_w {
                 return Ok(written);
             }
+            let cells = char_width(ch, TAB_WIDTH);
+            // `written` counts display cells (CJK/wide = 2, zero-width = 0) so
+            // the caller's width-based padding matches `widest_line()`; source
+            // text that reaches past `max_w` just over-counts and the caller's
+            // `saturating_sub` padding absorbs the straddle.
             queue!(out, SetForegroundColor(fg), Print(ch.to_string()))?;
-            written += 1;
+            written += cells;
         }
     }
     Ok(written)
@@ -5148,6 +5167,32 @@ mod tests {
     }
 
     #[test]
+    fn cursor_visual_col_walks_wide_chars_as_two_cells() {
+        // Regression: CJK / wide glyphs are two terminal cells, so the
+        // cursor's visual column must not stop short of the line end.
+        // "你" and "好" are each 2 cells wide → cursor at char col 2 (EOL)
+        // sits at visual col 4, not col 2.
+        let chars = "\u{4F60}\u{597D}".chars();
+        assert_eq!(cursor_visual_col_walk(chars.clone(), 2, &[]), 4);
+        // Cursor between the two wide chars sits at visual col 2.
+        assert_eq!(cursor_visual_col_walk(chars, 1, &[]), 2);
+    }
+
+    #[test]
+    fn cursor_visual_col_walk_zero_width_chars_advance_nothing() {
+        // Combining marks / ZWJ / variation selectors report width 0 and must
+        // not advance the visual column (the draw path mirrors this so the
+        // row is never clipped short by them).
+        // "e" + U+0301 (combining acute) then a wide CJK char "你" (2 cells).
+        let chars = "e\u{301}".chars().chain("\u{4F60}".chars());
+        // Cursor on the combining mark (col 1) stays at the 'e' cell.
+        assert_eq!(cursor_visual_col_walk(chars.clone(), 1, &[]), 1);
+        // Cursor on the CJK char (col 2): 'e' (1) + zero-width (0) = 1, then
+        // CJK occupies cells 1-2, so its start sits at visual col 1.
+        assert_eq!(cursor_visual_col_walk(chars, 2, &[]), 1);
+    }
+
+    #[test]
     fn tokenizer_splits_log_prefix_and_url() {
         let p = DebugPalette::default();
         let parts = tokenize_console_line(
@@ -6089,7 +6134,12 @@ fn draw_line_with_selection(
                 break;
             }
         }
-        let display_w = if *c == '\t' { TAB_WIDTH } else { 1 };
+        // Display width must match what the terminal actually advances for a
+        // character: tabs expand to `TAB_WIDTH` cells and CJK / other wide
+        // glyphs are two cells wide, but the syntax cache positions every other
+        // byte-colour by 1. Treating a wide char as 1 cell would draw the cursor
+        // (and clip the viewport) short of the CJK text's real end.
+        let display_w = char_width(*c, TAB_WIDTH);
         let char_visual_end = line_visual_pos + display_w;
         // Entirely off the left edge — advance trackers, render nothing.
         if char_visual_end <= view_left {
@@ -6102,12 +6152,26 @@ fn draw_line_with_selection(
         // viewport edge mid-tab.
         let visible_left = line_visual_pos.max(view_left);
         let visible_right = char_visual_end.min(view_left + avail);
-        if visible_right <= visible_left {
-            clipped_right = true;
-            break;
-        }
-        let visible_w = visible_right - visible_left;
-        if visual_used + visible_w > avail {
+        let visible_w = visible_right.saturating_sub(visible_left);
+        if visible_w == 0 {
+            if display_w > 0 || line_visual_pos >= view_left + avail {
+                // A positive-width char entirely past the right edge, or a
+                // zero-width char sitting at/after the pane's right edge —
+                // stop the row here. (A *visible* zero-width char — combining
+                // mark, ZWJ, variation selector — must never clip the row: it
+                // composes onto the previous cell and advances nothing.)
+                clipped_right = true;
+                break;
+            }
+            if line_visual_pos < view_left {
+                // Zero-width char entirely off the left edge: skip, don't
+                // advance (it has nothing to hang off of here anyway).
+                byte_off += c.len_utf8();
+                continue;
+            }
+            // Visible zero-width char — fall through and paint it in place;
+            // the trackers at the loop tail add 0 / no-op.
+        } else if visual_used + visible_w > avail {
             clipped_right = true;
             break;
         }
@@ -8181,10 +8245,15 @@ pub(crate) fn cursor_visual_col_walk(
         if i >= cursor_col {
             break;
         }
+        // Non-tab chars advance by their terminal display width, not 1 — CJK /
+        // wide glyphs are two cells wide. If this walk counted a wide char as 1
+        // cell it would (a) place the cursor short of the line end and (b) tell
+        // the viewport the line is narrower than it is, so a CJK-heavy line
+        // overflows the pane's right edge and its end becomes unreachable.
         if let Some(w) = hint_widths.get(i) {
             visual += *w;
         }
-        visual += if c == '\t' { TAB_WIDTH } else { 1 };
+        visual += char_width(c, TAB_WIDTH);
     }
     visual
 }

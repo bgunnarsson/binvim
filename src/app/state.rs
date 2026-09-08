@@ -1041,8 +1041,8 @@ impl HoverState {
             .map(|l| match l {
                 HoverLine::Blank => 0,
                 HoverLine::Rule => 0,
-                HoverLine::Prose(s) => s.chars().count(),
-                HoverLine::Heading { text, .. } => text.chars().count(),
+                HoverLine::Prose(s) => visual_width(s),
+                HoverLine::Heading { text, .. } => visual_width(text),
                 HoverLine::Code {
                     block_idx,
                     byte_offset,
@@ -1058,18 +1058,13 @@ impl HoverState {
     }
 }
 
-/// Visible width of a string when tabs expand to TAB_WIDTH columns. Used
-/// for sizing only — the renderer does the actual tab expansion.
+/// Visible width of a string when tabs expand to TAB_WIDTH columns and CJK /
+/// other wide glyphs are two cells. Used for sizing only — the renderer does
+/// the actual tab expansion.
 fn visual_width(s: &str) -> usize {
-    let mut w = 0usize;
-    for c in s.chars() {
-        if c == '\t' {
-            w += crate::render::TAB_WIDTH;
-        } else {
-            w += 1;
-        }
-    }
-    w
+    s.chars()
+        .map(|c| crate::render::char_width(c, crate::render::TAB_WIDTH))
+        .sum()
 }
 
 /// Push one `HoverLine::Code` per source line of `collected`, or one
