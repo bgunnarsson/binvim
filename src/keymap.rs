@@ -199,6 +199,10 @@ impl<'de> Deserialize<'de> for Keymaps {
         struct Raw {
             #[serde(default = "default_timeout_ms")]
             timeout: u64,
+            /// Anything else under `[keymaps]` — a mode binvim has no table
+            /// for, or a mistyped setting. Serde would drop it silently.
+            #[serde(flatten)]
+            unknown: HashMap<String, serde::de::IgnoredAny>,
             #[serde(default)]
             normal: HashMap<String, RawMapping>,
             #[serde(default)]
@@ -214,6 +218,11 @@ impl<'de> Deserialize<'de> for Keymaps {
         let visual = compile_table("visual", raw.visual, &mut errors);
         let insert = compile_table("insert", raw.insert, &mut errors);
         let command = compile_table("command", raw.command, &mut errors);
+        for name in raw.unknown.keys() {
+            errors.push(format!(
+                "[keymaps] {name}: not a keymaps setting — the tables are normal, visual, insert and command"
+            ));
+        }
         // The tables iterate in HashMap order; sort so the startup notice
         // names the same entry on every launch.
         errors.sort();
@@ -634,6 +643,33 @@ mod tests {
         assert!(keymaps.exact(MapMode::Command, &keys("jk")).is_none());
         assert!(keymaps.exact(MapMode::Insert, &keys("jj")).is_none());
         assert!(keymaps.exact(MapMode::Normal, &keys("jk")).is_none());
+    }
+
+    #[test]
+    fn unknown_tables_and_settings_are_reported_not_dropped() {
+        let keymaps: Keymaps = toml::from_str(
+            r#"
+            timout = 500
+
+            [operator]
+            H = "^"
+
+            [normal]
+            H = "^"
+            "#,
+        )
+        .expect("an unknown table must not fail the whole section");
+        assert!(keymaps.exact(MapMode::Normal, &keys("H")).is_some());
+        assert_eq!(keymaps.timeout, Duration::from_millis(1000));
+        assert_eq!(keymaps.errors.len(), 2, "{:?}", keymaps.errors);
+        for name in ["operator", "timout"] {
+            let prefix = format!("[keymaps] {name}:");
+            assert!(
+                keymaps.errors.iter().any(|e| e.starts_with(&prefix)),
+                "{name} not reported in {:?}",
+                keymaps.errors
+            );
+        }
     }
 
     #[test]
