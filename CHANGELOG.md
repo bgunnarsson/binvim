@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.20]
+
 ### Added
 - **Yanks reach your local clipboard over SSH.** binvim now emits the terminal
   OSC 52 escape alongside its usual `arboard` clipboard write, so a `yy` inside
