@@ -30,6 +30,26 @@ pub(crate) fn char_width(c: char, tab_width: usize) -> usize {
     }
 }
 
+/// How many of a character's cells fall inside the horizontal viewport
+/// `[view_left, view_left + avail)`, given that it starts at `line_visual_pos`
+/// and is `display_w` cells wide.
+///
+/// Multi-cell characters — tabs and CJK — can straddle either edge, and the
+/// answer is then smaller than `display_w`. Callers have to notice that: a tab
+/// can be painted as however many spaces it has room for, but a wide glyph
+/// cannot be painted in half, because the terminal advances its full width no
+/// matter how many cells the pane has left.
+pub(crate) fn visible_cells(
+    line_visual_pos: usize,
+    display_w: usize,
+    view_left: usize,
+    avail: usize,
+) -> usize {
+    let left = line_visual_pos.max(view_left);
+    let right = (line_visual_pos + display_w).min(view_left + avail);
+    right.saturating_sub(left)
+}
+
 /// Reset SGR state and immediately re-apply the optional theme background so
 /// subsequent unstyled `Print` calls land on the theme bg instead of the
 /// terminal's default. When `buf_bg` is `None` (no `background` set in
@@ -5086,7 +5106,7 @@ fn home_relative_with(path: &str, home: &str) -> String {
 mod tests {
     use super::{
         DebugPalette, cursor_visual_col_walk, display_lsp_root, find_match_ranges,
-        home_relative_with, tokenize_console_line, truncate,
+        home_relative_with, tokenize_console_line, truncate, visible_cells,
     };
 
     #[test]
@@ -5190,6 +5210,30 @@ mod tests {
         // Cursor on the CJK char (col 2): 'e' (1) + zero-width (0) = 1, then
         // CJK occupies cells 1-2, so its start sits at visual col 1.
         assert_eq!(cursor_visual_col_walk(chars, 2, &[]), 1);
+    }
+
+    #[test]
+    fn visible_cells_reports_a_wide_glyph_straddling_an_edge_as_partial() {
+        // Pane covers visual columns 10..20.
+        let (view_left, avail) = (10, 10);
+        // Fully inside — both cells owned.
+        assert_eq!(visible_cells(12, 2, view_left, avail), 2);
+        // Straddling the left edge: the glyph starts at col 9, so only its
+        // second cell is inside the pane.
+        assert_eq!(visible_cells(9, 2, view_left, avail), 1);
+        // Straddling the right edge: starts on the last column the pane owns.
+        assert_eq!(visible_cells(19, 2, view_left, avail), 1);
+        // Entirely outside on either side.
+        assert_eq!(visible_cells(8, 2, view_left, avail), 0);
+        assert_eq!(visible_cells(20, 2, view_left, avail), 0);
+        // A single-cell char is never partial — it is 1 or 0, which is what
+        // lets the draw loop treat `visible_w < display_w` as "wide glyph
+        // clipped, paint a marker instead of the character".
+        for pos in 0..30 {
+            assert!(matches!(visible_cells(pos, 1, view_left, avail), 0 | 1));
+        }
+        // Zero-width chars are always 0 cells, never "partial".
+        assert_eq!(visible_cells(12, 0, view_left, avail), 0);
     }
 
     #[test]
@@ -6147,12 +6191,7 @@ fn draw_line_with_selection(
             byte_off += c.len_utf8();
             continue;
         }
-        // Visible window for this char. `visible_left == line_visual_pos`
-        // when the char isn't clipped on the left; otherwise it's the
-        // viewport edge mid-tab.
-        let visible_left = line_visual_pos.max(view_left);
-        let visible_right = char_visual_end.min(view_left + avail);
-        let visible_w = visible_right.saturating_sub(visible_left);
+        let visible_w = visible_cells(line_visual_pos, display_w, view_left, avail);
         if visible_w == 0 {
             if display_w > 0 || line_visual_pos >= view_left + avail {
                 // A positive-width char entirely past the right edge, or a
@@ -6162,12 +6201,6 @@ fn draw_line_with_selection(
                 // composes onto the previous cell and advances nothing.)
                 clipped_right = true;
                 break;
-            }
-            if line_visual_pos < view_left {
-                // Zero-width char entirely off the left edge: skip, don't
-                // advance (it has nothing to hang off of here anyway).
-                byte_off += c.len_utf8();
-                continue;
             }
             // Visible zero-width char — fall through and paint it in place;
             // the trackers at the loop tail add 0 / no-op.
@@ -6340,6 +6373,20 @@ fn draw_line_with_selection(
             queue!(out, Print('·'))?;
         } else if *c == '\u{00A0}' && show_hidden {
             queue!(out, Print('⎵'))?;
+        } else if visible_w < display_w {
+            // A wide glyph straddling a viewport edge can't be painted in
+            // half — the terminal advances its full width regardless, which
+            // shoves the rest of the row one cell sideways (or one cell past
+            // the pane, into the neighbouring split). Fill the cells we do
+            // own with Vim's direction marker instead. Only reachable for
+            // multi-cell glyphs: a 1-cell char is either fully visible or
+            // has `visible_w == 0` and was handled above.
+            let marker = if line_visual_pos < view_left {
+                '<'
+            } else {
+                '>'
+            };
+            queue!(out, Print(marker.to_string().repeat(visible_w)))?;
         } else {
             queue!(out, Print(c.to_string()))?;
         }
