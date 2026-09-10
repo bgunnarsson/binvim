@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.21]
+
 ### Added
 - **Remap keys from `config.toml`.** A new `[keymaps]` section maps a key, or
   a sequence of keys, to the keys it should type instead, per mode, the way
