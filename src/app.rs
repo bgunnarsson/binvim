@@ -542,6 +542,11 @@ pub struct App {
     /// the parser unmapped — Vim's `noremap`. Without it `j = "k"` beside
     /// `k = "j"` would recurse until the stack ran out.
     pub(crate) expanding_keymap: bool,
+    /// Keys typed so far toward a multi-key `[keymaps]` mapping, held back
+    /// from the parser until they complete it, rule it out, or time out.
+    pub(crate) keymap_held: Vec<crossterm::event::KeyEvent>,
+    /// When the last held key arrived — the timeout runs from here.
+    pub(crate) keymap_held_at: Option<Instant>,
     pub(crate) recording: Option<RecordingState>,
     pub(crate) replaying: bool,
     /// True when `App::new` restored buffers from a saved session on
@@ -989,6 +994,8 @@ impl App {
             additional_selections: Vec::new(),
             replaying_macro: false,
             expanding_keymap: false,
+            keymap_held: Vec::new(),
+            keymap_held_at: None,
             recording: None,
             replaying: false,
             session_restored: restore_buffers,
@@ -1257,6 +1264,14 @@ impl App {
             if lens_retry_due {
                 poll_dur = poll_dur.min(Duration::from_millis(250));
             }
+            // A partly typed `[keymaps]` sequence is waiting on its next
+            // key — wake at the timeout so it resolves even if none comes.
+            if let Some(at) = self.keymap_held_at {
+                let until = (at + self.config.keymaps.timeout)
+                    .checked_duration_since(Instant::now())
+                    .unwrap_or(Duration::from_millis(0));
+                poll_dur = poll_dur.min(until);
+            }
             // A PTY drain hit its byte budget last iteration with bytes
             // still queued. Don't idle on the poll timeout — come right
             // back to finish draining. poll(0) still returns instantly
@@ -1286,6 +1301,10 @@ impl App {
             // Poll timed out and a lens retry is due — force a render
             // tick so the `if_due` hook actually fires the request.
             if !needs_render && lens_retry_due {
+                needs_render = true;
+            }
+            // A held `[keymaps]` sequence ran out of time — run what was typed.
+            if self.keymap_flush_if_due(Instant::now()) {
                 needs_render = true;
             }
             // Prefix timeout fired? Open the matching which-key popup.

@@ -9,6 +9,7 @@ use crossterm::event::{
 use std::path::PathBuf;
 
 use crate::command::{self, ExCommand, ExRange};
+use crate::keymap::KeymapMatch;
 use crate::mode::{Mode, VisualKind};
 use crate::motion;
 use crate::parser::{self, ParseCtx, ParseResult};
@@ -266,14 +267,20 @@ impl super::App {
                 let leader_pending = self.pending.any_leader_pending();
                 // A mapped key is judged by what it expands to: `H = "^"`
                 // stops `H` cycling buffers here, and a key mapped onto `:`
-                // or the leader gets through the way those keys do.
+                // or the leader gets through the way those keys do. Keys
+                // continuing a held `[keymaps]` sequence pass like a pending
+                // leader chord's.
                 let lead = self
-                    .keymap_for(&k, ParseCtx::Normal)
+                    .pending
+                    .accepts_mapping()
+                    .then(|| self.config.keymaps.exact(ParseCtx::Normal, &[k]))
+                    .flatten()
                     .and_then(|rhs| rhs.first().copied())
                     .unwrap_or(k);
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
+                    && self.keymap_held.is_empty()
                     && !super::state::is_start_page_passthrough(&lead)
                 {
                     // A restored session parks its tabs behind the start
@@ -1305,19 +1312,93 @@ impl super::App {
         }
     }
 
-    /// The user's `[keymaps]` expansion for `key`, when one exists and the
-    /// parser is at a point where it may fire.
-    fn keymap_for(&self, key: &KeyEvent, ctx: ParseCtx) -> Option<Vec<KeyEvent>> {
-        if self.expanding_keymap || !self.pending.accepts_mapping() {
-            return None;
+    /// Runs `key` through the `[keymaps]` matcher. `true` when the matcher
+    /// took it — held toward a longer mapping, or expanded — and the caller
+    /// must not parse it.
+    fn keymap_take(&mut self, key: KeyEvent, ctx: ParseCtx) -> bool {
+        if self.expanding_keymap || (self.keymap_held.is_empty() && !self.pending.accepts_mapping())
+        {
+            return false;
         }
-        self.config.keymaps.get(ctx, key).map(<[KeyEvent]>::to_vec)
+        self.keymap_held.push(key);
+        match self.config.keymaps.lookup(ctx, &self.keymap_held) {
+            KeymapMatch::Pending => {
+                self.keymap_held_at = Some(std::time::Instant::now());
+            }
+            KeymapMatch::Full(rhs) => {
+                let rhs = rhs.to_vec();
+                self.keymap_held.clear();
+                self.keymap_held_at = None;
+                self.expand_keymap(&rhs);
+            }
+            // The common case: an unmapped key with nothing held.
+            KeymapMatch::None if self.keymap_held.len() == 1 => {
+                self.keymap_held.clear();
+                return false;
+            }
+            KeymapMatch::None => self.keymap_flush(ctx),
+        }
+        true
+    }
+
+    /// Resolves held keys whose longer mapping can no longer complete — the
+    /// next key ruled it out, or the wait timed out. The longest held prefix
+    /// that is a mapping of its own runs, as in Vim; with none, the first key
+    /// goes through as typed. The keys after it are fed again, so they can
+    /// start a mapping of their own.
+    fn keymap_flush(&mut self, ctx: ParseCtx) {
+        let held = std::mem::take(&mut self.keymap_held);
+        self.keymap_held_at = None;
+        let mapped = (1..=held.len()).rev().find_map(|n| {
+            self.config
+                .keymaps
+                .exact(ctx, &held[..n])
+                .map(|rhs| (n, rhs.to_vec()))
+        });
+        let used = match mapped {
+            Some((n, rhs)) => {
+                self.expand_keymap(&rhs);
+                n
+            }
+            None => {
+                self.feed_unmapped(&held[..1]);
+                1
+            }
+        };
+        for &k in &held[used..] {
+            if !self.replay_key(k) {
+                break;
+            }
+        }
+    }
+
+    /// Resolves a held sequence whose wait has run out. `true` when it did,
+    /// so the caller repaints.
+    pub(super) fn keymap_flush_if_due(&mut self, now: std::time::Instant) -> bool {
+        let Some(at) = self.keymap_held_at else {
+            return false;
+        };
+        if now < at + self.config.keymaps.timeout {
+            return false;
+        }
+        let ctx = if matches!(self.mode, Mode::Visual(_)) {
+            ParseCtx::Visual
+        } else {
+            ParseCtx::Normal
+        };
+        self.keymap_flush(ctx);
+        true
     }
 
     fn expand_keymap(&mut self, rhs: &[KeyEvent]) {
         let skip = self.pending.absorb_mapping_count(rhs);
+        self.feed_unmapped(&rhs[skip..]);
+    }
+
+    /// Feeds keys to the current mode with mappings off — Vim's `noremap`.
+    fn feed_unmapped(&mut self, keys: &[KeyEvent]) {
         self.expanding_keymap = true;
-        for &k in &rhs[skip..] {
+        for &k in keys {
             if !self.replay_key(k) {
                 break;
             }
@@ -1326,8 +1407,7 @@ impl super::App {
     }
 
     pub(super) fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
-        if let Some(rhs) = self.keymap_for(&key, ctx) {
-            self.expand_keymap(&rhs);
+        if self.keymap_take(key, ctx) {
             return;
         }
         // Bare ENTER on a lens-bearing line invokes the lens, same as
@@ -2532,6 +2612,60 @@ mod tests {
         app.macros.insert('q', vec![h]);
         press(&mut app, "Q");
         assert_eq!(app.window.cursor.col, 4);
+    }
+
+    fn time_out(app: &mut crate::app::App) {
+        let later = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        assert!(app.keymap_flush_if_due(later), "nothing was held");
+    }
+
+    #[test]
+    fn multi_key_mapping_expands() {
+        let mut app = app_with_keymaps("    foo\n", "[normal]\ngh = \"^\"");
+        app.window.cursor.col = 6;
+        press(&mut app, "gh");
+        assert_eq!(app.window.cursor.col, 4);
+    }
+
+    #[test]
+    fn leader_mapping_expands() {
+        let mut app = app_with_keymaps("    foo\n", "[normal]\n\"<leader>x\" = \"$\"");
+        press(&mut app, " x");
+        assert_eq!(app.window.cursor.col, 6);
+    }
+
+    #[test]
+    fn held_prefix_runs_as_typed_on_timeout() {
+        let mut app = app_with_keymaps("a\nb\nc\n", "[normal]\ngh = \"^\"");
+        app.window.cursor.line = 2;
+        press(&mut app, "g");
+        assert_eq!(app.window.cursor.line, 2, "g must wait for its next key");
+        time_out(&mut app);
+        press(&mut app, "g");
+        assert_eq!(app.window.cursor.line, 0, "the held g should start gg");
+    }
+
+    #[test]
+    fn held_prefix_runs_as_typed_when_the_next_key_rules_it_out() {
+        let mut app = app_with_keymaps("a\nb\nc\n", "[normal]\ngh = \"^\"");
+        app.window.cursor.line = 2;
+        press(&mut app, "gg");
+        assert_eq!(app.window.cursor.line, 0);
+    }
+
+    #[test]
+    fn shorter_mapping_runs_once_the_longer_one_is_ruled_out() {
+        let text = "a\nb\nc\nd\ne\n";
+        let keymaps = "[normal]\nJ = \"j\"\nJk = \"gg\"";
+        let mut app = app_with_keymaps(text, keymaps);
+        press(&mut app, "J");
+        assert_eq!(app.window.cursor.line, 0, "J waits: Jk might follow");
+        time_out(&mut app);
+        assert_eq!(app.window.cursor.line, 1);
+        press(&mut app, "Jj");
+        assert_eq!(app.window.cursor.line, 3, "J runs as j, then j is typed");
+        press(&mut app, "Jk");
+        assert_eq!(app.window.cursor.line, 0);
     }
 
     #[test]

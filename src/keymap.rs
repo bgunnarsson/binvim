@@ -1,20 +1,24 @@
 //! User key mappings — the `[keymaps]` config section.
 //!
-//! A mapping replaces one key with a sequence of keys, the way Vim's
-//! `nnoremap` / `vnoremap` do. The sequence is fed back through the normal
-//! input path, so it reaches anything a typed key can — motions, operators,
-//! leader chords, `:` commands — without the config naming `Action` variants,
-//! which would freeze their names into a public format.
+//! A mapping replaces a key, or a sequence of keys, with another sequence,
+//! the way Vim's `nnoremap` / `vnoremap` do. The sequence is fed back through
+//! the normal input path, so it reaches anything a typed key can — motions,
+//! operators, leader chords, `:` commands — without the config naming
+//! `Action` variants, which would freeze their names into a public format.
 //!
 //! Where a mapping may fire is the parser's call, not this module's: see
-//! `PendingCmd::accepts_mapping`.
+//! `PendingCmd::accepts_mapping`. Holding a partly typed sequence and
+//! resolving it on a mismatch or timeout is `App`'s, in `app/input.rs`.
 //!
 //! ```toml
+//! [keymaps]
+//! timeout = 1000
+//!
 //! [keymaps.normal]
 //! H = "^"
-//! L = "$"
+//! gh = "^"
 //! J = "10j"
-//! "<C-s>" = ":w<CR>"
+//! "<leader>w" = ":w<CR>"
 //!
 //! [keymaps.visual]
 //! H = "^"
@@ -24,13 +28,21 @@ use crate::parser::ParseCtx;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::time::Duration;
 
 type KeyId = (KeyCode, KeyModifiers);
+type Table = HashMap<Vec<KeyId>, Vec<KeyEvent>>;
 
-#[derive(Debug, Default)]
+/// Vim's `timeoutlen` default.
+const DEFAULT_TIMEOUT_MS: u64 = 1000;
+
+#[derive(Debug)]
 pub struct Keymaps {
-    normal: HashMap<KeyId, Vec<KeyEvent>>,
-    visual: HashMap<KeyId, Vec<KeyEvent>>,
+    normal: Table,
+    visual: Table,
+    /// How long a partly typed multi-key mapping waits for its next key
+    /// before the held keys run as typed.
+    pub timeout: Duration,
     /// Entries that didn't parse, one line each. They're skipped rather than
     /// failing the load: `Config::load` falls back to the default config on
     /// any deserialize error, so one typo'd mapping would take the user's
@@ -38,15 +50,57 @@ pub struct Keymaps {
     pub errors: Vec<String>,
 }
 
+impl Default for Keymaps {
+    fn default() -> Self {
+        Self {
+            normal: Table::new(),
+            visual: Table::new(),
+            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            errors: Vec::new(),
+        }
+    }
+}
+
+/// How the keys typed so far relate to the mapping table.
+pub enum KeymapMatch<'a> {
+    /// No mapping starts with them.
+    None,
+    /// A longer mapping starts with them, so they wait for the next key.
+    /// That includes keys that are a mapping of their own: with `J` and `Jk`
+    /// both mapped, `J` runs only once the wait times out or the next key
+    /// rules `Jk` out.
+    Pending,
+    Full(&'a [KeyEvent]),
+}
+
 impl Keymaps {
-    /// The keys `key` expands to in `ctx`. An empty slice is a `<Nop>`
-    /// mapping — the key is switched off.
-    pub fn get(&self, ctx: ParseCtx, key: &KeyEvent) -> Option<&[KeyEvent]> {
-        let table = match ctx {
+    pub fn lookup(&self, ctx: ParseCtx, keys: &[KeyEvent]) -> KeymapMatch<'_> {
+        let ids: Vec<KeyId> = keys.iter().map(key_id).collect();
+        let table = self.table(ctx);
+        if table
+            .keys()
+            .any(|lhs| lhs.len() > ids.len() && lhs.starts_with(&ids))
+        {
+            return KeymapMatch::Pending;
+        }
+        match table.get(&ids) {
+            Some(rhs) => KeymapMatch::Full(rhs),
+            None => KeymapMatch::None,
+        }
+    }
+
+    /// The expansion for exactly `keys`, ignoring longer mappings. An empty
+    /// slice is a `<Nop>` mapping — the keys are switched off.
+    pub fn exact(&self, ctx: ParseCtx, keys: &[KeyEvent]) -> Option<&[KeyEvent]> {
+        let ids: Vec<KeyId> = keys.iter().map(key_id).collect();
+        self.table(ctx).get(&ids).map(Vec::as_slice)
+    }
+
+    fn table(&self, ctx: ParseCtx) -> &Table {
+        match ctx {
             ParseCtx::Normal => &self.normal,
             ParseCtx::Visual => &self.visual,
-        };
-        table.get(&key_id(key)).map(Vec::as_slice)
+        }
     }
 }
 
@@ -54,6 +108,8 @@ impl<'de> Deserialize<'de> for Keymaps {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         #[derive(Deserialize)]
         struct Raw {
+            #[serde(default = "default_timeout_ms")]
+            timeout: u64,
             #[serde(default)]
             normal: HashMap<String, String>,
             #[serde(default)]
@@ -69,21 +125,22 @@ impl<'de> Deserialize<'de> for Keymaps {
         Ok(Self {
             normal,
             visual,
+            timeout: Duration::from_millis(raw.timeout),
             errors,
         })
     }
 }
 
-fn compile_table(
-    mode: &str,
-    entries: HashMap<String, String>,
-    errors: &mut Vec<String>,
-) -> HashMap<KeyId, Vec<KeyEvent>> {
-    let mut table = HashMap::new();
+fn default_timeout_ms() -> u64 {
+    DEFAULT_TIMEOUT_MS
+}
+
+fn compile_table(mode: &str, entries: HashMap<String, String>, errors: &mut Vec<String>) -> Table {
+    let mut table = Table::new();
     for (lhs, rhs) in entries {
         match compile(&lhs, &rhs) {
-            Ok((id, keys)) => {
-                table.insert(id, keys);
+            Ok((ids, keys)) => {
+                table.insert(ids, keys);
             }
             Err(e) => errors.push(format!("[keymaps.{mode}] {lhs}: {e}")),
         }
@@ -91,18 +148,19 @@ fn compile_table(
     table
 }
 
-fn compile(lhs: &str, rhs: &str) -> Result<(KeyId, Vec<KeyEvent>), String> {
-    let &[from] = parse_keys(lhs)?.as_slice() else {
-        return Err("maps a single key — multi-key mappings aren't supported yet".into());
-    };
+fn compile(lhs: &str, rhs: &str) -> Result<(Vec<KeyId>, Vec<KeyEvent>), String> {
+    let from: Vec<KeyId> = parse_keys(lhs)?.iter().map(key_id).collect();
+    if from.is_empty() {
+        return Err("no key to map".into());
+    }
     if rhs.eq_ignore_ascii_case("<nop>") {
-        return Ok((key_id(&from), Vec::new()));
+        return Ok((from, Vec::new()));
     }
     let to = parse_keys(rhs)?;
     if to.is_empty() {
         return Err(r#"empty — map it to "<Nop>" to switch the key off"#.into());
     }
-    Ok((key_id(&from), to))
+    Ok((from, to))
 }
 
 /// What a key is matched on. Terminals disagree on whether an uppercase
@@ -221,6 +279,10 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
     }
 
+    fn keys(s: &str) -> Vec<KeyEvent> {
+        s.chars().map(plain).collect()
+    }
+
     fn codes(s: &str) -> Vec<(KeyCode, KeyModifiers)> {
         parse_keys(s)
             .expect("parses")
@@ -297,8 +359,10 @@ mod tests {
             H = "^"
             J = "10j"
             jk = "x"
+            "<leader>w" = ":w<CR>"
             X = "<Spce>"
             Z = ""
+            "" = "x"
 
             [visual]
             H = "^"
@@ -306,23 +370,64 @@ mod tests {
         )
         .expect("a bad entry must not fail the whole table");
         assert_eq!(
-            keymaps.get(ParseCtx::Normal, &plain('H')),
+            keymaps.exact(ParseCtx::Normal, &keys("H")),
             Some(&[plain('^')][..])
         );
         assert_eq!(
-            keymaps.get(ParseCtx::Normal, &plain('J')).map(<[_]>::len),
+            keymaps.exact(ParseCtx::Normal, &keys("J")).map(<[_]>::len),
             Some(3)
         );
-        assert!(keymaps.get(ParseCtx::Visual, &plain('H')).is_some());
-        assert!(keymaps.get(ParseCtx::Visual, &plain('J')).is_none());
+        assert!(keymaps.exact(ParseCtx::Normal, &keys("jk")).is_some());
+        assert!(keymaps.exact(ParseCtx::Normal, &keys(" w")).is_some());
+        assert!(keymaps.exact(ParseCtx::Visual, &keys("H")).is_some());
+        assert!(keymaps.exact(ParseCtx::Visual, &keys("J")).is_none());
         assert_eq!(keymaps.errors.len(), 3, "{:?}", keymaps.errors);
-        assert!(keymaps.errors[0].starts_with("[keymaps.normal] X:"));
+        for lhs in ["X", "Z", ""] {
+            let prefix = format!("[keymaps.normal] {lhs}:");
+            assert!(
+                keymaps.errors.iter().any(|e| e.starts_with(&prefix)),
+                "{lhs:?} not reported in {:?}",
+                keymaps.errors
+            );
+        }
+    }
+
+    #[test]
+    fn lookup_holds_prefixes_and_resolves_full_matches() {
+        let keymaps: Keymaps =
+            toml::from_str("[normal]\ngh = \"^\"\nJ = \"j\"\nJk = \"gg\"").unwrap();
+        let n = ParseCtx::Normal;
+        assert!(matches!(
+            keymaps.lookup(n, &keys("g")),
+            KeymapMatch::Pending
+        ));
+        assert!(matches!(
+            keymaps.lookup(n, &keys("gh")),
+            KeymapMatch::Full(_)
+        ));
+        assert!(matches!(keymaps.lookup(n, &keys("gx")), KeymapMatch::None));
+        assert!(matches!(keymaps.lookup(n, &keys("x")), KeymapMatch::None));
+        // `J` is a mapping of its own, but `Jk` could still follow.
+        assert!(matches!(
+            keymaps.lookup(n, &keys("J")),
+            KeymapMatch::Pending
+        ));
+        assert!(keymaps.exact(n, &keys("J")).is_some());
+    }
+
+    #[test]
+    fn timeout_defaults_to_vims_and_can_be_set() {
+        assert_eq!(Keymaps::default().timeout, Duration::from_millis(1000));
+        let keymaps: Keymaps = toml::from_str("[normal]\nH = \"^\"").unwrap();
+        assert_eq!(keymaps.timeout, Duration::from_millis(1000));
+        let keymaps: Keymaps = toml::from_str("timeout = 300").unwrap();
+        assert_eq!(keymaps.timeout, Duration::from_millis(300));
     }
 
     #[test]
     fn nop_switches_a_key_off() {
         let keymaps: Keymaps = toml::from_str("[normal]\nH = \"<Nop>\"").unwrap();
-        assert_eq!(keymaps.get(ParseCtx::Normal, &plain('H')), Some(&[][..]));
+        assert_eq!(keymaps.exact(ParseCtx::Normal, &keys("H")), Some(&[][..]));
         assert!(keymaps.errors.is_empty());
     }
 
@@ -330,11 +435,11 @@ mod tests {
     fn lookup_ignores_how_the_terminal_reports_shift() {
         let keymaps: Keymaps = toml::from_str("[normal]\nH = \"^\"\n\"<C-r>\" = \"u\"").unwrap();
         let shifted_h = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT);
-        assert!(keymaps.get(ParseCtx::Normal, &shifted_h).is_some());
+        assert!(keymaps.exact(ParseCtx::Normal, &[shifted_h]).is_some());
         let ctrl_shift_r = KeyEvent::new(
             KeyCode::Char('R'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         );
-        assert!(keymaps.get(ParseCtx::Normal, &ctrl_shift_r).is_some());
+        assert!(keymaps.exact(ParseCtx::Normal, &[ctrl_shift_r]).is_some());
     }
 }
