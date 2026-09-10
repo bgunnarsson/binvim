@@ -6,6 +6,20 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Remap keys from `config.toml`.** A new `[keymaps]` section maps one key to
+  the keys it should type instead, per mode, the way Vim's `nnoremap` /
+  `vnoremap` do — `H = "^"`, `J = "10j"`, `"<C-s>" = ":w<CR>"` under
+  `[keymaps.normal]` or `[keymaps.visual]`. Unlisted keys keep their defaults,
+  and `"<Nop>"` switches a key off. A mapping fires wherever a command or an
+  operator's motion starts, so `3H` and `dH` use it while `fH` still finds a
+  literal `H`. Expansions are never remapped, a typed count multiplies the
+  mapping's own (`3J` moves 30 lines), and an entry that doesn't parse is
+  skipped and named at startup instead of discarding the whole config.
+  Multi-key mappings, Insert-mode mappings and leader overrides are not part
+  of this first pass. Thanks to [@happyTonakai](https://github.com/happyTonakai)
+  for the proposal (#8).
+
 ## [0.5.20] - 2026-09-10
 
 ### Added

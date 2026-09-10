@@ -15,6 +15,7 @@ mod dap;
 mod editorconfig;
 mod format;
 mod git;
+mod keymap;
 mod lang;
 mod layout;
 mod lsp;

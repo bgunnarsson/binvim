@@ -126,38 +126,55 @@ impl super::App {
             );
             return;
         }
+        // A mapping like `Q = "@q"` lands here mid-expansion. The macro's
+        // keys were recorded as typed, so they get mappings applied the way
+        // typed keys do, not the expansion's noremap treatment.
+        let expanding_keymap = std::mem::replace(&mut self.expanding_keymap, false);
         'outer: for _ in 0..count {
             for k in keys.iter().copied() {
-                match self.mode {
-                    Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
-                    Mode::Insert => self.handle_insert_key(k),
-                    Mode::Command => self.handle_command_key(k),
-                    Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
-                    Mode::Search { .. } => self.handle_search_key(k),
-                    Mode::Picker => self.handle_picker_key(k),
-                    Mode::Prompt(_) => self.handle_prompt_key(k),
-                    // Macros don't navigate the debug pane — replay aborts if
-                    // the user happened to start recording while focused there.
-                    Mode::DebugPane => break 'outer,
-                    // Same for the terminal pane — macro replay doesn't
-                    // forward keys into a PTY, so abort cleanly if focus
-                    // happens to land there mid-replay.
-                    Mode::Terminal => break 'outer,
-                    // And the same for the file-tree pane — replay can't
-                    // open files from a sidebar mid-record cleanly, so
-                    // bail rather than fire half-meaningful keystrokes.
-                    Mode::FileTree => break 'outer,
-                    // Rename preview is a single-purpose modal flow —
-                    // macros mid-replay would race the user's accept
-                    // decision; bail cleanly.
-                    Mode::RenamePreview => break 'outer,
-                    // Same logic for the installer overlay.
-                    Mode::Installer => break 'outer,
+                if !self.replay_key(k) {
+                    break 'outer;
                 }
             }
         }
+        self.expanding_keymap = expanding_keymap;
         self.macro_replay_depth = self.macro_replay_depth.saturating_sub(1);
         self.replaying_macro = false;
+    }
+
+    /// Feeds one synthetic key — a replayed macro's, or a `[keymaps]`
+    /// expansion's — to the current mode's handler. `handle_event`'s guards
+    /// are skipped on purpose: they judge what the user typed, and the key
+    /// that started the replay already passed them. Returns `false` in a
+    /// mode that can't take synthetic keys, so the caller stops feeding.
+    pub(super) fn replay_key(&mut self, k: KeyEvent) -> bool {
+        match self.mode {
+            Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
+            Mode::Insert => self.handle_insert_key(k),
+            Mode::Command => self.handle_command_key(k),
+            Mode::Visual(_) => self.handle_keyboard(k, ParseCtx::Visual),
+            Mode::Search { .. } => self.handle_search_key(k),
+            Mode::Picker => self.handle_picker_key(k),
+            Mode::Prompt(_) => self.handle_prompt_key(k),
+            // Macros don't navigate the debug pane — replay aborts if
+            // the user happened to start recording while focused there.
+            Mode::DebugPane => return false,
+            // Same for the terminal pane — macro replay doesn't
+            // forward keys into a PTY, so abort cleanly if focus
+            // happens to land there mid-replay.
+            Mode::Terminal => return false,
+            // And the same for the file-tree pane — replay can't
+            // open files from a sidebar mid-record cleanly, so
+            // bail rather than fire half-meaningful keystrokes.
+            Mode::FileTree => return false,
+            // Rename preview is a single-purpose modal flow —
+            // macros mid-replay would race the user's accept
+            // decision; bail cleanly.
+            Mode::RenamePreview => return false,
+            // Same logic for the installer overlay.
+            Mode::Installer => return false,
+        }
+        true
     }
 
     /// `:reg` / `:registers` — toggle the registers overlay. Yank

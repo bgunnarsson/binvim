@@ -264,10 +264,17 @@ impl super::App {
                 // `e` after `<space>`) is also allowed so multi-key shortcuts
                 // resolve normally.
                 let leader_pending = self.pending.any_leader_pending();
+                // A mapped key is judged by what it expands to: `H = "^"`
+                // stops `H` cycling buffers here, and a key mapped onto `:`
+                // or the leader gets through the way those keys do.
+                let lead = self
+                    .keymap_for(&k, ParseCtx::Normal)
+                    .and_then(|rhs| rhs.first().copied())
+                    .unwrap_or(k);
                 if self.show_start_page
                     && matches!(self.mode, Mode::Normal)
                     && !leader_pending
-                    && !super::state::is_start_page_passthrough(&k)
+                    && !super::state::is_start_page_passthrough(&lead)
                 {
                     // A restored session parks its tabs behind the start
                     // page (hydrate_from_session re-raises the logo after
@@ -1298,7 +1305,31 @@ impl super::App {
         }
     }
 
+    /// The user's `[keymaps]` expansion for `key`, when one exists and the
+    /// parser is at a point where it may fire.
+    fn keymap_for(&self, key: &KeyEvent, ctx: ParseCtx) -> Option<Vec<KeyEvent>> {
+        if self.expanding_keymap || !self.pending.accepts_mapping() {
+            return None;
+        }
+        self.config.keymaps.get(ctx, key).map(<[KeyEvent]>::to_vec)
+    }
+
+    fn expand_keymap(&mut self, rhs: &[KeyEvent]) {
+        let skip = self.pending.absorb_mapping_count(rhs);
+        self.expanding_keymap = true;
+        for &k in &rhs[skip..] {
+            if !self.replay_key(k) {
+                break;
+            }
+        }
+        self.expanding_keymap = false;
+    }
+
     pub(super) fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
+        if let Some(rhs) = self.keymap_for(&key, ctx) {
+            self.expand_keymap(&rhs);
+            return;
+        }
         // Bare ENTER on a lens-bearing line invokes the lens, same as
         // `<leader>l` and the mouse click. Only fires when the parser
         // has no partial state (no pending operator / count / prefix)
@@ -2433,6 +2464,74 @@ mod tests {
             rope: Rope::from_str(text),
             ..Buffer::default()
         }
+    }
+
+    fn app_with_keymaps(text: &str, keymaps: &str) -> crate::app::App {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer = buf(text);
+        app.mode = Mode::Normal;
+        app.window.cursor.line = 0;
+        app.window.cursor.col = 0;
+        app.config.keymaps = toml::from_str(keymaps).expect("keymaps parse");
+        app
+    }
+
+    fn press(app: &mut crate::app::App, keys: &str) {
+        for c in keys.chars() {
+            let k = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+            app.handle_keyboard(k, ParseCtx::Normal);
+        }
+    }
+
+    #[test]
+    fn mapped_key_runs_its_expansion() {
+        let mut app = app_with_keymaps("    foo\n", "[normal]\nH = \"^\"");
+        app.window.cursor.col = 6;
+        press(&mut app, "H");
+        assert_eq!(app.window.cursor.col, 4);
+    }
+
+    #[test]
+    fn find_target_is_never_remapped() {
+        let mut app = app_with_keymaps("  aHb\n", "[normal]\nH = \"^\"");
+        press(&mut app, "fH");
+        assert_eq!(app.window.cursor.col, 3, "fH must find a literal H");
+    }
+
+    #[test]
+    fn mapping_supplies_an_operators_motion() {
+        let mut app = app_with_keymaps("    foo bar\n", "[normal]\nH = \"^\"");
+        app.window.cursor.col = 8;
+        // Black-hole register: a plain `d` mirrors to the OS clipboard,
+        // which every test in the process shares.
+        press(&mut app, "\"_dH");
+        assert_eq!(app.buffer.rope.to_string(), "    bar\n");
+    }
+
+    #[test]
+    fn typed_count_multiplies_the_mappings_count() {
+        let text = "x\n".repeat(40);
+        let mut app = app_with_keymaps(&text, "[normal]\nJ = \"10j\"");
+        press(&mut app, "3J");
+        assert_eq!(app.window.cursor.line, 30);
+    }
+
+    #[test]
+    fn expansions_are_not_remapped() {
+        let mut app = app_with_keymaps("a\nb\nc\n", "[normal]\nj = \"k\"\nk = \"j\"");
+        app.window.cursor.line = 1;
+        press(&mut app, "j");
+        assert_eq!(app.window.cursor.line, 0);
+    }
+
+    #[test]
+    fn macro_run_from_a_mapping_still_sees_mappings() {
+        let mut app = app_with_keymaps("    foo\n", "[normal]\nQ = \"@q\"\nH = \"^\"");
+        app.window.cursor.col = 6;
+        let h = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::NONE);
+        app.macros.insert('q', vec![h]);
+        press(&mut app, "Q");
+        assert_eq!(app.window.cursor.col, 4);
     }
 
     #[test]

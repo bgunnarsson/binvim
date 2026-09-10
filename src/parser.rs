@@ -580,10 +580,22 @@ impl PendingCmd {
     /// straight to a code-lens invocation (only safe when the parser
     /// isn't mid-command).
     pub fn is_clean(&self) -> bool {
-        self.count1.is_none()
+        self.accepts_mapping()
+            && self.count1.is_none()
             && self.operator.is_none()
             && self.count2.is_none()
-            && !self.awaiting_g
+            && self.register.is_none()
+    }
+
+    /// True when the next key starts a command or an operator's motion —
+    /// the only places a `[keymaps]` mapping may fire. Every `awaiting_*`
+    /// flag means the parser wants a literal (`fH` finds an `H`, `rH`
+    /// replaces with one) or the second key of a built-in prefix (`gH`,
+    /// `<space>bH`), and remapping there would change what was typed.
+    /// A count, a register or a pending operator doesn't block it, so
+    /// `3H`, `"aH` and `dH` all see the mapping.
+    pub fn accepts_mapping(&self) -> bool {
+        !self.awaiting_g
             && !self.awaiting_z
             && !self.awaiting_leader
             && self.awaiting_textobj.is_none()
@@ -591,7 +603,6 @@ impl PendingCmd {
             && !self.awaiting_replace
             && self.awaiting_mark.is_none()
             && !self.awaiting_register
-            && self.register.is_none()
             && !self.awaiting_macro_record
             && !self.awaiting_macro_play
             && !self.awaiting_buffer_leader
@@ -639,6 +650,45 @@ impl PendingCmd {
         };
         let cur = target.unwrap_or(0);
         *target = Some(cur.saturating_mul(10).saturating_add(d));
+    }
+
+    /// Folds a mapping's leading count into the one already typed, so `3J`
+    /// with `J = "10j"` moves 30 lines — feeding the mapping's digits
+    /// through `push_digit` would make it 310. Returns how many keys of
+    /// `rhs` it consumed; the caller feeds the rest.
+    pub fn absorb_mapping_count(&mut self, rhs: &[KeyEvent]) -> usize {
+        if !self.slot_in_progress() {
+            return 0;
+        }
+        let digits: Vec<usize> = rhs
+            .iter()
+            .map_while(|k| match k.code {
+                KeyCode::Char(c) if k.modifiers.is_empty() => c.to_digit(10),
+                _ => None,
+            })
+            .map(|d| d as usize)
+            .collect();
+        let slot = if self.operator.is_some() {
+            &mut self.count2
+        } else {
+            &mut self.count1
+        };
+        match digits.first() {
+            None => 0,
+            // A leading `0` is the line-start motion, which takes no count.
+            // Drop the typed one so the `0` isn't read as its next digit.
+            Some(0) => {
+                *slot = None;
+                0
+            }
+            Some(_) => {
+                let n = digits
+                    .iter()
+                    .fold(0usize, |n, d| n.saturating_mul(10).saturating_add(*d));
+                *slot = slot.map(|typed| typed.saturating_mul(n));
+                digits.len()
+            }
+        }
     }
 }
 
@@ -2153,5 +2203,92 @@ mod tests {
             }
         }
         panic!("3yy never produced an action");
+    }
+
+    fn keys(s: &str) -> Vec<KeyEvent> {
+        s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn mappings_fire_at_command_and_motion_starts() {
+        for (label, prefix) in [
+            ("clean", keys("")),
+            ("count", keys("3")),
+            ("register", keys("\"a")),
+            ("operator", keys("d")),
+            ("operator + count", keys("d3")),
+        ] {
+            let mut state = PendingCmd::default();
+            drive(&mut state, &prefix);
+            assert!(state.accepts_mapping(), "{label}");
+        }
+    }
+
+    #[test]
+    fn mappings_never_fire_on_a_literal_or_prefix_key() {
+        for (label, prefix) in [
+            ("f", keys("f")),
+            ("t", keys("t")),
+            ("r", keys("r")),
+            ("m", keys("m")),
+            ("'", keys("'")),
+            ("\"", keys("\"")),
+            ("q", keys("q")),
+            ("@", keys("@")),
+            ("g", keys("g")),
+            ("z", keys("z")),
+            ("]", keys("]")),
+            ("[", keys("[")),
+            ("di", keys("di")),
+            ("dg", keys("dg")),
+            ("ds", keys("ds")),
+            ("cs", keys("cs")),
+            ("<leader>", keys(" ")),
+            ("<leader>b", keys(" b")),
+            ("<C-w>", vec![ctrl_w()]),
+        ] {
+            let mut state = PendingCmd::default();
+            drive(&mut state, &prefix);
+            assert!(!state.accepts_mapping(), "{label}");
+        }
+    }
+
+    #[test]
+    fn mapping_count_multiplies_the_typed_one() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("3"));
+        assert_eq!(state.absorb_mapping_count(&keys("10j")), 2);
+        assert_eq!(state.count1, Some(30));
+
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("d3"));
+        assert_eq!(state.absorb_mapping_count(&keys("10j")), 2);
+        assert_eq!(state.count2, Some(30));
+    }
+
+    #[test]
+    fn mapping_count_is_left_alone_without_a_typed_one() {
+        let mut state = PendingCmd::default();
+        assert_eq!(state.absorb_mapping_count(&keys("10j")), 0);
+        assert_eq!(state.count1, None);
+
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("3"));
+        assert_eq!(state.absorb_mapping_count(&keys("^")), 0);
+        assert_eq!(state.count1, Some(3));
+    }
+
+    #[test]
+    fn mapping_to_zero_drops_the_typed_count() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("3"));
+        assert_eq!(state.absorb_mapping_count(&keys("0")), 0);
+        match parse(&mut state, key('0'), ParseCtx::Normal) {
+            ParseResult::Action(Action::Move {
+                motion: MotionVerb::LineStart,
+                ..
+            }) => {}
+            _ => panic!("the mapped 0 was read as a count digit"),
+        }
     }
 }

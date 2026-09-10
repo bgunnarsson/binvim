@@ -538,6 +538,10 @@ pub struct App {
     /// Cleared on Esc / exiting Visual / collapse.
     pub additional_selections: Vec<(usize, usize)>,
     pub(crate) replaying_macro: bool,
+    /// Set while a `[keymaps]` mapping's keys are being fed, so they reach
+    /// the parser unmapped — Vim's `noremap`. Without it `j = "k"` beside
+    /// `k = "j"` would recurse until the stack ran out.
+    pub(crate) expanding_keymap: bool,
     pub(crate) recording: Option<RecordingState>,
     pub(crate) replaying: bool,
     /// True when `App::new` restored buffers from a saved session on
@@ -984,6 +988,7 @@ impl App {
             quickfix: None,
             additional_selections: Vec::new(),
             replaying_macro: false,
+            expanding_keymap: false,
             recording: None,
             replaying: false,
             session_restored: restore_buffers,
@@ -1070,6 +1075,17 @@ impl App {
         // CLI-launched buffer (binvim huge.json) bypasses the
         // open_buffer path that ordinarily surfaces this hint, so fire
         // it here before lsp_attach_active short-circuits silently.
+        // A `[keymaps]` entry that didn't parse was skipped rather than
+        // failing the config, so say so once — otherwise the user is left
+        // wondering why their `H` still cycles buffers.
+        if let Some(first) = self.config.keymaps.errors.first() {
+            let more = self.config.keymaps.errors.len() - 1;
+            self.status_msg = if more == 0 {
+                format!("skipped {first}")
+            } else {
+                format!("skipped {first} (+{more} more)")
+            };
+        }
         if self.buffer.is_large() {
             self.status_msg = "large file — tree-sitter + LSP disabled".into();
         }

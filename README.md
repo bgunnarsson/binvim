@@ -507,6 +507,10 @@ check = true               # Ask crates.io once a day whether a newer binvim is 
 
 [clipboard]
 osc52 = "auto"             # Emit OSC 52 over SSH so a remote yank reaches your local clipboard.
+
+[keymaps.normal]
+H = "^"                    # A key → the keys it types instead. Unlisted keys keep their defaults.
+L = "$"
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. The section drives both **chrome** and **syntax** colouring.
@@ -541,6 +545,10 @@ osc52 = "auto"             # Emit OSC 52 over SSH so a remote yank reaches your 
 The default is `"auto"` — emit it over SSH, skip it locally. Locally arboard has already done the job, and the sequence isn't free: it puts every yank, base64'd, into the terminal's output stream, which is where `script`, asciinema and tmux logging will keep it. Force it with `osc52 = true` (always) or `osc52 = false` (never).
 
 **Inside tmux or screen it needs one line of their config.** Both swallow an application's OSC 52 by default. binvim sends the sequence raw *and* wrapped in the multiplexer's DCS passthrough, so enabling either route is enough — for tmux, `set -g set-clipboard on` **or** `set -g allow-passthrough on` in `~/.tmux.conf`. Your terminal emulator also has to support OSC 52 (most do; Terminal.app does not).
+
+**`[keymaps]`** — remap keys in Normal (`[keymaps.normal]`) and Visual (`[keymaps.visual]`) mode, the way Vim's `nnoremap` / `vnoremap` do. Each entry maps one key to the keys it should type instead, in Vim notation: `H = "^"`, `J = "10j"`, `"<C-s>" = ":w<CR>"`, `"," = "<leader>ff"`. Keys you don't list keep their defaults. `<Space>`, `<CR>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, the arrows, `<Home>` / `<End>`, `<PageUp>` / `<PageDown>`, `<F1>`–`<F24>`, `<leader>` and the `<C-…>` / `<A-…>` / `<S-…>` modifiers are understood; `<lt>` is a literal `<`, and mapping a key to `"<Nop>"` switches it off.
+
+A mapping fires wherever a command or a motion starts — `3H`, `"aH` and `dH` all use it — but never where the key is an argument: `fH` still finds an `H`, `rH` still replaces with one, and `gH` or `<space>bH` are left alone. Expansions aren't remapped, so `j = "k"` next to `k = "j"` swaps the two instead of looping. A count you type multiplies a count inside the mapping: with `J = "10j"`, `3J` moves 30 lines. Macros record the keys you pressed, so replaying one applies your mappings the same way. An entry that doesn't parse is skipped and named in the status line at startup; the rest of the config still loads. Not supported yet: multi-key left-hand sides (`jk`), Insert and Command-line mappings, and relabelling the which-key popup.
 
 **`[lsp]`** — both toggles default `true`. `semantic_tokens = false` gates the `textDocument/semanticTokens/full` request and the highlight-cache overlay off entirely (no wire traffic, no render delta). `document_highlight = false` gates `textDocument/documentHighlight` similarly. Useful if your LSP's semantic-token output collides badly with the tree-sitter pass, or if the on-every-cursor-settle highlight echo is more distracting than useful for your workflow.
 

@@ -30,6 +30,8 @@ pub struct Config {
     pub update: UpdateConfig,
     #[serde(default)]
     pub clipboard: ClipboardConfig,
+    #[serde(default)]
+    pub keymaps: crate::keymap::Keymaps,
 }
 
 /// Update check. When `check` is on (the default), binvim asks crates.io once
@@ -321,6 +323,7 @@ impl Default for Config {
             install: InstallConfig::default(),
             update: UpdateConfig::default(),
             clipboard: ClipboardConfig::default(),
+            keymaps: crate::keymap::Keymaps::default(),
         }
     }
 }
