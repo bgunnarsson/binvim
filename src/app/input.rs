@@ -9,7 +9,7 @@ use crossterm::event::{
 use std::path::PathBuf;
 
 use crate::command::{self, ExCommand, ExRange};
-use crate::keymap::KeymapMatch;
+use crate::keymap::{KeymapMatch, MapMode};
 use crate::mode::{Mode, VisualKind};
 use crate::motion;
 use crate::parser::{self, ParseCtx, ParseResult};
@@ -273,7 +273,7 @@ impl super::App {
                 let lead = self
                     .pending
                     .accepts_mapping()
-                    .then(|| self.config.keymaps.exact(ParseCtx::Normal, &[k]))
+                    .then(|| self.config.keymaps.exact(MapMode::Normal, &[k]))
                     .flatten()
                     .and_then(|rhs| rhs.first().copied())
                     .unwrap_or(k);
@@ -1315,15 +1315,16 @@ impl super::App {
     /// Runs `key` through the `[keymaps]` matcher. `true` when the matcher
     /// took it — held toward a longer mapping, or expanded — and the caller
     /// must not parse it.
-    fn keymap_take(&mut self, key: KeyEvent, ctx: ParseCtx) -> bool {
-        if self.expanding_keymap || (self.keymap_held.is_empty() && !self.pending.accepts_mapping())
-        {
+    fn keymap_take(&mut self, key: KeyEvent, mode: MapMode) -> bool {
+        // Insert has no parser state — any key may start a mapping there.
+        let may_start = mode.parse_ctx().is_none() || self.pending.accepts_mapping();
+        if self.expanding_keymap || (self.keymap_held.is_empty() && !may_start) {
             return false;
         }
         self.keymap_held.push(key);
-        match self.config.keymaps.lookup(ctx, &self.keymap_held) {
+        match self.config.keymaps.lookup(mode, &self.keymap_held) {
             KeymapMatch::Pending => {
-                let probe = self.held_as_pending(ctx);
+                let probe = self.held_as_pending(mode);
                 // Only keys that already mean something alone need the
                 // clock — a mapping of their own, or a finished command. An
                 // unfinished prefix (`g`, `<leader>`) waits like it would
@@ -1333,7 +1334,7 @@ impl super::App {
                     || (1..=self.keymap_held.len()).any(|n| {
                         self.config
                             .keymaps
-                            .exact(ctx, &self.keymap_held[..n])
+                            .exact(mode, &self.keymap_held[..n])
                             .is_some()
                     });
                 self.keymap_held_at = times_out.then(std::time::Instant::now);
@@ -1354,7 +1355,7 @@ impl super::App {
                 self.keymap_held.clear();
                 return false;
             }
-            KeymapMatch::None => self.keymap_flush(ctx),
+            KeymapMatch::None => self.keymap_flush(mode),
         }
         true
     }
@@ -1364,13 +1365,13 @@ impl super::App {
     /// that is a mapping of its own runs, as in Vim; with none, the first key
     /// goes through as typed. The keys after it are fed again, so they can
     /// start a mapping of their own.
-    fn keymap_flush(&mut self, ctx: ParseCtx) {
+    fn keymap_flush(&mut self, mode: MapMode) {
         let held = std::mem::take(&mut self.keymap_held);
         self.keymap_held_at = None;
         let mapped = (1..=held.len()).rev().find_map(|n| {
             self.config
                 .keymaps
-                .exact(ctx, &held[..n])
+                .exact(mode, &held[..n])
                 .map(|rhs| (n, rhs.to_vec()))
         });
         let used = match mapped {
@@ -1399,20 +1400,22 @@ impl super::App {
         if now < at + self.config.keymaps.timeout {
             return false;
         }
-        let ctx = if matches!(self.mode, Mode::Visual(_)) {
-            ParseCtx::Visual
-        } else {
-            ParseCtx::Normal
+        let mode = match self.mode {
+            Mode::Visual(_) => MapMode::Visual,
+            Mode::Insert => MapMode::Insert,
+            _ => MapMode::Normal,
         };
-        self.keymap_flush(ctx);
+        self.keymap_flush(mode);
         true
     }
 
     /// The parser state the held keys would leave if they went through
-    /// unmapped — `None` when one of them would finish or cancel a command.
+    /// unmapped — `None` when one of them would finish or cancel a command,
+    /// and always in Insert, where every key is text that means itself.
     /// It works on a copy, so nothing is dispatched: the timeout rule and
     /// the which-key popup judge held keys by it without committing to them.
-    fn held_as_pending(&self, ctx: ParseCtx) -> Option<parser::PendingCmd> {
+    fn held_as_pending(&self, mode: MapMode) -> Option<parser::PendingCmd> {
+        let ctx = mode.parse_ctx()?;
         let mut probe = self.pending.clone();
         self.keymap_held
             .iter()
@@ -1431,7 +1434,7 @@ impl super::App {
             ParseCtx::Normal
         };
         let pending = self
-            .held_as_pending(ctx)
+            .held_as_pending(ctx.into())
             .unwrap_or_else(|| self.pending.clone());
         let (title, mut entries) = if pending.awaiting_leader {
             ("Leader", state::leader_entries())
@@ -1465,7 +1468,7 @@ impl super::App {
                 .collect();
             self.config
                 .keymaps
-                .merge_whichkey(ctx, &chord, &mut entries);
+                .merge_whichkey(ctx.into(), &chord, &mut entries);
         }
         Some(WhichKeyState {
             title: title.into(),
@@ -1490,7 +1493,7 @@ impl super::App {
     }
 
     pub(super) fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
-        if self.keymap_take(key, ctx) {
+        if self.keymap_take(key, ctx.into()) {
             return;
         }
         // Bare ENTER on a lens-bearing line invokes the lens, same as
@@ -1552,6 +1555,13 @@ impl super::App {
                 return;
             }
             // Fall through with completion now closed.
+        }
+        // Below the popup, so a mapping never takes a key the popup uses,
+        // and never `<Tab>` from a Copilot ghost it would accept — every
+        // other key has already dropped the ghost above.
+        let ghost_tab = matches!(key.code, KeyCode::Tab) && self.copilot_ghost.is_some();
+        if !ghost_tab && self.keymap_take(key, MapMode::Insert) {
+            return;
         }
         if !self.replaying && !is_esc {
             if let Some(rec) = self.recording.as_mut() {
@@ -2639,10 +2649,12 @@ mod tests {
         app
     }
 
+    /// Types `keys` into whichever mode the app is in, so `ijk` enters
+    /// Insert with `i` and then reaches the Insert handler.
     fn press(app: &mut crate::app::App, keys: &str) {
         for c in keys.chars() {
             let k = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
-            app.handle_keyboard(k, ParseCtx::Normal);
+            app.replay_key(k);
         }
     }
 
@@ -2783,6 +2795,45 @@ mod tests {
         let popup = app.whichkey_popup().expect("Buffer popup");
         assert_eq!(popup.title, "Buffer");
         assert!(popup.entries.iter().any(|(k, d)| k == "z" && d == "gg"));
+    }
+
+    #[test]
+    fn insert_mapping_leaves_insert_mode() {
+        let mut app = app_with_keymaps("ab\n", "[insert]\njk = \"<Esc>\"");
+        press(&mut app, "ijk");
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.buffer.rope.to_string(), "ab\n");
+    }
+
+    #[test]
+    fn held_insert_key_is_typed_on_timeout() {
+        let mut app = app_with_keymaps("ab\n", "[insert]\njk = \"<Esc>\"");
+        press(&mut app, "ij");
+        assert_eq!(app.buffer.rope.to_string(), "ab\n", "jk might follow");
+        time_out(&mut app);
+        assert_eq!(app.buffer.rope.to_string(), "jab\n");
+        assert!(matches!(app.mode, Mode::Insert));
+    }
+
+    #[test]
+    fn held_insert_key_is_typed_when_the_next_key_rules_the_mapping_out() {
+        let mut app = app_with_keymaps("ab\n", "[insert]\njk = \"<Esc>\"");
+        press(&mut app, "ijx");
+        assert_eq!(app.buffer.rope.to_string(), "jxab\n");
+    }
+
+    #[test]
+    fn mappings_stay_in_their_own_mode() {
+        let keymaps = "[normal]\nH = \"^\"\n[insert]\njk = \"<Esc>\"";
+        let mut app = app_with_keymaps("a\nb\n", keymaps);
+        press(&mut app, "j");
+        assert_eq!(app.window.cursor.line, 1, "Insert's jk must not hold a j");
+        press(&mut app, "iH");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            "a\nHb\n",
+            "Normal's H must not fire in Insert"
+        );
     }
 
     #[test]

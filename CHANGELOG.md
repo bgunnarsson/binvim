@@ -22,9 +22,10 @@ follows [Semantic Versioning](https://semver.org/).
   while `fH` still finds a literal `H`. Expansions are never remapped, a typed
   count multiplies the mapping's own (`3J` with `J = "10j"` moves 30 lines),
   and an entry that doesn't parse is skipped and named at startup instead of
-  discarding the whole config. Insert-mode mappings are not part of this first
-  pass. Thanks to [@happyTonakai](https://github.com/happyTonakai) for the
-  proposal (#8).
+  discarding the whole config. `[keymaps.insert]` covers Insert mode —
+  `jk = "<Esc>"` works, and a lone `j` is still typed once the wait runs out.
+  Command-line mappings are not part of this first pass. Thanks to
+  [@happyTonakai](https://github.com/happyTonakai) for the proposal (#8).
 
 ## [0.5.20] - 2026-09-10
 

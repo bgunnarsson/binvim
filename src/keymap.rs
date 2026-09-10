@@ -30,6 +30,35 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
 
+/// The modes a `[keymaps]` table exists for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapMode {
+    Normal,
+    Visual,
+    Insert,
+}
+
+impl MapMode {
+    /// The parser context the mode's keys go through — `None` for Insert,
+    /// where a key is text rather than part of a command.
+    pub fn parse_ctx(self) -> Option<ParseCtx> {
+        match self {
+            Self::Normal => Some(ParseCtx::Normal),
+            Self::Visual => Some(ParseCtx::Visual),
+            Self::Insert => None,
+        }
+    }
+}
+
+impl From<ParseCtx> for MapMode {
+    fn from(ctx: ParseCtx) -> Self {
+        match ctx {
+            ParseCtx::Normal => Self::Normal,
+            ParseCtx::Visual => Self::Visual,
+        }
+    }
+}
+
 type KeyId = (KeyCode, KeyModifiers);
 type Table = HashMap<Vec<KeyId>, Mapping>;
 
@@ -65,6 +94,7 @@ const DEFAULT_TIMEOUT_MS: u64 = 1000;
 pub struct Keymaps {
     normal: Table,
     visual: Table,
+    insert: Table,
     /// How long a partly typed multi-key mapping waits for its next key
     /// before the held keys run as typed.
     pub timeout: Duration,
@@ -80,6 +110,7 @@ impl Default for Keymaps {
         Self {
             normal: Table::new(),
             visual: Table::new(),
+            insert: Table::new(),
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
             errors: Vec::new(),
         }
@@ -99,9 +130,9 @@ pub enum KeymapMatch<'a> {
 }
 
 impl Keymaps {
-    pub fn lookup(&self, ctx: ParseCtx, keys: &[KeyEvent]) -> KeymapMatch<'_> {
+    pub fn lookup(&self, mode: MapMode, keys: &[KeyEvent]) -> KeymapMatch<'_> {
         let ids: Vec<KeyId> = keys.iter().map(key_id).collect();
-        let table = self.table(ctx);
+        let table = self.table(mode);
         if table
             .keys()
             .any(|lhs| lhs.len() > ids.len() && lhs.starts_with(&ids))
@@ -116,9 +147,9 @@ impl Keymaps {
 
     /// The expansion for exactly `keys`, ignoring longer mappings. An empty
     /// slice is a `<Nop>` mapping — the keys are switched off.
-    pub fn exact(&self, ctx: ParseCtx, keys: &[KeyEvent]) -> Option<&[KeyEvent]> {
+    pub fn exact(&self, mode: MapMode, keys: &[KeyEvent]) -> Option<&[KeyEvent]> {
         let ids: Vec<KeyId> = keys.iter().map(key_id).collect();
-        self.table(ctx).get(&ids).map(|m| m.keys.as_slice())
+        self.table(mode).get(&ids).map(|m| m.keys.as_slice())
     }
 
     /// Layers the mappings one key past `chord` over the which-key rows for
@@ -126,13 +157,13 @@ impl Keymaps {
     /// rest are added. Each shows its `desc`, or else the keys it types.
     pub fn merge_whichkey(
         &self,
-        ctx: ParseCtx,
+        mode: MapMode,
         chord: &[KeyEvent],
         entries: &mut Vec<(String, String)>,
     ) {
         let chord: Vec<KeyId> = chord.iter().map(key_id).collect();
         let mut rows: Vec<(String, String)> = self
-            .table(ctx)
+            .table(mode)
             .iter()
             .filter(|(lhs, _)| lhs.len() == chord.len() + 1 && lhs.starts_with(&chord))
             .map(|(lhs, mapping)| (key_label(&lhs[chord.len()]), mapping.label()))
@@ -148,10 +179,11 @@ impl Keymaps {
         }
     }
 
-    fn table(&self, ctx: ParseCtx) -> &Table {
-        match ctx {
-            ParseCtx::Normal => &self.normal,
-            ParseCtx::Visual => &self.visual,
+    fn table(&self, mode: MapMode) -> &Table {
+        match mode {
+            MapMode::Normal => &self.normal,
+            MapMode::Visual => &self.visual,
+            MapMode::Insert => &self.insert,
         }
     }
 }
@@ -166,17 +198,21 @@ impl<'de> Deserialize<'de> for Keymaps {
             normal: HashMap<String, RawMapping>,
             #[serde(default)]
             visual: HashMap<String, RawMapping>,
+            #[serde(default)]
+            insert: HashMap<String, RawMapping>,
         }
         let raw = Raw::deserialize(d)?;
         let mut errors = Vec::new();
         let normal = compile_table("normal", raw.normal, &mut errors);
         let visual = compile_table("visual", raw.visual, &mut errors);
+        let insert = compile_table("insert", raw.insert, &mut errors);
         // The tables iterate in HashMap order; sort so the startup notice
         // names the same entry on every launch.
         errors.sort();
         Ok(Self {
             normal,
             visual,
+            insert,
             timeout: Duration::from_millis(raw.timeout),
             errors,
         })
@@ -470,17 +506,17 @@ mod tests {
         )
         .expect("a bad entry must not fail the whole table");
         assert_eq!(
-            keymaps.exact(ParseCtx::Normal, &keys("H")),
+            keymaps.exact(MapMode::Normal, &keys("H")),
             Some(&[plain('^')][..])
         );
         assert_eq!(
-            keymaps.exact(ParseCtx::Normal, &keys("J")).map(<[_]>::len),
+            keymaps.exact(MapMode::Normal, &keys("J")).map(<[_]>::len),
             Some(3)
         );
-        assert!(keymaps.exact(ParseCtx::Normal, &keys("jk")).is_some());
-        assert!(keymaps.exact(ParseCtx::Normal, &keys(" w")).is_some());
-        assert!(keymaps.exact(ParseCtx::Visual, &keys("H")).is_some());
-        assert!(keymaps.exact(ParseCtx::Visual, &keys("J")).is_none());
+        assert!(keymaps.exact(MapMode::Normal, &keys("jk")).is_some());
+        assert!(keymaps.exact(MapMode::Normal, &keys(" w")).is_some());
+        assert!(keymaps.exact(MapMode::Visual, &keys("H")).is_some());
+        assert!(keymaps.exact(MapMode::Visual, &keys("J")).is_none());
         assert_eq!(keymaps.errors.len(), 3, "{:?}", keymaps.errors);
         for lhs in ["X", "Z", ""] {
             let prefix = format!("[keymaps.normal] {lhs}:");
@@ -496,7 +532,7 @@ mod tests {
     fn lookup_holds_prefixes_and_resolves_full_matches() {
         let keymaps: Keymaps =
             toml::from_str("[normal]\ngh = \"^\"\nJ = \"j\"\nJk = \"gg\"").unwrap();
-        let n = ParseCtx::Normal;
+        let n = MapMode::Normal;
         assert!(matches!(
             keymaps.lookup(n, &keys("g")),
             KeymapMatch::Pending
@@ -527,7 +563,7 @@ mod tests {
     #[test]
     fn nop_switches_a_key_off() {
         let keymaps: Keymaps = toml::from_str("[normal]\nH = \"<Nop>\"").unwrap();
-        assert_eq!(keymaps.exact(ParseCtx::Normal, &keys("H")), Some(&[][..]));
+        assert_eq!(keymaps.exact(MapMode::Normal, &keys("H")), Some(&[][..]));
         assert!(keymaps.errors.is_empty());
     }
 
@@ -535,12 +571,12 @@ mod tests {
     fn lookup_ignores_how_the_terminal_reports_shift() {
         let keymaps: Keymaps = toml::from_str("[normal]\nH = \"^\"\n\"<C-r>\" = \"u\"").unwrap();
         let shifted_h = KeyEvent::new(KeyCode::Char('H'), KeyModifiers::SHIFT);
-        assert!(keymaps.exact(ParseCtx::Normal, &[shifted_h]).is_some());
+        assert!(keymaps.exact(MapMode::Normal, &[shifted_h]).is_some());
         let ctrl_shift_r = KeyEvent::new(
             KeyCode::Char('R'),
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         );
-        assert!(keymaps.exact(ParseCtx::Normal, &[ctrl_shift_r]).is_some());
+        assert!(keymaps.exact(MapMode::Normal, &[ctrl_shift_r]).is_some());
     }
 
     #[test]
@@ -555,11 +591,11 @@ mod tests {
         .unwrap();
         assert!(keymaps.errors.is_empty(), "{:?}", keymaps.errors);
         assert_eq!(
-            keymaps.exact(ParseCtx::Normal, &keys(" w")).map(<[_]>::len),
+            keymaps.exact(MapMode::Normal, &keys(" w")).map(<[_]>::len),
             Some(3)
         );
         let mut rows = vec![("w".to_string(), "Built-in".to_string())];
-        keymaps.merge_whichkey(ParseCtx::Normal, &keys(" "), &mut rows);
+        keymaps.merge_whichkey(MapMode::Normal, &keys(" "), &mut rows);
         assert_eq!(
             rows,
             vec![
@@ -576,7 +612,7 @@ mod tests {
         )
         .unwrap();
         let mut rows = Vec::new();
-        keymaps.merge_whichkey(ParseCtx::Normal, &keys(" "), &mut rows);
+        keymaps.merge_whichkey(MapMode::Normal, &keys(" "), &mut rows);
         assert_eq!(rows, vec![("z".to_string(), "<Nop>".to_string())]);
     }
 
