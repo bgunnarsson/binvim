@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.20]
+## [0.5.20] - 2026-09-10
 
 ### Added
 - **Yanks reach your local clipboard over SSH.** binvim now emits the terminal
