@@ -24,7 +24,7 @@ follows [Semantic Versioning](https://semver.org/).
   and an entry that doesn't parse is skipped and named at startup instead of
   discarding the whole config. `[keymaps.insert]` covers Insert mode —
   `jk = "<Esc>"` works, and a lone `j` is still typed once the wait runs out.
-  Command-line mappings are not part of this first pass. Thanks to
+  `[keymaps.command]` does the same for the `:` and `/` prompts. Thanks to
   [@happyTonakai](https://github.com/happyTonakai) for the proposal (#8).
 
 ## [0.5.20] - 2026-09-10

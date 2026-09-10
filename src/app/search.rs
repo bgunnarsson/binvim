@@ -7,6 +7,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Instant;
 
 use crate::cursor::Cursor;
+use crate::keymap::MapMode;
 use crate::mode::{Mode, VisualKind};
 use crate::motion::{MotionKind, MotionResult};
 
@@ -256,6 +257,9 @@ impl super::App {
 
     pub(super) fn handle_search_key(&mut self, key: KeyEvent) {
         use super::cmdline_history::HistoryKind;
+        if self.keymap_take(key, MapMode::Command) {
+            return;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();

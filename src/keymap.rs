@@ -36,16 +36,18 @@ pub enum MapMode {
     Normal,
     Visual,
     Insert,
+    /// The `:` and `/` prompts.
+    Command,
 }
 
 impl MapMode {
-    /// The parser context the mode's keys go through — `None` for Insert,
-    /// where a key is text rather than part of a command.
+    /// The parser context the mode's keys go through — `None` for Insert and
+    /// the command line, where a key is text rather than part of a command.
     pub fn parse_ctx(self) -> Option<ParseCtx> {
         match self {
             Self::Normal => Some(ParseCtx::Normal),
             Self::Visual => Some(ParseCtx::Visual),
-            Self::Insert => None,
+            Self::Insert | Self::Command => None,
         }
     }
 }
@@ -95,6 +97,7 @@ pub struct Keymaps {
     normal: Table,
     visual: Table,
     insert: Table,
+    command: Table,
     /// How long a partly typed multi-key mapping waits for its next key
     /// before the held keys run as typed.
     pub timeout: Duration,
@@ -111,6 +114,7 @@ impl Default for Keymaps {
             normal: Table::new(),
             visual: Table::new(),
             insert: Table::new(),
+            command: Table::new(),
             timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
             errors: Vec::new(),
         }
@@ -184,6 +188,7 @@ impl Keymaps {
             MapMode::Normal => &self.normal,
             MapMode::Visual => &self.visual,
             MapMode::Insert => &self.insert,
+            MapMode::Command => &self.command,
         }
     }
 }
@@ -200,12 +205,15 @@ impl<'de> Deserialize<'de> for Keymaps {
             visual: HashMap<String, RawMapping>,
             #[serde(default)]
             insert: HashMap<String, RawMapping>,
+            #[serde(default)]
+            command: HashMap<String, RawMapping>,
         }
         let raw = Raw::deserialize(d)?;
         let mut errors = Vec::new();
         let normal = compile_table("normal", raw.normal, &mut errors);
         let visual = compile_table("visual", raw.visual, &mut errors);
         let insert = compile_table("insert", raw.insert, &mut errors);
+        let command = compile_table("command", raw.command, &mut errors);
         // The tables iterate in HashMap order; sort so the startup notice
         // names the same entry on every launch.
         errors.sort();
@@ -213,6 +221,7 @@ impl<'de> Deserialize<'de> for Keymaps {
             normal,
             visual,
             insert,
+            command,
             timeout: Duration::from_millis(raw.timeout),
             errors,
         })
@@ -614,6 +623,17 @@ mod tests {
         let mut rows = Vec::new();
         keymaps.merge_whichkey(MapMode::Normal, &keys(" "), &mut rows);
         assert_eq!(rows, vec![("z".to_string(), "<Nop>".to_string())]);
+    }
+
+    #[test]
+    fn each_mode_reads_only_its_own_table() {
+        let keymaps: Keymaps =
+            toml::from_str("[insert]\njk = \"<Esc>\"\n[command]\njj = \"<Esc>\"").unwrap();
+        assert!(keymaps.exact(MapMode::Insert, &keys("jk")).is_some());
+        assert!(keymaps.exact(MapMode::Command, &keys("jj")).is_some());
+        assert!(keymaps.exact(MapMode::Command, &keys("jk")).is_none());
+        assert!(keymaps.exact(MapMode::Insert, &keys("jj")).is_none());
+        assert!(keymaps.exact(MapMode::Normal, &keys("jk")).is_none());
     }
 
     #[test]

@@ -1315,8 +1315,9 @@ impl super::App {
     /// Runs `key` through the `[keymaps]` matcher. `true` when the matcher
     /// took it — held toward a longer mapping, or expanded — and the caller
     /// must not parse it.
-    fn keymap_take(&mut self, key: KeyEvent, mode: MapMode) -> bool {
-        // Insert has no parser state — any key may start a mapping there.
+    pub(super) fn keymap_take(&mut self, key: KeyEvent, mode: MapMode) -> bool {
+        // Insert and the command line have no parser state — any key may
+        // start a mapping there.
         let may_start = mode.parse_ctx().is_none() || self.pending.accepts_mapping();
         if self.expanding_keymap || (self.keymap_held.is_empty() && !may_start) {
             return false;
@@ -1403,6 +1404,7 @@ impl super::App {
         let mode = match self.mode {
             Mode::Visual(_) => MapMode::Visual,
             Mode::Insert => MapMode::Insert,
+            Mode::Command | Mode::Search { .. } => MapMode::Command,
             _ => MapMode::Normal,
         };
         self.keymap_flush(mode);
@@ -1411,7 +1413,8 @@ impl super::App {
 
     /// The parser state the held keys would leave if they went through
     /// unmapped — `None` when one of them would finish or cancel a command,
-    /// and always in Insert, where every key is text that means itself.
+    /// and always in Insert and on the command line, where every key is text
+    /// that means itself.
     /// It works on a copy, so nothing is dispatched: the timeout rule and
     /// the which-key popup judge held keys by it without committing to them.
     fn held_as_pending(&self, mode: MapMode) -> Option<parser::PendingCmd> {
@@ -1995,6 +1998,9 @@ impl super::App {
 
     pub(super) fn handle_command_key(&mut self, key: KeyEvent) {
         use super::cmdline_history::HistoryKind;
+        if self.keymap_take(key, MapMode::Command) {
+            return;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
@@ -2834,6 +2840,31 @@ mod tests {
             "a\nHb\n",
             "Normal's H must not fire in Insert"
         );
+    }
+
+    #[test]
+    fn command_line_mapping_expands_in_the_colon_prompt() {
+        let mut app = app_with_keymaps("a\n", "[command]\nqq = \"wq\"");
+        press(&mut app, ":qq");
+        assert!(matches!(app.mode, Mode::Command));
+        assert_eq!(app.cmdline, "wq");
+    }
+
+    #[test]
+    fn command_line_mapping_expands_in_the_search_prompt() {
+        let mut app = app_with_keymaps("a\n", "[command]\njj = \"<Esc>\"");
+        press(&mut app, "/jj");
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(app.cmdline.is_empty());
+    }
+
+    #[test]
+    fn held_command_line_key_is_typed_on_timeout() {
+        let mut app = app_with_keymaps("a\n", "[command]\nqq = \"wq\"");
+        press(&mut app, ":q");
+        assert_eq!(app.cmdline, "", "qq might follow");
+        time_out(&mut app);
+        assert_eq!(app.cmdline, "q");
     }
 
     #[test]
