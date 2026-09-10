@@ -4,7 +4,7 @@ set -euo pipefail
 # One script, end-to-end release flow. Replaces the prior
 # do-release.sh / release.sh / pkg-homebrew.sh / pkg-web.sh quartet.
 #
-# Usage: ./scripts/release.sh <version> [--skip-ci-wait] [--yes] [--notes-only]
+# Usage: ./scripts/release.sh <version> [--skip-ci-wait] [--yes] [--notes-only] [--scoop-only]
 #   <version>       semver string, with or without leading `v` (e.g. 0.4.5 or v0.4.5)
 #   --skip-ci-wait  don't block waiting for the GitHub Actions release build
 #   --yes           non-interactive: auto-confirm Homebrew + web push prompts
@@ -13,6 +13,10 @@ set -euo pipefail
 #                   no bump, no publish, no tag, no tap. For finishing a
 #                   release whose notes step was skipped (e.g. the CI wait
 #                   timed out during an Actions outage). Idempotent.
+#   --scoop-only    point scoop/binvim.json at an already-published
+#                   Release's Windows zip, commit, push to main, and exit.
+#                   The Scoop counterpart of --notes-only; the two combine.
+#                   Idempotent.
 #
 # What it does, in order:
 #   1. Pre-flight checks (clean tree, on main, CHANGELOG entry exists,
@@ -34,6 +38,10 @@ set -euo pipefail
 #      check the asset count (expects 12 — 4 targets × tar.gz/sha256/bundle).
 #   5b. Overwrite the auto-generated Release notes with the curated
 #       CHANGELOG section for this version.
+#   5c. Point scoop/binvim.json at the Release's Windows zip (URL +
+#       sha256 from its .sha256 sidecar), commit, push to main. This
+#       repo is the Scoop bucket, and `scoop update` installs whatever
+#       version the committed manifest names.
 #   6. Verify the Homebrew tap repo is clean + current, then download
 #      the source tarball, compute sha256, rewrite url + sha256 in
 #      the formula, commit, push.
@@ -53,14 +61,16 @@ VERSION=""
 SKIP_CI_WAIT=0
 ASSUME_YES=0
 NOTES_ONLY=0
+SCOOP_ONLY=0
 
 for arg in "$@"; do
     case "$arg" in
         --skip-ci-wait) SKIP_CI_WAIT=1 ;;
         --yes|-y)       ASSUME_YES=1 ;;
         --notes-only)   NOTES_ONLY=1 ;;
+        --scoop-only)   SCOOP_ONLY=1 ;;
         -h|--help)
-            sed -n '4,47p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+            sed -n '4,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
             exit 0
             ;;
         -*)
@@ -78,7 +88,7 @@ for arg in "$@"; do
 done
 
 if [[ -z "$VERSION" ]]; then
-    echo "Usage: $0 <version> [--skip-ci-wait] [--yes] [--notes-only]" >&2
+    echo "Usage: $0 <version> [--skip-ci-wait] [--yes] [--notes-only] [--scoop-only]" >&2
     exit 1
 fi
 
@@ -125,6 +135,7 @@ TAP_DIR="${BINVIM_TAP_DIR:-$(find_sibling \
 WEB_DIR="${BINVIM_WEB_DIR:-$(find_sibling \
     "${PARENT}/${REPO}-web" \
     "${ROOT}/../../sites/${REPO}-web")}"
+SCOOP_MANIFEST="${ROOT}/scoop/binvim.json"
 
 # ─── Helpers ──────────────────────────────────────────────────────
 
@@ -227,6 +238,65 @@ push_release_notes() {
     return 0
 }
 
+# Point scoop/binvim.json at this release's Windows zip. This repo is its
+# own Scoop bucket, and `scoop update` installs whatever version the
+# committed manifest names. The manifest's `autoupdate` block does not
+# change that — Scoop only applies it when someone runs its checkver
+# tooling against the bucket, which is how the manifest sat at 0.4.7
+# while binvim moved on to 0.5.19.
+#
+# The hash comes from the `.sha256` sidecar release.yml publishes next to
+# the zip, so this can only run once CI has finished. Returns 1 on any
+# failure and leaves the caller to decide whether that stops the release.
+# Idempotent: a manifest already at this version commits nothing.
+update_scoop_manifest() {
+    local zip="${REPO}-${TAG}-x86_64-pc-windows-msvc.zip"
+    local url="https://github.com/${OWNER}/${REPO}/releases/download/${TAG}/${zip}"
+    local sha
+
+    sha="$(gh release download "$TAG" --pattern "${zip}.sha256" --output - 2>/dev/null \
+        | awk '{print $1}')"
+    if ! [[ "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "  ${zip}.sha256 is not on Release ${TAG} (CI still building?)." >&2
+        echo "  Check the build with: gh run list --workflow=release.yml --branch=${TAG}" >&2
+        return 1
+    fi
+
+    # Pick up anything pushed to main while CI was building, so the
+    # manifest commit lands on top of it instead of failing the push.
+    if ! git pull --ff-only origin main >/dev/null 2>&1; then
+        echo "  main can't fast-forward from origin — diverged or has unpushed commits." >&2
+        return 1
+    fi
+
+    # Only the concrete URL and hash are rewritten. The autoupdate block's
+    # URL carries a literal `$version` and its hash is an object, so
+    # neither pattern touches it.
+    perl -pi -e 's|("version":\s*)"[^"]*"|$1"'"${VERSION}"'"|' "$SCOOP_MANIFEST"
+    perl -pi -e 's|"url": "[^"]*/releases/download/v[0-9][^"]*"|"url": "'"${url}"'"|' "$SCOOP_MANIFEST"
+    perl -pi -e 's|"hash": "[0-9a-f]{64}"|"hash": "'"${sha}"'"|' "$SCOOP_MANIFEST"
+
+    # A reformatted manifest would make the patterns above miss silently
+    # and commit a half-bumped file, so check both values landed.
+    if ! grep -qF "\"${url}\"" "$SCOOP_MANIFEST" || ! grep -qF "\"${sha}\"" "$SCOOP_MANIFEST"; then
+        git checkout -- "$SCOOP_MANIFEST"
+        echo "  Couldn't rewrite ${SCOOP_MANIFEST} — has its layout changed?" >&2
+        echo "    url:  ${url}" >&2
+        echo "    hash: ${sha}" >&2
+        return 1
+    fi
+
+    if git diff --quiet -- "$SCOOP_MANIFEST"; then
+        echo "  Scoop manifest already points at ${TAG}. Nothing to commit."
+        return 0
+    fi
+
+    # Commit by path so nothing else staged in the tree rides along.
+    git commit -q -m "Scoop manifest points at binvim ${VERSION}" -- "$SCOOP_MANIFEST" || return 1
+    git push -q origin main || return 1
+    echo "  Pushed. \`scoop update ${REPO}\` now installs ${VERSION}."
+}
+
 # Verify a sibling repo is on a clean working tree and current with
 # origin (fast-forwardable). Aborts the release if not. The Homebrew
 # tap and binvim-web both get this treatment so a stale clone or
@@ -252,25 +322,37 @@ ensure_sibling_clean_and_current() {
     )
 }
 
-# ─── 0. --notes-only short circuit ────────────────────────────────
+# ─── 0. --notes-only / --scoop-only short circuit ────────────────────────────────
 
-# Deliberately ahead of the pre-flight: this path publishes nothing and
-# touches no repo, so a dirty tree or a not-on-main checkout is none of
-# its business. The tag existing is a precondition here, the opposite of
-# what the full flow demands.
-if [[ "$NOTES_ONLY" -eq 1 ]]; then
-    step "Push CHANGELOG section as GitHub Release notes (--notes-only)"
-
+# Deliberately ahead of the pre-flight: these paths finish a release that
+# is already out, so the tag existing is a precondition here, the
+# opposite of what the full flow demands. --notes-only touches no repo,
+# so a dirty tree or a not-on-main checkout is none of its business;
+# --scoop-only commits to main, so it checks the branch itself.
+if [[ "$NOTES_ONLY" -eq 1 ]] || [[ "$SCOOP_ONLY" -eq 1 ]]; then
     if ! command -v gh >/dev/null 2>&1; then
         echo "gh CLI not found. Install with: brew install gh" >&2
         exit 1
     fi
-    if ! grep -Eq "^## \[?${VERSION}\]?" CHANGELOG.md; then
-        echo "CHANGELOG.md has no entry for ${VERSION}." >&2
-        exit 1
+
+    if [[ "$NOTES_ONLY" -eq 1 ]]; then
+        step "Push CHANGELOG section as GitHub Release notes (--notes-only)"
+        if ! grep -Eq "^## \[?${VERSION}\]?" CHANGELOG.md; then
+            echo "CHANGELOG.md has no entry for ${VERSION}." >&2
+            exit 1
+        fi
+        push_release_notes strict || exit 1
     fi
 
-    push_release_notes strict || exit 1
+    if [[ "$SCOOP_ONLY" -eq 1 ]]; then
+        step "Point the Scoop manifest at ${TAG} (--scoop-only)"
+        if [[ "$(git rev-parse --abbrev-ref HEAD)" != "main" ]]; then
+            echo "Not on main. Switch to main first — the manifest commit goes there." >&2
+            exit 1
+        fi
+        update_scoop_manifest || exit 1
+    fi
+
     echo
     echo "  https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}"
     exit 0
@@ -513,7 +595,9 @@ else
         echo "  Watching run ${RUN_ID}..."
         if ! gh run watch "$RUN_ID" --exit-status; then
             echo "  Release workflow failed. Inspect with: gh run view ${RUN_ID}" >&2
-            echo "  Skipping Homebrew + web push — fix CI and re-run those steps manually." >&2
+            echo "  Skipping Scoop, Homebrew + web push. Once CI is fixed, finish with" >&2
+            echo "    ${BASH_SOURCE[0]} ${VERSION} --notes-only --scoop-only" >&2
+            echo "  and re-run the Homebrew + web steps manually." >&2
             exit 1
         fi
     fi
@@ -538,6 +622,14 @@ fi
 step "Push CHANGELOG section as GitHub Release notes"
 
 push_release_notes soft
+
+# ─── 5c. Point the Scoop manifest at this release ─────────────────
+
+step "Point the Scoop manifest at ${TAG}"
+
+# Not fatal: the Homebrew + web steps don't depend on the Windows zip,
+# so a Scoop miss shouldn't hold them back.
+update_scoop_manifest || echo "  Finish later with: ${BASH_SOURCE[0]} ${VERSION} --scoop-only" >&2
 
 # ─── 6. Update Homebrew tap ───────────────────────────────────────
 
@@ -658,12 +750,14 @@ cat <<EOF
   GitHub Release:  https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}
   crates.io:       https://crates.io/crates/${REPO}/${VERSION}
   Tap:             https://github.com/${OWNER}/homebrew-${REPO}
+  Scoop manifest:  https://github.com/${OWNER}/${REPO}/blob/main/scoop/binvim.json
   install.sh:      https://binvim.dev/install.sh
 
   Try:
     brew upgrade ${REPO}                          # if already tapped
     brew install ${OWNER}/${REPO}/${REPO}         # fresh install
     cargo install --locked ${REPO}                # from crates.io
+    scoop update ${REPO}                          # Windows, bucket already added
     curl -fsSL https://binvim.dev/install.sh | sh # curl path
 
 EOF
