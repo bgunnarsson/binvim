@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.5.21]
+## [0.5.21] - 2026-09-10
 
 ### Added
 - **Remap keys from `config.toml`.** A new `[keymaps]` section maps a key, or
