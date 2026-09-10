@@ -6,6 +6,42 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Yanks reach your local clipboard over SSH.** binvim now emits the terminal
+  OSC 52 escape alongside its usual `arboard` clipboard write, so a `yy` inside
+  a binvim running on a remote box lands on the clipboard of the machine you
+  are sitting at. It covers every unnamed-register write — `yy`, `dd`, `cc`,
+  the terminal and AI pane copies — matching what the local clipboard mirror
+  already did. Configured by `[clipboard] osc52`, which defaults to `"auto"`:
+  the sequence goes out over SSH and is skipped locally, where `arboard` has
+  already done the work and the escape would only put every yank, base64'd,
+  into any `script` / asciinema / tmux log of the session. `true` and `false`
+  force it. Inside tmux or screen the sequence is also sent through the
+  multiplexer's DCS passthrough, so either `set-clipboard on` or
+  `allow-passthrough on` is enough to make it work.
+  Thanks to [@happyTonakai](https://github.com/happyTonakai).
+
+### Fixed
+- **CJK and other wide characters no longer put the cursor in the wrong
+  column.** Every column walk in the editor advanced one cell per character,
+  but the terminal draws a CJK glyph in two — so the cursor sat mid-glyph,
+  clicks landed on the wrong character, and the end of a CJK-heavy line was
+  unreachable because the viewport thought the line was half as wide as it is.
+  Cursor placement, click-to-position, horizontal scrolling, the markdown
+  conceal walks and hover-popup sizing now all measure real terminal width.
+  A wide glyph that straddles the edge of a split is drawn as `<` or `>`
+  rather than spilling a cell into the pane next door, and combining marks
+  compose onto the character they belong to instead of consuming a column.
+  Thanks to [@happyTonakai](https://github.com/happyTonakai).
+
+### Changed
+- **A public fork is allowed when it exists to prepare a contribution.** GitHub
+  cannot open a pull request from a private fork to a public repository, so the
+  old "private forks only" rule ruled out the one contribution path the licence
+  invites. BSAL v1.1 defines a Contribution Fork instead: public is fine, as
+  long as it keeps the fork relationship, publishes no releases, isn't run as a
+  project of its own, and is deleted or made private once the PR closes.
+
 ## [0.5.19] - 2026-09-03
 
 ### Fixed
