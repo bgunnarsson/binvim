@@ -4202,7 +4202,7 @@ fn build_health_rows(
     );
     rows.push(DashRow::Blank);
 
-    // --- ENVIRONMENT (cwd + config in one box) ------------------------
+    // --- ENVIRONMENT (cwd + config + keymaps in one box) --------------
     let cwd_disp = home_relative_path(&snap.cwd);
     let cfg_path_disp = if snap.config_path.is_empty() {
         "—".to_string()
@@ -4214,7 +4214,22 @@ fn build_health_rows(
     } else {
         ("[missing]", p.overlay1)
     };
-    let env_lines = vec![
+    let keymap_counts = snap
+        .keymaps
+        .counts
+        .iter()
+        .map(|(mode, n)| format!("{mode} {n}"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let mut keymap_parts = vec![("keymaps ".into(), p.subtext1), (keymap_counts, p.text)];
+    if !snap.keymaps.skipped.is_empty() {
+        keymap_parts.push(("  ".into(), p.subtext1));
+        keymap_parts.push((
+            format!("[{} skipped]", snap.keymaps.skipped.len()),
+            p.yellow,
+        ));
+    }
+    let mut env_lines = vec![
         SectionLine::Custom {
             parts: vec![("cwd     ".into(), p.subtext1), (cwd_disp, p.text)],
         },
@@ -4226,7 +4241,17 @@ fn build_health_rows(
                 (cfg_status_label.into(), cfg_status_colour),
             ],
         },
+        SectionLine::Custom {
+            parts: keymap_parts,
+        },
     ];
+    // Every skipped entry, not just the first — the startup notice only
+    // had room for one, and it has long since timed out.
+    for entry in &snap.keymaps.skipped {
+        env_lines.push(SectionLine::Custom {
+            parts: vec![("        ".into(), p.subtext1), (entry.clone(), p.yellow)],
+        });
+    }
     push_section_box(rows, left, body_w, "ENVIRONMENT", p.peach, &env_lines);
     rows.push(DashRow::Blank);
 

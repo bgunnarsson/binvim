@@ -183,6 +183,19 @@ impl Keymaps {
         }
     }
 
+    /// How many mappings each mode's table holds, for `:health`.
+    pub fn counts(&self) -> Vec<(&'static str, usize)> {
+        [
+            ("normal", MapMode::Normal),
+            ("visual", MapMode::Visual),
+            ("insert", MapMode::Insert),
+            ("command", MapMode::Command),
+        ]
+        .into_iter()
+        .map(|(name, mode)| (name, self.table(mode).len()))
+        .collect()
+    }
+
     fn table(&self, mode: MapMode) -> &Table {
         match mode {
             MapMode::Normal => &self.normal,
@@ -670,6 +683,18 @@ mod tests {
                 keymaps.errors
             );
         }
+    }
+
+    #[test]
+    fn counts_cover_every_mode_in_table_order() {
+        let keymaps: Keymaps = toml::from_str(
+            "[normal]\nH = \"^\"\nL = \"$\"\nX = \"<Spce>\"\n[insert]\njk = \"<Esc>\"",
+        )
+        .unwrap();
+        assert_eq!(
+            keymaps.counts(),
+            vec![("normal", 2), ("visual", 0), ("insert", 1), ("command", 0)]
+        );
     }
 
     #[test]

@@ -24,6 +24,7 @@ pub struct HealthSnapshot {
     pub cwd: String,
     pub config_path: String,
     pub config_loaded: bool,
+    pub keymaps: HealthKeymaps,
     pub cpu: Option<f64>,
     pub ram_pct: Option<f64>,
     pub ram_mb: Option<f64>,
@@ -44,6 +45,15 @@ pub struct HealthSnapshot {
     pub session: HealthSession,
     /// Terminal capability bits, sampled from env at render time.
     pub terminal: HealthTerminal,
+}
+
+/// `[keymaps]` at a glance. The skipped entries are the same lines the
+/// startup notice names — only the first of them fits there, and the
+/// notice times out.
+pub struct HealthKeymaps {
+    /// `(mode, mappings)` for every mode, in table order.
+    pub counts: Vec<(&'static str, usize)>,
+    pub skipped: Vec<String>,
 }
 
 pub struct HealthEditorConfig {
@@ -336,6 +346,11 @@ impl super::App {
             program: std::env::var("TERM_PROGRAM").ok(),
         };
 
+        let keymaps = HealthKeymaps {
+            counts: self.config.keymaps.counts(),
+            skipped: self.config.keymaps.errors.clone(),
+        };
+
         HealthSnapshot {
             version: env!("CARGO_PKG_VERSION"),
             update_available: self.update.available.clone(),
@@ -343,6 +358,7 @@ impl super::App {
             cwd,
             config_path,
             config_loaded,
+            keymaps,
             cpu,
             ram_pct,
             ram_mb,

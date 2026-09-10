@@ -22,8 +22,9 @@ follows [Semantic Versioning](https://semver.org/).
   while `fH` still finds a literal `H`. Expansions are never remapped, a typed
   count multiplies the mapping's own (`3J` with `J = "10j"` moves 30 lines),
   and an entry that doesn't parse — or an unknown table such as
-  `[keymaps.operator]` — is skipped and named at startup instead of
-  discarding the whole config. `[keymaps.insert]` covers Insert mode —
+  `[keymaps.operator]` — is skipped, named at startup and listed in
+  `:health` beside each mode's mapping count, instead of discarding the whole
+  config. `[keymaps.insert]` covers Insert mode —
   `jk = "<Esc>"` works, and a lone `j` is still typed once the wait runs out.
   `[keymaps.command]` does the same for the `:` and `/` prompts. Thanks to
   [@happyTonakai](https://github.com/happyTonakai) for the proposal (#8).
