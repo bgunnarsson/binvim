@@ -108,7 +108,7 @@ Before opening a PR:
 - One logical change per PR. If you're tempted to write "and also fixed X" in the description, X is a separate PR.
 - Branch from `main`. Rebase on top of `main` before opening; no merge commits.
 - PR description should explain the *why* — what the user-visible behaviour was before, what it is after, and what motivated the change. The maintainer can read the diff for the *what*.
-- No Claude / AI / "Co-Authored-By" attribution in commit messages, branch names, or PR descriptions. The `attribution` CI check enforces this over every commit, the PR title and description, the branch name and the tracked files — run `scripts/check-ai-attribution.sh` before pushing to catch it first.
+- No Claude / AI / "Co-Authored-By" attribution in commit messages, branch names, or PR descriptions. The `attribution` CI check enforces this over every commit, the PR title and description, the branch name and the tracked files. Run `git config core.hooksPath .githooks` once per clone and a commit-msg hook refuses the commit instead, before it can reach a push.
 - Reference the issue number if you opened one.
 
 ## Reporting bugs

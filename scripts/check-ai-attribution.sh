@@ -6,6 +6,11 @@ set -euo pipefail
 # tracked file, or — when the workflow sets them — the PR title, PR body
 # and branch name (PR_TITLE / PR_BODY / BRANCH).
 #
+# `--message <file>` is the commit-msg hook's mode (.githooks/commit-msg):
+# only the message being written, the identity writing it and the current
+# branch. The rest of the repo is CI's job, and rescanning the whole
+# history on every commit would make the hook slow enough to get skipped.
+#
 # binvim itself integrates AI tools (the :claude / :codex / :opencode
 # panes, Copilot ghost text), so naming one is not an offence. The rules
 # only fire on the shapes attribution takes: `*-by:` trailers, bot and
@@ -25,6 +30,7 @@ tools='claude|anthropic|chatgpt|gpt(-?[0-9o][a-z0-9.-]*)?|openai|codex|copilot|g
 words='Cursor|Amp|Goose|Crush|Droid|Sweep|Continue|Bolt|Kiro|Cody|Kimi|Grok|Devin|Jules|Junie|Augment|Lovable'
 generic='ai|a\.i\.|llm|large language model|language model|artificial intelligence|chatbot|ai (assistant|agent)|coding (assistant|agent)'
 domains='anthropic\.com|openai\.com|cursor\.(com|sh)|aider\.chat|opencode\.ai|ampcode\.com|charm\.land|codeium\.com|windsurf\.com|tabnine\.com|sourcegraph\.com|cognition\.ai|devin\.ai|factory\.ai|x\.ai|mistral\.ai|deepseek\.com'
+identity="\b($tools)\b|@([a-z0-9-]+\.)*($domains)\b"
 
 lead='(generated|written|authored|co-?authored|created|produced|drafted|coded|made|built|assisted|powered|developed|implemented|refactored|reviewed)[[:space:]]+(with|by|using|via|through|alongside)|(thanks|thank you|credit|kudos|courtesy)[[:space:]]+(to|of|goes to)|with[[:space:]]+(the[[:space:]]+)?(help|assistance|support)[[:space:]]+(of|from)|help[[:space:]]+from'
 object='[[:space:]]+(the[[:space:]]+|an?[[:space:]]+)?\[?'
@@ -63,21 +69,37 @@ report() {
     failed=1
 }
 
-report 'Commit messages:' "$(
-    git log --format='%x01%h%n%B' HEAD |
-        awk '/^\001/ { sha = substr($0, 2); next } { print sha ": " $0 }' |
-        matches
-)"
+if [[ ${1:-} == --message ]]; then
+    # git hands the hook the raw editor file, so the comment lines and a
+    # `commit -v` diff below the scissors line are still in it — and that
+    # diff is the change, not the message.
+    report 'Commit message:' "$(
+        sed '/^. -\{24\} >8 -\{24\}$/,$d' "$2" | git stripspace --strip-comments | matches
+    )"
 
-report 'Commit authors / committers:' "$(
-    git log --format='%h: %an <%ae>%n%h: %cn <%ce>' HEAD |
-        grep -iE -e "\b($tools)\b|@([a-z0-9-]+\.)*($domains)\b" || true
-)"
+    report 'Commit author / committer:' "$(
+        { git var GIT_AUTHOR_IDENT; git var GIT_COMMITTER_IDENT; } |
+            grep -iE -e "$identity" || true
+    )"
 
-report 'Tracked files:' "$(git grep -I -n -e '' -- . ":(exclude)$self" | matches)"
+    BRANCH=$(git symbolic-ref -q --short HEAD || true)
+else
+    report 'Commit messages:' "$(
+        git log --format='%x01%h%n%B' HEAD |
+            awk '/^\001/ { sha = substr($0, 2); next } { print sha ": " $0 }' |
+            matches
+    )"
 
-report 'PR title:' "$(printf '%s\n' "${PR_TITLE:-}" | matches)"
-report 'PR description:' "$(printf '%s\n' "${PR_BODY:-}" | matches)"
+    report 'Commit authors / committers:' "$(
+        git log --format='%h: %an <%ae>%n%h: %cn <%ce>' HEAD |
+            grep -iE -e "$identity" || true
+    )"
+
+    report 'Tracked files:' "$(git grep -I -n -e '' -- . ":(exclude)$self" | matches)"
+
+    report 'PR title:' "$(printf '%s\n' "${PR_TITLE:-}" | matches)"
+    report 'PR description:' "$(printf '%s\n' "${PR_BODY:-}" | matches)"
+fi
 
 # Agents push to a branch namespaced by the tool — claude/…, codex/…,
 # cursor/… — so a tool name as the leading segment is attribution even
@@ -88,7 +110,7 @@ report 'Branch name:' "$(
 )"
 
 if ((failed)); then
-    echo 'AI attribution found. Reword the commits / PR text above and drop the trailers.' >&2
+    echo 'AI attribution found. Reword what is listed above and drop the trailers.' >&2
     exit 1
 fi
 echo 'No AI attribution found.'
