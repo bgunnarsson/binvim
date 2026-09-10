@@ -14,7 +14,7 @@ cargo run -- path/to/file      # debug-build run; `binvim [path]` once installed
 
 The user's `binvim` shell alias points at `target/release/binvim`, so any change you want them to exercise interactively needs a fresh `cargo build --release` — debug-build behaviour will not be picked up by their alias. Mention this in the hand-off if you've only built debug.
 
-CI runs `cargo test`, `cargo clippy` (warnings allowed for now), and `cargo fmt --check`. The fmt gate is configured by `rustfmt.toml` at the repo root: `max_width = 100` + `single_line_let_else_max_width = 100` to preserve compact `let Some(x) = … else { return; };` and single-line method chains. Run `cargo fmt` before pushing — anything that doesn't fit the config will fail CI.
+CI runs `cargo test`, `cargo clippy` (warnings allowed for now), `cargo fmt --check`, and `scripts/check-ai-attribution.sh` (`attribution.yml`), which fails on any AI attribution — trailers, bot identities, "generated with …" lines — in any commit in history, the PR title/body, the branch name, or a tracked file. The fmt gate is configured by `rustfmt.toml` at the repo root: `max_width = 100` + `single_line_let_else_max_width = 100` to preserve compact `let Some(x) = … else { return; };` and single-line method chains. Run `cargo fmt` before pushing — anything that doesn't fit the config will fail CI.
 
 ## Architecture
 

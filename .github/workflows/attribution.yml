@@ -1,0 +1,33 @@
+name: attribution
+
+# Separate from ci.yml because it has to rerun when a PR's title or
+# description is edited, and `edited` there would restart the whole
+# test matrix for a text change.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+
+concurrency:
+  group: attribution-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  attribution:
+    name: no AI attribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The scan covers every commit reachable from HEAD, not just the tip.
+          fetch-depth: 0
+
+      # PR text reaches the script through env rather than being
+      # interpolated into the command, so a title can't inject shell.
+      - name: scan commits, PR text, branch and tracked files
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: scripts/check-ai-attribution.sh
