@@ -31,7 +31,32 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 type KeyId = (KeyCode, KeyModifiers);
-type Table = HashMap<Vec<KeyId>, Vec<KeyEvent>>;
+type Table = HashMap<Vec<KeyId>, Mapping>;
+
+#[derive(Debug)]
+struct Mapping {
+    keys: Vec<KeyEvent>,
+    /// Shown in the which-key popup in place of the keys.
+    desc: Option<String>,
+}
+
+impl Mapping {
+    fn label(&self) -> String {
+        match &self.desc {
+            Some(desc) => desc.clone(),
+            None if self.keys.is_empty() => "<Nop>".into(),
+            None => self.keys.iter().map(|k| key_label(&key_id(k))).collect(),
+        }
+    }
+}
+
+/// A `[keymaps]` value: the keys alone, or `{ keys = "…", desc = "…" }`.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RawMapping {
+    Keys(String),
+    Described { keys: String, desc: Option<String> },
+}
 
 /// Vim's `timeoutlen` default.
 const DEFAULT_TIMEOUT_MS: u64 = 1000;
@@ -84,7 +109,7 @@ impl Keymaps {
             return KeymapMatch::Pending;
         }
         match table.get(&ids) {
-            Some(rhs) => KeymapMatch::Full(rhs),
+            Some(mapping) => KeymapMatch::Full(&mapping.keys),
             None => KeymapMatch::None,
         }
     }
@@ -93,7 +118,34 @@ impl Keymaps {
     /// slice is a `<Nop>` mapping — the keys are switched off.
     pub fn exact(&self, ctx: ParseCtx, keys: &[KeyEvent]) -> Option<&[KeyEvent]> {
         let ids: Vec<KeyId> = keys.iter().map(key_id).collect();
-        self.table(ctx).get(&ids).map(Vec::as_slice)
+        self.table(ctx).get(&ids).map(|m| m.keys.as_slice())
+    }
+
+    /// Layers the mappings one key past `chord` over the which-key rows for
+    /// it: a mapping on a key the popup already lists replaces that row, the
+    /// rest are added. Each shows its `desc`, or else the keys it types.
+    pub fn merge_whichkey(
+        &self,
+        ctx: ParseCtx,
+        chord: &[KeyEvent],
+        entries: &mut Vec<(String, String)>,
+    ) {
+        let chord: Vec<KeyId> = chord.iter().map(key_id).collect();
+        let mut rows: Vec<(String, String)> = self
+            .table(ctx)
+            .iter()
+            .filter(|(lhs, _)| lhs.len() == chord.len() + 1 && lhs.starts_with(&chord))
+            .map(|(lhs, mapping)| (key_label(&lhs[chord.len()]), mapping.label()))
+            .collect();
+        // The table iterates in HashMap order; sort so the added rows don't
+        // reshuffle from one popup to the next.
+        rows.sort();
+        for (key, desc) in rows {
+            match entries.iter_mut().find(|(k, _)| *k == key) {
+                Some(row) => row.1 = desc,
+                None => entries.push((key, desc)),
+            }
+        }
     }
 
     fn table(&self, ctx: ParseCtx) -> &Table {
@@ -111,9 +163,9 @@ impl<'de> Deserialize<'de> for Keymaps {
             #[serde(default = "default_timeout_ms")]
             timeout: u64,
             #[serde(default)]
-            normal: HashMap<String, String>,
+            normal: HashMap<String, RawMapping>,
             #[serde(default)]
-            visual: HashMap<String, String>,
+            visual: HashMap<String, RawMapping>,
         }
         let raw = Raw::deserialize(d)?;
         let mut errors = Vec::new();
@@ -135,17 +187,65 @@ fn default_timeout_ms() -> u64 {
     DEFAULT_TIMEOUT_MS
 }
 
-fn compile_table(mode: &str, entries: HashMap<String, String>, errors: &mut Vec<String>) -> Table {
+fn compile_table(
+    mode: &str,
+    entries: HashMap<String, RawMapping>,
+    errors: &mut Vec<String>,
+) -> Table {
     let mut table = Table::new();
-    for (lhs, rhs) in entries {
+    for (lhs, raw) in entries {
+        let (rhs, desc) = match raw {
+            RawMapping::Keys(keys) => (keys, None),
+            RawMapping::Described { keys, desc } => (keys, desc),
+        };
         match compile(&lhs, &rhs) {
             Ok((ids, keys)) => {
-                table.insert(ids, keys);
+                table.insert(ids, Mapping { keys, desc });
             }
             Err(e) => errors.push(format!("[keymaps.{mode}] {lhs}: {e}")),
         }
     }
     table
+}
+
+/// How a key reads in the which-key popup: plain characters as themselves
+/// and `<space>` like the built-in rows, Vim notation for everything else.
+fn key_label(&(code, mods): &KeyId) -> String {
+    let name = match code {
+        KeyCode::Char(' ') => "space".to_string(),
+        KeyCode::Char(c) if mods.is_empty() => return c.to_string(),
+        KeyCode::Char(c) => c.to_string(),
+        KeyCode::Enter => "CR".into(),
+        KeyCode::Esc => "Esc".into(),
+        KeyCode::Tab => "Tab".into(),
+        KeyCode::BackTab => "S-Tab".into(),
+        KeyCode::Backspace => "BS".into(),
+        KeyCode::Delete => "Del".into(),
+        KeyCode::Up => "Up".into(),
+        KeyCode::Down => "Down".into(),
+        KeyCode::Left => "Left".into(),
+        KeyCode::Right => "Right".into(),
+        KeyCode::Home => "Home".into(),
+        KeyCode::End => "End".into(),
+        KeyCode::PageUp => "PageUp".into(),
+        KeyCode::PageDown => "PageDown".into(),
+        KeyCode::Insert => "Ins".into(),
+        KeyCode::F(n) => format!("F{n}"),
+        other => format!("{other:?}"),
+    };
+    let mut label = String::from("<");
+    if mods.contains(KeyModifiers::CONTROL) {
+        label.push_str("C-");
+    }
+    if mods.contains(KeyModifiers::ALT) {
+        label.push_str("A-");
+    }
+    if mods.contains(KeyModifiers::SUPER) {
+        label.push_str("D-");
+    }
+    label.push_str(&name);
+    label.push('>');
+    label
 }
 
 fn compile(lhs: &str, rhs: &str) -> Result<(Vec<KeyId>, Vec<KeyEvent>), String> {
@@ -441,5 +541,53 @@ mod tests {
             KeyModifiers::CONTROL | KeyModifiers::SHIFT,
         );
         assert!(keymaps.exact(ParseCtx::Normal, &[ctrl_shift_r]).is_some());
+    }
+
+    #[test]
+    fn a_mapping_can_carry_a_description() {
+        let keymaps: Keymaps = toml::from_str(
+            r#"
+            [normal]
+            "<leader>w" = { keys = ":w<CR>", desc = "Save" }
+            "<leader>q" = { keys = ":q<CR>" }
+            "#,
+        )
+        .unwrap();
+        assert!(keymaps.errors.is_empty(), "{:?}", keymaps.errors);
+        assert_eq!(
+            keymaps.exact(ParseCtx::Normal, &keys(" w")).map(<[_]>::len),
+            Some(3)
+        );
+        let mut rows = vec![("w".to_string(), "Built-in".to_string())];
+        keymaps.merge_whichkey(ParseCtx::Normal, &keys(" "), &mut rows);
+        assert_eq!(
+            rows,
+            vec![
+                ("w".to_string(), "Save".to_string()),
+                ("q".to_string(), ":q<CR>".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn whichkey_rows_only_cover_the_next_key() {
+        let keymaps: Keymaps = toml::from_str(
+            "[normal]\n\"<leader>xy\" = \"gg\"\n\"<leader>z\" = \"<Nop>\"\n\"<C-x>\" = \"u\"",
+        )
+        .unwrap();
+        let mut rows = Vec::new();
+        keymaps.merge_whichkey(ParseCtx::Normal, &keys(" "), &mut rows);
+        assert_eq!(rows, vec![("z".to_string(), "<Nop>".to_string())]);
+    }
+
+    #[test]
+    fn key_labels_match_the_built_in_rows() {
+        assert_eq!(key_label(&key_id(&plain(' '))), "<space>");
+        assert_eq!(key_label(&key_id(&plain('G'))), "G");
+        assert_eq!(
+            key_label(&(KeyCode::Char('x'), KeyModifiers::CONTROL)),
+            "<C-x>"
+        );
+        assert_eq!(key_label(&(KeyCode::Enter, KeyModifiers::NONE)), "<CR>");
     }
 }

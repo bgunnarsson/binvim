@@ -11,16 +11,20 @@ follows [Semantic Versioning](https://semver.org/).
   a sequence of keys, to the keys it should type instead, per mode, the way
   Vim's `nnoremap` / `vnoremap` do — `H = "^"`, `gh = "^"`,
   `"<leader>w" = ":w<CR>"` under `[keymaps.normal]` or `[keymaps.visual]`.
-  Unlisted keys keep their defaults, and `"<Nop>"` switches a key off. A partly
-  typed sequence waits up to `[keymaps] timeout` milliseconds (default 1000)
-  for its next key, then runs as typed. A mapping fires wherever a command or
-  an operator's motion starts, so `3H` and `dH` use it while `fH` still finds a
-  literal `H`. Expansions are never remapped, a typed count multiplies the
-  mapping's own (`3J` with `J = "10j"` moves 30 lines), and an entry that
-  doesn't parse is skipped and named at startup instead of discarding the
-  whole config. Insert-mode mappings and leader overrides are not part of this
-  first pass. Thanks to [@happyTonakai](https://github.com/happyTonakai) for
-  the proposal (#8).
+  Unlisted keys keep their defaults, and `"<Nop>"` switches a key off. Keys
+  that already mean something on their own wait up to `[keymaps] timeout`
+  milliseconds (default 1000) for the rest of a longer mapping; an unfinished
+  prefix such as `<leader>` waits as long as it would unmapped, so pausing on
+  the which-key popup doesn't lose a leader mapping. `<leader>` mappings show
+  in that popup, labelled by an optional `desc`
+  (`"<leader>x" = { keys = ":w<CR>", desc = "Save" }`). A mapping fires
+  wherever a command or an operator's motion starts, so `3H` and `dH` use it
+  while `fH` still finds a literal `H`. Expansions are never remapped, a typed
+  count multiplies the mapping's own (`3J` with `J = "10j"` moves 30 lines),
+  and an entry that doesn't parse is skipped and named at startup instead of
+  discarding the whole config. Insert-mode mappings are not part of this first
+  pass. Thanks to [@happyTonakai](https://github.com/happyTonakai) for the
+  proposal (#8).
 
 ## [0.5.20] - 2026-09-10
 

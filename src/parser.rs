@@ -575,6 +575,28 @@ impl PendingCmd {
             || self.awaiting_android_leader
     }
 
+    /// The keys of the leader chord in flight — `" "` after `<space>`,
+    /// `" b"` after `<space>b`, and so on — so the which-key popup can list
+    /// the `[keymaps]` entries that continue it. Mirrors the sub-leader keys
+    /// `parse` sets these flags on.
+    pub fn leader_chord(&self) -> Option<&'static str> {
+        [
+            (self.awaiting_leader, " "),
+            (self.awaiting_buffer_leader, " b"),
+            (self.awaiting_debug_leader, " d"),
+            (self.awaiting_hunk_leader, " h"),
+            (self.awaiting_git_leader, " g"),
+            (self.awaiting_task_leader, " m"),
+            (self.awaiting_terminal_leader, " t"),
+            (self.awaiting_test_leader, " s"),
+            (self.awaiting_ai_leader, " j"),
+            (self.awaiting_package_leader, " p"),
+            (self.awaiting_android_leader, " A"),
+        ]
+        .into_iter()
+        .find_map(|(on, chord)| on.then_some(chord))
+    }
+
     /// True when no operator / count / leader prefix is in flight. Used
     /// by `handle_keyboard` to decide whether bare `<CR>` can shortcut
     /// straight to a code-lens invocation (only safe when the parser
@@ -2289,6 +2311,20 @@ mod tests {
                 ..
             }) => {}
             _ => panic!("the mapped 0 was read as a count digit"),
+        }
+    }
+
+    #[test]
+    fn leader_chord_names_the_keys_typed() {
+        assert_eq!(PendingCmd::default().leader_chord(), None);
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys(" "));
+        assert_eq!(state.leader_chord(), Some(" "));
+        for sub in "bdhgmtsjpA".chars() {
+            let chord = format!(" {sub}");
+            let mut state = PendingCmd::default();
+            drive(&mut state, &keys(&chord));
+            assert_eq!(state.leader_chord(), Some(chord.as_str()), "<space>{sub}");
         }
     }
 }

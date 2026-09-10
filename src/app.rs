@@ -1310,64 +1310,7 @@ impl App {
             // Prefix timeout fired? Open the matching which-key popup.
             if let Some(t) = self.leader_pressed_at {
                 if Instant::now() >= t + WHICHKEY_DELAY {
-                    let popup = if self.pending.awaiting_leader {
-                        Some(WhichKeyState {
-                            title: "Leader".into(),
-                            entries: state::leader_entries(),
-                        })
-                    } else if self.pending.awaiting_buffer_leader {
-                        Some(WhichKeyState {
-                            title: "Buffer".into(),
-                            entries: state::buffer_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_debug_leader {
-                        Some(WhichKeyState {
-                            title: "Debug".into(),
-                            entries: state::debug_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_hunk_leader {
-                        Some(WhichKeyState {
-                            title: "Hunk".into(),
-                            entries: state::hunk_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_git_leader {
-                        Some(WhichKeyState {
-                            title: "Git".into(),
-                            entries: state::git_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_task_leader {
-                        Some(WhichKeyState {
-                            title: "Task".into(),
-                            entries: state::task_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_terminal_leader {
-                        Some(WhichKeyState {
-                            title: "Terminal".into(),
-                            entries: state::terminal_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_test_leader {
-                        Some(WhichKeyState {
-                            title: "Test".into(),
-                            entries: state::test_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_ai_leader {
-                        Some(WhichKeyState {
-                            title: "AI".into(),
-                            entries: state::ai_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_package_leader {
-                        Some(WhichKeyState {
-                            title: "Package".into(),
-                            entries: state::package_prefix_entries(),
-                        })
-                    } else if self.pending.awaiting_android_leader {
-                        Some(WhichKeyState {
-                            title: "Android".into(),
-                            entries: state::android_prefix_entries(),
-                        })
-                    } else {
-                        None
-                    };
+                    let popup = self.whichkey_popup();
                     if let Some(p) = popup {
                         self.whichkey = Some(p);
                         needs_render = true;

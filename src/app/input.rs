@@ -17,7 +17,7 @@ use crate::parser::{self, ParseCtx, ParseResult};
 use super::pair::{
     detect_open_tag_to_close, is_close_char, is_html_like_buffer, open_pair_for, should_auto_pair,
 };
-use super::state::LastEdit;
+use super::state::{self, LastEdit, WhichKeyState};
 
 /// Characters that should re-fire `textDocument/completion` after being inserted.
 /// Identifier chars catch the typing-a-name case; the symbol set covers the
@@ -1323,12 +1323,30 @@ impl super::App {
         self.keymap_held.push(key);
         match self.config.keymaps.lookup(ctx, &self.keymap_held) {
             KeymapMatch::Pending => {
-                self.keymap_held_at = Some(std::time::Instant::now());
+                let probe = self.held_as_pending(ctx);
+                // Only keys that already mean something alone need the
+                // clock — a mapping of their own, or a finished command. An
+                // unfinished prefix (`g`, `<leader>`) waits like it would
+                // unmapped, so a pause to read the which-key popup doesn't
+                // lose the mapping.
+                let times_out = probe.is_none()
+                    || (1..=self.keymap_held.len()).any(|n| {
+                        self.config
+                            .keymaps
+                            .exact(ctx, &self.keymap_held[..n])
+                            .is_some()
+                    });
+                self.keymap_held_at = times_out.then(std::time::Instant::now);
+                if probe.is_some_and(|p| p.any_leader_pending()) {
+                    self.leader_pressed_at
+                        .get_or_insert_with(std::time::Instant::now);
+                }
             }
             KeymapMatch::Full(rhs) => {
                 let rhs = rhs.to_vec();
                 self.keymap_held.clear();
                 self.keymap_held_at = None;
+                self.leader_pressed_at = None;
                 self.expand_keymap(&rhs);
             }
             // The common case: an unmapped key with nothing held.
@@ -1388,6 +1406,71 @@ impl super::App {
         };
         self.keymap_flush(ctx);
         true
+    }
+
+    /// The parser state the held keys would leave if they went through
+    /// unmapped — `None` when one of them would finish or cancel a command.
+    /// It works on a copy, so nothing is dispatched: the timeout rule and
+    /// the which-key popup judge held keys by it without committing to them.
+    fn held_as_pending(&self, ctx: ParseCtx) -> Option<parser::PendingCmd> {
+        let mut probe = self.pending.clone();
+        self.keymap_held
+            .iter()
+            .all(|&k| matches!(parser::parse(&mut probe, k, ctx), ParseResult::Pending))
+            .then_some(probe)
+    }
+
+    /// The which-key popup for the leader chord in flight, with the user's
+    /// `[keymaps]` entries under it layered over the built-in rows. Keys a
+    /// multi-key mapping is holding count as typed, so `<space>` held for
+    /// `<leader>x` still opens the Leader popup.
+    pub(super) fn whichkey_popup(&self) -> Option<WhichKeyState> {
+        let ctx = if matches!(self.mode, Mode::Visual(_)) {
+            ParseCtx::Visual
+        } else {
+            ParseCtx::Normal
+        };
+        let pending = self
+            .held_as_pending(ctx)
+            .unwrap_or_else(|| self.pending.clone());
+        let (title, mut entries) = if pending.awaiting_leader {
+            ("Leader", state::leader_entries())
+        } else if pending.awaiting_buffer_leader {
+            ("Buffer", state::buffer_prefix_entries())
+        } else if pending.awaiting_debug_leader {
+            ("Debug", state::debug_prefix_entries())
+        } else if pending.awaiting_hunk_leader {
+            ("Hunk", state::hunk_prefix_entries())
+        } else if pending.awaiting_git_leader {
+            ("Git", state::git_prefix_entries())
+        } else if pending.awaiting_task_leader {
+            ("Task", state::task_prefix_entries())
+        } else if pending.awaiting_terminal_leader {
+            ("Terminal", state::terminal_prefix_entries())
+        } else if pending.awaiting_test_leader {
+            ("Test", state::test_prefix_entries())
+        } else if pending.awaiting_ai_leader {
+            ("AI", state::ai_prefix_entries())
+        } else if pending.awaiting_package_leader {
+            ("Package", state::package_prefix_entries())
+        } else if pending.awaiting_android_leader {
+            ("Android", state::android_prefix_entries())
+        } else {
+            return None;
+        };
+        if let Some(chord) = pending.leader_chord() {
+            let chord: Vec<KeyEvent> = chord
+                .chars()
+                .map(|c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE))
+                .collect();
+            self.config
+                .keymaps
+                .merge_whichkey(ctx, &chord, &mut entries);
+        }
+        Some(WhichKeyState {
+            title: title.into(),
+            entries,
+        })
     }
 
     fn expand_keymap(&mut self, rhs: &[KeyEvent]) {
@@ -2635,14 +2718,71 @@ mod tests {
     }
 
     #[test]
-    fn held_prefix_runs_as_typed_on_timeout() {
+    fn unfinished_prefix_waits_without_a_timeout() {
         let mut app = app_with_keymaps("a\nb\nc\n", "[normal]\ngh = \"^\"");
         app.window.cursor.line = 2;
         press(&mut app, "g");
         assert_eq!(app.window.cursor.line, 2, "g must wait for its next key");
-        time_out(&mut app);
+        let later = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        assert!(
+            !app.keymap_flush_if_due(later),
+            "g waits for its next key, as it does unmapped"
+        );
         press(&mut app, "g");
         assert_eq!(app.window.cursor.line, 0, "the held g should start gg");
+    }
+
+    #[test]
+    fn held_complete_command_runs_on_timeout() {
+        let mut app = app_with_keymaps("abc\n", "[normal]\nxx = \"dd\"");
+        // Black-hole register, for the same clipboard reason as `"_dH`.
+        press(&mut app, "\"_x");
+        assert_eq!(app.buffer.rope.to_string(), "abc\n", "xx might follow");
+        time_out(&mut app);
+        assert_eq!(app.buffer.rope.to_string(), "bc\n");
+    }
+
+    #[test]
+    fn leader_mapping_survives_a_pause_on_the_popup() {
+        let mut app = app_with_keymaps("    foo\n", "[normal]\n\"<leader>x\" = \"$\"");
+        press(&mut app, " ");
+        let later = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        assert!(!app.keymap_flush_if_due(later));
+        press(&mut app, "x");
+        assert_eq!(app.window.cursor.col, 6);
+    }
+
+    #[test]
+    fn whichkey_lists_leader_mappings_over_the_built_in_rows() {
+        let keymaps = r#"
+            [normal]
+            "<leader>x" = { keys = "$", desc = "End of line" }
+            "<leader>e" = "^"
+            "<leader>bz" = "gg"
+        "#;
+        let mut app = app_with_keymaps("foo\n", keymaps);
+        press(&mut app, " ");
+        assert!(
+            app.leader_pressed_at.is_some(),
+            "a held leader must start the which-key timer"
+        );
+        let popup = app.whichkey_popup().expect("Leader popup");
+        assert_eq!(popup.title, "Leader");
+        let row = |k: &str| {
+            popup
+                .entries
+                .iter()
+                .find(|(key, _)| key == k)
+                .map(|(_, d)| d.clone())
+        };
+        assert_eq!(row("x").as_deref(), Some("End of line"));
+        assert_eq!(row("e").as_deref(), Some("^"), "replaces File explorer");
+        assert_eq!(row("b").as_deref(), Some("+Buffer"));
+
+        press(&mut app, "b");
+        let popup = app.whichkey_popup().expect("Buffer popup");
+        assert_eq!(popup.title, "Buffer");
+        assert!(popup.entries.iter().any(|(k, d)| k == "z" && d == "gg"));
     }
 
     #[test]
