@@ -17,7 +17,7 @@
       # specifics; declaring it inline keeps the actual terms visible to
       # `nix-env -qa --json` consumers.
       binvimLicense = {
-        fullName = "binvim Source-Available License (BSAL) v1.0";
+        fullName = "binvim Source-Available License (BSAL) v1.1";
         url = "https://github.com/bgunnarsson/binvim/blob/main/LICENSE";
         free = false;
         redistributable = false;

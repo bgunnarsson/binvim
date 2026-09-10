@@ -7,7 +7,8 @@ Thanks for considering a contribution. binvim is a small project with a small su
 binvim is **source-available, not open source** — see [LICENSE](LICENSE) for the full text. The short version that matters for contributors:
 
 - You may clone, build, and modify binvim for your own use on hardware you control.
-- You may **not** publish a public fork. A private fork on a code-hosting platform that exists solely to prepare a PR is fine, but it has to be deleted or kept private once the PR is merged or abandoned.
+- **Fork away to open a PR** — publicly is fine, and on GitHub it's the only option, since a PR can't be opened from a private fork. What you can't do is keep it running as a project of its own: leave the fork relationship intact, don't publish releases or registry entries from it, and delete it (or flip it private) once your PR is merged or closed. LICENSE §3 spells this out as a "Contribution Fork".
+- You may **not** redistribute binvim, publish binaries, or stand up a copy of the repo as its own project.
 - By submitting a PR you grant the maintainer a perpetual, irrevocable, sublicensable licence to use your contribution as part of binvim, including under different licence terms in the future (LICENSE §4). You also represent that the work is yours to grant.
 
 If you can't agree to that, please don't open a PR.
@@ -29,13 +30,15 @@ Bug fixes, missing-LSP arms, and tree-sitter additions don't need a pre-discussi
 ```sh
 cargo build                                  # debug build
 cargo build --release                        # release build (target/release/binvim)
-cargo test                                   # full suite, ~207 unit tests
+cargo test                                   # full suite, ~640 unit tests
 cargo test motion::tests                     # one module
 cargo test motion::tests::word_forward_basic # one test
 cargo run -- path/to/file                    # debug-build run
 ```
 
-There is no CI. There is no enforced `cargo fmt` or `clippy` config. Run them locally if you like; they are not gating.
+CI runs `cargo test`, `cargo clippy` and `cargo fmt --check` on every PR. **`cargo fmt --check` is gating** — run `cargo fmt` before you push or the build goes red. Clippy warnings are reported but don't fail the build yet. The formatting config is `rustfmt.toml` at the repo root; `max_width = 100` plus `single_line_let_else_max_width = 100` keeps compact `let … else` and single-line method chains intact.
+
+If this is your first PR to the repo, GitHub holds the workflow run until the maintainer approves it — a PR sitting with no checks reported is waiting on that, not broken.
 
 If you're testing changes by running `binvim` interactively, remember that **the install/alias path is `target/release/binvim`** — a debug build will not be picked up. Run `cargo build --release` after the change you want to exercise.
 

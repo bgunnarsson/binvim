@@ -1,11 +1,13 @@
-binvim Source-Available License (BSAL) v1.0
+binvim Source-Available License (BSAL) v1.1
 
 Copyright (c) 2026 B. Gunnarsson. All rights reserved.
 
 This software is source-available, not open source as defined by the Open
 Source Initiative. The source is published so that you may read it, run it
 locally, and contribute improvements back to the canonical project. It is
-not licensed for redistribution, forking, or any form of public republication.
+not licensed for redistribution or for republication as a project of its
+own. Forking to prepare a contribution is permitted, including publicly —
+see Section 3.
 
 ================================================================================
 1. Definitions
@@ -22,6 +24,10 @@ by the Licensor (currently at github.com/bgunnarsson/binvim).
 "Contribution" means any modification, addition, bug fix, or other change to
 the Software that you submit to the Canonical Project — for example via a
 pull request, patch, or issue attachment.
+
+"Contribution Fork" means a copy of the Canonical Project's repository on a
+code-hosting platform that exists solely to prepare and submit Contributions,
+and that meets the conditions in Section 3.
 
 "You" means the individual or legal entity exercising rights under this
 License.
@@ -54,9 +60,10 @@ You may NOT, without the Licensor's prior written permission:
       part, to any third party;
 
   (b) publish, host, mirror, or otherwise make the Software (modified or
-      unmodified) publicly available, including by creating a public fork
-      on a code-hosting platform, publishing a binary release, or making
-      it available through a package registry;
+      unmodified) publicly available — including by standing up a copy of
+      the repository as a project of its own, publishing a binary release,
+      or making it available through a package registry — except as a
+      Contribution Fork under the terms below;
 
   (c) sublicense, sell, lease, rent, or commercially distribute the
       Software or any work derived from it;
@@ -70,10 +77,32 @@ You may NOT, without the Licensor's prior written permission:
   (f) use the names "binvim" or "B. Gunnarsson" to endorse or promote
       products derived from the Software without prior written permission.
 
-For clarity: a private fork on a code-hosting platform that exists solely to
-prepare a Contribution is permitted, provided it is deleted or kept private
-once the Contribution has been merged or abandoned. A public fork is not
-permitted under any circumstances.
+Contribution Forks
+------------------
+
+A Contribution Fork is permitted, and it may be public. On most code-hosting
+platforms — GitHub included — a pull request cannot be opened from a private
+fork to a public repository, so a public fork is the only workable route for
+the contribution path this License invites.
+
+A Contribution Fork must:
+
+  (a) exist to prepare Contributions to the Canonical Project, and not be
+      presented, promoted, or maintained as an independent project, an
+      alternative distribution, or a continuation of the Software;
+
+  (b) keep the platform's fork relationship to the Canonical Project intact,
+      and carry this License unmodified;
+
+  (c) not be used to publish binary releases, package-registry entries, or
+      hosted services; and
+
+  (d) be deleted or made private once its Contributions have been merged or
+      abandoned, and in any case within 90 days of the last of them being
+      closed.
+
+A fork that stops meeting these conditions is not a Contribution Fork, and
+Section 3(b) applies to it in full.
 
 ================================================================================
 4. Contributions
