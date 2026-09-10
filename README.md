@@ -506,7 +506,7 @@ prompt_on_open = true      # Hint (once/language/session) when a file's LSP or f
 check = true               # Ask crates.io once a day whether a newer binvim is out.
 
 [clipboard]
-osc52 = true               # Also emit OSC 52 so a remote (SSH) yank reaches the local clipboard.
+osc52 = "auto"             # Emit OSC 52 over SSH so a remote yank reaches your local clipboard.
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. The section drives both **chrome** and **syntax** colouring.
@@ -536,7 +536,11 @@ osc52 = true               # Also emit OSC 52 so a remote (SSH) yank reaches the
 
 **`[line_numbers]`** — `relative = true` (the default) renders the gutter Vim-style: the cursor's row shows its absolute (1-indexed) line in a brighter Subtext1 tone, every other row shows the count of lines away from the cursor. Pairs naturally with count-prefixed motions like `5j` / `12k` / `3dd`. Set `relative = false` to fall back to plain 1-indexed numbering on every row.
 
-**`[clipboard]`** — `osc52 = true` (the default) additionally emits the terminal OSC 52 sequence whenever binvim writes to the system clipboard, alongside the usual `arboard` call. arboard reaches only the machine binvim runs on; the OSC 52 sequence lets the *terminal* write to the **local** clipboard, so a `yy` inside a binvim running over SSH lands in your own desktop's clipboard. Running locally it's harmless — the terminal either sets the clipboard to the same text or ignores the sequence. Set `osc52 = false` to disable the sequence (some very minimal terminals may echo it).
+**`[clipboard]`** — `osc52` controls the terminal OSC 52 escape that binvim can emit alongside its usual `arboard` clipboard write. arboard only ever reaches the machine binvim runs on; OSC 52 asks the *terminal* to write the **local** clipboard, so a `yy` inside a binvim running over SSH lands on your own desktop.
+
+The default is `"auto"` — emit it over SSH, skip it locally. Locally arboard has already done the job, and the sequence isn't free: it puts every yank, base64'd, into the terminal's output stream, which is where `script`, asciinema and tmux logging will keep it. Force it with `osc52 = true` (always) or `osc52 = false` (never).
+
+**Inside tmux or screen it needs one line of their config.** Both swallow an application's OSC 52 by default. binvim sends the sequence raw *and* wrapped in the multiplexer's DCS passthrough, so enabling either route is enough — for tmux, `set -g set-clipboard on` **or** `set -g allow-passthrough on` in `~/.tmux.conf`. Your terminal emulator also has to support OSC 52 (most do; Terminal.app does not).
 
 **`[lsp]`** — both toggles default `true`. `semantic_tokens = false` gates the `textDocument/semanticTokens/full` request and the highlight-cache overlay off entirely (no wire traffic, no render delta). `document_highlight = false` gates `textDocument/documentHighlight` similarly. Useful if your LSP's semantic-token output collides badly with the tree-sitter pass, or if the on-every-cursor-settle highlight echo is more distracting than useful for your workflow.
 

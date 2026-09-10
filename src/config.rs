@@ -249,27 +249,56 @@ pub struct FileExplorerConfig {
 /// `osc52` additionally emits the terminal OSC 52 sequence so a *remote*
 /// binvim over SSH can push a yank into the **local** terminal's clipboard.
 ///
-/// Running locally it's harmless — the terminal either sets the clipboard to
-/// the same text or ignores the sequence. On by default; turn off the
-/// sequence with `osc52 = false`:
+/// The default is `"auto"` — emit the sequence only over SSH, which is the
+/// only place it buys anything. Force it either way with `true` / `false`:
 ///
 /// ```toml
 /// [clipboard]
 /// osc52 = false
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub struct ClipboardConfig {
-    #[serde(default = "default_clipboard_osc52")]
-    pub osc52: bool,
+    #[serde(default)]
+    pub osc52: Osc52Mode,
 }
 
-fn default_clipboard_osc52() -> bool {
-    true
+/// When to emit the OSC 52 escape alongside the `arboard` clipboard write.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum Osc52Mode {
+    /// Over SSH only. Locally `arboard` has already put the text on the
+    /// clipboard, so the sequence buys nothing there and costs something:
+    /// every yank ends up base64'd in the terminal's output stream, which is
+    /// exactly where `script`, asciinema and tmux logging keep it. A password
+    /// yanked out of a `.env` should not outlive the session in a transcript.
+    #[default]
+    Auto,
+    Always,
+    Never,
 }
 
-impl Default for ClipboardConfig {
-    fn default() -> Self {
-        Self { osc52: true }
+impl<'de> Deserialize<'de> for Osc52Mode {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        // The key reads naturally as both a switch and a mode, so accept
+        // either spelling rather than making the user remember which one it
+        // wants — `osc52 = true` and `osc52 = "always"` mean the same thing.
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Bool(bool),
+            Name(String),
+        }
+        match Raw::deserialize(d)? {
+            Raw::Bool(true) => Ok(Self::Always),
+            Raw::Bool(false) => Ok(Self::Never),
+            Raw::Name(s) => match s.to_ascii_lowercase().as_str() {
+                "auto" => Ok(Self::Auto),
+                "always" | "on" | "true" => Ok(Self::Always),
+                "never" | "off" | "false" => Ok(Self::Never),
+                other => Err(serde::de::Error::custom(format!(
+                    r#"unknown osc52 mode {other:?} — expected "auto", true, or false"#
+                ))),
+            },
+        }
     }
 }
 
@@ -1097,6 +1126,38 @@ fn default_capture_color(head: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `osc52` reads naturally as both a switch and a mode, so it takes a
+    /// bool or a name. Defaulting to `Auto` is what keeps the escape off a
+    /// local session, where `arboard` has already set the clipboard.
+    #[test]
+    fn osc52_accepts_a_bool_or_a_mode_name() {
+        let parse = |src: &str| toml::from_str::<Config>(src).map(|c| c.clipboard.osc52);
+
+        assert_eq!(parse("").unwrap(), Osc52Mode::Auto, "absent section");
+        assert_eq!(parse("[clipboard]").unwrap(), Osc52Mode::Auto, "absent key");
+        assert_eq!(
+            parse("[clipboard]\nosc52 = \"auto\"").unwrap(),
+            Osc52Mode::Auto
+        );
+        assert_eq!(
+            parse("[clipboard]\nosc52 = true").unwrap(),
+            Osc52Mode::Always
+        );
+        assert_eq!(
+            parse("[clipboard]\nosc52 = false").unwrap(),
+            Osc52Mode::Never
+        );
+        assert_eq!(
+            parse("[clipboard]\nosc52 = \"Always\"").unwrap(),
+            Osc52Mode::Always,
+            "name match is case-insensitive"
+        );
+        assert!(
+            parse("[clipboard]\nosc52 = \"sometimes\"").is_err(),
+            "an unknown mode must be a config error, not a silent default"
+        );
+    }
 
     /// Regression: tsserver tags nearly every DOM symbol with the
     /// `defaultLibrary` modifier and every `const` with `readonly`. The

@@ -3,6 +3,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::config::Osc52Mode;
 use crate::mode::{Mode, Operator};
 use crate::parser::{Action, ParseCtx};
 
@@ -257,45 +258,128 @@ pub fn mirrors_to_system_clipboard(target: Option<char>) -> bool {
     }
 }
 
-/// OSC 52 payloads above this many bytes are skipped: terminals commonly cap
-/// the sequence length and silently truncate oversized payloads, and a
-/// blocking write of a large base64 blob would stall the single-threaded event
-/// loop over a slow SSH link. `arboard` (local) and the in-memory register are
+/// Cap on the *encoded* OSC 52 payload: terminals commonly cap the sequence
+/// length and silently truncate past it, and a blocking write of a large
+/// base64 blob would stall the single-threaded event loop over a slow SSH
+/// link. The check has to run on the encoded length rather than the source
+/// text — base64 inflates by 4/3, so a 64 KiB yank measured before encoding
+/// would emit ~87 KiB. `arboard` (local) and the in-memory register are
 /// unaffected by the skip.
-const MAX_OSC52_BYTES: usize = 64 * 1024;
+const MAX_OSC52_ENCODED_BYTES: usize = 64 * 1024;
+
+/// GNU screen truncates a DCS string somewhere past 768 bytes, so a long
+/// sequence has to go out as several passthroughs. The outer terminal sees
+/// one continuous byte stream, so splitting mid-sequence is fine.
+const SCREEN_DCS_CHUNK: usize = 400;
 
 /// Best-effort write of `text` to the OS clipboard. `arboard` hits the
-/// local machine's clipboard; when `osc52` is set we *also* emit the OSC 52
-/// terminal sequence so a remote binvim (over SSH) can push the yank into the
-/// local terminal's clipboard. Failures are swallowed — the editor still has
-/// the text in its in-memory unnamed register. Running locally the OSC 52
-/// emission is a harmless no-op: the terminal either sets the clipboard to
-/// the same text or ignores the sequence.
+/// local machine's clipboard; the OSC 52 sequence asks the *terminal* to
+/// write the local one, which is what gets a yank out of a binvim running
+/// over SSH and onto the user's own desktop. Failures are swallowed — the
+/// editor still has the text in its in-memory unnamed register.
 ///
-/// The sequence is emitted only when the payload is non-empty, under
-/// `MAX_OSC52_BYTES`, and stdout is actually a terminal — a bare `ESC]52;c;`
-/// (empty payload) has terminal-dependent side effects (some treat it as a
-/// clipboard *read* request), and control characters don't belong on a
-/// redirected stream.
-pub fn set_system_clipboard(text: &str, osc52: bool) {
+/// The sequence is emitted only when `mode` calls for it (see [`Osc52Mode`]),
+/// the payload is non-empty and under [`MAX_OSC52_ENCODED_BYTES`], and stdout
+/// is actually a terminal — a bare `ESC]52;c;` (empty payload) has
+/// terminal-dependent side effects (some treat it as a clipboard *read*
+/// request), and control characters don't belong on a redirected stream.
+pub fn set_system_clipboard(text: &str, mode: Osc52Mode) {
     use std::io::IsTerminal;
     if let Ok(mut cb) = arboard::Clipboard::new() {
         let _ = cb.set_text(text.to_string());
     }
-    if osc52 && osc52_payload_accepted(text) && std::io::stdout().is_terminal() {
-        use std::io::Write;
-        let mut out = std::io::stdout();
-        let _ = out.write_all(osc52_sequence(text).as_bytes());
-        let _ = out.flush();
+    if !osc52_enabled(mode, is_ssh_session())
+        || !osc52_payload_accepted(text)
+        || !std::io::stdout().is_terminal()
+    {
+        return;
     }
+    use std::io::Write;
+    let wire = osc52_wire(&osc52_sequence(text), detect_multiplexer());
+    let mut out = std::io::stdout();
+    let _ = out.write_all(&wire);
+    let _ = out.flush();
+}
+
+/// Whether to emit the sequence at all. `Auto` gates on being the far end of
+/// an SSH connection — see [`Osc52Mode::Auto`] for why local emission is a
+/// cost rather than a no-op.
+fn osc52_enabled(mode: Osc52Mode, is_ssh: bool) -> bool {
+    match mode {
+        Osc52Mode::Never => false,
+        Osc52Mode::Always => true,
+        Osc52Mode::Auto => is_ssh,
+    }
+}
+
+/// Whether this binvim is on the far end of an SSH connection. sshd sets all
+/// three of these; any one is enough, and a set-but-empty value doesn't count
+/// (that's how a login shell clears an inherited one).
+fn is_ssh_session() -> bool {
+    ["SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT"]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
 }
 
 /// Whether an OSC 52 payload is worth emitting: non-empty (a bare `ESC]52;c;`
 /// has terminal-dependent side effects, e.g. some terminals treat it as a
-/// read request) and under `MAX_OSC52_BYTES` (terminals cap/truncate oversized
-/// sequences, and a huge blocking write would stall the event loop).
+/// read request) and, once encoded, under `MAX_OSC52_ENCODED_BYTES`.
 fn osc52_payload_accepted(text: &str) -> bool {
-    !text.is_empty() && text.len() <= MAX_OSC52_BYTES
+    !text.is_empty() && base64_encoded_len(text.len()) <= MAX_OSC52_ENCODED_BYTES
+}
+
+/// Length of `n` bytes once base64-encoded, `=` padding included.
+fn base64_encoded_len(n: usize) -> usize {
+    n.div_ceil(3) * 4
+}
+
+/// What sits between binvim and the terminal that owns the clipboard.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Multiplexer {
+    None,
+    Tmux,
+    Screen,
+}
+
+fn detect_multiplexer() -> Multiplexer {
+    if std::env::var_os("TMUX").is_some() {
+        Multiplexer::Tmux
+    } else if std::env::var_os("STY").is_some() {
+        Multiplexer::Screen
+    } else {
+        Multiplexer::None
+    }
+}
+
+/// The bytes to actually write for `seq`, given what it has to travel through.
+///
+/// Under tmux we emit the raw sequence *and* the DCS-wrapped one, because the
+/// two routes out are gated separately and a user has typically enabled at
+/// most one: the raw sequence needs `set-clipboard on` (the default,
+/// `external`, drops what applications send), and the wrapped one needs
+/// `allow-passthrough on` (off by default since tmux 3.3). Sending both means
+/// either setting is enough. If both are on the clipboard is set twice to the
+/// same text, which nobody can observe; if neither is, tmux swallows both and
+/// nothing reaches the screen.
+fn osc52_wire(seq: &str, mux: Multiplexer) -> Vec<u8> {
+    match mux {
+        Multiplexer::None => seq.as_bytes().to_vec(),
+        Multiplexer::Tmux => {
+            // Every ESC inside a tmux passthrough has to be doubled, or tmux
+            // ends the DCS at the first one and prints the rest.
+            let escaped = seq.replace('\x1b', "\x1b\x1b");
+            format!("{seq}\x1bPtmux;{escaped}\x1b\\").into_bytes()
+        }
+        Multiplexer::Screen => {
+            let mut out = Vec::with_capacity(seq.len() + 32);
+            for chunk in seq.as_bytes().chunks(SCREEN_DCS_CHUNK) {
+                out.extend_from_slice(b"\x1bP");
+                out.extend_from_slice(chunk);
+                out.extend_from_slice(b"\x1b\\");
+            }
+            out
+        }
+    }
 }
 
 /// The OSC 52 clipboard sequence for `text`: `ESC ] 52 ; c ; <base64> BEL`.
@@ -435,19 +519,91 @@ mod tests {
     /// An empty payload is rejected (a bare `ESC]52;c;` is ambiguous across
     /// terminals) and oversized payloads are skipped so a huge blocking write
     /// can't stall the event loop or exceed a terminal's OSC 52 cap.
+    ///
+    /// The cap is measured *after* encoding — a source-text check would let
+    /// base64's 4/3 inflation push the wire payload a third past the limit.
     #[test]
-    fn osc52_payload_accepted_rejects_empty_and_oversized() {
-        let big = "x".repeat(MAX_OSC52_BYTES + 1);
+    fn osc52_payload_accepted_measures_the_encoded_length() {
         assert!(!osc52_payload_accepted(""), "empty rejected");
-        assert!(
-            !osc52_payload_accepted(&big),
-            "over the cap rejected: {} bytes",
-            big.len()
-        );
         assert!(osc52_payload_accepted("hello"), "normal payload accepted");
+
+        // Largest source text that still encodes within the cap, and one
+        // group of three bytes past it.
+        let at_cap = "x".repeat(MAX_OSC52_ENCODED_BYTES / 4 * 3);
+        assert_eq!(base64_encoded_len(at_cap.len()), MAX_OSC52_ENCODED_BYTES);
+        assert!(osc52_payload_accepted(&at_cap), "at the cap accepted");
+
+        let over = "x".repeat(at_cap.len() + 3);
+        assert!(!osc52_payload_accepted(&over), "over the cap rejected");
+
+        // The regression this guards: a source text under the cap whose
+        // encoding is not. Measured before encoding, this would have gone out
+        // as ~87 KiB.
+        let inflates_past = "x".repeat(MAX_OSC52_ENCODED_BYTES);
+        assert!(base64_encoded_len(inflates_past.len()) > MAX_OSC52_ENCODED_BYTES);
         assert!(
-            osc52_payload_accepted(&"x".repeat(MAX_OSC52_BYTES)),
-            "at the cap accepted"
+            !osc52_payload_accepted(&inflates_past),
+            "source text at the cap encodes past it, so it must be rejected"
         );
+    }
+
+    /// `Auto` — the default — is the only mode that consults the environment.
+    #[test]
+    fn osc52_auto_emits_only_over_ssh() {
+        assert!(!osc52_enabled(Osc52Mode::Auto, false), "local: no sequence");
+        assert!(osc52_enabled(Osc52Mode::Auto, true), "ssh: sequence");
+        assert!(osc52_enabled(Osc52Mode::Always, false));
+        assert!(osc52_enabled(Osc52Mode::Always, true));
+        assert!(!osc52_enabled(Osc52Mode::Never, false));
+        assert!(!osc52_enabled(Osc52Mode::Never, true));
+    }
+
+    /// Bare terminal: the sequence goes out exactly as built.
+    #[test]
+    fn osc52_wire_is_untouched_without_a_multiplexer() {
+        let seq = osc52_sequence("hi");
+        assert_eq!(osc52_wire(&seq, Multiplexer::None), seq.as_bytes());
+    }
+
+    /// tmux gets both routes: the raw sequence (for `set-clipboard on`) and
+    /// the DCS passthrough (for `allow-passthrough on`), with every ESC in
+    /// the wrapped copy doubled so tmux doesn't end the DCS early.
+    #[test]
+    fn osc52_wire_wraps_for_tmux_and_doubles_escapes() {
+        let wire = String::from_utf8(osc52_wire("\x1b]52;c;aGk=\x07", Multiplexer::Tmux)).unwrap();
+        assert_eq!(
+            wire,
+            "\x1b]52;c;aGk=\x07\x1bPtmux;\x1b\x1b]52;c;aGk=\x07\x1b\\"
+        );
+        // The passthrough body must carry no lone ESC, or tmux terminates
+        // the DCS at it and prints the remainder to the pane. Peel the pairs
+        // off and nothing should be left.
+        let body = wire.split_once("\x1bPtmux;").unwrap().1;
+        let body = body.strip_suffix("\x1b\\").unwrap();
+        assert!(
+            !body.replace("\x1b\x1b", "").contains('\x1b'),
+            "lone ESC left in passthrough body"
+        );
+    }
+
+    /// screen truncates a long DCS, so the sequence goes out in chunks that
+    /// the outer terminal reassembles into one byte stream.
+    #[test]
+    fn osc52_wire_chunks_for_screen() {
+        let short = osc52_wire("\x1b]52;c;aGk=\x07", Multiplexer::Screen);
+        assert_eq!(short, b"\x1bP\x1b]52;c;aGk=\x07\x1b\\");
+
+        // A payload spanning several chunks: strip the DCS framing and the
+        // original sequence must come back byte for byte.
+        let seq = osc52_sequence(&"x".repeat(SCREEN_DCS_CHUNK * 2));
+        let wire = String::from_utf8(osc52_wire(&seq, Multiplexer::Screen)).unwrap();
+        let chunks: Vec<&str> = wire
+            .split("\x1b\\")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.strip_prefix("\x1bP").expect("chunk carries DCS prefix"))
+            .collect();
+        assert!(chunks.len() > 1, "long sequence must be split");
+        assert!(chunks.iter().all(|c| c.len() <= SCREEN_DCS_CHUNK));
+        assert_eq!(chunks.concat(), seq);
     }
 }
