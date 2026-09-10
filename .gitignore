@@ -48,6 +48,7 @@ playground/**/.zig-cache/
 .DS_Store
 *.swp
 *.swo
+.claude/
 
 # Local environment / secrets
 .env
