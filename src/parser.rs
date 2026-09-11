@@ -166,6 +166,17 @@ pub enum InsertWhere {
     LastInsert,
 }
 
+/// Where `p` leaves the cursor, and whether it re-indents.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PutStyle {
+    /// `p` / `P`.
+    Plain,
+    /// `gp` / `gP` — the cursor ends just after the text.
+    CursorAfter,
+    /// `]p` / `[p` — linewise text takes the cursor line's indent.
+    Reindent,
+}
+
 /// What `ys` wraps: a motion's range, a text object, or `count` lines.
 #[derive(Debug, Clone, Copy)]
 pub enum SurroundTarget {
@@ -233,6 +244,7 @@ pub enum Action {
         before: bool,
         count: usize,
         register: Option<char>,
+        style: PutStyle,
     },
     EnterCommand,
     EnterSearch {
@@ -1077,21 +1089,39 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // additions (`]d` for diagnostics, etc.) don't accidentally fire.
     if state.awaiting_bracket_close {
         state.awaiting_bracket_close = false;
+        let count = state.total_count();
+        let register = state.register;
         state.reset();
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixNext),
             'h' => ParseResult::Action(Action::HunkNext),
             's' => ParseResult::Action(Action::SpellNext),
+            // `]p` puts below at the cursor line's indent, `]P` above.
+            'p' | 'P' if ctx == ParseCtx::Normal => ParseResult::Action(Action::Put {
+                before: ch == 'P',
+                count,
+                register,
+                style: PutStyle::Reindent,
+            }),
             _ => ParseResult::Cancelled,
         };
     }
     if state.awaiting_bracket_open {
         state.awaiting_bracket_open = false;
+        let count = state.total_count();
+        let register = state.register;
         state.reset();
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixPrev),
             'h' => ParseResult::Action(Action::HunkPrev),
             's' => ParseResult::Action(Action::SpellPrev),
+            // `[p` and `[P` both put above.
+            'p' | 'P' if ctx == ParseCtx::Normal => ParseResult::Action(Action::Put {
+                before: true,
+                count,
+                register,
+                style: PutStyle::Reindent,
+            }),
             _ => ParseResult::Cancelled,
         };
     }
@@ -1670,6 +1700,18 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             };
             return ParseResult::Action(action);
         }
+        // gp / gP — put, leaving the cursor just after the text.
+        if matches!(ch, 'p' | 'P') && ctx == ParseCtx::Normal && state.operator.is_none() {
+            let count = state.total_count();
+            let register = state.register;
+            state.reset();
+            return ParseResult::Action(Action::Put {
+                before: ch == 'P',
+                count,
+                register,
+                style: PutStyle::CursorAfter,
+            });
+        }
         // gi — Insert where it was last left.
         if ch == 'i' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
@@ -2089,11 +2131,13 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 before: false,
                 count: state.total_count(),
                 register: state.register,
+                style: PutStyle::Plain,
             }),
             'P' => Some(Action::Put {
                 before: true,
                 count: state.total_count(),
                 register: state.register,
+                style: PutStyle::Plain,
             }),
             ':' => Some(Action::EnterCommand),
             '.' => Some(Action::Repeat),
