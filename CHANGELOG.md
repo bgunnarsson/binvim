@@ -153,6 +153,12 @@ follows [Semantic Versioning](https://semver.org/).
   columns without one. A comment paragraph keeps its marker (`//`, `///`,
   `#` …) on every line it re-flows to. `gw` does the same and leaves the
   cursor where it was. `.` repeats both.
+- **`!{motion}` and `!!` filter lines through a shell command.** They open
+  the `:` line with the lines' range typed in (`:5,7!`), and the command
+  you add gets those lines on stdin — `!ip` then `sort` sorts a paragraph.
+  What it prints replaces them; if it fails, they stay as they were and
+  the status line shows its error. Visual `!` and a typed `:{range}!cmd`
+  work the same.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

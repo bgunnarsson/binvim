@@ -104,6 +104,17 @@ fn run_stdin_pipe(bin: &Path, args: &[&str], source: &str, label: &str) -> Resul
     String::from_utf8(output.stdout).map_err(|e| format!("{label} stdout not utf-8: {e}"))
 }
 
+/// `!` filters: `cmd` run by the user's shell (`cmd /C` on Windows), with
+/// `input` on stdin.
+pub(crate) fn filter_through_shell(cmd: &str, input: &str) -> Result<String, String> {
+    let label = format!("!{cmd}");
+    if cfg!(windows) {
+        return run_stdin_pipe(Path::new("cmd"), &["/C", cmd], input, &label);
+    }
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
+    run_stdin_pipe(Path::new(&shell), &["-c", cmd], input, &label)
+}
+
 /// Format Python via `ruff format` (preferred — single Rust binary,
 /// fast, picks up `pyproject.toml` / `ruff.toml` automatically) with
 /// `black` as a fallback when ruff isn't installed. Both read stdin

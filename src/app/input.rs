@@ -2600,6 +2600,10 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.delete_lines(range);
             }
+            ExCommand::Filter { range, cmd } => {
+                let (l1, l2) = self.resolve_range(range, true);
+                self.filter_lines(l1, l2, &cmd);
+            }
             ExCommand::YankRange { range } => {
                 self.yank_lines(range);
             }
@@ -3379,6 +3383,53 @@ mod tests {
         app.buffer.path = Some(std::path::PathBuf::from("x.rs"));
         press(&mut app, "gqj");
         assert_eq!(app.buffer.rope.to_string(), "// aa bb cc\n");
+    }
+
+    #[test]
+    fn bang_opens_the_command_line_with_the_range() {
+        let mut app = app_with_keymaps("c\nb\na\n\nz\n", "");
+        press(&mut app, "!ip");
+        assert_eq!(app.mode, Mode::Command);
+        assert_eq!(app.cmdline, "1,3!");
+
+        let mut app = app_with_keymaps("a\nb\n", "");
+        app.window.cursor.line = 1;
+        press(&mut app, "!!");
+        assert_eq!(app.cmdline, "2!");
+
+        let mut app = app_with_keymaps("a\nb\nc\n", "");
+        press(&mut app, "Vj!");
+        assert_eq!(app.cmdline, "1,2!");
+        assert_eq!(app.mode, Mode::Command);
+    }
+
+    #[test]
+    fn an_empty_filter_command_leaves_the_lines_alone() {
+        let mut app = app_with_keymaps("keep\n", "");
+        press(&mut app, "!!");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.buffer.rope.to_string(), "keep\n");
+        assert!(app.status_msg.contains("E34"), "{}", app.status_msg);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_filter_replaces_the_lines_with_what_the_command_prints() {
+        let mut app = app_with_keymaps("c\nb\na\n\nz\n", "");
+        press(&mut app, "!ipsort");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.buffer.rope.to_string(), "a\nb\nc\n\nz\n");
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failing_filter_leaves_the_lines_alone_and_says_why() {
+        let mut app = app_with_keymaps("keep\n", "");
+        press(&mut app, "!!echo bad >&2; exit 3");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.buffer.rope.to_string(), "keep\n");
+        assert!(app.status_msg.contains("exit 3: bad"), "{}", app.status_msg);
     }
 
     #[test]

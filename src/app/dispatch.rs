@@ -94,7 +94,7 @@ impl super::App {
                 count,
                 register,
             } => {
-                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.record_before_op(op);
                 if !self.try_multi_op_motion(op, motion, count, register) {
                     let m = self.run_motion(motion, count);
                     let m = self.paragraph_linewise(motion, m);
@@ -106,7 +106,7 @@ impl super::App {
                 count,
                 register,
             } => {
-                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.record_before_op(op);
                 if !self.try_multi_op_linewise(op, count, register) {
                     self.apply_op_linewise(op, count, register);
                 }
@@ -117,7 +117,7 @@ impl super::App {
                 count,
                 register,
             } => {
-                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.record_before_op(op);
                 if !self.try_multi_op_textobj(op, obj, register) {
                     self.apply_text_object(op, obj, count, register);
                 }
@@ -395,7 +395,7 @@ impl super::App {
             Action::ReselectVisual => self.reselect_visual(),
             Action::ChangeListJump { older, count } => self.goto_change(older, count),
             Action::VisualOperate { op, register } => {
-                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.record_before_op(op);
                 self.apply_visual_operate(op, register);
             }
             Action::VisualPut { register } => {
@@ -511,7 +511,11 @@ impl super::App {
         // Indent / outdent on a text-object range: derive line span and shift them.
         if matches!(
             op,
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Format { .. }
+            Operator::Indent
+                | Operator::Outdent
+                | Operator::Reindent
+                | Operator::Format { .. }
+                | Operator::Filter
         ) {
             let l1 = self.buffer.rope.char_to_line(range.start);
             let l2_idx = range.end.saturating_sub(1);
@@ -555,6 +559,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {
                 unreachable!()
             }
@@ -799,12 +804,24 @@ impl super::App {
         }
     }
 
+    /// The undo step an operator takes before it runs — but not `!`, which
+    /// only opens the `:` line. The filter takes its own step when it runs.
+    fn record_before_op(&mut self, op: Operator) {
+        if op != Operator::Filter {
+            self.history.record(&self.buffer.rope, self.window.cursor);
+        }
+    }
+
     fn apply_op_with_motion(&mut self, op: Operator, m: MotionResult, target: Option<char>) {
         // Indent/outdent operate on whole lines from cursor to motion target,
         // regardless of motion kind. Bypass the byte-range path used by d/c/y.
         if matches!(
             op,
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Format { .. }
+            Operator::Indent
+                | Operator::Outdent
+                | Operator::Reindent
+                | Operator::Format { .. }
+                | Operator::Filter
         ) {
             let l1 = self.window.cursor.line.min(m.target.line);
             let l2 = self.window.cursor.line.max(m.target.line);
@@ -845,6 +862,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {
                 unreachable!()
             }
@@ -858,7 +876,11 @@ impl super::App {
         // Indent / outdent (>>, <<, count-prefixed) operate purely on line content.
         if matches!(
             op,
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Format { .. }
+            Operator::Indent
+                | Operator::Outdent
+                | Operator::Reindent
+                | Operator::Format { .. }
+                | Operator::Filter
         ) {
             self.shift_lines(op, l1, l2);
             return;
@@ -924,6 +946,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {
                 unreachable!()
             }

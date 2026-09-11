@@ -123,6 +123,9 @@ pub enum Operator {
     Format {
         keep_cursor: bool,
     },
+    /// `!` — filter lines through a shell command, typed on the `:` line it
+    /// opens.
+    Filter,
     /// `gu` / `gU` / `g~` / `g?` — rewrite the range's case in place.
     Case(CaseOp),
 }
