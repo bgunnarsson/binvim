@@ -3141,6 +3141,15 @@ mod tests {
     }
 
     #[test]
+    fn g0_goes_to_the_first_char_on_screen_when_scrolled() {
+        let mut app = app_with_keymaps("0123456789abcdef\n", "");
+        app.window.view_left = 5;
+        app.window.cursor.col = 10;
+        press(&mut app, "g0");
+        assert_eq!(app.window.cursor.col, 5);
+    }
+
+    #[test]
     fn cip_leaves_an_empty_line_to_type_on() {
         let mut app = app_with_keymaps("a\nb\n\nc\n", "");
         press(&mut app, "\"_cip");

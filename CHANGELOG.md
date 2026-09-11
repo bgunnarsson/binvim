@@ -60,6 +60,12 @@ follows [Semantic Versioning](https://semver.org/).
   non-blank N-1 lines down, so `d_` is `dd`; `N|` goes to column N. The line
   motions are linewise with an operator (`d+` takes this line and the next).
   `<CR>` on a line with a code lens still runs the lens.
+- **`gj` / `gk`, `g0` / `g^` / `gm` / `g$` and `gM`.** binvim doesn't wrap
+  lines, so `gj` / `gk` move like `j` / `k`. It scrolls long lines sideways
+  instead, and `g0`, `g^`, `gm` and `g$` go to the first char, first
+  non-blank, middle and last char of the part of the line on screen, as they
+  do in Vim with `nowrap`; tabs and wide characters count at their screen
+  width. `gM` goes to the middle of the line's text.
 
 ## [0.5.21] - 2026-09-10
 

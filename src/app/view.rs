@@ -277,6 +277,11 @@ impl super::App {
         crate::render::cursor_visual_col_walk(line.chars(), self.window.cursor.col, &hints_at)
     }
 
+    /// Columns the text gets in the active pane, after the gutter.
+    pub(super) fn text_area_cols(&self) -> usize {
+        (self.active_pane_rect().w as usize).saturating_sub(self.gutter_width())
+    }
+
     pub fn buffer_rows(&self) -> usize {
         // Reserve the status line at the bottom, (when applicable) one row at
         // the top for the tab bar, and the debug + terminal pane rows at the

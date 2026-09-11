@@ -257,6 +257,66 @@ pub fn to_column(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     }
 }
 
+/// Char column whose cells cover screen column `visual` on `line`, counting
+/// tabs and wide chars at their real width; the last char when the line ends
+/// first.
+fn col_at_visual(buf: &Buffer, line: usize, visual: usize) -> usize {
+    let len = buf.line_len(line);
+    let mut used = 0;
+    for (col, c) in buf.rope.line(line).chars().take(len).enumerate() {
+        used += crate::render::char_width(c, crate::render::TAB_WIDTH);
+        if used > visual {
+            return col;
+        }
+    }
+    len.saturating_sub(1)
+}
+
+/// `g0` / `gm` / `g$`: the char at screen column `visual`. binvim scrolls
+/// long lines sideways instead of wrapping them, so the caller measures from
+/// `view_left`, the first column on screen, as Vim does with `nowrap`.
+pub fn screen_col(buf: &Buffer, cur: Cursor, visual: usize, kind: MotionKind) -> MotionResult {
+    let col = col_at_visual(buf, cur.line, visual);
+    MotionResult {
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: col,
+        },
+        kind,
+    }
+}
+
+/// `g^` — the first non-blank char at or after screen column `visual`.
+pub fn screen_first_non_blank(buf: &Buffer, cur: Cursor, visual: usize) -> MotionResult {
+    let from = col_at_visual(buf, cur.line, visual);
+    let col = (from..buf.line_len(cur.line))
+        .find(|c| !matches!(buf.char_at(cur.line, *c), Some(ch) if ch.is_whitespace()))
+        .unwrap_or(from);
+    MotionResult {
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: col,
+        },
+        kind: MotionKind::CharExclusive,
+    }
+}
+
+/// `gM` — the middle of the line's text.
+pub fn line_middle(buf: &Buffer, cur: Cursor) -> MotionResult {
+    let len = buf.line_len(cur.line);
+    let col = (len / 2).min(len.saturating_sub(1));
+    MotionResult {
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: col,
+        },
+        kind: MotionKind::CharExclusive,
+    }
+}
+
 pub fn first_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
     let line_len = buf.line_len(cur.line);
     let mut col = 0;
@@ -878,6 +938,30 @@ mod tests {
         assert_eq!(to_column(&b, cur(0, 0), 3).target.col, 2);
         assert_eq!(to_column(&b, cur(0, 3), 1).target.col, 0);
         assert_eq!(to_column(&b, cur(0, 0), 40).target.col, 4);
+    }
+
+    #[test]
+    fn screen_columns_count_tabs_at_their_width() {
+        let excl = MotionKind::CharExclusive;
+        let b = buf("abcdefghij\n");
+        assert_eq!(screen_col(&b, cur(0, 0), 4, excl).target.col, 4);
+        assert_eq!(screen_col(&b, cur(0, 0), 40, excl).target.col, 9);
+        let t = buf("\tabc\n");
+        assert_eq!(screen_col(&t, cur(0, 0), 2, excl).target.col, 0);
+        assert_eq!(screen_col(&t, cur(0, 0), 4, excl).target.col, 1);
+    }
+
+    #[test]
+    fn screen_first_non_blank_skips_blanks_on_screen() {
+        let b = buf("ab   cd\n");
+        assert_eq!(screen_first_non_blank(&b, cur(0, 0), 2).target.col, 5);
+        assert_eq!(screen_first_non_blank(&b, cur(0, 0), 0).target.col, 0);
+    }
+
+    #[test]
+    fn line_middle_is_half_the_text() {
+        assert_eq!(line_middle(&buf("abcdefgh\n"), cur(0, 0)).target.col, 4);
+        assert_eq!(line_middle(&buf("\n"), cur(0, 0)).target.col, 0);
     }
 
     #[test]
