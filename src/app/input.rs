@@ -2575,13 +2575,19 @@ impl super::App {
                 range,
                 pattern,
                 replacement,
-                global,
-                regex,
+                flags,
             } => {
-                self.history.record(&self.buffer.rope, self.window.cursor);
-                match self.substitute(range, &pattern, &replacement, global, regex) {
-                    Ok(0) => self.status_msg = format!("Pattern not found: {pattern}"),
-                    Ok(n) => {
+                if !flags.count_only {
+                    self.history.record(&self.buffer.rope, self.window.cursor);
+                }
+                match self.substitute(range, &pattern, &replacement, flags) {
+                    Ok((0, _)) => self.status_msg = format!("Pattern not found: {pattern}"),
+                    Ok((n, lines)) if flags.count_only => {
+                        let es = if n == 1 { "" } else { "es" };
+                        let s = if lines == 1 { "" } else { "s" };
+                        self.status_msg = format!("{n} match{es} on {lines} line{s}");
+                    }
+                    Ok((n, _)) => {
                         self.status_msg =
                             format!("{n} substitution{}", if n == 1 { "" } else { "s" });
                     }
@@ -2591,10 +2597,9 @@ impl super::App {
             ExCommand::ProjectSubstitute {
                 pattern,
                 replacement,
-                global,
-                regex,
+                flags,
             } => {
-                self.project_substitute(&pattern, &replacement, global, regex);
+                self.project_substitute(&pattern, &replacement, flags);
             }
             ExCommand::DeleteRange { range } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
@@ -2674,6 +2679,7 @@ impl super::App {
             ExCommand::Unknown(s) => {
                 self.status_msg = format!("E492: Not an editor command: {s}");
             }
+            ExCommand::Invalid(e) => self.status_msg = e,
         }
     }
 
@@ -2858,66 +2864,81 @@ impl super::App {
         }
     }
 
+    /// `:s` — Vim's pattern and replacement syntax, `flags` applied. How many
+    /// matches there were, and on how many lines.
     pub(super) fn substitute(
         &mut self,
         range: ExRange,
         pat: &str,
         repl: &str,
-        global: bool,
-        regex: bool,
-    ) -> Result<usize, String> {
-        if pat.is_empty() {
-            return Ok(0);
-        }
-        let compiled = if regex {
-            Some(regex::Regex::new(pat).map_err(|e| format!("bad regex: {e}"))?)
+        flags: command::SubFlags,
+    ) -> Result<(usize, usize), String> {
+        let pattern = if pat.is_empty() {
+            match self.last_search.as_ref() {
+                Some((last, _)) => last.clone(),
+                None => return Err("E35: No previous regular expression".into()),
+            }
         } else {
-            None
+            pat.to_string()
         };
+        let cased = super::search::with_case(&pattern, flags.ignore_case);
+        let re = super::search::compile_search(&cased)?;
+        let groups = super::search::vim_groups(&re);
+        let counts = self.replace_matches(
+            range,
+            &re,
+            flags.global,
+            flags.count_only,
+            &|caps, matched| super::search::expand_replacement(repl, caps, &groups, matched),
+        );
+        // `:s` leaves its pattern as the one `n` repeats, as in Vim.
+        let backward = self.last_search.as_ref().is_some_and(|(_, back)| *back);
+        self.set_search(&pattern, backward);
+        Ok(counts)
+    }
+
+    /// Every match of `re` in `range` — the first on each line, or all of
+    /// them when `global` — replaced by what `with` makes of it, or only
+    /// counted when `count_only`. How many matches, and on how many lines.
+    pub(super) fn replace_matches(
+        &mut self,
+        range: ExRange,
+        re: &regex::Regex,
+        global: bool,
+        count_only: bool,
+        with: &dyn Fn(&regex::Captures, &str) -> String,
+    ) -> (usize, usize) {
         let (l1, l2) = self.resolve_range(range, true);
+        let l2 = l2.min(self.last_text_line());
         let mut total = 0usize;
+        let mut lines = 0usize;
         // Iterate bottom-up so edits to lower lines don't shift higher line indices.
         for line in (l1..=l2).rev() {
-            let line_len = self.buffer.line_len(line);
-            if line_len == 0 {
-                continue;
-            }
             let line_start = self.buffer.line_start_idx(line);
+            let line_len = self.buffer.line_len(line);
             let line_text: String = self
                 .buffer
                 .rope
                 .slice(line_start..(line_start + line_len))
                 .to_string();
-            let (new_text, n) = if let Some(re) = compiled.as_ref() {
-                if global {
-                    let count = re.find_iter(&line_text).count();
-                    (re.replace_all(&line_text, repl).into_owned(), count)
-                } else if re.is_match(&line_text) {
-                    (re.replacen(&line_text, 1, repl).into_owned(), 1)
-                } else {
-                    (line_text.clone(), 0)
-                }
-            } else if global {
-                let count = line_text.matches(pat).count();
-                (line_text.replace(pat, repl), count)
-            } else if line_text.contains(pat) {
-                (line_text.replacen(pat, repl, 1), 1)
-            } else {
-                (line_text.clone(), 0)
-            };
-            if n > 0 {
+            let (new_text, n) = super::search::substitute_line(re, &line_text, global, with);
+            if n == 0 {
+                continue;
+            }
+            total += n;
+            lines += 1;
+            if !count_only {
                 self.buffer.delete_range(line_start, line_start + line_len);
                 self.buffer.insert_at_idx(line_start, &new_text);
-                total += n;
             }
         }
-        if total > 0 {
+        if total > 0 && !count_only {
             self.window.cursor.line = l1;
             self.window.cursor.col = 0;
             self.window.cursor.want_col = 0;
             self.clamp_cursor_normal();
         }
-        Ok(total)
+        (total, lines)
     }
 
     fn delete_lines(&mut self, range: ExRange) {
@@ -2957,23 +2978,28 @@ impl super::App {
     /// substitution across every line, and save. The originally-active
     /// buffer is restored at the end so the user lands back where they
     /// were. No confirmation prompt — the user has git for safety.
-    fn project_substitute(&mut self, pattern: &str, replacement: &str, global: bool, regex: bool) {
+    fn project_substitute(&mut self, pattern: &str, replacement: &str, flags: command::SubFlags) {
         if pattern.is_empty() {
             self.status_msg = "S: empty pattern".into();
             return;
         }
+        // ripgrep runs the same regex engine, so the translated pattern finds
+        // exactly the files `:s` would change.
+        let cased = super::search::with_case(pattern, flags.ignore_case);
+        let source = match super::search::search_source(&cased) {
+            Ok(source) => source,
+            Err(e) => {
+                self.status_msg = format!("S: {e}");
+                return;
+            }
+        };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         // Use ripgrep's --files-with-matches to get the candidate file list.
         let mut rg = std::process::Command::new("rg");
         rg.arg("--files-with-matches").arg("--color=never");
-        // `r` flag → let ripgrep treat the pattern as a regex (it does
-        // by default), so leave --fixed-strings off in that mode.
-        if !regex {
-            rg.arg("--fixed-strings");
-        }
         let files_output = rg
             .arg("--")
-            .arg(pattern)
+            .arg(&source)
             .arg(".")
             .current_dir(&cwd)
             .output();
@@ -3004,18 +3030,14 @@ impl super::App {
                 errors += 1;
                 continue;
             }
-            self.history.record(&self.buffer.rope, self.window.cursor);
-            match self.substitute(
-                crate::command::ExRange::Whole,
-                pattern,
-                replacement,
-                global,
-                regex,
-            ) {
-                Ok(n) if n > 0 => {
+            if !flags.count_only {
+                self.history.record(&self.buffer.rope, self.window.cursor);
+            }
+            match self.substitute(crate::command::ExRange::Whole, pattern, replacement, flags) {
+                Ok((n, _)) if n > 0 => {
                     total_subs += n;
                     files_changed += 1;
-                    if self.save_active().is_err() {
+                    if !flags.count_only && self.save_active().is_err() {
                         errors += 1;
                     }
                 }
@@ -3027,6 +3049,12 @@ impl super::App {
         }
         if original_active < self.buffers.len() && self.active != original_active {
             let _ = self.switch_to(original_active);
+        }
+        if flags.count_only && total_subs > 0 {
+            let es = if total_subs == 1 { "" } else { "es" };
+            let s = if files_changed == 1 { "" } else { "s" };
+            self.status_msg = format!("{total_subs} match{es} in {files_changed} file{s}");
+            return;
         }
         self.status_msg = if total_subs == 0 {
             format!("S: pattern not found: {pattern}")
@@ -3740,6 +3768,55 @@ mod tests {
         press(&mut app, "dgn");
         assert_eq!(app.buffer.rope.to_string(), "foo\n");
         assert!(app.status_msg.contains("E35"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn substitute_takes_vim_patterns_and_replacements() {
+        let mut app = app_with_keymaps("one two\nthree four\n", "");
+        app.exec_command("%s/\\(\\w\\+\\) \\(\\w\\+\\)/\\2 \\1/");
+        assert_eq!(app.buffer.rope.to_string(), "two one\nfour three\n");
+        assert_eq!(app.status_msg, "2 substitutions");
+
+        let mut app = app_with_keymaps("Foo foo\n", "");
+        app.exec_command("s/foo/[&]/g");
+        assert_eq!(app.buffer.rope.to_string(), "[Foo] [foo]\n");
+        let mut app = app_with_keymaps("Foo foo\n", "");
+        app.exec_command("s/foo/[&]/gI");
+        assert_eq!(app.buffer.rope.to_string(), "Foo [foo]\n");
+
+        let mut app = app_with_keymaps("a\n\nb\n", "");
+        app.exec_command("%s/^/# /");
+        assert_eq!(app.buffer.rope.to_string(), "# a\n# \n# b\n");
+    }
+
+    #[test]
+    fn substitute_n_counts_and_changes_nothing() {
+        let mut app = app_with_keymaps("a a\nb\na\n", "");
+        app.exec_command("%s/a/x/gn");
+        assert_eq!(app.buffer.rope.to_string(), "a a\nb\na\n");
+        assert_eq!(app.status_msg, "3 matches on 2 lines");
+    }
+
+    #[test]
+    fn substitute_shares_its_pattern_with_search() {
+        let mut app = app_with_keymaps("cat dog cat\n", "");
+        press(&mut app, "/dog");
+        tap(&mut app, KeyCode::Enter);
+        app.exec_command("s//bird/");
+        assert_eq!(app.buffer.rope.to_string(), "cat bird cat\n");
+        app.exec_command("s/cat/cow/");
+        assert_eq!(app.buffer.rope.to_string(), "cow bird cat\n");
+        // c0 o1 w2 _3 b4 i5 r6 d7 _8 c9
+        press(&mut app, "n");
+        assert_eq!(app.window.cursor.col, 9);
+    }
+
+    #[test]
+    fn substitute_flags_it_does_not_know_are_an_error() {
+        let mut app = app_with_keymaps("a\n", "");
+        app.exec_command("s/a/b/q");
+        assert_eq!(app.buffer.rope.to_string(), "a\n");
+        assert!(app.status_msg.contains("E488"), "{}", app.status_msg);
     }
 
     #[test]

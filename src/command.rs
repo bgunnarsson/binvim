@@ -26,23 +26,20 @@ pub enum ExCommand {
     },
     BufferList,
     BufferSwitch(String),
+    /// `:s/pat/repl/[flags]` — Vim's pattern and replacement syntax.
     Substitute {
         range: ExRange,
         pattern: String,
         replacement: String,
-        global: bool,
-        /// `r` flag — pattern is a regex (otherwise plain literal text).
-        /// Replacement honours `$1`/`$2`/… capture references when set.
-        regex: bool,
+        flags: SubFlags,
     },
-    /// `:S/pat/repl/[g]` — project-wide substitute. Scans the workspace
+    /// `:S/pat/repl/[flags]` — project-wide substitute. Scans the workspace
     /// with ripgrep, applies the substitution to every matching file,
     /// saves each one. The range prefix (if any) is ignored.
     ProjectSubstitute {
         pattern: String,
         replacement: String,
-        global: bool,
-        regex: bool,
+        flags: SubFlags,
     },
     DeleteRange {
         range: ExRange,
@@ -145,6 +142,9 @@ pub enum ExCommand {
     /// `app/dap_glue.rs::cmd_debug_test_nearest`.
     DebugTestNearest,
     Unknown(String),
+    /// A command that parsed but can't run as typed; the status line says
+    /// why.
+    Invalid(String),
 }
 
 /// AI-assistant launcher tags — one per shell command we know how
@@ -299,24 +299,30 @@ pub fn parse(line: &str) -> ExCommand {
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
     let rest = rest.trim();
     if let Some(args) = rest.strip_prefix('s') {
-        if let Some((pat, repl, global, regex)) = parse_substitute_args(args) {
-            return ExCommand::Substitute {
-                range,
-                pattern: pat,
-                replacement: repl,
-                global,
-                regex,
-            };
+        match parse_substitute_args(args) {
+            Some(Ok((pattern, replacement, flags))) => {
+                return ExCommand::Substitute {
+                    range,
+                    pattern,
+                    replacement,
+                    flags,
+                };
+            }
+            Some(Err(e)) => return ExCommand::Invalid(e),
+            None => {}
         }
     }
     if let Some(args) = rest.strip_prefix('S') {
-        if let Some((pat, repl, global, regex)) = parse_substitute_args(args) {
-            return ExCommand::ProjectSubstitute {
-                pattern: pat,
-                replacement: repl,
-                global,
-                regex,
-            };
+        match parse_substitute_args(args) {
+            Some(Ok((pattern, replacement, flags))) => {
+                return ExCommand::ProjectSubstitute {
+                    pattern,
+                    replacement,
+                    flags,
+                };
+            }
+            Some(Err(e)) => return ExCommand::Invalid(e),
+            None => {}
         }
     }
     if rest == "d" || rest == "delete" {
@@ -530,42 +536,116 @@ fn parse_range(s: &str) -> (ExRange, &str) {
     (ExRange::Single(n), after)
 }
 
-/// Parse `:s/old/new/flags` style args. The first char after `s` is the delimiter.
-fn parse_substitute_args(args: &str) -> Option<(String, String, bool, bool)> {
-    let mut chars = args.chars();
-    let delim = chars.next()?;
-    if delim.is_alphanumeric() {
+/// The flags after `:s/pat/repl/`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubFlags {
+    /// `g` — every match on a line, not only the first.
+    pub global: bool,
+    /// `i` / `I` — ignore case, or don't, whatever the pattern says.
+    pub ignore_case: Option<bool>,
+    /// `n` — count the matches and change nothing.
+    pub count_only: bool,
+}
+
+/// `:s` / `:S` arguments — `/pat/repl/flags`, with any delimiter Vim
+/// allows in place of `/`. `None` when they aren't that shape at all, an
+/// error when the flags are wrong. With no replacement the match is
+/// deleted.
+fn parse_substitute_args(args: &str) -> Option<Result<(String, String, SubFlags), String>> {
+    let delim = args.chars().next()?;
+    if delim.is_alphanumeric() || matches!(delim, ' ' | '\\' | '"' | '|') {
         return None;
     }
-    let mut parts: Vec<String> = vec![String::new()];
-    let mut escape = false;
-    for c in chars {
-        if escape {
-            parts.last_mut().unwrap().push(c);
-            escape = false;
-        } else if c == '\\' {
-            escape = true;
-            parts.last_mut().unwrap().push(c);
-        } else if c == delim {
-            parts.push(String::new());
+    let body = &args[delim.len_utf8()..];
+    let mut fields = vec![String::new()];
+    let mut flags = "";
+    let mut escaped = false;
+    for (i, c) in body.char_indices() {
+        if escaped || c != delim {
+            escaped = !escaped && c == '\\';
+            let last = fields.len() - 1;
+            fields[last].push(c);
+        } else if fields.len() == 2 {
+            flags = &body[i + c.len_utf8()..];
+            break;
         } else {
-            parts.last_mut().unwrap().push(c);
+            fields.push(String::new());
         }
     }
-    if parts.len() < 2 {
-        return None;
+    let mut fields = fields.into_iter();
+    let pattern = fields.next().unwrap_or_default();
+    let replacement = fields.next().unwrap_or_default();
+    Some(parse_sub_flags(flags.trim()).map(|flags| (pattern, replacement, flags)))
+}
+
+fn parse_sub_flags(text: &str) -> Result<SubFlags, String> {
+    let mut flags = SubFlags::default();
+    for c in text.chars() {
+        match c {
+            'g' => flags.global = true,
+            'i' => flags.ignore_case = Some(true),
+            'I' => flags.ignore_case = Some(false),
+            'n' => flags.count_only = true,
+            // Once the switch to a regex; every pattern is one now.
+            'r' => {}
+            _ => return Err(format!("E488: Trailing characters: {text}")),
+        }
     }
-    let pat = parts.remove(0);
-    let repl = parts.remove(0);
-    let flags = parts.into_iter().next().unwrap_or_default();
-    let global = flags.contains('g');
-    let regex = flags.contains('r');
-    Some((pat, repl, global, regex))
+    Ok(flags)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn substitute_splits_at_its_delimiter_and_reads_the_flags() {
+        match parse("%s/a\\/b/c/gI") {
+            ExCommand::Substitute {
+                pattern,
+                replacement,
+                flags,
+                ..
+            } => {
+                assert_eq!(pattern, "a\\/b");
+                assert_eq!(replacement, "c");
+                let want = SubFlags {
+                    global: true,
+                    ignore_case: Some(false),
+                    count_only: false,
+                };
+                assert_eq!(flags, want);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            parse("s#x#y#n"),
+            ExCommand::Substitute {
+                flags: SubFlags {
+                    count_only: true,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("s/x"),
+            ExCommand::Substitute { replacement, .. } if replacement.is_empty()
+        ));
+        assert!(matches!(parse("s/x/y/r"), ExCommand::Substitute { .. }));
+        assert!(matches!(
+            parse("S/x/y/i"),
+            ExCommand::ProjectSubstitute {
+                flags: SubFlags {
+                    ignore_case: Some(true),
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(parse("s/x/y/q"), ExCommand::Invalid(e) if e.contains("E488")));
+        assert!(!matches!(parse("set"), ExCommand::Substitute { .. }));
+    }
 
     #[test]
     fn alternate_file_commands_parse_with_or_without_a_space() {

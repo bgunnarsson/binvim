@@ -568,16 +568,20 @@ impl super::App {
             self.status_msg = "replace cancelled (empty)".into();
             return;
         }
+        // Plain text on both sides, so `:s`'s pattern and replacement syntax
+        // is kept out of it.
+        let re = match regex::Regex::new(&regex::escape(&original)) {
+            Ok(re) => re,
+            Err(e) => {
+                self.status_msg = format!("replace: {e}");
+                return;
+            }
+        };
         self.history.record(&self.buffer.rope, self.window.cursor);
-        let n = self
-            .substitute(
-                crate::command::ExRange::Whole,
-                &original,
-                &new_text,
-                true,
-                false,
-            )
-            .unwrap_or(0);
+        let (n, _) =
+            self.replace_matches(crate::command::ExRange::Whole, &re, true, false, &|_, _| {
+                new_text.clone()
+            });
         self.status_msg = if n == 0 {
             format!("Pattern not found: {original}")
         } else {
