@@ -131,7 +131,16 @@ pub struct Buffer {
     /// The last Visual selection's kind and cursor end; `'<` / `'>` hold its
     /// ends. `gv` rebuilds the selection from the three.
     pub last_visual: Option<LastVisual>,
+    /// Where recent changes were, oldest first — char indices that move with
+    /// edits like marks do. `g;` / `g,` walk it; a change on the same line as
+    /// the newest entry replaces it.
+    pub changes: Vec<usize>,
+    /// Where `g;` / `g,` are in `changes`; its length until they move.
+    pub change_idx: usize,
 }
+
+/// Vim keeps 100 change-list entries per buffer.
+pub const CHANGE_LIST_MAX: usize = 100;
 
 /// How the last Visual selection was made — the part `'<` / `'>` can't say.
 #[derive(Debug, Clone, Copy)]
@@ -160,6 +169,8 @@ impl Buffer {
             marks: HashMap::new(),
             change_open: false,
             last_visual: None,
+            changes: Vec::new(),
+            change_idx: 0,
         }
     }
 
@@ -190,6 +201,8 @@ impl Buffer {
                 marks: HashMap::new(),
                 change_open: false,
                 last_visual: None,
+                changes: Vec::new(),
+                change_idx: 0,
             })
         } else {
             Ok(Self {
@@ -203,6 +216,8 @@ impl Buffer {
                 marks: HashMap::new(),
                 change_open: false,
                 last_visual: None,
+                changes: Vec::new(),
+                change_idx: 0,
             })
         }
     }
@@ -315,7 +330,7 @@ impl Buffer {
     /// and `']`. A mark inside deleted text lands where the deletion was.
     fn track_edit(&mut self, at: usize, removed: usize, inserted: usize) {
         let end = at + removed;
-        for m in self.marks.values_mut() {
+        for m in self.marks.values_mut().chain(self.changes.iter_mut()) {
             if *m >= end {
                 *m = *m - removed + inserted;
             } else if *m > at {
@@ -333,10 +348,31 @@ impl Buffer {
         self.change_open = true;
     }
 
-    /// Ends the change `'[` / `']` have been growing over; the next edit
-    /// starts a new one.
+    /// Ends the change `'[` / `']` have been growing over, so the next edit
+    /// starts a new one, and adds it to the change list.
     pub fn close_change(&mut self) {
+        if !self.change_open {
+            return;
+        }
         self.change_open = false;
+        let Some(at) = self.marks.get(&'.').copied() else {
+            return;
+        };
+        // One entry per line, as in Vim: working along a line moves the entry
+        // rather than adding one per command.
+        let line = self.pos_of(at).0;
+        if self
+            .changes
+            .last()
+            .is_some_and(|&last| self.pos_of(last).0 == line)
+        {
+            self.changes.pop();
+        }
+        self.changes.push(at);
+        if self.changes.len() > CHANGE_LIST_MAX {
+            self.changes.remove(0);
+        }
+        self.change_idx = self.changes.len();
     }
 
     pub fn set_mark(&mut self, name: char, line: usize, col: usize) {
@@ -344,23 +380,29 @@ impl Buffer {
         self.marks.insert(name, idx);
     }
 
-    /// Where mark `name` is now. Clamped, since undo swaps the text without
-    /// moving marks.
-    pub fn mark(&self, name: char) -> Option<(usize, usize)> {
-        let idx = (*self.marks.get(&name)?).min(self.total_chars());
+    /// (line, col) of char index `idx`. Clamped, since undo swaps the text
+    /// without moving marks or the change list.
+    pub fn pos_of(&self, idx: usize) -> (usize, usize) {
+        let idx = idx.min(self.total_chars());
         let line = self.rope.char_to_line(idx);
-        Some((line, idx - self.rope.line_to_char(line)))
+        (line, idx - self.rope.line_to_char(line))
     }
 
-    /// Replaces the whole text, keeping each mark at its line and column — a
-    /// formatter or a reload rewrites everything, and following the text char
-    /// by char would pile every mark up at the start.
+    /// Where mark `name` is now.
+    pub fn mark(&self, name: char) -> Option<(usize, usize)> {
+        Some(self.pos_of(*self.marks.get(&name)?))
+    }
+
+    /// Replaces the whole text, keeping each mark and change-list entry at its
+    /// line and column — a formatter or a reload rewrites everything, and
+    /// following the text char by char would pile them all up at the start.
     pub fn replace_all(&mut self, text: &str) {
         let kept: Vec<(char, (usize, usize))> = self
             .marks
             .keys()
             .filter_map(|&name| Some((name, self.mark(name)?)))
             .collect();
+        let changes: Vec<(usize, usize)> = self.changes.iter().map(|&at| self.pos_of(at)).collect();
         let open = self.change_open;
         let total = self.total_chars();
         self.delete_range(0, total);
@@ -369,6 +411,10 @@ impl Buffer {
         for (name, (line, col)) in kept {
             self.set_mark(name, line, col);
         }
+        self.changes = changes
+            .into_iter()
+            .map(|(line, col)| self.pos_to_char(line, col))
+            .collect();
         self.change_open = open;
     }
 
@@ -432,6 +478,33 @@ mod tests {
         b.replace_all("ONE\nTWO\nTHREE\n");
         assert_eq!(b.mark('a'), Some((2, 1)));
         assert_eq!(b.mark('['), None, "the rewrite isn't a change of its own");
+    }
+
+    #[test]
+    fn closed_changes_fill_the_change_list_one_entry_per_line() {
+        let mut b = buf_with_text("aaa\nbbb\nccc\n");
+        b.insert_at_idx(0, "x");
+        b.close_change();
+        b.insert_at_idx(2, "y");
+        b.close_change();
+        b.insert_at_idx(10, "z");
+        b.close_change();
+        let at = |b: &Buffer| b.changes.iter().map(|&i| b.pos_of(i)).collect::<Vec<_>>();
+        assert_eq!(at(&b), vec![(0, 2), (2, 0)]);
+        assert_eq!(b.change_idx, 2);
+        b.insert_at_idx(0, "new\n");
+        assert_eq!(at(&b), vec![(1, 2), (3, 0)], "entries move with the text");
+    }
+
+    #[test]
+    fn change_list_keeps_the_last_hundred() {
+        let mut b = buf_with_text(&"x\n".repeat(150));
+        for line in 0..150 {
+            b.insert_at_idx(b.pos_to_char(line, 0), "y");
+            b.close_change();
+        }
+        assert_eq!(b.changes.len(), CHANGE_LIST_MAX);
+        assert_eq!(b.pos_of(b.changes[0]).0, 50);
     }
 
     #[test]

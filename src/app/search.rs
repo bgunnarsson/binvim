@@ -75,6 +75,62 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
+    /// `g;` (`older`) / `g,`: `count` places through the change list. A count
+    /// past either end stops at the last entry; only a move from there errors.
+    pub(super) fn goto_change(&mut self, older: bool, count: usize) {
+        let len = self.buffer.changes.len();
+        if len == 0 {
+            self.status_msg = "E664: changelist is empty".into();
+            return;
+        }
+        let idx = self.buffer.change_idx.min(len);
+        let target = if older {
+            if idx == 0 {
+                self.status_msg = "E662: At start of changelist".into();
+                return;
+            }
+            idx.saturating_sub(count.max(1))
+        } else {
+            if idx + 1 >= len {
+                self.status_msg = "E663: At end of changelist".into();
+                return;
+            }
+            (idx + count.max(1)).min(len - 1)
+        };
+        self.buffer.change_idx = target;
+        let (line, col) = self.buffer.pos_of(self.buffer.changes[target]);
+        self.window.cursor.line = line.min(self.buffer.line_count().saturating_sub(1));
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
+        self.clamp_cursor_normal();
+    }
+
+    /// `:changes` — the change list in the list overlay, oldest first, each
+    /// row numbered by its distance from where `g;` / `g,` are, as in Vim.
+    pub(super) fn cmd_changes(&mut self) {
+        let idx = self.buffer.change_idx.min(self.buffer.changes.len());
+        let rows = self
+            .buffer
+            .changes
+            .iter()
+            .enumerate()
+            .map(|(i, &at)| {
+                let (line, col) = self.buffer.pos_of(at);
+                let here = if i == idx { '>' } else { ' ' };
+                let label = format!("{here}{:>5} {:>5} {:>4}", i.abs_diff(idx), line + 1, col);
+                let text = self.buffer.rope.line(line).to_string().trim().to_string();
+                (label, text)
+            })
+            .collect();
+        self.listing = Some(super::state::Listing {
+            title: "change  line   col  text".into(),
+            rows,
+            empty: "(no changes yet)".into(),
+        });
+        self.show_list_page = true;
+        self.list_scroll = 0;
+    }
+
     pub(super) fn jump_forward(&mut self) {
         if self.jump_idx + 1 >= self.jumplist.len() {
             self.status_msg = "Already at newest jump".into();

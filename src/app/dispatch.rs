@@ -357,6 +357,7 @@ impl super::App {
                 self.window.visual_anchor = Some(self.window.cursor);
             }
             Action::ReselectVisual => self.reselect_visual(),
+            Action::ChangeListJump { older, count } => self.goto_change(older, count),
             Action::VisualOperate { op, register } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.apply_visual_operate(op, register);

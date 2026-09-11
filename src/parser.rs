@@ -218,6 +218,11 @@ pub enum Action {
     EnterVisual(VisualKind),
     /// `gv` — the last Visual selection again.
     ReselectVisual,
+    /// `g;` / `g,` — `count` places older / newer in the change list.
+    ChangeListJump {
+        older: bool,
+        count: usize,
+    },
     Repeat,
     PageScroll(PageScrollKind),
     AdjustViewport(ViewportAdjust),
@@ -1529,6 +1534,15 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if ch == 'T' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
             return ParseResult::Action(Action::BufferPrev);
+        }
+        // g; / g, — older / newer places in the change list.
+        if matches!(ch, ';' | ',') && ctx == ParseCtx::Normal && state.operator.is_none() {
+            let count = state.total_count();
+            state.reset();
+            return ParseResult::Action(Action::ChangeListJump {
+                older: ch == ';',
+                count,
+            });
         }
         // gi — Insert where it was last left.
         if ch == 'i' && ctx == ParseCtx::Normal && state.operator.is_none() {

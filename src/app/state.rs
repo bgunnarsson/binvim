@@ -150,6 +150,17 @@ pub struct KeyStart {
     pub selection: Option<(Cursor, Cursor)>,
 }
 
+/// What the list overlay shows in place of the registers — `:changes` and
+/// the like. Built when the command runs, as Vim prints its listings.
+#[derive(Debug, Clone)]
+pub struct Listing {
+    pub title: String,
+    /// Label column, then the text beside it.
+    pub rows: Vec<(String, String)>,
+    /// Shown when there are no rows.
+    pub empty: String,
+}
+
 /// One row in the quickfix list — populated from grep results, LSP
 /// references, or diagnostics. Line / column are 1-indexed (Vim
 /// convention; what `:clist` shows). `text` is a short preview for the

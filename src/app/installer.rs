@@ -237,7 +237,7 @@ impl super::App {
         // Other full-screen overlays would otherwise paint over us.
         self.show_health_page = false;
         self.show_messages_page = false;
-        self.show_registers_page = false;
+        self.show_list_page = false;
         self.show_test_results_page = false;
         self.show_start_page = false;
         self.completion = None;

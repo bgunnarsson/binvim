@@ -101,6 +101,11 @@ follows [Semantic Versioning](https://semver.org/).
 - **`gi` inserts where Insert was last left.** It goes to the `` `^ `` mark,
   which moves with any edits since, and starts Insert there. Before the
   first insert it starts Insert at the cursor.
+- **The change list: `g;`, `g,` and `:changes`.** `g;` goes back through the
+  places you changed, newest first, and `g,` forward again; a count skips
+  that many. Each buffer keeps its last 100 changes, a change on the same
+  line as the one before counts once, and the places move with the text.
+  `:changes` lists them in the same overlay as `:registers`.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another
