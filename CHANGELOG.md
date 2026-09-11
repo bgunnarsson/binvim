@@ -278,6 +278,12 @@ follows [Semantic Versioning](https://semver.org/).
   the quickfix list; a range picks them by number (`:2,4bufdo`). The run ends
   where the command last ran and stops at the first error. `:s` takes the `e`
   flag, so `:bufdo %s/a/b/ge` reads as it does in Vim.
+- **`:grep`, `:vimgrep` and `:make` fill the quickfix list.** `:grep args`
+  runs `rg --vimgrep args` through your shell and jumps to the first match
+  (`:grep!` doesn't); `:vimgrep /pat/[g][j] files` searches with a Vim
+  pattern, a file with `*` in it being a glob. `:make [args]` runs the
+  workspace's build — a `build` task, or plain `make` — in a task tab, and
+  when it exits its errors become the list and the first is jumped to.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

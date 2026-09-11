@@ -486,6 +486,9 @@ pub struct App {
     /// independent picker sessions; cleared on a clean shutdown when
     /// the session is saved.
     pub last_task: Option<crate::task::Task>,
+    /// The tab `:make` started, by label, and whether its first error is
+    /// jumped to when it exits. `None` once it has.
+    pub make_tab: Option<(String, bool)>,
     /// LSP rename preview state. `Some` while the user is reviewing
     /// a `WorkspaceEdit` from `textDocument/rename` and hasn't yet
     /// accepted (apply enabled rows) or cancelled. Drives the modal
@@ -1013,6 +1016,7 @@ impl App {
             pending_debug_profiles: Vec::new(),
             pending_tasks: Vec::new(),
             last_task: None,
+            make_tab: None,
             pending_rename_preview: None,
             rename_anchor: None,
             pending_ref_augment: None,

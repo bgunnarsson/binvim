@@ -138,6 +138,101 @@ impl super::App {
 
     /// Drain finished searches into the picker. Returns `true` if anything
     /// changed and the frame needs a repaint.
+    /// `:grep[!] args` — `rg --vimgrep args` through the shell, as Vim runs
+    /// 'grepprg', so quoting and globs read the same; the matches become the
+    /// quickfix list and, without `!`, the first is jumped to.
+    pub(super) fn grep_command(&mut self, args: &str, jump: bool) {
+        let args = match self.expand_file_names(args) {
+            Ok(args) => args,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let output = match crate::format::run_shell(&format!("rg --vimgrep {args}"), "") {
+            Ok(output) => output,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let entries = super::quickfix::vimgrep_entries(&output.text, &cwd);
+        if entries.is_empty() {
+            self.quickfix = None;
+            let first = output.text.lines().next().unwrap_or("");
+            // ripgrep exits 1 when nothing matched; anything else failed.
+            self.status_msg = match output.failed {
+                Some(code) if code != 1 => format!("grep: shell returned {code}: {first}"),
+                _ => format!("E480: No match: {args}"),
+            };
+            return;
+        }
+        self.qf_replace(entries, jump);
+    }
+
+    /// `:vimgrep /pat/[g][j] files` — a Vim pattern, translated for ripgrep
+    /// as `:S` does, over `files`. A file with `*`, `?` or `[` in it is a glob
+    /// over the working directory rather than a path. Without `g` only a
+    /// line's first match counts, as in Vim.
+    pub(super) fn vimgrep_command(&mut self, pattern: &str, files: &str, all: bool, jump: bool) {
+        let source = match self
+            .pattern_or_last(pattern)
+            .and_then(|pattern| super::search::search_source(&pattern))
+        {
+            Ok(source) => source,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let files = match self.expand_file_names(files) {
+            Ok(files) => files,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let (globs, mut paths): (Vec<&str>, Vec<&str>) = files
+            .split_whitespace()
+            .partition(|file| file.contains(['*', '?', '[']));
+        if globs.is_empty() && paths.is_empty() {
+            self.status_msg = "E683: File name missing or invalid pattern".into();
+            return;
+        }
+        if paths.is_empty() {
+            paths.push(".");
+        }
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let mut rg = std::process::Command::new("rg");
+        rg.args(["--vimgrep", "--color=never", "--no-messages"]);
+        for glob in &globs {
+            rg.arg("--glob").arg(glob);
+        }
+        let output = rg
+            .arg("-e")
+            .arg(&source)
+            .arg("--")
+            .args(&paths)
+            .current_dir(&cwd)
+            .output();
+        let Ok(output) = output else {
+            self.status_msg = "vimgrep: ripgrep not on PATH".into();
+            return;
+        };
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut entries = super::quickfix::vimgrep_entries(&text, &cwd);
+        if !all {
+            entries.dedup_by(|b, a| a.path == b.path && a.line == b.line);
+        }
+        if entries.is_empty() {
+            self.quickfix = None;
+            self.status_msg = format!("E480: No match: {pattern}");
+            return;
+        }
+        self.qf_replace(entries, jump);
+    }
+
     pub(super) fn handle_grep_events(&mut self) -> bool {
         let mut progress = false;
         while let Ok(ev) = self.grep.rx.try_recv() {

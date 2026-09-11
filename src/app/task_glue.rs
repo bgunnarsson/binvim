@@ -109,6 +109,55 @@ impl super::App {
         }
     }
 
+    /// `:make[!] [args]` — the workspace's build (`task::build_task`) with
+    /// `args` added, run in a task tab like any other; `finish_make` takes it
+    /// from there when it exits.
+    pub(super) fn cmd_make(&mut self, args: &str, jump: bool) {
+        let args = match self.expand_file_names(args) {
+            Ok(args) => args,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let tasks = task::discover_all(&self.task_start_dir());
+        let Some(mut task) = task::build_task(tasks) else {
+            self.status_msg = "make: no build found (npm / just / cargo / make / dotnet)".into();
+            return;
+        };
+        task.args
+            .extend(args.split_whitespace().map(str::to_string));
+        task.label = ":make".into();
+        let tabs = self.terminals.len();
+        self.task_kickoff(task);
+        if self.terminals.len() > tabs {
+            self.make_tab = Some((":make".into(), jump));
+        }
+    }
+
+    /// `:make`'s tab exited: its errors become the quickfix list and, unless
+    /// `:make!`, focus comes back from the tab to the first of them. A build
+    /// that shows none empties the list, as Vim's does.
+    fn finish_make(&mut self, idx: usize, entries: Vec<crate::app::state::QuickfixEntry>) {
+        let Some((_, jump)) = self.make_tab.take() else {
+            return;
+        };
+        if entries.is_empty() {
+            self.quickfix = None;
+            self.status_msg = "make: no errors detected".into();
+            return;
+        }
+        let n = entries.len();
+        if jump && matches!(self.mode, Mode::Terminal) && self.active_terminal_idx == idx {
+            self.mode = Mode::Normal;
+        }
+        self.qf_replace(entries, jump);
+        if !jump {
+            let s = if n == 1 { "" } else { "s" };
+            self.status_msg = format!("make: {n} error{s} → quickfix");
+        }
+    }
+
     /// Spawn a task in a new bottom-terminal tab. Labels the tab with
     /// the task name so the strip stays readable when several tasks
     /// are running simultaneously (the common case: `dev` + `lint` +
@@ -185,13 +234,22 @@ impl super::App {
     pub(super) fn task_poll_exits_and_scrape(&mut self) -> bool {
         let mut new_entries: Vec<crate::app::state::QuickfixEntry> = Vec::new();
         let mut status_hint: Option<String> = None;
-        for term in &self.terminals {
+        let mut make_exit: Option<(usize, Vec<crate::app::state::QuickfixEntry>)> = None;
+        for (idx, term) in self.terminals.iter().enumerate() {
             let Some(label) = term.label() else { continue };
             let Some(_status) = term.poll_exit() else { continue };
             let inner = term.grid();
             let text = inner.handler.grid.text_lines().join("\n");
             drop(inner);
             let scraped = scrape_task_errors(&text);
+            if self
+                .make_tab
+                .as_ref()
+                .is_some_and(|(make, _)| *make == label)
+            {
+                make_exit = Some((idx, scraped));
+                continue;
+            }
             let n = scraped.len();
             if n > 0 {
                 new_entries.extend(scraped);
@@ -202,6 +260,10 @@ impl super::App {
             } else if status_hint.is_none() {
                 status_hint = Some(format!("'{label}' exited (no errors detected)"));
             }
+        }
+        if let Some((idx, entries)) = make_exit {
+            self.finish_make(idx, entries);
+            return true;
         }
         if new_entries.is_empty() {
             if let Some(msg) = status_hint {
