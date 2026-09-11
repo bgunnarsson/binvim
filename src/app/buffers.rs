@@ -199,6 +199,19 @@ impl super::App {
         Ok(())
     }
 
+    /// `:new` / `:vnew` — a fresh unnamed buffer in the focused window. It's
+    /// pushed at the end, so the start page's `[No Name]` seed at index 0 is
+    /// never taken for it.
+    pub(super) fn open_empty_buffer(&mut self) -> Result<()> {
+        self.buffers.push(BufferStash {
+            buffer: Buffer::empty(),
+            ..Default::default()
+        });
+        self.switch_to(self.buffers.len() - 1)?;
+        self.show_start_page = false;
+        Ok(())
+    }
+
     pub fn open_buffer(&mut self, path: PathBuf) -> Result<()> {
         // Switch to existing buffer if this path is already open.
         if self.buffer.path.as_deref() == Some(path.as_path()) {

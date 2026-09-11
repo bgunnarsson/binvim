@@ -167,6 +167,36 @@ impl super::App {
         }
     }
 
+    /// `:sp` / `:vs` / `:new` / `:vnew` — the window split, then the new pane
+    /// given `file`, a fresh empty buffer for `:new`, or left on the same
+    /// buffer. A file that won't open closes the new pane again.
+    pub(super) fn split_command(&mut self, vertical: bool, file: Option<&str>, empty: bool) {
+        let dir = if vertical {
+            SplitDir::Vertical
+        } else {
+            SplitDir::Horizontal
+        };
+        // A refused split leaves focus where it was; opening the file there,
+        // or closing the pane on failure, would take the original window.
+        let before = self.active_window;
+        self.window_split(dir);
+        if self.active_window == before {
+            return;
+        }
+        let opened = match file {
+            Some(file) => self
+                .expand_file_names(file)
+                .map_err(anyhow::Error::msg)
+                .and_then(|file| self.open_buffer(std::path::PathBuf::from(file))),
+            None if empty => self.open_empty_buffer(),
+            None => Ok(()),
+        };
+        if let Err(e) = opened {
+            self.window_close();
+            self.status_msg = format!("error: {e}");
+        }
+    }
+
     /// Called by `delete_buffer` after a `buffers.remove(removed)` and
     /// any `self.active` adjustment: re-points every Window's
     /// `buffer_idx` so it stays consistent with the now-shifted buffer

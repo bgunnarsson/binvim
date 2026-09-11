@@ -2628,6 +2628,13 @@ impl super::App {
                 }
             }
             ExCommand::Shell { cmd } => self.shell_command(&cmd, ""),
+            ExCommand::Split {
+                vertical,
+                file,
+                empty,
+            } => self.split_command(vertical, file.as_deref(), empty),
+            ExCommand::OnlyWindow => self.window_only(),
+            ExCommand::CloseWindow => self.window_close(),
             ExCommand::WriteCommand { range, cmd } => {
                 // `:w !cmd` takes the whole file unless given a range.
                 let (l1, l2) = self.resolve_range(range, false);
@@ -3182,7 +3189,7 @@ impl super::App {
     /// `%` and `#` in a command's argument, as Vim reads them: the current
     /// file's name and the alternate file's — relative to the working
     /// directory when they're under it. `\%` and `\#` are the characters.
-    fn expand_file_names(&self, text: &str) -> Result<String, String> {
+    pub(super) fn expand_file_names(&self, text: &str) -> Result<String, String> {
         let cwd = std::env::current_dir().ok();
         let mut out = String::new();
         let mut chars = text.chars();
@@ -4870,6 +4877,30 @@ mod tests {
         assert_eq!(app.window.cursor.line, 1);
         app.exec_command("r /no/such/file");
         assert!(app.status_msg.contains("E484"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn window_commands_split_and_close() {
+        let mut app = app_with_keymaps("a\n", "");
+        app.exec_command("vs");
+        assert_eq!(app.windows.len(), 1);
+        assert_eq!(app.buffer.rope.to_string(), "a\n");
+        app.exec_command("new");
+        assert_eq!(app.windows.len(), 2);
+        assert_eq!(app.buffer.rope.to_string(), "");
+        assert!(app.buffer.path.is_none());
+        app.exec_command("only");
+        assert!(app.windows.is_empty());
+        app.exec_command("close");
+        assert!(app.status_msg.contains("E444"), "{}", app.status_msg);
+
+        let path = std::env::temp_dir().join(format!("binvim-split-{}.txt", std::process::id()));
+        std::fs::write(&path, "split\n").expect("temp file");
+        let mut app = app_with_keymaps("a\n", "");
+        app.exec_command(&format!("sp {}", path.display()));
+        std::fs::remove_file(&path).ok();
+        assert_eq!(app.windows.len(), 1);
+        assert_eq!(app.buffer.rope.to_string(), "split\n");
     }
 
     #[cfg(unix)]
