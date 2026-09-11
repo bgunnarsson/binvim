@@ -405,6 +405,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:pu[t][!] [x]`            | Put register `x` on lines of their own below the line, or above it with `!` (`:0pu` for the top). |
 | `:le` / `:ri` / `:ce`      | Align the lines left (`:le 4` indents by 4), right or centred in a width (`:ce 60`; default `max_line_length`, else 80). |
 | `:retab[!] [N]`            | Lay tabs and spaces out again for tabstop `N` — spaces or tabs as the file indents; `!` takes runs of spaces too. |
+| `:norm[al][!] {keys}`      | Type `keys` in Normal mode on each line of the range (`:%norm A;`), each line its own undo step; `!` leaves `[keymaps]` out. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. `:dapb` accepts arg forms: `:dapb if <expr>` for a conditional breakpoint, `:dapb hit <expr>` for hit-count, `:dapb plain` to strip both. Conditional breakpoints render as `◆` in the gutter; the breakpoints pane lists each row's expression inline. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:x` / `ZZ` / `ZQ`        | `:x` and `ZZ` write only if the buffer is modified, then quit; `ZQ` is `:q!`. `:q`, `:wq` and `:x` refuse (`E162`) while another buffer has unsaved changes. |

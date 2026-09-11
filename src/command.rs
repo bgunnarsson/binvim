@@ -98,6 +98,13 @@ pub enum ExCommand {
         bang: bool,
         tabstop: Option<usize>,
     },
+    /// `:norm[al][!] {keys}` — the keys typed in Normal mode on each line;
+    /// `remap: false` (`!`) leaves `[keymaps]` out.
+    Normal {
+        range: ExRange,
+        keys: String,
+        remap: bool,
+    },
     NoHighlight,
     Format,
     Health,
@@ -412,8 +419,9 @@ impl RangeSpec {
 }
 
 pub fn parse(line: &str) -> ExCommand {
-    let line = line.trim();
-    if line.is_empty() {
+    // Only the start: `:normal` types trailing blanks as keys.
+    let line = line.trim_start();
+    if line.trim_end().is_empty() {
         return ExCommand::Unknown(String::new());
     }
     // Bare line number: ":42" jumps to that line.
@@ -431,7 +439,7 @@ pub fn parse(line: &str) -> ExCommand {
         Some(Err(spec)) => {
             return ExCommand::Ranged {
                 spec,
-                rest: rest.trim().to_string(),
+                rest: rest.trim_start().to_string(),
             };
         }
     };
@@ -441,6 +449,9 @@ pub fn parse(line: &str) -> ExCommand {
 /// The command after its range, once the range is plain line numbers.
 /// `line` is the whole command line, for the commands that take no range.
 pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
+    if let Some(command) = parse_normal(range, rest) {
+        return command;
+    }
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
     let rest = rest.trim();
     // `:&` / `:~`, and `:&&` / `:~&`, which keep the last `:s`'s flags.
@@ -681,6 +692,32 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
             ":dapb expected `if <expr>` | `hit <expr>` | `plain`, got `{rest}`"
         )),
     }
+}
+
+/// `:norm[al][!] {keys}` — the keys kept as typed, trailing blanks and all.
+fn parse_normal(range: ExRange, rest: &str) -> Option<ExCommand> {
+    let rest = rest.trim_start();
+    let name_end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_end);
+    if name.len() < 4 || !"normal".starts_with(name) {
+        return None;
+    }
+    let (remap, keys) = match after.strip_prefix('!') {
+        Some(keys) => (false, keys),
+        None => (true, after),
+    };
+    // Vim skips the blanks between the name and the keys.
+    let keys = keys.trim_start();
+    if keys.is_empty() {
+        return Some(ExCommand::Invalid("E471: Argument required".into()));
+    }
+    Some(ExCommand::Normal {
+        range,
+        keys: keys.to_string(),
+        remap,
+    })
 }
 
 /// The line commands — `:d` / `:y`, `:m`, `:t` / `:co`, `:j`, `:>` / `:<`,
@@ -1266,6 +1303,25 @@ mod tests {
         assert!(matches!(parse("marks"), ExCommand::Marks));
         assert!(matches!(parse("jumps"), ExCommand::Jumps));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn normal_keeps_its_keys_as_typed() {
+        assert!(matches!(
+            parse("%norm Ax "),
+            ExCommand::Normal { range: ExRange::Whole, keys, remap: true } if keys == "Ax "
+        ));
+        assert!(matches!(
+            parse("normal! dd"),
+            ExCommand::Normal { keys, remap: false, .. } if keys == "dd"
+        ));
+        assert!(matches!(
+            parse("'a,'bnorm x "),
+            ExCommand::Ranged { rest, .. } if rest == "norm x "
+        ));
+        assert!(matches!(parse("norm"), ExCommand::Invalid(e) if e.contains("E471")));
+        assert!(matches!(parse("noh"), ExCommand::NoHighlight));
+        assert!(matches!(parse("42 "), ExCommand::Goto(42)));
     }
 
     #[test]

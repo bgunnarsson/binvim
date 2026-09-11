@@ -243,6 +243,11 @@ follows [Semantic Versioning](https://semver.org/).
   take a register and a count (`:d a 3`); `:pu` / `:pu!` put a register on
   lines of their own below or above; `:le` / `:ri` / `:ce` align them; and
   `:retab[!] [N]` lays tabs and spaces out again for a new tabstop.
+- **`:normal[!] {keys}` types Normal-mode keys on every line of a range.**
+  Each line starts at its first column, a command the keys leave open —
+  Insert mode included — is closed as `Esc` would close it, and each line
+  undoes on its own. `:normal!` leaves `[keymaps]` out, and without a range
+  the keys run once where the cursor is.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
