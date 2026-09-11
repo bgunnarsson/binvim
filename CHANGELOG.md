@@ -237,6 +237,12 @@ follows [Semantic Versioning](https://semver.org/).
   is turned round, a range on its own goes to its last line, and an unset
   mark or a pattern with no match says so. `:` on a Visual selection now
   opens the command line with `'<,'>` filled in.
+- **The line commands.** `:m` moves lines and `:t` / `:co` copy them to
+  below an address (`0` for the top); `:j` joins them, and `:j!` without
+  the spaces; `:>` / `:<` shift them, once for each `>` / `<`; `:d` / `:y`
+  take a register and a count (`:d a 3`); `:pu` / `:pu!` put a register on
+  lines of their own below or above; `:le` / `:ri` / `:ce` align them; and
+  `:retab[!] [N]` lays tabs and spaces out again for a new tabstop.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
