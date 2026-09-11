@@ -3125,6 +3125,32 @@ mod tests {
     }
 
     #[test]
+    fn dap_deletes_the_paragraph_and_the_blank_line_after_it() {
+        let mut app = app_with_keymaps("a\nb\n\nc\n", "");
+        press(&mut app, "\"_dap");
+        assert_eq!(app.buffer.rope.to_string(), "c\n");
+    }
+
+    #[test]
+    fn cip_leaves_an_empty_line_to_type_on() {
+        let mut app = app_with_keymaps("a\nb\n\nc\n", "");
+        press(&mut app, "\"_cip");
+        assert_eq!(app.buffer.rope.to_string(), "\n\nc\n");
+        assert!(matches!(app.mode, Mode::Insert));
+    }
+
+    #[test]
+    fn vip_selects_whole_lines() {
+        let mut app = app_with_keymaps("a\nb\n\nc\n", "");
+        press(&mut app, "vip");
+        assert!(matches!(
+            app.mode,
+            Mode::Visual(crate::mode::VisualKind::Line)
+        ));
+        assert_eq!(app.window.cursor.line, 1);
+    }
+
+    #[test]
     fn mapped_key_runs_its_expansion() {
         let mut app = app_with_keymaps("    foo\n", "[normal]\nH = \"^\"");
         app.window.cursor.col = 6;

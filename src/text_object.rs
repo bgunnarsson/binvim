@@ -18,13 +18,17 @@ pub enum TextObjectVerb {
         close: char,
         inner: bool,
     },
+    Paragraph {
+        inner: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct TextRange {
     pub start: usize,
     pub end: usize,
-    /// True if the range is meant to be linewise (not currently used by Phase-2 objects).
+    /// True for the line-wise objects (`ip` / `ap`): the register is
+    /// line-wise, Visual selects whole lines, and Change keeps one line.
     pub linewise: bool,
 }
 
@@ -34,6 +38,7 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::BigWord { inner } => word(buf, cur, inner, true),
         TextObjectVerb::Quotes { ch, inner } => quoted(buf, cur, ch, inner),
         TextObjectVerb::Pair { open, close, inner } => pair(buf, cur, open, close, inner),
+        TextObjectVerb::Paragraph { inner } => paragraph(buf, cur, inner),
     }
 }
 
@@ -73,6 +78,7 @@ pub fn compute_counted(
         TextObjectVerb::Pair { open, close, inner } => {
             expand_pairs(buf, first, open, close, inner, count)
         }
+        TextObjectVerb::Paragraph { inner } => extend_paragraphs(buf, first, inner, count),
     }
 }
 
@@ -148,6 +154,75 @@ enum Class {
     Whitespace,
     Word,
     Punct,
+}
+
+/// Whether `line` counts as blank for the paragraph objects. Unlike `{` / `}`,
+/// Vim's `ip` / `ap` treat a whitespace-only line as blank (`:h ap`).
+fn is_blank_line(buf: &Buffer, line: usize) -> bool {
+    (0..buf.line_len(line)).all(|c| matches!(buf.char_at(line, c), Some(ch) if ch.is_whitespace()))
+}
+
+/// First and last line of the run around `line` whose lines are all blank, or
+/// all not.
+fn line_run(buf: &Buffer, line: usize, lines: usize) -> (usize, usize) {
+    let blank = is_blank_line(buf, line);
+    let mut first = line;
+    while first > 0 && is_blank_line(buf, first - 1) == blank {
+        first -= 1;
+    }
+    let mut last = line;
+    while last + 1 < lines && is_blank_line(buf, last + 1) == blank {
+        last += 1;
+    }
+    (first, last)
+}
+
+fn line_span(buf: &Buffer, first: usize, last: usize) -> TextRange {
+    TextRange {
+        start: buf.line_start_idx(first),
+        end: buf.line_start_idx(last + 1),
+        linewise: true,
+    }
+}
+
+/// `ip` is the run of lines around the cursor — the paragraph, or the blank
+/// lines it sits on. `ap` adds the run after it; for the last paragraph in the
+/// file, which has none, it takes the blank lines before it instead.
+fn paragraph(buf: &Buffer, cur: Cursor, inner: bool) -> Option<TextRange> {
+    let lines = crate::motion::vim_line_count(buf).max(1);
+    let line = cur.line.min(lines - 1);
+    let (mut first, mut last) = line_run(buf, line, lines);
+    if !inner {
+        if last + 1 < lines {
+            last = line_run(buf, last + 1, lines).1;
+        } else if first > 0 && !is_blank_line(buf, line) {
+            first = line_run(buf, first - 1, lines).0;
+        }
+    }
+    Some(line_span(buf, first, last))
+}
+
+/// `Nip` takes N runs, blank ones included; `Nap` takes N paragraphs, each
+/// with the blank lines after it.
+fn extend_paragraphs(
+    buf: &Buffer,
+    first: TextRange,
+    inner: bool,
+    count: usize,
+) -> Option<TextRange> {
+    let lines = crate::motion::vim_line_count(buf).max(1);
+    let first_line = buf.rope.char_to_line(first.start);
+    let mut last = buf
+        .rope
+        .char_to_line(first.end.saturating_sub(1).max(first.start));
+    let runs_per_count = if inner { 1 } else { 2 };
+    for _ in 0..(count - 1) * runs_per_count {
+        if last + 1 >= lines {
+            break;
+        }
+        last = line_run(buf, last + 1, lines).1;
+    }
+    Some(line_span(buf, first_line, last))
 }
 
 fn cls_word(c: char) -> Class {
@@ -365,6 +440,45 @@ mod tests {
             col: c,
             want_col: c,
         }
+    }
+
+    // 0 a · 1 b · 2 "" · 3 c · 4 d · 5 "" · 6 e
+    const PARAS: &str = "a\nb\n\nc\nd\n\ne\n";
+
+    fn para_lines(s: &str, line: usize, inner: bool, count: usize) -> (usize, usize) {
+        let b = buf(s);
+        let obj = TextObjectVerb::Paragraph { inner };
+        let r = compute_counted(&b, cur(line, 0), obj, count).unwrap();
+        assert!(r.linewise);
+        (b.rope.char_to_line(r.start), b.rope.char_to_line(r.end - 1))
+    }
+
+    #[test]
+    fn ip_is_the_paragraph_and_ap_adds_the_blank_lines_after() {
+        assert_eq!(para_lines(PARAS, 3, true, 1), (3, 4));
+        assert_eq!(para_lines(PARAS, 3, false, 1), (3, 5));
+    }
+
+    #[test]
+    fn ap_on_the_last_paragraph_takes_the_blank_lines_before() {
+        assert_eq!(para_lines(PARAS, 6, false, 1), (5, 6));
+    }
+
+    #[test]
+    fn ip_on_a_blank_line_is_the_blank_run() {
+        assert_eq!(para_lines(PARAS, 2, true, 1), (2, 2));
+        assert_eq!(para_lines(PARAS, 2, false, 1), (2, 4));
+    }
+
+    #[test]
+    fn counted_paragraph_objects() {
+        assert_eq!(para_lines(PARAS, 0, true, 2), (0, 2));
+        assert_eq!(para_lines(PARAS, 0, false, 2), (0, 5));
+    }
+
+    #[test]
+    fn whitespace_only_lines_bound_the_paragraph_objects() {
+        assert_eq!(para_lines("a\n  \nb\n", 0, true, 1), (0, 0));
     }
 
     #[test]

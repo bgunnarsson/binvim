@@ -1043,6 +1043,7 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 close: '>',
                 inner,
             }),
+            'p' => Some(TextObjectVerb::Paragraph { inner }),
             _ => None,
         };
         let count = state.total_count();
@@ -2384,6 +2385,20 @@ mod tests {
                 ..
             }) => {}
             _ => panic!("{{ should move a paragraph back"),
+        }
+    }
+
+    #[test]
+    fn dap_operates_on_the_paragraph_object() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("da"));
+        match parse(&mut state, key('p'), ParseCtx::Normal) {
+            ParseResult::Action(Action::OperateTextObject {
+                op: Operator::Delete,
+                obj: TextObjectVerb::Paragraph { inner: false },
+                ..
+            }) => {}
+            _ => panic!("dap should delete the paragraph object"),
         }
     }
 

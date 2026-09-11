@@ -444,7 +444,18 @@ impl super::App {
             }
             Operator::Change => {
                 self.write_register(target, removed, range.linewise);
-                self.buffer.delete_range(range.start, range.end);
+                // Changing whole lines leaves one empty line to type on, as
+                // `cc` does; deleting the last newline too would pull the
+                // next line up under the cursor.
+                let keeps_newline = range.linewise
+                    && range.end > range.start
+                    && self.buffer.rope.char(range.end - 1) == '\n';
+                let end = if keeps_newline {
+                    range.end - 1
+                } else {
+                    range.end
+                };
+                self.buffer.delete_range(range.start, end);
                 self.cursor_to_idx(range.start);
                 self.mode = Mode::Insert;
             }
