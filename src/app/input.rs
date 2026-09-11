@@ -3475,6 +3475,22 @@ mod tests {
     }
 
     #[test]
+    fn daa_and_cia_work_on_arguments() {
+        let mut app = app_with_keymaps("call(one, two)\n", "");
+        app.window.cursor.col = 10;
+        app.window.cursor.want_col = 10;
+        press(&mut app, "daa");
+        assert_eq!(app.buffer.rope.to_string(), "call(one)\n");
+
+        let mut app = app_with_keymaps("call(one, two)\n", "");
+        app.window.cursor.col = 5;
+        app.window.cursor.want_col = 5;
+        press(&mut app, "cia1");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "call(1, two)\n");
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

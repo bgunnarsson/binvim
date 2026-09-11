@@ -171,6 +171,11 @@ follows [Semantic Versioning](https://semver.org/).
   tags and `at` the element with them — `dit`, `cat`, `yit`, `vat` — in
   any buffer, not only HTML. A count reaches that many elements out, and
   `dit` on an empty element does nothing.
+- **`ia` / `aa` argument text objects.** `ia` takes the comma-separated
+  argument under the cursor inside `()`, `[]` or `{}`, and `aa` the
+  argument with one comma next to it — `daa` on `b` in `f(a, b)` leaves
+  `f(a)`. Commas inside nested brackets or quoted strings don't split an
+  argument, and a count reaches the arguments of an outer pair.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number
