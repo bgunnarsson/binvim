@@ -5301,6 +5301,39 @@ mod tests {
     }
 
     #[test]
+    fn visual_block_insert_and_append_mirror_on_every_row() {
+        let mut app = app_with_keymaps("abc\nabc\nabc\n", "");
+        app.window.cursor.col = 1;
+        app.window.cursor.want_col = 1;
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jjIX");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "aXbc\naXbc\naXbc\n");
+        // `.` repeats it on a block of the same size, from the cursor.
+        press(&mut app, "gg0.");
+        assert_eq!(app.buffer.rope.to_string(), "XaXbc\nXaXbc\nXaXbc\n");
+        // One undo takes the whole repeat back.
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), "aXbc\naXbc\naXbc\n");
+
+        // `A` pads a row that stops short of the block.
+        let mut app = app_with_keymaps("abcd\nab\nabcd\n", "");
+        app.window.cursor.col = 1;
+        app.window.cursor.want_col = 1;
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jjlAY");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "abcYd\nab Y\nabcYd\n");
+
+        // `$A` appends at each row's own end.
+        let mut app = app_with_keymaps("a\nabc\nab\n", "");
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jj$A!");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "a!\nabc!\nab!\n");
+    }
+
+    #[test]
     fn history_window_lists_runs_and_closes() {
         let mut app = app_with_keymaps("abc\n", "");
         app.cmd_history.clear();

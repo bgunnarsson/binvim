@@ -311,6 +311,10 @@ follows [Semantic Versioning](https://semver.org/).
 - **`q:` / `q/` / `q?` open the command-line window.** A split below lists the
   ex or search history with an empty line at the bottom; edit it in Normal
   mode, `<CR>` runs the line under the cursor, and `Ctrl-C` or `:q` closes it.
+- **Visual-block `I`, `A` and `$A` type on every row at once.** `I` inserts
+  before the block, `A` after it — padding rows that stop short — and `$A` at
+  each row's own end; `.` repeats it on a block of the same size, and one undo
+  takes it back.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
