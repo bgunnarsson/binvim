@@ -264,6 +264,66 @@ fn sentence_target(buf: &Buffer, idx: usize) -> MotionResult {
     }
 }
 
+/// `[(` / `[{` — the `count`th unmatched `open` before the cursor — and
+/// `])` / `]}`, the unmatched `close` after it: the brackets the cursor sits
+/// in. With none there the cursor stays, so an operator does nothing.
+pub fn unmatched_bracket(
+    buf: &Buffer,
+    cur: Cursor,
+    open: char,
+    close: char,
+    forward: bool,
+    count: usize,
+) -> MotionResult {
+    let total = buf.total_chars();
+    let from = buf.pos_to_char(cur.line, cur.col);
+    let found = if forward {
+        find_unmatched(buf, from + 1..total, open, close, count)
+    } else {
+        find_unmatched(buf, (0..from).rev(), close, open, count)
+    };
+    let idx = found.unwrap_or(from);
+    let line = buf.rope.char_to_line(idx);
+    let col = idx - buf.rope.line_to_char(line);
+    MotionResult {
+        target: Cursor {
+            line,
+            col,
+            want_col: col,
+        },
+        kind: MotionKind::CharExclusive,
+    }
+}
+
+/// Walks `indices` for the `count`th `outward` bracket that no `inward` one
+/// on the way has matched.
+fn find_unmatched(
+    buf: &Buffer,
+    indices: impl Iterator<Item = usize>,
+    inward: char,
+    outward: char,
+    count: usize,
+) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut left = count.max(1);
+    for i in indices {
+        let c = buf.rope.char(i);
+        if c == inward {
+            depth += 1;
+        } else if c == outward {
+            if depth > 0 {
+                depth -= 1;
+                continue;
+            }
+            left -= 1;
+            if left == 0 {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
 /// Whether a sentence starts at char `i`: an empty line, or the first
 /// non-blank after a sentence's end, after a blank line, or in the buffer.
 pub(crate) fn is_sentence_start(buf: &Buffer, i: usize) -> bool {

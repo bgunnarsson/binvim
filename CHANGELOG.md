@@ -176,6 +176,11 @@ follows [Semantic Versioning](https://semver.org/).
   argument with one comma next to it — `daa` on `b` in `f(a, b)` leaves
   `f(a)`. Commas inside nested brackets or quoted strings don't split an
   argument, and a count reaches the arguments of an outer pair.
+- **`]d` / `[d` jump between diagnostics.** They go to the next or previous
+  diagnostic in the buffer, round past either end, and show its message in
+  the status line.
+- **`[(` / `[{` and `])` / `]}`.** They go to the unmatched bracket around
+  the cursor, and work after an operator — `d])` deletes up to the `)`.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

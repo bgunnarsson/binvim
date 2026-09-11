@@ -1341,6 +1341,58 @@ impl super::App {
         }
     }
 
+    /// `]d` / `[d` — to the next / previous diagnostic in this buffer, round
+    /// past either end, with what it reports in the status line. Several on
+    /// one spot are one stop.
+    pub(super) fn goto_diagnostic(&mut self, forward: bool, count: usize) {
+        let mut spots: Vec<(usize, usize, Severity, String)> = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(|path| self.lsp.diagnostics_for(path))
+            .map(|diags| {
+                diags
+                    .iter()
+                    .map(|d| (d.line, d.col, d.severity, d.message.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if spots.is_empty() {
+            self.status_msg = "No diagnostics".into();
+            return;
+        }
+        spots.sort_by_key(|s| (s.0, s.1));
+        spots.dedup_by_key(|s| (s.0, s.1));
+        let mut at = (self.window.cursor.line, self.window.cursor.col);
+        let mut pick = 0;
+        for _ in 0..count.max(1) {
+            pick = if forward {
+                spots.iter().position(|s| (s.0, s.1) > at).unwrap_or(0)
+            } else {
+                spots
+                    .iter()
+                    .rposition(|s| (s.0, s.1) < at)
+                    .unwrap_or(spots.len() - 1)
+            };
+            at = (spots[pick].0, spots[pick].1);
+        }
+        let label = match spots[pick].2 {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+            Severity::Hint => "hint",
+        };
+        let first_line = spots[pick].3.lines().next().unwrap_or("");
+        let status = format!("{label}: {first_line}");
+        self.push_jump();
+        let line = at.0.min(self.buffer.line_count().saturating_sub(1));
+        let col = at.1.min(self.buffer.line_len(line).saturating_sub(1));
+        self.window.cursor.line = line;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
+        self.status_msg = status;
+    }
+
     /// Diagnostics for `line` of whichever buffer has `path`. Used by
     /// the renderer when drawing an inactive pane — diagnostics are
     /// keyed by path on `LspManager`, so any buffer's reports can be

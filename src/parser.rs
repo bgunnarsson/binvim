@@ -56,6 +56,13 @@ pub enum MotionVerb {
     SentenceForward,
     /// `(` — to the start of this sentence, or the one before.
     SentenceBackward,
+    /// `[(` / `[{` and `])` / `]}` — to the unmatched bracket of that kind
+    /// before or after the cursor.
+    UnmatchedBracket {
+        open: char,
+        close: char,
+        forward: bool,
+    },
     /// `+` / `<CR>` — N lines down, on the first non-blank.
     NextLineStart,
     /// `-` — N lines up, on the first non-blank.
@@ -384,6 +391,11 @@ pub enum Action {
     WriteQuitIfModified,
     /// `ZQ` — `:q!`: quit without writing.
     QuitDiscard,
+    /// `]d` / `[d` — to the next / previous diagnostic, saying what it reports.
+    DiagnosticJump {
+        forward: bool,
+        count: usize,
+    },
     /// `]q` — jump to the next entry in the quickfix list.
     QuickfixNext,
     /// `[q` — jump to the previous entry in the quickfix list.
@@ -878,6 +890,26 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     ParseResult::Pending
 }
 
+/// A bracket-prefixed motion (`])`, `[{`): a move, or what an operator
+/// waiting for it covers.
+fn bracket_motion(
+    op: Option<Operator>,
+    motion: MotionVerb,
+    count: usize,
+    register: Option<char>,
+) -> ParseResult {
+    let action = match op {
+        Some(op) => Action::Operate {
+            op,
+            motion,
+            count,
+            register,
+        },
+        None => Action::Move { motion, count },
+    };
+    ParseResult::Action(action)
+}
+
 /// The operator a key names after `g`: the case operators, and `gq` / `gw`.
 fn g_operator(ch: char) -> Option<Operator> {
     match ch {
@@ -1119,9 +1151,30 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.awaiting_bracket_close = false;
         let count = state.total_count();
         let register = state.register;
+        let op = state.operator;
         state.reset();
+        let unmatched = match ch {
+            ')' => Some(('(', ')')),
+            '}' => Some(('{', '}')),
+            _ => None,
+        };
+        if let Some((open, close)) = unmatched {
+            let motion = MotionVerb::UnmatchedBracket {
+                open,
+                close,
+                forward: true,
+            };
+            return bracket_motion(op, motion, count, register);
+        }
+        if op.is_some() {
+            return ParseResult::Cancelled;
+        }
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixNext),
+            'd' => ParseResult::Action(Action::DiagnosticJump {
+                forward: true,
+                count,
+            }),
             'h' => ParseResult::Action(Action::HunkNext),
             's' => ParseResult::Action(Action::SpellNext),
             // `]p` puts below at the cursor line's indent, `]P` above.
@@ -1138,9 +1191,30 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.awaiting_bracket_open = false;
         let count = state.total_count();
         let register = state.register;
+        let op = state.operator;
         state.reset();
+        let unmatched = match ch {
+            '(' => Some(('(', ')')),
+            '{' => Some(('{', '}')),
+            _ => None,
+        };
+        if let Some((open, close)) = unmatched {
+            let motion = MotionVerb::UnmatchedBracket {
+                open,
+                close,
+                forward: false,
+            };
+            return bracket_motion(op, motion, count, register);
+        }
+        if op.is_some() {
+            return ParseResult::Cancelled;
+        }
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixPrev),
+            'd' => ParseResult::Action(Action::DiagnosticJump {
+                forward: false,
+                count,
+            }),
             'h' => ParseResult::Action(Action::HunkPrev),
             's' => ParseResult::Action(Action::SpellPrev),
             // `[p` and `[P` both put above.
@@ -2023,10 +2097,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Pending;
     }
 
-    // Bracket prefixes — `]q` / `[q` step through the quickfix list. The
-    // pending state only kicks in when no operator is in flight (`d]` is
-    // still text-object territory; brackets there go through `awaiting_textobj`).
-    if ctx == ParseCtx::Normal && state.operator.is_none() {
+    // Bracket prefixes — `]q` / `[q` step through the quickfix list, and more.
+    // After an operator only the motions among them (`])`, `[{`) resolve;
+    // `di]` never gets here, as `i` has already taken the `]`.
+    if ctx == ParseCtx::Normal {
         if ch == ']' {
             state.awaiting_bracket_close = true;
             return ParseResult::Pending;

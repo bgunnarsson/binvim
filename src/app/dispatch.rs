@@ -215,6 +215,7 @@ impl super::App {
             }
             Action::BufferNext => self.cycle_buffer(1),
             Action::BufferPrev => self.cycle_buffer(-1),
+            Action::DiagnosticJump { forward, count } => self.goto_diagnostic(forward, count),
             Action::QuickfixNext => self.qf_next(),
             Action::QuickfixPrev => self.qf_prev(),
             Action::HunkNext => self.hunk_jump(true),
@@ -622,6 +623,18 @@ impl super::App {
             MotionVerb::SentenceBackward => {
                 motion::sentence_backward(&self.buffer, self.window.cursor, count)
             }
+            MotionVerb::UnmatchedBracket {
+                open,
+                close,
+                forward,
+            } => motion::unmatched_bracket(
+                &self.buffer,
+                self.window.cursor,
+                open,
+                close,
+                forward,
+                count,
+            ),
             MotionVerb::NextLineStart => {
                 motion::next_line_start(&self.buffer, self.window.cursor, count)
             }
