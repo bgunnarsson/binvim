@@ -385,6 +385,55 @@ fn find_open_tag(buf: &Buffer, end: usize, name: &str) -> Option<(usize, usize)>
     None
 }
 
+/// The element around char `at`, for `it` / `at`: the nearest open tag at or
+/// before it whose matching close tag ends after it, as the two tags' full
+/// `<…>` spans. `depth` 2 is the element around that one, and so on — `None`
+/// once there are no more, as a count past the outermost pair fails in Vim.
+pub(crate) fn enclosing_element(
+    buf: &Buffer,
+    at: usize,
+    depth: usize,
+) -> Option<((usize, usize), (usize, usize))> {
+    let total = buf.total_chars();
+    if total == 0 {
+        return None;
+    }
+    let mut scan_from = at.min(total - 1);
+    let mut must_end_after = at;
+    let mut found: Option<((usize, usize), (usize, usize))> = None;
+    for level in 0..depth.max(1) {
+        if let Some((open, close)) = found.filter(|_| level > 0) {
+            scan_from = open.0.checked_sub(1)?;
+            must_end_after = close.1 - 1;
+        }
+        let mut hit = None;
+        let mut i = scan_from + 1;
+        while i > 0 {
+            i -= 1;
+            if buf.rope.char(i) != '<' {
+                continue;
+            }
+            let Some(info) = enclosing_tag(buf, i) else {
+                continue;
+            };
+            if info.kind != TagKind::Open || is_void_html_element(&info.name) {
+                continue;
+            }
+            let Some(close) = find_close_tag(buf, info.range.1, &info.name)
+                .and_then(|name| enclosing_tag(buf, name.0))
+            else {
+                continue;
+            };
+            if close.range.1 > must_end_after {
+                hit = Some((info.range, close.range));
+                break;
+            }
+        }
+        found = Some(hit?);
+    }
+    found
+}
+
 /// True when this buffer is the kind of file where `<div>` should auto-close
 /// to `<div></div>`. Markdown is in here because GitHub-flavoured markdown
 /// embeds raw HTML; XML follows the same tag-pair rules; framework formats
