@@ -30,6 +30,10 @@ pub enum TextObjectVerb {
     Tag {
         inner: bool,
     },
+    /// `ia` / `aa` — a comma-separated argument inside `()`, `[]` or `{}`.
+    Argument {
+        inner: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -50,6 +54,7 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::Paragraph { inner } => paragraph(buf, cur, inner),
         TextObjectVerb::Sentence { inner } => sentence(buf, cur, inner),
         TextObjectVerb::Tag { inner } => tag(buf, cur, inner, 1),
+        TextObjectVerb::Argument { inner } => argument(buf, cur, inner, 1),
     }
 }
 
@@ -92,6 +97,7 @@ pub fn compute_counted(
         TextObjectVerb::Paragraph { inner } => extend_paragraphs(buf, first, inner, count),
         TextObjectVerb::Sentence { inner } => extend_sentences(buf, first, inner, count),
         TextObjectVerb::Tag { inner } => tag(buf, cur, inner, count),
+        TextObjectVerb::Argument { inner } => argument(buf, cur, inner, count),
     }
 }
 
@@ -255,6 +261,161 @@ fn tag(buf: &Buffer, cur: Cursor, inner: bool, count: usize) -> Option<TextRange
         end,
         linewise: false,
     })
+}
+
+/// How far above the cursor `ia` / `aa` start reading for the brackets
+/// around it: far enough for any argument list, without walking the whole
+/// file on every use. A string opened further up than this can throw it off.
+const ARGUMENT_LOOKBACK_LINES: usize = 200;
+
+/// `ia` / `aa`: the comma-separated argument around the cursor, in the
+/// nearest `()`, `[]` or `{}` holding it — commas inside nested brackets or
+/// quoted strings don't split one. `ia` is the argument, trimmed. `aa` adds
+/// one comma next to it: the one after it and the whitespace up to the next
+/// argument, or for the last argument the one before it. A count takes the
+/// argument in the pair that many levels out.
+fn argument(buf: &Buffer, cur: Cursor, inner: bool, count: usize) -> Option<TextRange> {
+    let total = buf.total_chars();
+    let at = buf.pos_to_char(cur.line, cur.col).min(total);
+    let from = buf.line_start_idx(cur.line.saturating_sub(ARGUMENT_LOOKBACK_LINES));
+    let mut open: Vec<usize> = Vec::new();
+    let mut quotes = QuoteScan::default();
+    for i in from..at {
+        let c = buf.rope.char(i);
+        if quotes.step(buf, i, c) {
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => open.push(i),
+            ')' | ']' | '}'
+                if open
+                    .last()
+                    .is_some_and(|&o| closer_of(buf.rope.char(o)) == c) =>
+            {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    let opener = *open.get(open.len().checked_sub(count.max(1))?)?;
+    let close = closer_of(buf.rope.char(opener));
+    let mut commas = Vec::new();
+    let mut depth = 0usize;
+    let mut quotes = QuoteScan::default();
+    let mut closer = None;
+    for i in opener + 1..total {
+        let c = buf.rope.char(i);
+        if quotes.step(buf, i, c) {
+            continue;
+        }
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' if depth > 0 => depth -= 1,
+            _ if c == close => {
+                closer = Some(i);
+                break;
+            }
+            ',' if depth == 0 => commas.push(i),
+            _ => {}
+        }
+    }
+    let closer = closer?;
+    // Argument k runs from just after the bracket or comma before it to the
+    // comma or bracket after it.
+    let starts: Vec<usize> = std::iter::once(opener + 1)
+        .chain(commas.iter().map(|c| c + 1))
+        .collect();
+    let ends: Vec<usize> = commas
+        .iter()
+        .copied()
+        .chain(std::iter::once(closer))
+        .collect();
+    let k = (0..starts.len()).find(|&k| starts[k] <= at && at <= ends[k])?;
+    let (arg_start, arg_end) = trimmed(buf, starts[k], ends[k])?;
+    if inner {
+        return Some(TextRange {
+            start: arg_start,
+            end: arg_end,
+            linewise: false,
+        });
+    }
+    let (start, end) = if k + 1 < starts.len() {
+        let next = trimmed(buf, starts[k + 1], ends[k + 1]).map_or(ends[k] + 1, |(s, _)| s);
+        (arg_start, next)
+    } else if k > 0 {
+        let before = trimmed(buf, starts[k - 1], ends[k - 1]).map_or(ends[k - 1], |(_, e)| e);
+        (before, arg_end)
+    } else {
+        (arg_start, arg_end)
+    };
+    Some(TextRange {
+        start,
+        end,
+        linewise: false,
+    })
+}
+
+fn closer_of(open: char) -> char {
+    match open {
+        '(' => ')',
+        '[' => ']',
+        _ => '}',
+    }
+}
+
+/// `[start, end)` without the whitespace at either end; `None` when that
+/// leaves nothing.
+fn trimmed(buf: &Buffer, start: usize, end: usize) -> Option<(usize, usize)> {
+    let is_ws = |i: usize| buf.rope.char(i).is_whitespace();
+    let first = (start..end).find(|&i| !is_ws(i))?;
+    let last = (start..end).rev().find(|&i| !is_ws(i))?;
+    Some((first, last + 1))
+}
+
+/// Walks quoted strings for the argument object. `"` and `` ` `` always
+/// quote; `'` only when it isn't an apostrophe (`don't`) and closes on its
+/// line, so a Rust lifetime (`&'a str`) doesn't. A backslash escapes the
+/// next char, and `"` / `'` strings end at the line.
+#[derive(Default)]
+struct QuoteScan {
+    quote: Option<char>,
+    escaped: bool,
+}
+
+impl QuoteScan {
+    /// Whether the char `c` at `i` is part of a quoted string, its quotes
+    /// included.
+    fn step(&mut self, buf: &Buffer, i: usize, c: char) -> bool {
+        if let Some(q) = self.quote {
+            if self.escaped {
+                self.escaped = false;
+            } else if c == '\\' {
+                self.escaped = true;
+            } else if c == q || (c == '\n' && q != '`') {
+                self.quote = None;
+            }
+            return true;
+        }
+        let opens = match c {
+            '"' | '`' => true,
+            '\'' => {
+                let after_word = i > 0 && {
+                    let p = buf.rope.char(i - 1);
+                    p.is_alphanumeric() || p == '_'
+                };
+                let closes = (i + 1..buf.total_chars())
+                    .map(|j| buf.rope.char(j))
+                    .take_while(|&ch| ch != '\n')
+                    .any(|ch| ch == '\'');
+                !after_word && closes
+            }
+            _ => false,
+        };
+        if opens {
+            self.quote = Some(c);
+        }
+        opens
+    }
 }
 
 /// `is` / `as`. `is` is the sentence up to its end mark; `as` adds the spaces
@@ -1010,5 +1171,45 @@ mod tests {
     fn it_on_an_empty_element_is_no_object() {
         assert_eq!(tag_text("<a></a>", 1, true, 1), None);
         assert_eq!(tag_text("<a></a>", 1, false, 1).as_deref(), Some("<a></a>"));
+    }
+
+    fn arg_text(s: &str, col: usize, inner: bool, count: usize) -> Option<String> {
+        let b = buf(s);
+        let obj = TextObjectVerb::Argument { inner };
+        let r = compute_counted(&b, cur(0, col), obj, count)?;
+        Some(b.rope.slice(r.start..r.end).to_string())
+    }
+
+    #[test]
+    fn ia_and_aa_take_an_argument_and_one_comma() {
+        // f0 (1 a2 ,3 _4 g5 (6 b7 ,8 _9 c10 )11 ,12 _13 "14 x15 ,16 _17 y18 "19 )20
+        let s = "f(a, g(b, c), \"x, y\")";
+        assert_eq!(arg_text(s, 2, true, 1).as_deref(), Some("a"));
+        assert_eq!(arg_text(s, 2, false, 1).as_deref(), Some("a, "));
+        assert_eq!(arg_text(s, 5, true, 1).as_deref(), Some("g(b, c)"));
+        assert_eq!(arg_text(s, 10, true, 1).as_deref(), Some("c"));
+        assert_eq!(arg_text(s, 10, false, 1).as_deref(), Some(", c"));
+        assert_eq!(arg_text(s, 15, true, 1).as_deref(), Some("\"x, y\""));
+        assert_eq!(arg_text(s, 15, false, 1).as_deref(), Some(", \"x, y\""));
+    }
+
+    #[test]
+    fn a_count_on_an_argument_object_reaches_the_outer_pair() {
+        let s = "f(a, g(b, c), \"x, y\")";
+        assert_eq!(arg_text(s, 10, true, 2).as_deref(), Some("g(b, c)"));
+        assert_eq!(arg_text(s, 10, true, 3), None);
+    }
+
+    #[test]
+    fn argument_objects_skip_lifetimes_and_empty_lists() {
+        assert_eq!(
+            arg_text("f(x: &'a str, y)", 14, true, 1).as_deref(),
+            Some("y")
+        );
+        assert_eq!(
+            arg_text("f(x: &'a str, y)", 14, false, 1).as_deref(),
+            Some(", y")
+        );
+        assert_eq!(arg_text("f()", 2, true, 1), None);
     }
 }
