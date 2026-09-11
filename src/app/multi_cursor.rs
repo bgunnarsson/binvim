@@ -217,7 +217,11 @@ impl super::App {
                     self.mode = Mode::Insert;
                 }
             }
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {}
+            Operator::Indent
+            | Operator::Outdent
+            | Operator::Reindent
+            | Operator::Format { .. }
+            | Operator::Case(_) => {}
         }
     }
 }

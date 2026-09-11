@@ -239,12 +239,50 @@ impl super::App {
         self.window.cursor.want_col = col;
     }
 
-    /// `>`, `<` and `=` over whole lines.
+    /// `gq` / `gw` — re-flows lines `l1..=l2` to `.editorconfig`'s
+    /// `max_line_length`, or 79 columns as Vim does without a `textwidth`.
+    /// `gq` leaves the cursor on the last line it wrote, `gw` where it was.
+    pub(super) fn format_lines(&mut self, l1: usize, l2: usize, keep_cursor: bool) {
+        let last = crate::motion::vim_line_count(&self.buffer).saturating_sub(1);
+        let l2 = l2.min(last);
+        let width = self.editorconfig.max_line_length.unwrap_or(79);
+        let marker = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(crate::lang::Lang::detect)
+            .and_then(|lang| lang.line_comment_prefix());
+        let start = self.buffer.line_start_idx(l1);
+        let end = self.buffer.line_start_idx(l2) + self.buffer.line_len(l2);
+        let old = self.buffer.rope.slice(start..end).to_string();
+        let new = reflow(&old, width, marker, self.editorconfig.tab_width);
+        if new != old {
+            self.buffer.replace_range(start, end, &new);
+        }
+        let cursor = self.window.cursor;
+        let last = crate::motion::vim_line_count(&self.buffer).saturating_sub(1);
+        let (line, col) = if keep_cursor {
+            let line = cursor.line.min(last);
+            (
+                line,
+                cursor.col.min(self.buffer.line_len(line).saturating_sub(1)),
+            )
+        } else {
+            let line = l1 + new.matches('\n').count();
+            (line, self.first_non_blank_col(line))
+        };
+        self.window.cursor.line = line;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
+    }
+
+    /// `>`, `<`, `=` and `gq` / `gw` over whole lines.
     pub(super) fn shift_lines(&mut self, op: Operator, l1: usize, l2: usize) {
         match op {
             Operator::Indent => self.indent_lines(l1, l2),
             Operator::Outdent => self.outdent_lines(l1, l2),
             Operator::Reindent => self.reindent_range(l1, l2),
+            Operator::Format { keep_cursor } => self.format_lines(l1, l2, keep_cursor),
             Operator::Delete | Operator::Change | Operator::Yank | Operator::Case(_) => {}
         }
     }
@@ -1135,6 +1173,91 @@ fn dedent_once(lead: &str, unit: &str) -> String {
     }
 }
 
+/// `gq`'s re-flow of whole lines `text` (no final newline) to `width`
+/// columns. Lines with the same indent and comment marker — `marker` and any
+/// repeat of its characters, so `///` and `//!` too — form a paragraph and
+/// keep both on every line; blank and marker-only lines end one and stay.
+fn reflow(text: &str, width: usize, marker: Option<&str>, tab_width: usize) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut para: Option<(String, Vec<&str>)> = None;
+    for line in text.split('\n') {
+        let (prefix, body) = split_prefix(line, marker);
+        let words: Vec<&str> = body.split_whitespace().collect();
+        if words.is_empty() {
+            fill_paragraph(&mut out, para.take(), width, tab_width);
+            out.push(line.trim_end().to_string());
+            continue;
+        }
+        match para.as_mut() {
+            Some((open, so_far)) if *open == prefix => {
+                so_far.extend(words);
+                continue;
+            }
+            _ => {}
+        }
+        fill_paragraph(&mut out, para.take(), width, tab_width);
+        para = Some((prefix, words));
+    }
+    fill_paragraph(&mut out, para, width, tab_width);
+    out.join("\n")
+}
+
+/// A line's indent and comment marker, with the space after it, and the text
+/// that follows them.
+fn split_prefix<'a>(line: &'a str, marker: Option<&str>) -> (String, &'a str) {
+    let indent = leading_ws(line);
+    let rest = &line[indent.len()..];
+    let Some(marker) = marker.filter(|m| rest.starts_with(*m)) else {
+        return (indent.to_string(), rest);
+    };
+    let repeat: usize = rest[marker.len()..]
+        .chars()
+        .take_while(|c| marker.contains(*c) || *c == '!')
+        .map(char::len_utf8)
+        .sum();
+    let full = &rest[..marker.len() + repeat];
+    (format!("{indent}{full} "), &rest[full.len()..])
+}
+
+/// Lays a paragraph's words out after its prefix, a new line whenever the
+/// next word would pass `width`. A word longer than that gets a line alone.
+fn fill_paragraph(
+    out: &mut Vec<String>,
+    para: Option<(String, Vec<&str>)>,
+    width: usize,
+    tab_width: usize,
+) {
+    let Some((prefix, words)) = para else {
+        return;
+    };
+    let prefix_width = display_width(&prefix, tab_width);
+    let mut line = prefix.clone();
+    let mut line_width = prefix_width;
+    let mut empty = true;
+    for word in words {
+        let word_width = word.chars().count();
+        if !empty && line_width + 1 + word_width > width {
+            out.push(std::mem::replace(&mut line, prefix.clone()));
+            line_width = prefix_width;
+            empty = true;
+        }
+        if !empty {
+            line.push(' ');
+            line_width += 1;
+        }
+        line.push_str(word);
+        line_width += word_width;
+        empty = false;
+    }
+    out.push(line);
+}
+
+fn display_width(s: &str, tab_width: usize) -> usize {
+    s.chars()
+        .map(|c| if c == '\t' { tab_width } else { 1 })
+        .sum()
+}
+
 /// `]p`'s indent: the first line's indent becomes `lead`, and every other
 /// line keeps its indent relative to the first — one less indented than the
 /// first gives up that much of `lead`. Blank lines come out empty. Indents
@@ -1475,5 +1598,27 @@ mod tests {
             super::reindent_lines(text, "    "),
             "    a\n      b\n\n   c\n"
         );
+    }
+
+    #[test]
+    fn reflow_fills_paragraphs_and_keeps_comment_markers() {
+        assert_eq!(
+            super::reflow("aa bb\ncc dd ee", 8, None, 4),
+            "aa bb cc\ndd ee"
+        );
+        assert_eq!(
+            super::reflow(
+                "  /// one two\n  /// three\n  ///\n  /// four",
+                20,
+                Some("//"),
+                4
+            ),
+            "  /// one two three\n  ///\n  /// four"
+        );
+        assert_eq!(
+            super::reflow("// a\n/// b", 79, Some("//"), 4),
+            "// a\n/// b"
+        );
+        assert_eq!(super::reflow("a\n\nb\nc", 79, None, 4), "a\n\nb c");
     }
 }

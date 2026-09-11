@@ -511,7 +511,7 @@ impl super::App {
         // Indent / outdent on a text-object range: derive line span and shift them.
         if matches!(
             op,
-            Operator::Indent | Operator::Outdent | Operator::Reindent
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Format { .. }
         ) {
             let l1 = self.buffer.rope.char_to_line(range.start);
             let l2_idx = range.end.saturating_sub(1);
@@ -551,7 +551,11 @@ impl super::App {
                 self.cursor_to_idx(range.start);
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+            Operator::Indent
+            | Operator::Outdent
+            | Operator::Reindent
+            | Operator::Format { .. }
+            | Operator::Case(_) => {
                 unreachable!()
             }
         }
@@ -800,7 +804,7 @@ impl super::App {
         // regardless of motion kind. Bypass the byte-range path used by d/c/y.
         if matches!(
             op,
-            Operator::Indent | Operator::Outdent | Operator::Reindent
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Format { .. }
         ) {
             let l1 = self.window.cursor.line.min(m.target.line);
             let l2 = self.window.cursor.line.max(m.target.line);
@@ -837,7 +841,11 @@ impl super::App {
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+            Operator::Indent
+            | Operator::Outdent
+            | Operator::Reindent
+            | Operator::Format { .. }
+            | Operator::Case(_) => {
                 unreachable!()
             }
         }
@@ -850,7 +858,7 @@ impl super::App {
         // Indent / outdent (>>, <<, count-prefixed) operate purely on line content.
         if matches!(
             op,
-            Operator::Indent | Operator::Outdent | Operator::Reindent
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Format { .. }
         ) {
             self.shift_lines(op, l1, l2);
             return;
@@ -912,7 +920,11 @@ impl super::App {
                 self.window.cursor.want_col = 0;
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+            Operator::Indent
+            | Operator::Outdent
+            | Operator::Reindent
+            | Operator::Format { .. }
+            | Operator::Case(_) => {
                 unreachable!()
             }
         }

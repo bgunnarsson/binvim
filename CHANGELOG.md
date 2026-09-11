@@ -148,6 +148,11 @@ follows [Semantic Versioning](https://semver.org/).
   level deeper after a line that opens a block, and a level shallower for a
   line that starts by closing one. The ` * ` lines of a block comment stay
   lined up, and blank lines lose their whitespace. `.` repeats it.
+- **`gq` / `gw` re-flow text.** `gqq`, `gqip`, `gq{motion}` and Visual
+  `gq` fill each paragraph to `.editorconfig`'s `max_line_length`, or 79
+  columns without one. A comment paragraph keeps its marker (`//`, `///`,
+  `#` …) on every line it re-flows to. `gw` does the same and leaves the
+  cursor where it was. `.` repeats both.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number
