@@ -174,6 +174,92 @@ fn previous_word_boundary(buffer: &crate::buffer::Buffer, line: usize, col: usiz
     i
 }
 
+/// Result of feeding one key to an Insert-mode `Ctrl-V` sequence.
+struct LiteralStep {
+    /// Char to insert now, if the sequence produced one.
+    insert: Option<char>,
+    /// State to keep waiting in; `None` ends the sequence.
+    next: Option<super::state::LiteralPending>,
+    /// The key ended a code without being part of it, so it still gets its
+    /// normal Insert-mode handling — Vim's `Ctrl-V u41z` inserts `A`, then `z`.
+    reprocess: bool,
+}
+
+/// Vim's `Ctrl-V` grammar: the next key literally, or `u` + up to 4 hex
+/// digits, `U` + 8, `x` + 2, `o` + 3 octal, or up to 3 decimal digits.
+fn literal_step(pending: &super::state::LiteralPending, key: KeyEvent) -> LiteralStep {
+    use super::state::LiteralPending;
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let done = |insert| LiteralStep {
+        insert,
+        next: None,
+        reprocess: false,
+    };
+    let collect = |prefix, radix, max, digits| LiteralStep {
+        insert: None,
+        next: Some(LiteralPending::Code {
+            prefix,
+            radix,
+            max,
+            digits,
+        }),
+        reprocess: false,
+    };
+    match pending {
+        LiteralPending::Key => match key.code {
+            KeyCode::Tab => done(Some('\t')),
+            KeyCode::Char(c) if !ctrl => match c {
+                'u' => collect(c, 16, 4, String::new()),
+                'U' => collect(c, 16, 8, String::new()),
+                'x' | 'X' => collect(c, 16, 2, String::new()),
+                'o' | 'O' => collect(c, 8, 3, String::new()),
+                '0'..='9' => collect(c, 10, 3, c.to_string()),
+                _ => done(Some(c)),
+            },
+            _ => done(None),
+        },
+        LiteralPending::Code {
+            prefix,
+            radix,
+            max,
+            digits,
+        } => {
+            let value = |d: &str| u32::from_str_radix(d, *radix).ok().and_then(char::from_u32);
+            match key.code {
+                KeyCode::Char(d) if !ctrl && d.is_digit(*radix) => {
+                    let mut more = digits.clone();
+                    more.push(d);
+                    // Decimal codes stop at 255, as in Vim: `Ctrl-V 300` is
+                    // code 30 followed by a typed `0`.
+                    if *radix == 10 && matches!(more.parse::<u32>(), Ok(v) if v > 255) {
+                        return LiteralStep {
+                            insert: value(digits),
+                            next: None,
+                            reprocess: true,
+                        };
+                    }
+                    if more.len() == *max {
+                        return done(value(&more));
+                    }
+                    collect(*prefix, *radix, *max, more)
+                }
+                _ => {
+                    let insert = if digits.is_empty() {
+                        Some(*prefix)
+                    } else {
+                        value(digits)
+                    };
+                    LiteralStep {
+                        insert,
+                        next: None,
+                        reprocess: true,
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Should an Enter pressed at the cursor split a paired opener / closer
 /// onto three lines with an indented middle row?
 ///
@@ -1563,12 +1649,19 @@ impl super::App {
         // and never `<Tab>` from a Copilot ghost it would accept — every
         // other key has already dropped the ghost above.
         let ghost_tab = matches!(key.code, KeyCode::Tab) && self.copilot_ghost.is_some();
-        // The register name after `Ctrl-R` is a literal, like `fH`'s target —
-        // never the first key of a mapping.
-        if !ghost_tab && !self.insert_register_pending && self.keymap_take(key, MapMode::Insert) {
+        // The register name after `Ctrl-R`, and every key of a `Ctrl-V`
+        // sequence, is a literal — like `fH`'s target, never a mapping's key.
+        let literal_next = self.insert_register_pending || self.insert_literal_pending.is_some();
+        if !ghost_tab && !literal_next && self.keymap_take(key, MapMode::Insert) {
             return;
         }
-        if !self.replaying && !is_esc {
+        // Esc stays out of the recording because it ends the session — except
+        // straight after `Ctrl-V`, which consumes it, so `.` needs it back.
+        let esc_consumed = matches!(
+            self.insert_literal_pending,
+            Some(super::state::LiteralPending::Key)
+        );
+        if !self.replaying && (!is_esc || esc_consumed) {
             if let Some(rec) = self.recording.as_mut() {
                 rec.keys.push(key);
             }
@@ -1591,6 +1684,16 @@ impl super::App {
                 _ => {}
             }
             return;
+        }
+        if let Some(pending) = self.insert_literal_pending.take() {
+            let step = literal_step(&pending, key);
+            self.insert_literal_pending = step.next;
+            if let Some(c) = step.insert {
+                self.insert_literal_char(c);
+            }
+            if !step.reprocess {
+                return;
+            }
         }
         match key.code {
             KeyCode::Esc => {
@@ -1636,6 +1739,9 @@ impl super::App {
             }
             KeyCode::Char('r' | 'R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_register_pending = true;
+            }
+            KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.insert_literal_pending = Some(super::state::LiteralPending::Key);
             }
             // Multi-cursor leaves these alone: shifting one line would leave
             // the other cursors' char indices pointing at the wrong text.
@@ -1916,6 +2022,29 @@ impl super::App {
             }
             _ => {}
         }
+    }
+
+    /// Puts a `Ctrl-V` char in as it is: no auto-pair, closer-skip, tag close
+    /// or completion trigger — which is the point of typing it literally.
+    fn insert_literal_char(&mut self, c: char) {
+        // The buffer renderer draws every char but tab, space and NBSP as-is,
+        // so a control char would reach the terminal as a raw byte and
+        // scramble the frame. Tab it already draws as spaces.
+        if c.is_control() && c != '\t' {
+            self.status_msg = format!(
+                "Ctrl-V: U+{:04X} is a control character, which binvim can't display",
+                c as u32
+            );
+            return;
+        }
+        if !self.additional_cursors.is_empty() {
+            self.mirror_insert_char(c);
+            return;
+        }
+        self.buffer
+            .insert_char(self.window.cursor.line, self.window.cursor.col, c);
+        self.window.cursor.col += 1;
+        self.window.cursor.want_col = self.window.cursor.col;
     }
 
     /// Smart Enter — copies the current line's leading whitespace onto the
@@ -2855,6 +2984,84 @@ mod tests {
         app.replay_key(ctrl('d'));
         assert_eq!(app.buffer.rope.to_string(), "foo\n");
         assert_eq!(app.window.cursor.col, 2);
+    }
+
+    /// Feeds `keys` after a `Ctrl-V` and returns what got inserted, plus
+    /// whether the key that ended the sequence still needs normal handling.
+    fn after_ctrl_v(keys: &str) -> (Vec<char>, bool) {
+        let mut pending = Some(crate::app::state::LiteralPending::Key);
+        let mut inserted = Vec::new();
+        let mut reprocess = false;
+        for c in keys.chars() {
+            let Some(p) = pending.take() else { break };
+            let step = literal_step(&p, KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+            inserted.extend(step.insert);
+            pending = step.next;
+            reprocess = step.reprocess;
+        }
+        (inserted, reprocess)
+    }
+
+    #[test]
+    fn ctrl_v_takes_a_plain_key_literally() {
+        assert_eq!(after_ctrl_v("("), (vec!['('], false));
+    }
+
+    #[test]
+    fn ctrl_v_character_codes() {
+        assert_eq!(after_ctrl_v("u00e9"), (vec!['é'], false));
+        assert_eq!(after_ctrl_v("x41"), (vec!['A'], false));
+        assert_eq!(after_ctrl_v("o101"), (vec!['A'], false));
+        assert_eq!(after_ctrl_v("065"), (vec!['A'], false));
+    }
+
+    #[test]
+    fn ctrl_v_code_ends_early_on_a_non_digit() {
+        assert_eq!(after_ctrl_v("u41z"), (vec!['A'], true));
+    }
+
+    #[test]
+    fn ctrl_v_u_with_no_digits_inserts_the_u() {
+        assert_eq!(after_ctrl_v("uz"), (vec!['u'], true));
+    }
+
+    #[test]
+    fn ctrl_v_decimal_code_stops_at_255() {
+        assert_eq!(after_ctrl_v("300"), (vec!['\u{1e}'], true));
+    }
+
+    #[test]
+    fn ctrl_v_tab_inserts_a_real_tab() {
+        let mut app = insert_at("ab\n", 0, 1);
+        app.replay_key(ctrl('v'));
+        app.replay_key(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.buffer.rope.to_string(), "a\tb\n");
+        assert_eq!(app.window.cursor.col, 2);
+    }
+
+    #[test]
+    fn ctrl_v_bracket_is_not_auto_paired() {
+        let mut app = insert_at("a\n", 0, 1);
+        app.replay_key(ctrl('v'));
+        press(&mut app, "(");
+        assert_eq!(app.buffer.rope.to_string(), "a(\n");
+    }
+
+    #[test]
+    fn typing_carries_on_after_a_ctrl_v_code() {
+        let mut app = insert_at("a\n", 0, 1);
+        app.replay_key(ctrl('v'));
+        press(&mut app, "u41z");
+        assert_eq!(app.buffer.rope.to_string(), "aAz\n");
+    }
+
+    #[test]
+    fn ctrl_v_refuses_a_control_character() {
+        let mut app = insert_at("a\n", 0, 1);
+        app.replay_key(ctrl('v'));
+        press(&mut app, "u001b");
+        assert_eq!(app.buffer.rope.to_string(), "a\n");
+        assert!(app.status_msg.contains("U+001B"));
     }
 
     #[test]

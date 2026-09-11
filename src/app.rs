@@ -530,6 +530,9 @@ pub struct App {
     pub snippet_session: Option<crate::app::state::SnippetSession>,
     /// Insert-mode `Ctrl-R` is waiting for the name of the register to paste.
     pub insert_register_pending: bool,
+    /// Insert-mode `Ctrl-V` sequence in flight — waiting for the literal key,
+    /// or collecting a character code's digits. `None` when not in one.
+    pub insert_literal_pending: Option<crate::app::state::LiteralPending>,
     /// Quickfix list — `:cnext` / `:cprev` / `]q` / `[q` navigate it.
     /// Loaded from grep, LSP references, or diagnostics; `None` when
     /// nothing has been populated yet.
@@ -993,6 +996,7 @@ impl App {
             additional_cursors: Vec::new(),
             snippet_session: None,
             insert_register_pending: false,
+            insert_literal_pending: None,
             quickfix: None,
             additional_selections: Vec::new(),
             replaying_macro: false,
