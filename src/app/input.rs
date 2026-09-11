@@ -3598,6 +3598,101 @@ mod tests {
     }
 
     #[test]
+    fn a_search_offset_moves_off_the_match_and_n_keeps_it() {
+        // f0 o1 o2 _3 b4 a5 r6 _7 f8 o9 o10
+        let mut app = app_with_keymaps("foo bar foo\n", "");
+        press(&mut app, "/foo/e");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.col, 2);
+        press(&mut app, "n");
+        assert_eq!(app.window.cursor.col, 10);
+        press(&mut app, "n");
+        assert_eq!(app.window.cursor.col, 2);
+        // `*` starts afresh, with no offset.
+        press(&mut app, "*");
+        assert_eq!(app.window.cursor.col, 8);
+        press(&mut app, "n");
+        assert_eq!(app.window.cursor.col, 0);
+
+        for (query, col) in [("/bar/e+1", 7), ("/bar/s-1", 3), ("/bar/b+1", 5)] {
+            let mut app = app_with_keymaps("foo bar foo\n", "");
+            press(&mut app, query);
+            tap(&mut app, KeyCode::Enter);
+            assert_eq!(app.window.cursor.col, col, "{query}");
+        }
+
+        // A step off a line's end lands on the next line.
+        let mut app = app_with_keymaps("ab\ncd\n", "");
+        press(&mut app, "/b/e+1");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
+
+        let mut app = app_with_keymaps("foo bar foo\n", "");
+        app.window.cursor.col = 10;
+        app.window.cursor.want_col = 10;
+        press(&mut app, "?foo?e");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.col, 2);
+    }
+
+    #[test]
+    fn a_line_offset_lands_on_the_first_non_blank_lines_away() {
+        let mut app = app_with_keymaps("x\n  one\nx\n  two\n", "");
+        press(&mut app, "/x/+1");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 2));
+        press(&mut app, "n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (3, 2));
+        press(&mut app, "N");
+        assert_eq!(app.window.cursor.line, 1);
+
+        let mut app = app_with_keymaps("x\nlast\n", "");
+        press(&mut app, "/x/+5");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.line, 1);
+    }
+
+    #[test]
+    fn double_slash_drops_the_offset_and_a_bare_slash_keeps_it() {
+        // f0 o1 o2 _3 f4 o5 o6 _7 f8 o9 o10
+        let mut app = app_with_keymaps("foo foo foo\n", "");
+        let search = |app: &mut crate::app::App, query: &str| {
+            press(app, query);
+            tap(app, KeyCode::Enter);
+            app.window.cursor.col
+        };
+        assert_eq!(search(&mut app, "/foo/e"), 2);
+        assert_eq!(search(&mut app, "//"), 4);
+        assert_eq!(search(&mut app, "/"), 8);
+        assert_eq!(search(&mut app, "//e"), 10);
+        assert_eq!(search(&mut app, "/"), 2);
+    }
+
+    #[test]
+    fn an_operator_takes_the_search_offset_into_account() {
+        let mut app = app_with_keymaps("foo bar foo\n", "");
+        press(&mut app, "/bar/e");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "0dn");
+        assert_eq!(app.buffer.rope.to_string(), " foo\n");
+
+        let mut app = app_with_keymaps("x\none\nx\ntwo\n", "");
+        press(&mut app, "/x/+1");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "ggdn");
+        assert_eq!(app.buffer.rope.to_string(), "x\ntwo\n");
+    }
+
+    #[test]
+    fn an_offset_vim_would_not_read_is_an_error() {
+        let mut app = app_with_keymaps("foo bar\n", "");
+        press(&mut app, "/bar/x");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.col, 0);
+        assert!(app.status_msg.contains("E488"), "{}", app.status_msg);
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

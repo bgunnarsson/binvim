@@ -9,7 +9,7 @@ use std::time::Instant;
 use crate::cursor::Cursor;
 use crate::keymap::MapMode;
 use crate::mode::{Mode, VisualKind};
-use crate::motion::{MotionKind, MotionResult};
+use crate::motion::{self, MotionKind, MotionResult};
 
 use super::pair::{
     bracket_pair, find_match_close, find_match_open, html_tag_pair_at, is_bracket,
@@ -25,6 +25,7 @@ impl super::App {
         if !self.set_search(&word_pattern(&word, whole_word), backward) {
             return;
         }
+        self.search_offset = SearchOffset::None;
         let cur_idx = self
             .buffer
             .pos_to_char(self.window.cursor.line, self.window.cursor.col);
@@ -308,16 +309,9 @@ impl super::App {
         } else {
             !*was_backward
         };
-        let mut at = self
-            .buffer
-            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        for _ in 0..count.max(1) {
-            let from = if forward { at + 1 } else { at };
-            let Some((start, _)) = self.find_match(from, forward, true) else {
-                return stay;
-            };
-            at = start;
-        }
+        let Some(at) = self.search_landing(forward, count) else {
+            return stay;
+        };
         let line = self.buffer.rope.char_to_line(at);
         let col = at - self.buffer.rope.line_to_char(line);
         MotionResult {
@@ -326,7 +320,104 @@ impl super::App {
                 col,
                 want_col: col,
             },
-            kind: MotionKind::CharExclusive,
+            kind: self.search_offset.kind(),
+        }
+    }
+
+    /// Where the search lands `count` matches on from the cursor, offset
+    /// applied, round the buffer's end. The next match is the next place a
+    /// match lands, not the next place one starts, so `n` under `/pat/e` or
+    /// `/pat/-1` doesn't find the match it's on again.
+    fn search_landing(&self, forward: bool, count: usize) -> Option<usize> {
+        let re = self.search_pattern.as_ref()?;
+        let rope = &self.buffer.rope;
+        let text = rope.to_string();
+        let landings: Vec<usize> = hits(re, &text)
+            .into_iter()
+            .map(|(s, e)| {
+                let start = rope.byte_to_char(s);
+                self.offset_landing(start, rope.byte_to_char(e) - start)
+            })
+            .collect();
+        let mut at = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        for _ in 0..count.max(1) {
+            let next = if forward {
+                landings.iter().find(|&&l| l > at).or(landings.first())
+            } else {
+                landings.iter().rev().find(|&&l| l < at).or(landings.last())
+            };
+            at = *next?;
+        }
+        Some(at)
+    }
+
+    /// Where the search offset puts the cursor for a match at `start`, `len`
+    /// chars long.
+    fn offset_landing(&self, start: usize, len: usize) -> usize {
+        match self.search_offset {
+            SearchOffset::None => start,
+            SearchOffset::Start(by) => self.step_chars(start, by),
+            SearchOffset::End(by) => self.step_chars(start + len.saturating_sub(1), by),
+            SearchOffset::Line(by) => {
+                let line = self
+                    .buffer
+                    .rope
+                    .char_to_line(start)
+                    .saturating_add_signed(by)
+                    .min(self.last_text_line());
+                let from = Cursor {
+                    line,
+                    col: 0,
+                    want_col: 0,
+                };
+                let target = motion::first_non_blank(&self.buffer, from).target;
+                self.buffer.pos_to_char(target.line, target.col)
+            }
+        }
+    }
+
+    /// `at` moved `by` chars the way Vim's search offsets count them: a line's
+    /// end isn't a place of its own, so a step off it lands on the next line.
+    /// Stops at either end of the buffer.
+    fn step_chars(&self, at: usize, by: isize) -> usize {
+        let rope = &self.buffer.rope;
+        let mut line = rope.char_to_line(at);
+        let mut col = at - rope.line_to_char(line);
+        let last = self.last_text_line();
+        for _ in 0..by.unsigned_abs() {
+            if by > 0 {
+                if col + 1 < self.buffer.line_len(line) {
+                    col += 1;
+                } else if line < last {
+                    line += 1;
+                    col = 0;
+                } else {
+                    break;
+                }
+            } else if col > 0 {
+                col -= 1;
+            } else if line > 0 {
+                line -= 1;
+                col = self.buffer.line_len(line).saturating_sub(1);
+            } else {
+                break;
+            }
+        }
+        self.buffer.pos_to_char(line, col)
+    }
+
+    /// The last line with text in it — not the empty one ropey counts after
+    /// a final newline.
+    fn last_text_line(&self) -> usize {
+        let rope = &self.buffer.rope;
+        let lines = self.buffer.line_count();
+        let ends_in_newline = rope.len_chars() > 0 && rope.char(rope.len_chars() - 1) == '\n';
+        if ends_in_newline && lines > 1 {
+            lines - 2
+        } else {
+            lines - 1
         }
     }
 
@@ -465,31 +556,43 @@ impl super::App {
     }
 
     fn execute_search(&mut self, query: &str, backward: bool) {
-        let q = if query.is_empty() {
+        let delim = if backward { '?' } else { '/' };
+        let (typed, offset) = split_offset(query, delim);
+        let pattern = if typed.is_empty() {
             match self.last_search.as_ref() {
                 Some((q, _)) => q.clone(),
-                None => return,
+                None => {
+                    self.status_msg = "E35: No previous regular expression".into();
+                    return;
+                }
             }
         } else {
-            query.to_string()
+            typed
         };
-        if !self.set_search(&q, backward) {
+        // `/<CR>` keeps the last offset; `//<CR>` and a new pattern drop it.
+        let offset = match offset {
+            Some(text) => match SearchOffset::parse(text) {
+                Ok(offset) => offset,
+                Err(e) => {
+                    self.status_msg = e;
+                    return;
+                }
+            },
+            None if query.is_empty() => self.search_offset,
+            None => SearchOffset::None,
+        };
+        if !self.set_search(&pattern, backward) {
             return;
         }
-        let cur_idx = self
-            .buffer
-            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        // From the char after the cursor, as Vim does, so a match the cursor
-        // is already on isn't found again.
-        let from = if backward { cur_idx } else { cur_idx + 1 };
-        match self.find_match(from, !backward, true) {
-            Some((idx, _)) => {
+        self.search_offset = offset;
+        match self.search_landing(!backward, 1) {
+            Some(at) => {
                 self.push_jump();
-                self.cursor_to_idx(idx);
+                self.cursor_to_idx(at);
                 self.clamp_cursor_normal();
             }
             None => {
-                self.status_msg = format!("Pattern not found: {q}");
+                self.status_msg = format!("Pattern not found: {pattern}");
             }
         }
     }
@@ -727,6 +830,86 @@ fn word_pattern(word: &str, whole: bool) -> String {
     }
     out.push_str("\\c");
     out
+}
+
+/// Where a search puts the cursor relative to the match.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum SearchOffset {
+    #[default]
+    None,
+    /// `+N` / `-N` / `N` — lines down or up, on the first non-blank.
+    Line(isize),
+    /// `e` / `e±N` — chars on from the match's last char.
+    End(isize),
+    /// `s` / `b` / `s±N` / `b±N` — chars on from the match's first char.
+    Start(isize),
+}
+
+impl SearchOffset {
+    /// The offset typed after the pattern's closing `/` or `?`.
+    fn parse(text: &str) -> Result<Self, String> {
+        let (anchor, rest) = match text.chars().next() {
+            Some(c @ ('e' | 's' | 'b')) => (Some(c), &text[1..]),
+            _ => (None, text),
+        };
+        let signed = rest.starts_with(['+', '-']);
+        let (sign, digits) = match rest.strip_prefix('-') {
+            Some(digits) => (-1, digits),
+            None => (1, rest.strip_prefix('+').unwrap_or(rest)),
+        };
+        if !digits.chars().all(|c| c.is_ascii_digit()) {
+            return Err(format!("E488: Trailing characters: {text}"));
+        }
+        let magnitude = if digits.is_empty() {
+            // A bare `+` or `-` is one; a bare `e` / `s` is none.
+            isize::from(signed)
+        } else {
+            digits.parse().unwrap_or(isize::MAX)
+        };
+        let by = sign * magnitude;
+        let offset = match anchor {
+            Some('e') => SearchOffset::End(by),
+            Some(_) => SearchOffset::Start(by),
+            None if text.is_empty() => SearchOffset::None,
+            None => SearchOffset::Line(by),
+        };
+        Ok(offset)
+    }
+
+    /// `e` takes the match's last char in, and a line offset whole lines.
+    fn kind(self) -> MotionKind {
+        match self {
+            SearchOffset::Line(_) => MotionKind::Linewise,
+            SearchOffset::End(_) => MotionKind::CharInclusive,
+            SearchOffset::None | SearchOffset::Start(_) => MotionKind::CharExclusive,
+        }
+    }
+}
+
+/// A typed search split at its first unescaped `delim` into the pattern and
+/// the offset after it, `None` when there's no closing delimiter. In a `?`
+/// search `\?` is a plain `?`, as in Vim.
+fn split_offset(query: &str, delim: char) -> (String, Option<&str>) {
+    let mut pattern = String::new();
+    let mut chars = query.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == delim {
+            return (pattern, Some(&query[i + c.len_utf8()..]));
+        }
+        if c != '\\' {
+            pattern.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some((_, '?')) if delim == '?' => pattern.push('?'),
+            Some((_, n)) => {
+                pattern.push('\\');
+                pattern.push(n);
+            }
+            None => pattern.push('\\'),
+        }
+    }
+    (pattern, None)
 }
 
 /// A search pattern in Vim's syntax, compiled: `^` and `$` match at every
@@ -1068,10 +1251,12 @@ fn brace(chars: &[char], i: usize) -> Result<(String, usize), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile_search, hits, word_pattern};
+    use super::{SearchOffset, compile_search, hits, split_offset, word_pattern};
 
     /// (pattern, text, where the first match starts and what it covers).
-    const TABLE: &[(&str, &str, Option<(usize, &str)>)] = &[
+    type Row = (&'static str, &'static str, Option<(usize, &'static str)>);
+
+    const TABLE: &[Row] = &[
         ("foo", "a foo", Some((2, "foo"))),
         ("foo", "a FOO", Some((2, "FOO"))),
         ("Foo", "a foo Foo", Some((6, "Foo"))),
@@ -1126,5 +1311,40 @@ mod tests {
         assert_eq!(word_pattern("foo", true), "\\<foo\\>\\c");
         assert_eq!(word_pattern("foo", false), "foo\\c");
         assert_eq!(word_pattern("a.b", true), "\\<a\\.b\\>\\c");
+    }
+
+    #[test]
+    fn a_search_splits_at_its_delimiter_into_pattern_and_offset() {
+        let own = |p: &str| p.to_string();
+        assert_eq!(split_offset("foo", '/'), (own("foo"), None));
+        assert_eq!(split_offset("foo/e", '/'), (own("foo"), Some("e")));
+        assert_eq!(split_offset("a\\/b/", '/'), (own("a\\/b"), Some("")));
+        assert_eq!(split_offset("/e", '/'), (own(""), Some("e")));
+        assert_eq!(split_offset("a\\?b?s", '?'), (own("a?b"), Some("s")));
+        assert_eq!(split_offset("a/b", '?'), (own("a/b"), None));
+    }
+
+    #[test]
+    fn offsets_read_the_way_vim_reads_them() {
+        let table = [
+            ("", SearchOffset::None),
+            ("e", SearchOffset::End(0)),
+            ("e+1", SearchOffset::End(1)),
+            ("e-", SearchOffset::End(-1)),
+            ("e2", SearchOffset::End(2)),
+            ("s-1", SearchOffset::Start(-1)),
+            ("b", SearchOffset::Start(0)),
+            ("b+2", SearchOffset::Start(2)),
+            ("+2", SearchOffset::Line(2)),
+            ("-", SearchOffset::Line(-1)),
+            ("+", SearchOffset::Line(1)),
+            ("3", SearchOffset::Line(3)),
+        ];
+        for (text, want) in table {
+            assert_eq!(SearchOffset::parse(text), Ok(want), "{text:?}");
+        }
+        for text in ["x", "e+-1", "e1x", ";/b"] {
+            assert!(SearchOffset::parse(text).is_err(), "{text}");
+        }
     }
 }

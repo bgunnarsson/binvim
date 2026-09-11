@@ -196,6 +196,13 @@ follows [Semantic Versioning](https://semver.org/).
   `*` / `#` now search the whole word and `g*` / `g#` the bare text, and
   `n` / `N` take a count. Backreferences and lookaround aren't supported,
   and say so.
+- **Search offsets.** `/pat/e` puts the cursor on a match's last char and
+  `/pat/e+1` / `/pat/e-1` count on from there, `/pat/s-1` / `/pat/b+2`
+  count from its first, and `/pat/+2` lands two lines down on the first
+  non-blank. `n` / `N` keep the offset, `//` searches the last pattern
+  again with a new one (or none), and a bare `/` keeps it. After an
+  operator `e` takes the last char in and a line offset works on whole
+  lines, so `dn` deletes through the match.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
