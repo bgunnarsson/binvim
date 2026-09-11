@@ -83,6 +83,7 @@ impl super::App {
         if idx == self.active {
             return Ok(());
         }
+        self.remember_alternate();
         let active = self.active;
         let snap = self.snapshot_active();
         self.buffers[active] = snap;
@@ -125,6 +126,7 @@ impl super::App {
             // the primary pane on its own buffer.
             return self.switch_to(idx);
         }
+        self.remember_alternate();
         let outgoing_tab = self.active_tab;
         let outgoing_active = self.active;
         // 1. Stash buffer-level state of the focused buffer.
@@ -400,10 +402,41 @@ impl super::App {
         }
     }
 
+    /// Record the outgoing buffer as the alternate. An unnamed buffer has
+    /// nothing to reopen, so it leaves the previous alternate in place.
+    fn remember_alternate(&mut self) {
+        if let Some(path) = self.buffer.path.clone() {
+            self.alternate_path = Some(path);
+        }
+    }
+
+    /// `Ctrl-^` / `:e#` / `:b#` — back to the file that was active before
+    /// this one, in its own tab, reopened from disk if it has been closed
+    /// since. `N Ctrl-^` goes to buffer N instead, as in Vim.
+    pub(super) fn switch_alternate(&mut self, count: Option<usize>) -> Result<()> {
+        if let Some(n) = count {
+            return self.switch_buffer_by_spec(&n.to_string());
+        }
+        let Some(path) = self.alternate_path.clone() else {
+            anyhow::bail!("E23: No alternate file");
+        };
+        let open = self
+            .buffers
+            .iter()
+            .position(|stash| stash.buffer.path.as_deref() == Some(path.as_path()));
+        match open {
+            Some(idx) => self.switch_tab(idx),
+            None => self.open_buffer(path),
+        }
+    }
+
     pub(super) fn switch_buffer_by_spec(&mut self, spec: &str) -> Result<()> {
         let spec = spec.trim();
         if spec.is_empty() {
             anyhow::bail!("E94: No matching buffer");
+        }
+        if spec == "#" {
+            return self.switch_alternate(None);
         }
         // Numeric: 1-based buffer number.
         if let Ok(n) = spec.parse::<usize>() {

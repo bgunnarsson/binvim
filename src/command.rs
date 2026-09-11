@@ -323,6 +323,9 @@ pub fn parse(line: &str) -> ExCommand {
         "q!" | "quit!" => ExCommand::QuitForce,
         "wq" | "x" => ExCommand::WriteQuit,
         "e" | "edit" => ExCommand::Edit(rest.to_string()),
+        // `:e#` / `:b#` are usually typed without the space.
+        "e#" | "edit#" => ExCommand::Edit("#".into()),
+        "b#" | "buffer#" => ExCommand::BufferSwitch("#".into()),
         "bn" | "bnext" => ExCommand::BufferNext,
         "bp" | "bprev" | "bprevious" => ExCommand::BufferPrev,
         "bd" | "bdelete" => ExCommand::BufferDelete { force: false },
@@ -513,4 +516,25 @@ fn parse_substitute_args(args: &str) -> Option<(String, String, bool, bool)> {
     let global = flags.contains('g');
     let regex = flags.contains('r');
     Some((pat, repl, global, regex))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alternate_file_commands_parse_with_or_without_a_space() {
+        for line in ["e#", "e #", "edit#"] {
+            assert!(
+                matches!(parse(line), ExCommand::Edit(p) if p == "#"),
+                "{line}"
+            );
+        }
+        for line in ["b#", "b #", "buffer#"] {
+            assert!(
+                matches!(parse(line), ExCommand::BufferSwitch(p) if p == "#"),
+                "{line}"
+            );
+        }
+    }
 }
