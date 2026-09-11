@@ -207,6 +207,15 @@ follows [Semantic Versioning](https://semver.org/).
   the match itself, so `cgn` changes the next match and `.` then changes
   the one after, and `dgn` deletes it. Alone they start Visual over the
   match, and from Visual they stretch the selection on to the next one.
+- **`:s` takes Vim's patterns and replacements.** The pattern is a regex in
+  the same syntax as `/`, smart case included — so a lower-case pattern now
+  ignores case — and an empty one reuses the last search, which `:s` then
+  becomes, as in Vim. The replacement takes `&` / `\0` for the match,
+  `\1`–`\9` for groups (`$1` still works) and `\r` for a line break. New
+  flags: `i` / `I` to ignore case or not, and `n` to count the matches
+  without changing anything. `r` is still accepted and changes nothing, and
+  a flag `:s` doesn't know is now an error rather than ignored. `:S` takes
+  the same syntax and flags.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

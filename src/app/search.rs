@@ -410,7 +410,7 @@ impl super::App {
 
     /// The last line with text in it — not the empty one ropey counts after
     /// a final newline.
-    fn last_text_line(&self) -> usize {
+    pub(super) fn last_text_line(&self) -> usize {
         let rope = &self.buffer.rope;
         let lines = self.buffer.line_count();
         let ends_in_newline = rope.len_chars() > 0 && rope.char(rope.len_chars() - 1) == '\n';
@@ -938,15 +938,28 @@ fn split_offset(query: &str, delim: char) -> (String, Option<&str>) {
     (pattern, None)
 }
 
-/// A search pattern in Vim's syntax, compiled: `^` and `$` match at every
-/// line, and case follows `translate`.
-pub(super) fn compile_search(pattern: &str) -> Result<regex::Regex, String> {
+/// A search pattern in Vim's syntax as the Rust regex it means, with its
+/// case and `^` / `$` matching at every line spelled inline — so ripgrep,
+/// which runs the same engine, can take it as it is.
+pub(super) fn search_source(pattern: &str) -> Result<String, String> {
     let (source, ignore_case) = translate(pattern).map_err(|e| format!("Invalid pattern: {e}"))?;
-    regex::RegexBuilder::new(&source)
-        .case_insensitive(ignore_case)
-        .multi_line(true)
-        .build()
-        .map_err(|_| format!("Invalid pattern: {pattern}"))
+    let flags = if ignore_case { "(?im)" } else { "(?m)" };
+    Ok(format!("{flags}{source}"))
+}
+
+/// A search pattern in Vim's syntax, compiled.
+pub(super) fn compile_search(pattern: &str) -> Result<regex::Regex, String> {
+    regex::Regex::new(&search_source(pattern)?).map_err(|_| format!("Invalid pattern: {pattern}"))
+}
+
+/// `pattern` made to ignore case or not, whatever it says itself — the
+/// `:s` `i` / `I` flags.
+pub(super) fn with_case(pattern: &str, ignore_case: Option<bool>) -> String {
+    match ignore_case {
+        Some(true) => format!("\\c{pattern}"),
+        Some(false) => format!("\\C{pattern}"),
+        None => pattern.to_string(),
+    }
 }
 
 /// Where `re` matches in `text`, as byte ranges — narrowed to the `zs`
@@ -972,6 +985,112 @@ pub(super) fn hits(re: &regex::Regex, text: &str) -> Vec<(usize, usize)> {
         };
     }
     out
+}
+
+/// The regex groups Vim's `\1`–`\9` name, in order: every group but the
+/// one `\zs` / `\ze` add, which Vim doesn't count.
+pub(super) fn vim_groups(re: &regex::Regex) -> Vec<usize> {
+    re.capture_names()
+        .enumerate()
+        .skip(1)
+        .filter(|&(_, name)| name != Some("zs"))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// `line` with `re`'s first match replaced by what `with` makes of it, or
+/// every match when `global`, and how many there were. As in Vim, an empty
+/// match right where the last one ended doesn't count.
+pub(super) fn substitute_line(
+    re: &regex::Regex,
+    line: &str,
+    global: bool,
+    with: &dyn Fn(&regex::Captures, &str) -> String,
+) -> (String, usize) {
+    let mut out = String::new();
+    let mut copied = 0;
+    let mut last_end = None;
+    let mut count = 0;
+    let mut from = 0;
+    while from <= line.len() {
+        let Some(caps) = re.captures_at(line, from) else {
+            break;
+        };
+        let Some(whole) = caps.get(0) else {
+            break;
+        };
+        let step = line[whole.end()..].chars().next().map_or(1, char::len_utf8);
+        from = if whole.is_empty() {
+            whole.end() + step
+        } else {
+            whole.end()
+        };
+        if whole.is_empty() && last_end == Some(whole.start()) {
+            continue;
+        }
+        last_end = Some(whole.end());
+        let part = caps.name("zs").unwrap_or(whole);
+        out.push_str(&line[copied..part.start()]);
+        out.push_str(&with(&caps, part.as_str()));
+        copied = part.end();
+        count += 1;
+        if !global {
+            break;
+        }
+    }
+    out.push_str(&line[copied..]);
+    (out, count)
+}
+
+/// A `:s` replacement for one match: `&` and `\0` are the match, `\1`–`\9`
+/// its groups — and `$1`–`$9`, which `:s` took before — `\r` / `\n` a line
+/// break and `\t` a tab. Any other char after a backslash stands for itself.
+pub(super) fn expand_replacement(
+    repl: &str,
+    caps: &regex::Captures,
+    groups: &[usize],
+    matched: &str,
+) -> String {
+    let mut out = String::new();
+    let mut chars = repl.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '&' => out.push_str(matched),
+            '\\' => match chars.next() {
+                Some(digit @ '0'..='9') => push_group(&mut out, caps, groups, matched, digit),
+                Some('r' | 'n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some(other) => out.push(other),
+                None => out.push('\\'),
+            },
+            '$' => match chars.next_if(char::is_ascii_digit) {
+                Some(digit) => push_group(&mut out, caps, groups, matched, digit),
+                None => out.push('$'),
+            },
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// Group `digit` of a match onto `out`: `0` is the match itself, and a group
+/// that took no part adds nothing.
+fn push_group(
+    out: &mut String,
+    caps: &regex::Captures,
+    groups: &[usize],
+    matched: &str,
+    digit: char,
+) {
+    let n = digit.to_digit(10).map_or(0, |d| d as usize);
+    let text = match n.checked_sub(1) {
+        None => matched,
+        Some(i) => groups
+            .get(i)
+            .and_then(|&g| caps.get(g))
+            .map_or("", |m| m.as_str()),
+    };
+    out.push_str(text);
 }
 
 /// How much of Vim's pattern syntax is special without a backslash: `\v`
@@ -1277,7 +1396,10 @@ fn brace(chars: &[char], i: usize) -> Result<(String, usize), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{SearchOffset, compile_search, hits, split_offset, word_pattern};
+    use super::{
+        SearchOffset, compile_search, expand_replacement, hits, split_offset, substitute_line,
+        vim_groups, word_pattern,
+    };
 
     /// (pattern, text, where the first match starts and what it covers).
     type Row = (&'static str, &'static str, Option<(usize, &'static str)>);
@@ -1372,5 +1494,33 @@ mod tests {
         for text in ["x", "e+-1", "e1x", ";/b"] {
             assert!(SearchOffset::parse(text).is_err(), "{text}");
         }
+    }
+
+    #[test]
+    fn substitution_expands_the_match_and_its_groups_the_way_vim_does() {
+        let sub = |pattern: &str, line: &str, repl: &str, global: bool| {
+            let re = compile_search(pattern).unwrap_or_else(|e| panic!("{pattern}: {e}"));
+            let groups = vim_groups(&re);
+            substitute_line(&re, line, global, &|caps, matched| {
+                expand_replacement(repl, caps, &groups, matched)
+            })
+        };
+        let own = |s: &str| s.to_string();
+        assert_eq!(
+            sub("\\(a\\)\\(b\\)", "xab", "\\2\\1", false),
+            (own("xba"), 1)
+        );
+        assert_eq!(sub("o", "foo", "0", true), (own("f00"), 2));
+        assert_eq!(sub("o", "foo", "0", false), (own("f0o"), 1));
+        assert_eq!(sub("b", "abc", "[&]", false), (own("a[b]c"), 1));
+        assert_eq!(sub("b", "abc", "\\&\\0", false), (own("a&bc"), 1));
+        assert_eq!(sub("\\(b\\)", "abc", "$1$1", false), (own("abbc"), 1));
+        assert_eq!(sub("b", "abc", "\\r", false), (own("a\nc"), 1));
+        assert_eq!(sub("x*", "xab", "-", true), (own("-a-b-"), 3));
+        assert_eq!(
+            sub("a\\zs\\(b\\)", "abab", "<\\1>", true),
+            (own("a<b>a<b>"), 2)
+        );
+        assert_eq!(sub("q", "abc", "z", true), (own("abc"), 0));
     }
 }
