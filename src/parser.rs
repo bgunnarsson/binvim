@@ -214,6 +214,8 @@ pub enum Action {
         backward: bool,
     },
     EnterVisual(VisualKind),
+    /// `gv` — the last Visual selection again.
+    ReselectVisual,
     Repeat,
     PageScroll(PageScrollKind),
     AdjustViewport(ViewportAdjust),
@@ -1525,6 +1527,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if ch == 'T' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
             return ParseResult::Action(Action::BufferPrev);
+        }
+        // gv — the last Visual selection, from Normal or (swapping) Visual.
+        if ch == 'v' && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::ReselectVisual);
         }
         let mv = match ch {
             'g' => Some(MotionVerb::FirstLine),
