@@ -392,6 +392,14 @@ pub enum Action {
     VisualInsert {
         append: bool,
     },
+    /// Visual `D` `X` `Y` `C` `R` — Vim's uppercase forms, on whole lines (in
+    /// block mode `D` / `C` to each row's end).
+    VisualLinewise {
+        key: char,
+        register: Option<char>,
+    },
+    /// Visual `O` — the other corner in block mode, the other end otherwise.
+    VisualSwapCorner,
     /// Block `I` / `A` / `$A` from the cursor, `rows` by `width` — the form
     /// `.` repeats, on a block of the same size.
     BlockInsert {
@@ -950,7 +958,11 @@ fn g_operator(ch: char) -> Option<Operator> {
 }
 
 fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResult {
-    if matches!(key.code, KeyCode::Esc) {
+    // Visual `Ctrl-C` leaves the way `Esc` does.
+    let visual_ctrl_c = ctx == ParseCtx::Visual
+        && key.code == KeyCode::Char('c')
+        && key.modifiers.contains(KeyModifiers::CONTROL);
+    if matches!(key.code, KeyCode::Esc) || visual_ctrl_c {
         state.reset();
         return ParseResult::Cancelled;
     }
@@ -1861,7 +1873,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             });
         }
         // g* / g# — `*` / `#` without the word boundaries.
-        if matches!(ch, '*' | '#') && ctx == ParseCtx::Normal && state.operator.is_none() {
+        if matches!(ch, '*' | '#')
+            && matches!(ctx, ParseCtx::Normal | ParseCtx::Visual)
+            && state.operator.is_none()
+        {
             state.reset();
             return ParseResult::Action(Action::SearchWord {
                 backward: ch == '#',
@@ -1982,7 +1997,24 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 return ParseResult::Action(Action::VisualInsert { append: ch == 'A' });
             }
-            'd' | 'D' | 'x' => {
+            'D' | 'X' | 'Y' | 'C' | 'R' => {
+                let register = state.take_register();
+                state.reset();
+                return ParseResult::Action(Action::VisualLinewise { key: ch, register });
+            }
+            'O' => {
+                state.reset();
+                return ParseResult::Action(Action::VisualSwapCorner);
+            }
+            // `*` / `#` search from Visual too; the selection follows the cursor.
+            '*' | '#' => {
+                state.reset();
+                return ParseResult::Action(Action::SearchWord {
+                    backward: ch == '#',
+                    whole_word: true,
+                });
+            }
+            'd' | 'x' => {
                 let register = state.take_register();
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate {
@@ -1998,7 +2030,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                     register,
                 });
             }
-            'c' | 'C' | 's' => {
+            'c' | 's' => {
                 let register = state.take_register();
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate {
@@ -2794,6 +2826,31 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn visual_uppercase_keys_o_and_ctrl_c_parse() {
+        for ch in ['D', 'X', 'Y', 'C', 'R'] {
+            let mut state = PendingCmd::default();
+            match parse(&mut state, key(ch), ParseCtx::Visual) {
+                ParseResult::Action(Action::VisualLinewise {
+                    key: k,
+                    register: None,
+                }) => assert_eq!(k, ch),
+                _ => panic!("Visual {ch} did not go line-wise"),
+            }
+        }
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, key('O'), ParseCtx::Visual),
+            ParseResult::Action(Action::VisualSwapCorner)
+        ));
+        let mut state = PendingCmd::default();
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(matches!(
+            parse(&mut state, ctrl_c, ParseCtx::Visual),
+            ParseResult::Cancelled
+        ));
     }
 
     #[test]

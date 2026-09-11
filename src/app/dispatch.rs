@@ -217,6 +217,8 @@ impl super::App {
             Action::ReplayMacro { name, count } => self.replay_macro(name, count),
             Action::ExpressionPrompt => self.open_expression_prompt(false),
             Action::VisualInsert { append } => self.visual_insert(append),
+            Action::VisualLinewise { key, register } => self.visual_linewise(key, register),
+            Action::VisualSwapCorner => self.visual_swap_corner(),
             Action::BlockInsert {
                 append,
                 to_eol,
