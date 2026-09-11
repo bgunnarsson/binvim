@@ -1838,6 +1838,13 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.awaiting_visual_surround = true;
                 return ParseResult::Pending;
             }
+            '=' => {
+                state.reset();
+                return ParseResult::Action(Action::VisualOperate {
+                    op: Operator::Reindent,
+                    register: None,
+                });
+            }
             '>' => {
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate {
@@ -1957,13 +1964,14 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     }
 
     // Operators (only in normal mode — visual handles d/c/y/>/< above).
-    if ctx == ParseCtx::Normal && matches!(ch, 'd' | 'c' | 'y' | '>' | '<') {
+    if ctx == ParseCtx::Normal && matches!(ch, 'd' | 'c' | 'y' | '>' | '<' | '=') {
         let op = match ch {
             'd' => Operator::Delete,
             'c' => Operator::Change,
             'y' => Operator::Yank,
             '>' => Operator::Indent,
             '<' => Operator::Outdent,
+            '=' => Operator::Reindent,
             _ => unreachable!(),
         };
         if let Some(existing) = state.operator {

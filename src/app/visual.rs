@@ -213,6 +213,16 @@ impl super::App {
             Mode::Visual(k) => k,
             _ => return,
         };
+        // `=` takes whole lines and leaves Visual, as Vim's does — unlike
+        // `>` / `<`, which keep the selection for another press.
+        if op == Operator::Reindent {
+            let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+            let l1 = anchor.line.min(self.window.cursor.line);
+            let l2 = anchor.line.max(self.window.cursor.line);
+            self.exit_visual();
+            self.reindent_range(l1, l2);
+            return;
+        }
         // Block selection is non-contiguous — handle it on its own track.
         if matches!(kind, VisualKind::Block) {
             self.apply_block_operate(op, target);
@@ -223,7 +233,10 @@ impl super::App {
         // outdent fall through to the single-selection line path below,
         // and so do the case operators, which change the primary only.
         if !self.additional_selections.is_empty()
-            && !matches!(op, Operator::Indent | Operator::Outdent | Operator::Case(_))
+            && !matches!(
+                op,
+                Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_)
+            )
         {
             self.apply_multi_selection_operate(op, target);
             return;
@@ -296,7 +309,9 @@ impl super::App {
                 self.mode = Mode::Insert;
                 self.window.visual_anchor = None;
             }
-            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -379,7 +394,9 @@ impl super::App {
                     self.exit_visual();
                 }
             }
-            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -662,7 +679,9 @@ impl super::App {
                     self.exit_visual();
                 }
             }
-            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+                unreachable!()
+            }
         }
     }
 

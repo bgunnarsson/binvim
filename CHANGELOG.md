@@ -143,6 +143,11 @@ follows [Semantic Versioning](https://semver.org/).
   `Ctrl-A` and `Ctrl-X` change the first number in the selected part of
   each line, block selections included. The `g` forms count up line by
   line, so a column of zeros becomes 1, 2, 3.
+- **`=` re-indents.** `==`, `=ip`, `=%` and Visual `=` set each line's
+  indent the way Enter indents a new line: as deep as the line above, a
+  level deeper after a line that opens a block, and a level shallower for a
+  line that starts by closing one. The ` * ` lines of a block comment stay
+  lined up, and blank lines lose their whitespace. `.` repeats it.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

@@ -116,6 +116,8 @@ pub enum Operator {
     Yank,
     Indent,
     Outdent,
+    /// `=` — re-indent lines the way Enter indents a new one.
+    Reindent,
     /// `gu` / `gU` / `g~` / `g?` — rewrite the range's case in place.
     Case(CaseOp),
 }

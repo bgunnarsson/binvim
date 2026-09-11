@@ -6,7 +6,7 @@
 use std::time::Instant;
 
 use crate::editorconfig::IndentStyle;
-use crate::mode::{Mode, VisualKind};
+use crate::mode::{Mode, Operator, VisualKind};
 use crate::parser::{InsertWhere, PutStyle};
 
 use super::pair::{is_paired_bracket, surround_open_close};
@@ -195,6 +195,58 @@ impl super::App {
         let col = self.first_non_blank_col(l1);
         self.window.cursor.col = col;
         self.window.cursor.want_col = col;
+    }
+
+    /// `=` — re-indents lines `l1..=l2` the way Enter indents a new line (see
+    /// `indent_below`), each against the nearest non-blank line above it as
+    /// already re-indented. Blank lines lose their whitespace.
+    pub(super) fn reindent_range(&mut self, l1: usize, l2: usize) {
+        let last = crate::motion::vim_line_count(&self.buffer).saturating_sub(1);
+        let l2 = l2.min(last);
+        let unit = self.editorconfig.indent_string();
+        let text_of = |buffer: &crate::buffer::Buffer, line: usize| {
+            let start = buffer.line_start_idx(line);
+            buffer
+                .rope
+                .slice(start..start + buffer.line_len(line))
+                .to_string()
+        };
+        let mut above = (0..l1)
+            .rev()
+            .map(|line| text_of(&self.buffer, line))
+            .find(|text| !text.trim().is_empty());
+        for line in l1..=l2 {
+            let text = text_of(&self.buffer, line);
+            let body = text.trim_start_matches([' ', '\t']);
+            let blank = body.trim().is_empty();
+            let lead = match above.as_deref() {
+                Some(prev) if !blank => indent_below(prev, body, &unit),
+                _ => String::new(),
+            };
+            // The old indent is spaces and tabs only, so bytes count chars.
+            let old_len = text.len() - body.len();
+            if lead != text[..old_len] {
+                let start = self.buffer.line_start_idx(line);
+                self.buffer.replace_range(start, start + old_len, &lead);
+            }
+            if !blank {
+                above = Some(format!("{lead}{body}"));
+            }
+        }
+        self.window.cursor.line = l1;
+        let col = self.first_non_blank_col(l1);
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
+    }
+
+    /// `>`, `<` and `=` over whole lines.
+    pub(super) fn shift_lines(&mut self, op: Operator, l1: usize, l2: usize) {
+        match op {
+            Operator::Indent => self.indent_lines(l1, l2),
+            Operator::Outdent => self.outdent_lines(l1, l2),
+            Operator::Reindent => self.reindent_range(l1, l2),
+            Operator::Delete | Operator::Change | Operator::Yank | Operator::Case(_) => {}
+        }
     }
 
     /// Remove up to one indent unit's worth of leading whitespace from every
@@ -1038,6 +1090,48 @@ impl super::App {
         } else {
             self.status_msg = "Already at newest change".into();
         }
+    }
+}
+
+/// A line ending in `text` opens a block, so the line after it goes a level
+/// deeper — Enter's rule, and `=`'s.
+pub(super) fn opens_block(text: &str) -> bool {
+    let text = text.trim_end();
+    text.ends_with(['{', '[', '(', ':']) || text.ends_with("=>") || text.ends_with("->")
+}
+
+/// The indent `=` gives a line holding `body` under the line `above`: the
+/// same as `above`, a level deeper when `above` opens a block, and a level
+/// shallower when `body` starts by closing one. The ` * ` lines of a block
+/// comment sit one space in from its `/*`, and the line after one comes
+/// back out.
+fn indent_below(above: &str, body: &str, unit: &str) -> String {
+    let mut lead = leading_ws(above).to_string();
+    let above_body = &above[lead.len()..];
+    if body.starts_with('*') && above_body.starts_with("/*") {
+        lead.push(' ');
+        return lead;
+    }
+    if body.starts_with('*') && above_body.starts_with('*') {
+        return lead;
+    }
+    if above_body.starts_with('*') && lead.ends_with(' ') {
+        lead.pop();
+    }
+    if opens_block(above) {
+        lead.push_str(unit);
+    }
+    if body.starts_with(['}', ']', ')']) {
+        lead = dedent_once(&lead, unit);
+    }
+    lead
+}
+
+fn dedent_once(lead: &str, unit: &str) -> String {
+    match lead.strip_suffix(unit) {
+        Some(shorter) => shorter.to_string(),
+        // Tabs where the unit is spaces, or the other way round.
+        None => lead[..lead.len().saturating_sub(1)].to_string(),
     }
 }
 

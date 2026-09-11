@@ -2281,19 +2281,10 @@ impl super::App {
             .rev()
             .find(|c| !c.is_whitespace())
             .copied();
-        let prev_two: String = chars[..col.min(chars.len())]
-            .iter()
-            .rev()
-            .take_while(|c| !c.is_whitespace())
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
+        let before: String = chars[..col.min(chars.len())].iter().collect();
         // What's the first non-whitespace char at/after the cursor?
         let next_non_ws = chars.get(col).copied();
-        let opener_after = matches!(prev_non_ws, Some('{') | Some('[') | Some('(') | Some(':'))
-            || prev_two.ends_with("=>")
-            || prev_two.ends_with("->");
+        let opener_after = super::edit::opens_block(&before);
         let split_pair =
             should_split_pair_on_enter(prev_non_ws, next_non_ws, chars.get(col + 1).copied());
 
@@ -3290,6 +3281,60 @@ mod tests {
         press(&mut app, "v");
         app.replay_key(ctrl('a'));
         assert_eq!(app.buffer.rope.to_string(), "5 8\n");
+    }
+
+    #[test]
+    fn double_equals_and_equals_ip_reindent_by_the_block_structure() {
+        let mut app = app_with_keymaps("fn a() {\nx\n}\n", "");
+        let u = app.editorconfig.indent_string();
+        app.window.cursor.line = 1;
+        press(&mut app, "==");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            format!("fn a() {{\n{u}x\n}}\n")
+        );
+
+        let mut app = app_with_keymaps("if a {\nb\nif c {\nd\n      }\n}\n", "");
+        press(&mut app, "=ip");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            format!("if a {{\n{u}b\n{u}if c {{\n{u}{u}d\n{u}}}\n}}\n")
+        );
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 0));
+    }
+
+    #[test]
+    fn equals_percent_and_visual_equals_reindent() {
+        let mut app = app_with_keymaps("x {\n      y\n  }\n", "");
+        let u = app.editorconfig.indent_string();
+        app.window.cursor.col = 2;
+        app.window.cursor.want_col = 2;
+        press(&mut app, "=%");
+        assert_eq!(app.buffer.rope.to_string(), format!("x {{\n{u}y\n}}\n"));
+
+        let mut app = app_with_keymaps("a {\nb\n", "");
+        press(&mut app, "Vj=");
+        assert_eq!(app.buffer.rope.to_string(), format!("a {{\n{u}b\n"));
+        assert_eq!(app.mode, Mode::Normal);
+    }
+
+    #[test]
+    fn dot_repeats_a_reindent() {
+        let mut app = app_with_keymaps("a {\nb\nc\n}\n", "");
+        let u = app.editorconfig.indent_string();
+        app.window.cursor.line = 1;
+        press(&mut app, "==j.");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            format!("a {{\n{u}b\n{u}c\n}}\n")
+        );
+    }
+
+    #[test]
+    fn reindent_lines_up_block_comments_and_empties_blank_lines() {
+        let mut app = app_with_keymaps("/*\n* a\n*/\n  \nx\n", "");
+        press(&mut app, "Vjjjj=");
+        assert_eq!(app.buffer.rope.to_string(), "/*\n * a\n */\n\nx\n");
     }
 
     #[test]
