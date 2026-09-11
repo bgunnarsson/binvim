@@ -398,6 +398,13 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:S/pat/repl/[flags]`     | Project-wide substitute, with the same syntax and flags. ripgrep enumerates the files containing `pat`, opens each, applies the substitution buffer-wide, saves (with `n`, only counts). |
 | `:&` / `:&&` / `:~`       | The last `:s` again on the range: `:&` without its flags, `:&&` with them, `:~` with the last search's pattern in place of its own. In Normal mode `&` runs it on the current line, `g&` on every line with its flags (`:%s//~/&`). |
 | `:{range}` addresses      | `.`, `$`, `N`, `+N` / `-N` on any address, `'a`, `'<` / `'>`, `/pat/`, `?pat?`, `\/`, `\?` and `%`, joined by `,` or by `;` (which counts the second from the first). A range on its own goes to its last line, and `:` on a Visual selection fills in `'<,'>`. |
+| `:m` / `:t` / `:co {addr}` | Move, or copy, the lines to below the address — `0` for the top. |
+| `:j[!] [count]`            | Join the lines as `J` does, or as `gJ` with `!`. |
+| `:>` / `:<` `[count]`      | Shift the lines one indent for each `>` / `<` typed (`:>>>` is three). |
+| `:d` / `:y` `[x] [count]`  | Delete / yank the lines into register `x`; a count takes that many lines from the range's last. |
+| `:pu[t][!] [x]`            | Put register `x` on lines of their own below the line, or above it with `!` (`:0pu` for the top). |
+| `:le` / `:ri` / `:ce`      | Align the lines left (`:le 4` indents by 4), right or centred in a width (`:ce 60`; default `max_line_length`, else 80). |
+| `:retab[!] [N]`            | Lay tabs and spaces out again for tabstop `N` — spaces or tabs as the file indents; `!` takes runs of spaces too. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. `:dapb` accepts arg forms: `:dapb if <expr>` for a conditional breakpoint, `:dapb hit <expr>` for hit-count, `:dapb plain` to strip both. Conditional breakpoints render as `◆` in the gutter; the breakpoints pane lists each row's expression inline. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:x` / `ZZ` / `ZQ`        | `:x` and `ZZ` write only if the buffer is modified, then quit; `ZQ` is `:q!`. `:q`, `:wq` and `:x` refuse (`E162`) while another buffer has unsaved changes. |

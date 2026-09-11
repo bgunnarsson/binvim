@@ -41,8 +41,11 @@ pub enum ExCommand {
         replacement: String,
         flags: SubFlags,
     },
+    /// `:d [x] [count]` — the lines into register `x`.
     DeleteRange {
         range: ExRange,
+        register: Option<char>,
+        count: Option<usize>,
     },
     /// `:{range}!cmd` — the lines through a shell command, replaced by what
     /// it prints.
@@ -50,8 +53,50 @@ pub enum ExCommand {
         range: ExRange,
         cmd: String,
     },
+    /// `:y [x] [count]`.
     YankRange {
         range: ExRange,
+        register: Option<char>,
+        count: Option<usize>,
+    },
+    /// `:m` / `:t` / `:co` — the lines moved, or copied, to below the `to`
+    /// address; `0` puts them at the top.
+    MoveLines {
+        range: ExRange,
+        to: LineSpec,
+        copy: bool,
+    },
+    /// `:j[!] [count]` — the lines joined as `J` does, or as `gJ` with `!`.
+    JoinRange {
+        range: ExRange,
+        count: Option<usize>,
+        spaces: bool,
+    },
+    /// `:>` / `:<` — the lines shifted `times` indents, one per `>` / `<`.
+    ShiftRange {
+        range: ExRange,
+        count: Option<usize>,
+        right: bool,
+        times: usize,
+    },
+    /// `:pu[t][!] [x]` — a register's text on lines of its own below the
+    /// line, or above it with `!`.
+    PutLines {
+        range: ExRange,
+        register: Option<char>,
+        above: bool,
+    },
+    /// `:le [indent]` / `:ri [width]` / `:ce [width]`.
+    AlignLines {
+        range: ExRange,
+        align: Align,
+        width: Option<usize>,
+    },
+    /// `:retab[!] [N]`.
+    Retab {
+        range: ExRange,
+        bang: bool,
+        tabstop: Option<usize>,
     },
     NoHighlight,
     Format,
@@ -299,6 +344,14 @@ pub enum ExRange {
     Lines(usize, usize),
 }
 
+/// Where `:le` / `:ri` / `:ce` put lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Align {
+    Left,
+    Right,
+    Center,
+}
+
 /// One line address, as typed: the app resolves it against the buffer,
 /// since marks, searches and `.` need one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -439,9 +492,6 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
             None => {}
         }
     }
-    if rest == "d" || rest == "delete" {
-        return ExCommand::DeleteRange { range };
-    }
     // Only after a range: a bare `:!cmd` runs a command in Vim, which binvim
     // doesn't do.
     if let Some(cmd) = rest
@@ -453,8 +503,8 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
             cmd: cmd.trim().to_string(),
         };
     }
-    if rest == "y" || rest == "yank" {
-        return ExCommand::YankRange { range };
+    if let Some(command) = parse_line_command(range, rest) {
+        return command;
     }
 
     // A range and nothing after it goes to its last line, as `:'a` does.
@@ -630,6 +680,134 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
         _ => ExCommand::Unknown(format!(
             ":dapb expected `if <expr>` | `hit <expr>` | `plain`, got `{rest}`"
         )),
+    }
+}
+
+/// The line commands — `:d` / `:y`, `:m`, `:t` / `:co`, `:j`, `:>` / `:<`,
+/// `:pu`, `:le` / `:ri` / `:ce` and `:retab` — or `None` when `rest` is none
+/// of them.
+fn parse_line_command(range: ExRange, rest: &str) -> Option<ExCommand> {
+    if let Some(dir @ ('>' | '<')) = rest.chars().next() {
+        let times = rest.chars().take_while(|&c| c == dir).count();
+        let command = match parse_count(&rest[times..]) {
+            Ok(count) => ExCommand::ShiftRange {
+                range,
+                count,
+                right: dir == '>',
+                times,
+            },
+            Err(e) => ExCommand::Invalid(e),
+        };
+        return Some(command);
+    }
+    let name_end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_end);
+    let (bang, args) = match after.strip_prefix('!') {
+        Some(args) => (true, args.trim()),
+        None => (false, after.trim()),
+    };
+    // `name` is `full` cut short, to no fewer than `min` letters, the way
+    // Vim abbreviates commands.
+    let is = |full: &str, min: usize| name.len() >= min && full.starts_with(name);
+    let align = [
+        ("left", Align::Left),
+        ("right", Align::Right),
+        ("center", Align::Center),
+    ]
+    .into_iter()
+    .find(|&(full, _)| is(full, 2))
+    .map(|(_, align)| align);
+    let command = if is("delete", 1) && !bang {
+        parse_register_count(args).map(|(register, count)| ExCommand::DeleteRange {
+            range,
+            register,
+            count,
+        })
+    } else if is("yank", 1) && !bang {
+        parse_register_count(args).map(|(register, count)| ExCommand::YankRange {
+            range,
+            register,
+            count,
+        })
+    } else if (is("move", 1) || is("t", 1) || is("copy", 2)) && !bang {
+        let copy = !is("move", 1);
+        parse_address(args).map(|to| ExCommand::MoveLines { range, to, copy })
+    } else if is("join", 1) {
+        parse_count(args).map(|count| ExCommand::JoinRange {
+            range,
+            count,
+            spaces: !bang,
+        })
+    } else if is("put", 2) {
+        parse_register(args).map(|register| ExCommand::PutLines {
+            range,
+            register,
+            above: bang,
+        })
+    } else if let Some(align) = align.filter(|_| !bang) {
+        parse_number(args).map(|width| ExCommand::AlignLines {
+            range,
+            align,
+            width,
+        })
+    } else if is("retab", 3) {
+        parse_number(args).map(|tabstop| ExCommand::Retab {
+            range,
+            bang,
+            tabstop,
+        })
+    } else {
+        return None;
+    };
+    Some(command.unwrap_or_else(ExCommand::Invalid))
+}
+
+/// `[x] [count]` after `:d` / `:y`: a register name, then a count.
+fn parse_register_count(args: &str) -> Result<(Option<char>, Option<usize>), String> {
+    let (register, rest) = match args.chars().next() {
+        Some(c) if !c.is_ascii_digit() => (Some(c), &args[c.len_utf8()..]),
+        _ => (None, args),
+    };
+    Ok((register, parse_count(rest)?))
+}
+
+/// `[x]` after `:pu`: a register name and nothing else.
+fn parse_register(args: &str) -> Result<Option<char>, String> {
+    let mut chars = args.chars();
+    match (chars.next(), chars.next()) {
+        (None, _) => Ok(None),
+        (Some(c), None) => Ok(Some(c)),
+        _ => Err(format!("E488: Trailing characters: {args}")),
+    }
+}
+
+/// The address after `:m` / `:t` / `:co`, and nothing else.
+fn parse_address(args: &str) -> Result<LineSpec, String> {
+    match parse_line_spec(args)? {
+        (Some(spec), rest) if rest.trim().is_empty() => Ok(spec),
+        (Some(_), rest) => Err(format!("E488: Trailing characters: {}", rest.trim())),
+        (None, _) => Err("E14: Invalid address".into()),
+    }
+}
+
+/// A number argument, or none.
+fn parse_number(args: &str) -> Result<Option<usize>, String> {
+    let args = args.trim();
+    if args.is_empty() {
+        return Ok(None);
+    }
+    args.parse()
+        .map(Some)
+        .map_err(|_| format!("E488: Trailing characters: {args}"))
+}
+
+/// A count after a command, which Vim wants to be at least one.
+fn parse_count(args: &str) -> Result<Option<usize>, String> {
+    match parse_number(args)? {
+        Some(0) => Err("E939: Positive count required".into()),
+        count => Ok(count),
     }
 }
 
@@ -964,12 +1142,130 @@ mod tests {
         assert!(matches!(
             parse("5,7d"),
             ExCommand::DeleteRange {
-                range: ExRange::Lines(5, 7)
+                range: ExRange::Lines(5, 7),
+                ..
             }
         ));
         assert!(matches!(parse("'a,'bd"), ExCommand::Ranged { rest, .. } if rest == "d"));
         assert!(matches!(parse("7"), ExCommand::Goto(7)));
         assert!(matches!(parse("3,9"), ExCommand::Goto(9)));
+    }
+
+    #[test]
+    fn line_commands_read_their_arguments() {
+        assert!(matches!(
+            parse("2,3d a 4"),
+            ExCommand::DeleteRange {
+                range: ExRange::Lines(2, 3),
+                register: Some('a'),
+                count: Some(4),
+            }
+        ));
+        assert!(matches!(
+            parse("y 3"),
+            ExCommand::YankRange {
+                register: None,
+                count: Some(3),
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("delete b"),
+            ExCommand::DeleteRange {
+                register: Some('b'),
+                count: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("m0"),
+            ExCommand::MoveLines {
+                copy: false,
+                to: LineSpec {
+                    base: Address::Line(0),
+                    offset: 0,
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("t."),
+            ExCommand::MoveLines {
+                copy: true,
+                to: LineSpec {
+                    base: Address::Current,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("co $"),
+            ExCommand::MoveLines {
+                copy: true,
+                to: LineSpec {
+                    base: Address::Last,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("j!"),
+            ExCommand::JoinRange {
+                spaces: false,
+                count: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse(">>> 2"),
+            ExCommand::ShiftRange {
+                right: true,
+                times: 3,
+                count: Some(2),
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("<"),
+            ExCommand::ShiftRange {
+                right: false,
+                times: 1,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("pu! a"),
+            ExCommand::PutLines {
+                above: true,
+                register: Some('a'),
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("ce 40"),
+            ExCommand::AlignLines {
+                align: Align::Center,
+                width: Some(40),
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("retab! 4"),
+            ExCommand::Retab {
+                bang: true,
+                tabstop: Some(4),
+                ..
+            }
+        ));
+        assert!(matches!(parse("m"), ExCommand::Invalid(e) if e.contains("E14")));
+        assert!(matches!(parse("d a b"), ExCommand::Invalid(_)));
+        assert!(matches!(parse("d 0"), ExCommand::Invalid(e) if e.contains("E939")));
+        // Longer commands that start with the same letters are still themselves.
+        assert!(matches!(parse("marks"), ExCommand::Marks));
+        assert!(matches!(parse("jumps"), ExCommand::Jumps));
+        assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
     }
 
     #[test]

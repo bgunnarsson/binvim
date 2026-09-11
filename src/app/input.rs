@@ -2607,16 +2607,96 @@ impl super::App {
             } => {
                 self.project_substitute(&pattern, &replacement, flags);
             }
-            ExCommand::DeleteRange { range } => {
+            ExCommand::DeleteRange {
+                range,
+                register,
+                count,
+            } => {
+                let (l1, l2) = self.counted_range(range, count);
                 self.history.record(&self.buffer.rope, self.window.cursor);
-                self.delete_lines(range);
+                self.delete_lines(l1, l2, register);
             }
             ExCommand::Filter { range, cmd } => {
                 let (l1, l2) = self.resolve_range(range, true);
                 self.filter_lines(l1, l2, &cmd);
             }
-            ExCommand::YankRange { range } => {
-                self.yank_lines(range);
+            ExCommand::YankRange {
+                range,
+                register,
+                count,
+            } => {
+                let (l1, l2) = self.counted_range(range, count);
+                self.yank_lines(l1, l2, register);
+            }
+            ExCommand::MoveLines { range, to, copy } => {
+                let (l1, l2) = self.counted_range(range, None);
+                match self
+                    .line_target(&to)
+                    .and_then(|at| self.transfer_lines(l1, l2, at, copy))
+                {
+                    Ok(last) => self.cursor_to_first_non_blank(last),
+                    Err(e) => self.status_msg = e,
+                }
+            }
+            ExCommand::JoinRange {
+                range,
+                count,
+                spaces,
+            } => {
+                let (l1, l2) = self.counted_range(range, count);
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.window.cursor.line = l1;
+                self.join_lines((l2 - l1).max(1), spaces);
+            }
+            ExCommand::ShiftRange {
+                range,
+                count,
+                right,
+                times,
+            } => {
+                let (l1, l2) = self.counted_range(range, count);
+                let op = if right {
+                    crate::mode::Operator::Indent
+                } else {
+                    crate::mode::Operator::Outdent
+                };
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                for _ in 0..times {
+                    self.shift_lines(op, l1, l2);
+                }
+                self.cursor_to_first_non_blank(l2);
+            }
+            ExCommand::PutLines {
+                range,
+                register,
+                above,
+            } => {
+                let (_, line) = self.counted_range(range, None);
+                // `:0put` goes above the first line.
+                let above = above || matches!(range, ExRange::Single(0));
+                self.put_lines(line, register, above);
+            }
+            ExCommand::AlignLines {
+                range,
+                align,
+                width,
+            } => {
+                let (l1, l2) = self.counted_range(range, None);
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.align_lines(l1, l2, align, width);
+                self.clamp_cursor_normal();
+            }
+            ExCommand::Retab {
+                range,
+                bang,
+                tabstop,
+            } => {
+                // `:retab` takes the whole file unless given a range.
+                let (l1, l2) = self.resolve_range(range, false);
+                let l2 = l2.min(self.last_text_line());
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.retab_lines(l1, l2, bang, tabstop);
+                self.clamp_cursor_normal();
             }
             ExCommand::NoHighlight => {
                 self.search_hl_off = true;
@@ -2907,6 +2987,56 @@ impl super::App {
             }
         };
         Ok(base.saturating_add_signed(spec.offset).min(last))
+    }
+
+    /// `range`'s lines, 0-based and within the text — or, with a count after
+    /// the command, that many lines from the range's last, as Vim reads
+    /// `:d 3`.
+    fn counted_range(&self, range: ExRange, count: Option<usize>) -> (usize, usize) {
+        let last = self.last_text_line();
+        let (l1, l2) = self.resolve_range(range, true);
+        let (l1, l2) = (l1.min(last), l2.min(last));
+        match count {
+            Some(n) => (l2, l2.saturating_add(n.saturating_sub(1)).min(last)),
+            None => (l1, l2),
+        }
+    }
+
+    /// Where `:m` / `:t` put lines: the line they'll start at — the one
+    /// after the address's, or the top for `0`.
+    fn line_target(&self, to: &command::LineSpec) -> Result<usize, String> {
+        if to.base == command::Address::Line(0) && to.offset == 0 {
+            return Ok(0);
+        }
+        Ok(self.resolve_line_spec(to, self.window.cursor.line)? + 1)
+    }
+
+    /// `:pu[t]` — a register's text on lines of its own below `line`, or
+    /// above it, however it was yanked. The cursor ends on its last line.
+    fn put_lines(&mut self, line: usize, register: Option<char>, above: bool) {
+        let Some(reg) = self
+            .read_register(register)
+            .filter(|reg| !reg.text.is_empty())
+        else {
+            let name = register.unwrap_or('"');
+            self.status_msg = format!("E353: Nothing in register {name}");
+            return;
+        };
+        let text = reg.text.strip_suffix('\n').unwrap_or(&reg.text);
+        let lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        let at = if above { line } else { line + 1 };
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        self.replace_lines(at, at, &lines);
+        self.cursor_to_first_non_blank(at + lines.len() - 1);
+    }
+
+    fn cursor_to_first_non_blank(&mut self, line: usize) {
+        let from = crate::cursor::Cursor {
+            line,
+            col: 0,
+            want_col: 0,
+        };
+        self.window.cursor = motion::first_non_blank(&self.buffer, from).target;
     }
 
     /// Runs a `:s` — asking about each match with `c` — and says how it went.
@@ -3244,8 +3374,7 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
-    fn delete_lines(&mut self, range: ExRange) {
-        let (l1, l2) = self.resolve_range(range, true);
+    fn delete_lines(&mut self, l1: usize, l2: usize, register: Option<char>) {
         let last_line = self.buffer.line_count().saturating_sub(1);
         let start = self.buffer.line_start_idx(l1);
         let end = self.buffer.line_start_idx(l2 + 1);
@@ -3266,7 +3395,7 @@ impl super::App {
         } else {
             raw
         };
-        self.write_register(None, reg_text, true);
+        self.write_register(register, reg_text, true);
         self.buffer.delete_range(effective_start, end);
         let new_last = self.buffer.line_count().saturating_sub(1);
         self.window.cursor.line = l1.min(new_last);
@@ -3379,8 +3508,7 @@ impl super::App {
         };
     }
 
-    fn yank_lines(&mut self, range: ExRange) {
-        let (l1, l2) = self.resolve_range(range, true);
+    fn yank_lines(&mut self, l1: usize, l2: usize, register: Option<char>) {
         let start = self.buffer.line_start_idx(l1);
         let end = self.buffer.line_start_idx(l2 + 1);
         let raw = self.buffer.rope.slice(start..end).to_string();
@@ -3391,7 +3519,7 @@ impl super::App {
         } else {
             raw
         };
-        self.write_yank_register(None, reg_text, true);
+        self.write_yank_register(register, reg_text, true);
         self.flash_yank(start, end);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
     }
@@ -4270,6 +4398,64 @@ mod tests {
         press(&mut app, "d");
         tap(&mut app, KeyCode::Enter);
         assert_eq!(app.buffer.rope.to_string(), "a\nd\n");
+    }
+
+    #[test]
+    fn line_commands_move_copy_join_and_put() {
+        let run = |text: &str, cmds: &[&str]| {
+            let mut app = app_with_keymaps(text, "");
+            for cmd in cmds {
+                app.exec_command(cmd);
+            }
+            (app.buffer.rope.to_string(), app.status_msg.clone())
+        };
+        let text = "a\nb\nc\nd\n";
+        assert_eq!(run(text, &["1m$"]).0, "b\nc\nd\na\n");
+        assert_eq!(run(text, &["3,4m0"]).0, "c\nd\na\nb\n");
+        assert_eq!(run(text, &["2t."]).0, "a\nb\nb\nc\nd\n");
+        assert_eq!(run(text, &["1,2co$"]).0, "a\nb\nc\nd\na\nb\n");
+        // A last line with no line break still has none after the move.
+        assert_eq!(run("a\nb\nc", &["1m$"]).0, "b\nc\na");
+        let (after, status) = run(text, &["2,3m2"]);
+        assert_eq!(after, text);
+        assert!(status.contains("E134"), "{status}");
+        assert_eq!(run(text, &["1,3j"]).0, "a b c\nd\n");
+        assert_eq!(run(text, &["j!"]).0, "ab\nc\nd\n");
+        assert_eq!(
+            run(text, &["2y a", "$pu a", "1pu! a"]).0,
+            "b\na\nb\nc\nd\nb\n"
+        );
+        assert_eq!(run(text, &["2d b 2", "1pu b"]).0, "a\nb\nc\nd\n");
+        assert!(run(text, &["pu q"]).1.contains("E353"));
+    }
+
+    #[test]
+    fn line_commands_shift_align_and_retab() {
+        let mut app = app_with_keymaps("a\nb\nc\nd\n", "");
+        let unit = app.editorconfig.indent_string();
+        app.exec_command("2,3>>");
+        let want = format!("a\n{unit}{unit}b\n{unit}{unit}c\nd\n");
+        assert_eq!(app.buffer.rope.to_string(), want);
+
+        let mut app = app_with_keymaps("  ab\nabcd\n\n", "");
+        app.editorconfig.indent_style = crate::editorconfig::IndentStyle::Spaces;
+        app.editorconfig.tab_width = 4;
+        app.exec_command("%ri 6");
+        assert_eq!(app.buffer.rope.to_string(), "    ab\n  abcd\n\n");
+        app.exec_command("%ce 8");
+        assert_eq!(app.buffer.rope.to_string(), "   ab\n  abcd\n\n");
+        app.exec_command("%le 1");
+        assert_eq!(app.buffer.rope.to_string(), " ab\n abcd\n\n");
+
+        let mut app = app_with_keymaps("\tx\n  \ty\na  b\n", "");
+        app.editorconfig.indent_style = crate::editorconfig::IndentStyle::Spaces;
+        app.editorconfig.tab_width = 4;
+        app.exec_command("retab");
+        assert_eq!(app.buffer.rope.to_string(), "    x\n    y\na  b\n");
+        app.editorconfig.indent_style = crate::editorconfig::IndentStyle::Tabs;
+        app.exec_command("retab! 2");
+        assert_eq!(app.buffer.rope.to_string(), "\t\tx\n\t\ty\na\t b\n");
+        assert_eq!(app.editorconfig.tab_width, 2);
     }
 
     #[test]

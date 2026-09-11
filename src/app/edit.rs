@@ -339,6 +339,139 @@ impl super::App {
         }
     }
 
+    /// `:m` / `:t` / `:co` — lines `l1..=l2` moved, or copied, to start at
+    /// line `at`, counted before the move. The line they end on.
+    pub(super) fn transfer_lines(
+        &mut self,
+        l1: usize,
+        l2: usize,
+        at: usize,
+        copy: bool,
+    ) -> Result<usize, String> {
+        if !copy && at > l1 && at <= l2 {
+            return Err("E134: Cannot move a range of lines into itself".into());
+        }
+        let text_of = |app: &Self, line: usize| {
+            let start = app.buffer.line_start_idx(line);
+            let len = app.buffer.line_len(line);
+            app.buffer.rope.slice(start..start + len).to_string()
+        };
+        let block: Vec<String> = (l1..=l2).map(|line| text_of(self, line)).collect();
+        let n = block.len();
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        if copy {
+            self.replace_lines(at, at, &block);
+            return Ok(at + n - 1);
+        }
+        if at <= l1 {
+            let mut lines = block;
+            lines.extend((at..l1).map(|line| text_of(self, line)));
+            self.replace_lines(at, l2 + 1, &lines);
+            return Ok(at + n - 1);
+        }
+        let mut lines: Vec<String> = (l2 + 1..at).map(|line| text_of(self, line)).collect();
+        lines.extend(block);
+        self.replace_lines(l1, at, &lines);
+        Ok(at - 1)
+    }
+
+    /// Lines `lo..hi` replaced by `lines`, one line each — `lo == hi` puts
+    /// them in before line `lo`, which may be one past the last. The last
+    /// line keeps, or goes without, a line break as the buffer's did.
+    pub(super) fn replace_lines(&mut self, lo: usize, hi: usize, lines: &[String]) {
+        let count = crate::motion::vim_line_count(&self.buffer);
+        let total = self.buffer.total_chars();
+        let at = |app: &Self, line: usize| {
+            if line < count {
+                app.buffer.line_start_idx(line)
+            } else {
+                total
+            }
+        };
+        let (start, end) = (at(self, lo), at(self, hi));
+        let ends_in_break = total > 0 && self.buffer.rope.char(total - 1) == '\n';
+        let mut text = lines.join("\n");
+        if hi < count || ends_in_break {
+            text.push('\n');
+        } else if lo == count {
+            text.insert(0, '\n');
+        }
+        self.buffer.replace_range(start, end, &text);
+    }
+
+    /// `:le` / `:ri` / `:ce` — lines `l1..=l2` indented to `width` columns
+    /// for `Left`, or right-aligned / centred in `width` columns, which
+    /// default to `max_line_length`, else 80. Blank lines come out empty.
+    pub(super) fn align_lines(
+        &mut self,
+        l1: usize,
+        l2: usize,
+        align: crate::command::Align,
+        width: Option<usize>,
+    ) {
+        use crate::command::Align;
+        let tab = self.editorconfig.tab_width.max(1);
+        let text_width = width.unwrap_or(self.editorconfig.max_line_length.unwrap_or(80));
+        for line in l1..=l2 {
+            let start = self.buffer.line_start_idx(line);
+            let len = self.buffer.line_len(line);
+            let old = self.buffer.rope.slice(start..start + len).to_string();
+            let body = match align {
+                Align::Left => old.trim_start(),
+                Align::Right | Align::Center => old.trim(),
+            };
+            let columns = match align {
+                Align::Left => width.unwrap_or(0),
+                Align::Right => text_width.saturating_sub(display_width(body, tab)),
+                Align::Center => text_width.saturating_sub(display_width(body, tab)) / 2,
+            };
+            let new = if body.is_empty() {
+                String::new()
+            } else {
+                format!("{}{body}", self.indent_text(columns))
+            };
+            if new != old {
+                self.buffer.replace_range(start, start + len, &new);
+            }
+        }
+    }
+
+    /// `:retab[!] [N]` — lines `l1..=l2` with every run of blanks holding a
+    /// tab (with `!`, every run) laid out again for tabstop `N`: in spaces
+    /// when the file indents with spaces, in tabs where they fit when it uses
+    /// tabs. Each run keeps the columns the old tabstop gave it, and `N`
+    /// becomes the tabstop.
+    pub(super) fn retab_lines(&mut self, l1: usize, l2: usize, bang: bool, tabstop: Option<usize>) {
+        let old = self.editorconfig.tab_width.max(1);
+        let new = tabstop.unwrap_or(old).max(1);
+        let tabs = matches!(
+            self.editorconfig.indent_style,
+            crate::editorconfig::IndentStyle::Tabs
+        );
+        for line in l1..=l2 {
+            let start = self.buffer.line_start_idx(line);
+            let len = self.buffer.line_len(line);
+            let text = self.buffer.rope.slice(start..start + len).to_string();
+            let redone = retab(&text, old, new, tabs, bang);
+            if redone != text {
+                self.buffer.replace_range(start, start + len, &redone);
+            }
+        }
+        self.editorconfig.tab_width = new;
+    }
+
+    /// Leading blanks `columns` wide — tabs and then spaces when the file
+    /// indents with tabs.
+    fn indent_text(&self, columns: usize) -> String {
+        let tab = self.editorconfig.tab_width.max(1);
+        match self.editorconfig.indent_style {
+            crate::editorconfig::IndentStyle::Tabs => {
+                "\t".repeat(columns / tab) + &" ".repeat(columns % tab)
+            }
+            crate::editorconfig::IndentStyle::Spaces => " ".repeat(columns),
+        }
+    }
+
     /// Remove up to one indent unit's worth of leading whitespace from every
     /// line in `[l1, l2]`. For tab indent style we strip one tab if present;
     /// for spaces we strip up to `indent_size` whitespace chars.
@@ -1304,6 +1437,55 @@ fn fill_paragraph(
     out.push(line);
 }
 
+/// `line` with its runs of blanks laid out again for tabstop `new`, keeping
+/// the columns tabstop `old` gave them — only the runs that hold a tab
+/// unless `every` — in tabs where they fit when `tabs`, else in spaces.
+fn retab(line: &str, old: usize, new: usize, tabs: bool, every: bool) -> String {
+    let mut out = String::new();
+    let mut col = 0;
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != ' ' && c != '\t' {
+            out.push(c);
+            col += 1;
+            continue;
+        }
+        let from = col;
+        let mut run = String::new();
+        let mut has_tab = false;
+        let mut next = Some(c);
+        while let Some(blank) = next {
+            run.push(blank);
+            if blank == '\t' {
+                has_tab = true;
+                col += old - col % old;
+            } else {
+                col += 1;
+            }
+            next = chars.next_if(|&n| n == ' ' || n == '\t');
+        }
+        if has_tab || every {
+            out.push_str(&blanks(from, col, new, tabs));
+        } else {
+            out.push_str(&run);
+        }
+    }
+    out
+}
+
+/// Blanks from column `from` to `to`: a tab for each tabstop `ts` they
+/// reach when `tabs`, and spaces for the rest.
+fn blanks(from: usize, to: usize, ts: usize, tabs: bool) -> String {
+    let mut out = String::new();
+    let mut col = from;
+    while tabs && (col / ts + 1) * ts <= to {
+        out.push('\t');
+        col = (col / ts + 1) * ts;
+    }
+    out.push_str(&" ".repeat(to - col));
+    out
+}
+
 fn display_width(s: &str, tab_width: usize) -> usize {
     s.chars()
         .map(|c| if c == '\t' { tab_width } else { 1 })
@@ -1571,7 +1753,7 @@ pub(super) fn shift_block_up_by_one(
 
 #[cfg(test)]
 mod tests {
-    use super::{shift_block_down_by_one, shift_block_up_by_one};
+    use super::{retab, shift_block_down_by_one, shift_block_up_by_one};
     use crate::buffer::Buffer;
     use ropey::Rope;
 
@@ -1650,6 +1832,16 @@ mod tests {
             super::reindent_lines(text, "    "),
             "    a\n      b\n\n   c\n"
         );
+    }
+
+    #[test]
+    fn retab_keeps_the_columns_and_redoes_the_blanks() {
+        assert_eq!(retab("\tx", 4, 4, false, false), "    x");
+        assert_eq!(retab("  \ty", 4, 4, false, false), "    y");
+        assert_eq!(retab("a  b", 4, 4, false, false), "a  b");
+        assert_eq!(retab("    x", 4, 2, true, true), "\t\tx");
+        assert_eq!(retab("a  b", 4, 2, true, true), "a\t b");
+        assert_eq!(retab("\t\tx", 8, 4, true, false), "\t\t\t\tx");
     }
 
     #[test]
