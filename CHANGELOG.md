@@ -273,6 +273,11 @@ follows [Semantic Versioning](https://semver.org/).
   alone goes home, `:cd -` goes back, and `~`, `%` and `#` expand. The
   pickers, grep and the file tree follow the new directory, and open buffers
   keep their files; language servers keep the root they started with.
+- **`:bufdo`, `:windo`, `:cdo` and `:cfdo` run a command everywhere.** In
+  every buffer, every window, at every quickfix entry, or once per file in
+  the quickfix list; a range picks them by number (`:2,4bufdo`). The run ends
+  where the command last ran and stops at the first error. `:s` takes the `e`
+  flag, so `:bufdo %s/a/b/ge` reads as it does in Vim.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

@@ -143,8 +143,8 @@ impl Layout {
         None
     }
 
-    /// Collect every window id present in the tree. Test-only helper.
-    #[allow(dead_code)]
+    /// Every window id, in layout order — a split's first pane before its
+    /// second — the order `:windo` visits them in.
     pub fn ids(&self) -> Vec<WindowId> {
         let mut out = Vec::new();
         Self::collect_ids(&self.root, &mut out);

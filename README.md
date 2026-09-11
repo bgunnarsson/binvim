@@ -414,6 +414,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:sp` / `:vs` `[file]`     | Split the window — stacked or side by side — onto `file` or the same buffer; `:new` / `:vnew` split onto a new empty buffer. `<C-w>v` / `<C-w>s` still open the picker. |
 | `:on[ly]` / `:clo[se]`     | Close every other window, or this one. |
 | `:cd [dir]` / `:pwd`       | Change the working directory — home without `dir`, back with `-` — or show it. The pickers, grep and the file tree follow it; language servers keep their root. |
+| `:bufdo` / `:windo` `{cmd}` | Run `cmd` in every buffer or window; `:cdo` / `:cfdo` at every quickfix entry, or once per file. A range picks them by number (`:2,4bufdo`); the first error stops the run. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. `:dapb` accepts arg forms: `:dapb if <expr>` for a conditional breakpoint, `:dapb hit <expr>` for hit-count, `:dapb plain` to strip both. Conditional breakpoints render as `◆` in the gutter; the breakpoints pane lists each row's expression inline. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:x` / `ZZ` / `ZQ`        | `:x` and `ZZ` write only if the buffer is modified, then quit; `ZQ` is `:q!`. `:q`, `:wq` and `:x` refuse (`E162`) while another buffer has unsaved changes. |

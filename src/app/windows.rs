@@ -47,7 +47,7 @@ impl super::App {
     /// than the currently-live one, also stash/load the buffer-level
     /// state via `switch_to` so App's live fields (buffer, history,
     /// folds, highlight cache, git hunks, …) match the new focus.
-    fn focus_window(&mut self, target: crate::layout::WindowId) {
+    pub(super) fn focus_window(&mut self, target: crate::layout::WindowId) {
         if target == self.active_window {
             return;
         }

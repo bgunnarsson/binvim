@@ -127,6 +127,14 @@ pub enum ExCommand {
         file: Option<String>,
         empty: bool,
     },
+    /// `:bufdo` / `:windo` / `:cdo` / `:cfdo` `{cmd}` — `cmd` run in each
+    /// buffer, window, quickfix entry or quickfix file, `range` picking them
+    /// by number.
+    Each {
+        range: ExRange,
+        over: EachOver,
+        cmd: String,
+    },
     /// `:on[ly]` — every window but this one closed.
     OnlyWindow,
     /// `:clo[se]` — this window closed.
@@ -403,6 +411,35 @@ pub enum ExRange {
     Lines(usize, usize),
 }
 
+impl ExRange {
+    /// The 0-based first and last of `len` items that `:bufdo`, `:windo`,
+    /// `:cdo` and `:cfdo` pick with this range — all of them without one.
+    /// `None` when it picks none.
+    pub fn pick(self, len: usize) -> Option<(usize, usize)> {
+        let (a, b) = match self {
+            ExRange::Implicit | ExRange::Whole => (1, len),
+            ExRange::Single(n) => (n, n),
+            ExRange::Lines(a, b) => (a.min(b), a.max(b)),
+        };
+        if a == 0 || a > len {
+            return None;
+        }
+        Some((a - 1, b.min(len) - 1))
+    }
+}
+
+/// What `:bufdo` / `:windo` / `:cdo` / `:cfdo` run their command over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EachOver {
+    Buffers,
+    Windows,
+    /// Every quickfix entry.
+    Entries,
+    /// The first entry of each run of entries in one file — where `:cnfile`
+    /// stops.
+    Files,
+}
+
 /// `:sort`'s options.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SortOpts {
@@ -524,6 +561,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         return command;
     }
     if let Some(command) = parse_global(range, rest) {
+        return command;
+    }
+    if let Some(command) = parse_each(range, rest) {
         return command;
     }
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
@@ -835,6 +875,35 @@ fn parse_window_command(head: &str, rest: &str) -> Option<ExCommand> {
         return Some(ExCommand::CloseWindow);
     }
     None
+}
+
+/// `:bufd[o]`, `:wind[o]`, `:cdo` and `:cfd[o]`, each with an optional `!`,
+/// and the command after them kept as typed.
+fn parse_each(range: ExRange, rest: &str) -> Option<ExCommand> {
+    let name_end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_end);
+    let over = if abbreviates(name, "bufdo", 4) {
+        EachOver::Buffers
+    } else if abbreviates(name, "windo", 4) {
+        EachOver::Windows
+    } else if name == "cdo" {
+        EachOver::Entries
+    } else if abbreviates(name, "cfdo", 3) {
+        EachOver::Files
+    } else {
+        return None;
+    };
+    let cmd = after.strip_prefix('!').unwrap_or(after).trim_start();
+    if cmd.is_empty() {
+        return Some(ExCommand::Invalid("E471: Argument required".into()));
+    }
+    Some(ExCommand::Each {
+        range,
+        over,
+        cmd: cmd.to_string(),
+    })
 }
 
 /// `:g/pat/cmd`, `:g!/pat/cmd` and `:v/pat/cmd`, with any delimiter `:s`
@@ -1248,6 +1317,10 @@ fn parse_sub_flags(text: &str) -> Result<SubFlags, String> {
             'I' => flags.ignore_case = Some(false),
             'n' => flags.count_only = true,
             'c' => flags.confirm = true,
+            // A pattern that isn't found is reported, never an error, so
+            // there's nothing for `e` to hold back — but `:bufdo %s/a/b/ge`
+            // has to read.
+            'e' => {}
             // Once the switch to a regex; every pattern is one now.
             'r' => {}
             _ => return Err(format!("E488: Trailing characters: {text}")),
@@ -1672,6 +1745,49 @@ mod tests {
         assert!(matches!(parse("spell"), ExCommand::SpellToggle));
         assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn each_commands_parse() {
+        assert!(matches!(
+            parse("bufdo %s/a/b/ge"),
+            ExCommand::Each { range: ExRange::Implicit, over: EachOver::Buffers, cmd }
+                if cmd == "%s/a/b/ge"
+        ));
+        assert!(matches!(
+            parse("2,3windo normal x"),
+            ExCommand::Each {
+                range: ExRange::Lines(2, 3),
+                over: EachOver::Windows,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("cdo! s/a/b/"),
+            ExCommand::Each { over: EachOver::Entries, cmd, .. } if cmd == "s/a/b/"
+        ));
+        assert!(matches!(
+            parse("cfd w"),
+            ExCommand::Each {
+                over: EachOver::Files,
+                ..
+            }
+        ));
+        assert!(matches!(parse("bufdo"), ExCommand::Invalid(e) if e.contains("E471")));
+        // `:cd` and `:win…` commands stay themselves.
+        assert!(matches!(parse("cd src"), ExCommand::ChangeDir(_)));
+    }
+
+    #[test]
+    fn a_range_picks_items_by_number() {
+        assert_eq!(ExRange::Implicit.pick(3), Some((0, 2)));
+        assert_eq!(ExRange::Whole.pick(3), Some((0, 2)));
+        assert_eq!(ExRange::Single(2).pick(3), Some((1, 1)));
+        assert_eq!(ExRange::Lines(3, 2).pick(3), Some((1, 2)));
+        assert_eq!(ExRange::Lines(2, 9).pick(3), Some((1, 2)));
+        assert_eq!(ExRange::Single(4).pick(3), None);
+        assert_eq!(ExRange::Single(0).pick(3), None);
+        assert_eq!(ExRange::Implicit.pick(0), None);
     }
 
     #[test]
