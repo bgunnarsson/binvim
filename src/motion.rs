@@ -133,6 +133,20 @@ pub fn goto_line(buf: &Buffer, n: usize) -> MotionResult {
     }
 }
 
+/// `N%` — the line `percent` of the way through the file, rounded up the way
+/// Vim does it: `(N * lines + 99) / 100`.
+pub fn percent_line(buf: &Buffer, percent: usize) -> MotionResult {
+    // Ropey counts the empty line after a trailing newline; Vim doesn't, and
+    // counting it would shift every percentage by up to a line.
+    let len = buf.rope.len_chars();
+    let lines = if len > 0 && buf.rope.char(len - 1) == '\n' {
+        buf.line_count() - 1
+    } else {
+        buf.line_count()
+    };
+    goto_line(buf, (percent.min(100) * lines.max(1)).div_ceil(100).max(1))
+}
+
 pub fn first_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
     let line_len = buf.line_len(cur.line);
     let mut col = 0;
@@ -678,6 +692,15 @@ mod tests {
             col,
             want_col: col,
         }
+    }
+
+    #[test]
+    fn percent_line_rounds_up_like_vim() {
+        let b = buf(&"x\n".repeat(10));
+        assert_eq!(percent_line(&b, 1).target.line, 0);
+        assert_eq!(percent_line(&b, 50).target.line, 4);
+        assert_eq!(percent_line(&b, 100).target.line, 9);
+        assert_eq!(percent_line(&b, 250).target.line, 9);
     }
 
     #[test]

@@ -3,6 +3,8 @@
 //! machinery on `>` / quote characters.
 
 use crate::buffer::Buffer;
+use crate::cursor::Cursor;
+use crate::motion::{MotionKind, MotionResult};
 
 pub fn is_bracket(c: char) -> bool {
     matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
@@ -57,6 +59,51 @@ pub fn find_match_open(buf: &Buffer, close_idx: usize, open: char, close: char) 
         }
     }
     None
+}
+
+/// `%`: from the first bracket at or after the cursor on its line to the one
+/// that matches it. Inside an HTML tag of an html-like buffer it goes to the
+/// `<` of the partner tag instead. Inclusive, so `d%` takes both brackets.
+/// `None` when there's nothing on the line to match.
+pub fn match_pair_motion(buf: &Buffer, cur: Cursor) -> Option<MotionResult> {
+    let tag = if is_html_like_buffer(buf) {
+        html_tag_pair_at(buf, cur.line, cur.col)
+    } else {
+        None
+    };
+    let target = match tag {
+        // Both ranges are tag *names*: `open` sits right after `<`, `close`
+        // right after `</`.
+        Some((open, close)) => {
+            let here = buf.pos_to_char(cur.line, cur.col);
+            if here + 2 >= close.0 {
+                open.0 - 1
+            } else {
+                close.0 - 2
+            }
+        }
+        None => {
+            let col = (cur.col..buf.line_len(cur.line))
+                .find(|c| matches!(buf.char_at(cur.line, *c), Some(ch) if is_bracket(ch)))?;
+            let idx = buf.pos_to_char(cur.line, col);
+            let (open, close, forward) = bracket_pair(buf.rope.char(idx));
+            if forward {
+                find_match_close(buf, idx, open, close)?
+            } else {
+                find_match_open(buf, idx, open, close)?
+            }
+        }
+    };
+    let line = buf.rope.char_to_line(target);
+    let col = target - buf.rope.line_to_char(line);
+    Some(MotionResult {
+        target: Cursor {
+            line,
+            col,
+            want_col: col,
+        },
+        kind: MotionKind::CharInclusive,
+    })
 }
 
 /// Map a Vim-surround pair-id char to its open/close strings. `b`/`B`
@@ -463,4 +510,71 @@ pub fn detect_open_tag_to_close(buffer: &Buffer, line: usize, col_after: usize) 
         return None;
     }
     Some(name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ropey::Rope;
+
+    fn buf(s: &str) -> Buffer {
+        Buffer {
+            rope: Rope::from_str(s),
+            ..Buffer::default()
+        }
+    }
+
+    fn target(b: &Buffer, line: usize, col: usize) -> Option<(usize, usize)> {
+        let cur = Cursor {
+            line,
+            col,
+            want_col: col,
+        };
+        match_pair_motion(b, cur).map(|m| (m.target.line, m.target.col))
+    }
+
+    #[test]
+    fn percent_jumps_from_an_opener_to_its_closer() {
+        assert_eq!(target(&buf("f(a, (b))\n"), 0, 1), Some((0, 8)));
+    }
+
+    #[test]
+    fn percent_jumps_from_a_closer_back_to_its_opener() {
+        assert_eq!(target(&buf("f(a, (b))\n"), 0, 7), Some((0, 5)));
+    }
+
+    #[test]
+    fn percent_uses_the_first_bracket_after_the_cursor() {
+        assert_eq!(target(&buf("if x { y }\n"), 0, 0), Some((0, 9)));
+    }
+
+    #[test]
+    fn percent_crosses_lines() {
+        assert_eq!(target(&buf("fn f() {\n    x\n}\n"), 0, 7), Some((2, 0)));
+    }
+
+    #[test]
+    fn percent_with_nothing_to_match_is_none() {
+        assert_eq!(target(&buf("plain\n"), 0, 0), None);
+        assert_eq!(target(&buf("f(x\n"), 0, 0), None);
+    }
+
+    #[test]
+    fn percent_is_inclusive() {
+        let cur = Cursor {
+            line: 0,
+            col: 0,
+            want_col: 0,
+        };
+        let m = match_pair_motion(&buf("(x)\n"), cur).unwrap();
+        assert!(matches!(m.kind, MotionKind::CharInclusive));
+    }
+
+    #[test]
+    fn percent_jumps_between_html_tags() {
+        let mut b = buf("<div class=\"a\">x</div>\n");
+        b.path = Some(std::path::PathBuf::from("page.html"));
+        assert_eq!(target(&b, 0, 3), Some((0, 16)));
+        assert_eq!(target(&b, 0, 18), Some((0, 0)));
+    }
 }

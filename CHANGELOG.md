@@ -36,6 +36,13 @@ follows [Semantic Versioning](https://semver.org/).
   press inserts the character at the cursor's column from the line above
   (`Ctrl-Y`) or below (`Ctrl-E`), so holding it copies a run of the
   neighbouring line. Nothing is inserted where that line is shorter.
+- **`%` jumps to the matching bracket.** From the first `(`, `[`, `{` or
+  closer at or after the cursor on its line, `%` jumps to the partner —
+  through nesting and across lines — and works with operators, so `d%`
+  deletes both brackets and everything between them. Inside an HTML tag in an
+  HTML-like file (`.html`, `.tsx`, `.vue`, `.md`, …) it jumps to the partner
+  tag. `N%` goes to the line N percent of the way through the file. Both are
+  jumps, so `Ctrl-O` comes back.
 
 ## [0.5.21] - 2026-09-10
 

@@ -1254,6 +1254,8 @@ pub fn is_jump_motion(m: MotionVerb) -> bool {
             | MotionVerb::ViewportMiddle
             | MotionVerb::ViewportBottom
             | MotionVerb::SearchNext { .. }
+            | MotionVerb::MatchPair
+            | MotionVerb::PercentLine(_)
     )
 }
 
