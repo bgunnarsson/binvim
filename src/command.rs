@@ -184,6 +184,13 @@ pub enum ExCommand {
     NoHighlight,
     /// `:se[t] [args]` (D4) — every option shown without any.
     Set(Vec<SetArg>),
+    /// `:ea[rlier]` / `:lat[er]` `[N|Ns|Nm|Nh|Nd|Nf]`.
+    UndoTime {
+        earlier: bool,
+        amount: UndoAmount,
+    },
+    /// `:undol[ist]` — the ends of the undo branches.
+    UndoList,
     /// `:cd [dir]` / `:chd[ir]` — the working directory moved to `dir`, the
     /// home directory without one, or the previous one for `-`.
     ChangeDir(String),
@@ -492,6 +499,14 @@ pub enum SetArg {
     Number(&'static str, usize),
 }
 
+/// How far `:earlier` / `:later` go: undo steps, a time, or file writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UndoAmount {
+    Steps(usize),
+    Time(std::time::Duration),
+    Writes(usize),
+}
+
 /// `:set`'s arguments, space-separated; `all`, or nothing, for every option.
 fn parse_set_args(args: &str) -> Result<Vec<SetArg>, String> {
     if args == "all" {
@@ -759,6 +774,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
     if let Some(command) = parse_window_command(head, rest) {
         return command;
     }
+    if let Some(command) = parse_undo_command(head, rest) {
+        return command;
+    }
     match head {
         "w" | "write" => {
             if rest.is_empty() {
@@ -948,6 +966,53 @@ pub fn cd_target(
         return home_or_fail().map(|home| home.join(rest));
     }
     Ok(std::path::PathBuf::from(arg))
+}
+
+/// `:ea[rlier]` / `:lat[er]` `[count][s|m|h|d|f]` and `:undol[ist]`.
+fn parse_undo_command(head: &str, rest: &str) -> Option<ExCommand> {
+    if abbreviates(head, "undolist", 5) {
+        return Some(ExCommand::UndoList);
+    }
+    let earlier = if abbreviates(head, "earlier", 2) {
+        true
+    } else if abbreviates(head, "later", 3) {
+        false
+    } else {
+        return None;
+    };
+    let command = match parse_undo_amount(rest) {
+        Some(amount) => ExCommand::UndoTime { earlier, amount },
+        None => ExCommand::Invalid(format!("E475: Invalid argument: {rest}")),
+    };
+    Some(command)
+}
+
+/// `:earlier`'s argument: a count, with `s` / `m` / `h` / `d` for a time or
+/// `f` for file writes. No count, or none at all, is 1.
+fn parse_undo_amount(text: &str) -> Option<UndoAmount> {
+    let digits = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(digits);
+    let n: u64 = if number.is_empty() {
+        1
+    } else {
+        number.parse().ok()?
+    };
+    let time = |per: u64| {
+        Some(UndoAmount::Time(std::time::Duration::from_secs(
+            n.saturating_mul(per),
+        )))
+    };
+    match unit {
+        "" => Some(UndoAmount::Steps(n as usize)),
+        "s" => time(1),
+        "m" => time(60),
+        "h" => time(3600),
+        "d" => time(86400),
+        "f" => Some(UndoAmount::Writes(n as usize)),
+        _ => None,
+    }
 }
 
 /// Whether `name` is `full` cut short, to no fewer than `min` letters, the
@@ -1920,6 +1985,38 @@ mod tests {
         assert!(matches!(parse("spell"), ExCommand::SpellToggle));
         assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn earlier_later_and_undolist_parse() {
+        use std::time::Duration;
+        let amount = |line: &str| match parse(line) {
+            ExCommand::UndoTime { amount, .. } => Some(amount),
+            _ => None,
+        };
+        assert_eq!(amount("earlier"), Some(UndoAmount::Steps(1)));
+        assert_eq!(amount("ea 3"), Some(UndoAmount::Steps(3)));
+        assert_eq!(
+            amount("earlier 10s"),
+            Some(UndoAmount::Time(Duration::from_secs(10)))
+        );
+        assert_eq!(
+            amount("lat 2m"),
+            Some(UndoAmount::Time(Duration::from_secs(120)))
+        );
+        assert_eq!(
+            amount("later 1h"),
+            Some(UndoAmount::Time(Duration::from_secs(3600)))
+        );
+        assert_eq!(amount("earlier 2f"), Some(UndoAmount::Writes(2)));
+        assert_eq!(amount("earlier f"), Some(UndoAmount::Writes(1)));
+        assert!(matches!(
+            parse("later"),
+            ExCommand::UndoTime { earlier: false, .. }
+        ));
+        assert!(matches!(parse("earlier 3x"), ExCommand::Invalid(e) if e.contains("E475")));
+        assert!(matches!(parse("undolist"), ExCommand::UndoList));
+        assert!(matches!(parse("undol"), ExCommand::UndoList));
     }
 
     #[test]

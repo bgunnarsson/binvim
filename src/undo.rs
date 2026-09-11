@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 #[derive(Clone)]
 pub struct Snapshot {
@@ -20,6 +21,10 @@ struct Node {
     parent: Option<usize>,
     /// The child `redo` goes to: the one most recently made or left.
     redo_child: Option<usize>,
+    /// When the state was made, for `:earlier` / `:later` by time.
+    made: Instant,
+    /// The file write that saved it, for `:earlier` / `:later` by writes.
+    written: Option<usize>,
 }
 
 /// Undo history as a tree (D5): an edit after an undo starts a new branch and
@@ -30,6 +35,18 @@ struct Node {
 pub struct History {
     nodes: Vec<Node>,
     cur: usize,
+    /// File writes so far this session.
+    writes: usize,
+}
+
+/// One `:undolist` row: the last state of a branch.
+#[derive(Debug, Clone)]
+pub struct Leaf {
+    pub number: usize,
+    /// How many changes from the oldest state.
+    pub changes: usize,
+    pub age: Duration,
+    pub written: Option<usize>,
 }
 
 /// Cap so a long-running session doesn't OOM. 1000 is plenty — anything
@@ -48,6 +65,8 @@ impl History {
                 snap: None,
                 parent: None,
                 redo_child: None,
+                made: Instant::now(),
+                written: None,
             });
             self.cur = 0;
         }
@@ -62,6 +81,8 @@ impl History {
             snap: None,
             parent: Some(self.cur),
             redo_child: None,
+            made: Instant::now(),
+            written: None,
         });
         self.cur = child;
         if self.nodes.len() > MAX_STATES {
@@ -172,6 +193,98 @@ impl History {
         self.nodes[self.cur].snap.clone()
     }
 
+    /// The current state was just written to the file: it's that write's.
+    pub fn mark_written(&mut self) {
+        if self.nodes.is_empty() {
+            self.nodes.push(Node {
+                snap: None,
+                parent: None,
+                redo_child: None,
+                made: Instant::now(),
+                written: None,
+            });
+            self.cur = 0;
+        }
+        self.writes += 1;
+        self.nodes[self.cur].written = Some(self.writes);
+    }
+
+    /// `:earlier` / `:later` by time: the newest state made at least `by`
+    /// before this one — or, `later`, the oldest made at least `by` after it —
+    /// measured from the current state's time, as Vim's are.
+    pub fn target_by_time(&self, by: Duration, earlier: bool) -> Option<usize> {
+        let now = self.nodes.get(self.cur)?.made;
+        if earlier {
+            let found = now
+                .checked_sub(by)
+                .and_then(|limit| (0..self.cur).rev().find(|&i| self.nodes[i].made <= limit));
+            return Some(found.unwrap_or(0));
+        }
+        let limit = now.checked_add(by)?;
+        let found = (self.cur + 1..self.nodes.len()).find(|&i| self.nodes[i].made >= limit);
+        Some(found.unwrap_or(self.nodes.len() - 1))
+    }
+
+    /// `:earlier Nf` / `:later Nf`: the state `count` file writes back or on.
+    /// From a state changed since the last write, the first one back is that
+    /// write; past the first write is the oldest state, as in Vim.
+    pub fn target_by_writes(&self, count: usize, earlier: bool) -> Option<usize> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let count = count.max(1);
+        let written = (0..self.nodes.len()).filter(|&i| self.nodes[i].written.is_some());
+        if earlier {
+            let back: Vec<usize> = written.filter(|&i| i < self.cur).collect();
+            return Some(back.len().checked_sub(count).map_or(0, |k| back[k]));
+        }
+        let on: Vec<usize> = written.filter(|&i| i > self.cur).collect();
+        Some(on.get(count - 1).copied().unwrap_or(self.nodes.len() - 1))
+    }
+
+    /// Straight to state `target`, keeping the current one on its node.
+    pub fn jump(
+        &mut self,
+        target: usize,
+        current_rope: &Rope,
+        current_cursor: Cursor,
+    ) -> Option<Snapshot> {
+        if target == self.cur || target >= self.nodes.len() {
+            return None;
+        }
+        self.leave(current_rope, current_cursor);
+        self.cur = target;
+        self.nodes[target].snap.clone()
+    }
+
+    /// `:undolist`'s rows: the last state of every branch, oldest first.
+    pub fn leaves(&self) -> Vec<Leaf> {
+        let mut has_child = vec![false; self.nodes.len()];
+        for node in &self.nodes {
+            if let Some(parent) = node.parent {
+                has_child[parent] = true;
+            }
+        }
+        let now = Instant::now();
+        (1..self.nodes.len())
+            .filter(|&i| !has_child[i])
+            .map(|i| {
+                let mut changes = 0;
+                let mut at = self.nodes[i].parent;
+                while let Some(parent) = at {
+                    changes += 1;
+                    at = self.nodes[parent].parent;
+                }
+                Leaf {
+                    number: i,
+                    changes,
+                    age: now.saturating_duration_since(self.nodes[i].made),
+                    written: self.nodes[i].written,
+                }
+            })
+            .collect()
+    }
+
     /// The current branch as the linear stacks the files hold: the states
     /// before this one, oldest first, and the ones `redo` reaches, the next
     /// one last.
@@ -215,9 +328,15 @@ impl History {
                 snap,
                 parent: i.checked_sub(1),
                 redo_child: None,
+                made: Instant::now(),
+                written: None,
             });
         }
-        Self { nodes, cur }
+        Self {
+            nodes,
+            cur,
+            writes: 0,
+        }
     }
 
     /// Persist the current branch to `path` along with `file_hash`. We store
@@ -328,6 +447,50 @@ pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn earlier_and_later_by_writes_and_by_time() {
+        let r = Rope::from_str;
+        let mut history = History::new();
+        // Writes at "ab" and "abc", then "abcd" unsaved — as the Vim check had it.
+        history.record(&r("a"), at_start());
+        history.mark_written();
+        history.record(&r("ab"), at_start());
+        history.mark_written();
+        history.record(&r("abc"), at_start());
+        assert_eq!(history.target_by_writes(1, true), Some(2));
+        assert_eq!(history.target_by_writes(2, true), Some(1));
+        assert_eq!(history.target_by_writes(3, true), Some(0));
+        assert_eq!(history.target_by_writes(1, false), Some(3));
+        assert_eq!(
+            text(history.jump(1, &r("abcd"), at_start())).as_deref(),
+            Some("ab")
+        );
+        assert_eq!(history.target_by_writes(1, false), Some(2));
+        assert_eq!(history.target_by_writes(1, true), Some(0));
+        // By time, from the current state's time.
+        let now = Instant::now();
+        for (i, secs) in [(0, 30), (1, 20), (2, 10), (3, 0)] {
+            history.nodes[i].made = now.checked_sub(Duration::from_secs(secs)).expect("uptime");
+        }
+        history.cur = 3;
+        assert_eq!(
+            history.target_by_time(Duration::from_secs(15), true),
+            Some(1)
+        );
+        history.cur = 0;
+        assert_eq!(
+            history.target_by_time(Duration::from_secs(15), false),
+            Some(2)
+        );
+        assert_eq!(
+            history.target_by_time(Duration::from_secs(900), false),
+            Some(3)
+        );
+        // `:undolist` lists the ends of branches only.
+        let leaves: Vec<usize> = history.leaves().iter().map(|leaf| leaf.number).collect();
+        assert_eq!(leaves, vec![3]);
+    }
 
     fn at_start() -> Cursor {
         Cursor {

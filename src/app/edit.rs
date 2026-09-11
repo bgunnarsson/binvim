@@ -1374,6 +1374,71 @@ impl super::App {
         self.buffer.version = self.buffer.version.wrapping_add(1);
         self.clamp_cursor_normal();
     }
+
+    /// `:earlier` / `:later`: by steps as `g-` / `g+` go, or straight to the
+    /// state a time or a number of file writes away.
+    pub(super) fn undo_jump(&mut self, earlier: bool, amount: crate::command::UndoAmount) {
+        let target = match amount {
+            crate::command::UndoAmount::Steps(count) => {
+                self.undo_time(earlier, count);
+                return;
+            }
+            crate::command::UndoAmount::Time(by) => self.history.target_by_time(by, earlier),
+            crate::command::UndoAmount::Writes(count) => {
+                self.history.target_by_writes(count, earlier)
+            }
+        };
+        let snap = target.and_then(|target| {
+            self.history
+                .jump(target, &self.buffer.rope, self.window.cursor)
+        });
+        let Some(snap) = snap else {
+            let end = if earlier { "oldest" } else { "newest" };
+            self.status_msg = format!("Already at {end} change");
+            return;
+        };
+        self.buffer.rope = snap.rope;
+        self.window.cursor = snap.cursor;
+        self.buffer.dirty = true;
+        self.buffer.version = self.buffer.version.wrapping_add(1);
+        self.clamp_cursor_normal();
+    }
+
+    /// `:undolist` — each undo branch's last state: its number, how many
+    /// changes deep it is, how long ago it was made, and whether a write
+    /// saved it.
+    pub(super) fn cmd_undolist(&mut self) {
+        let rows = self
+            .history
+            .leaves()
+            .into_iter()
+            .map(|leaf| {
+                let label = format!("{:>6} {:>7}", leaf.number, leaf.changes);
+                let saved = leaf
+                    .written
+                    .map(|write| format!("  saved ({write})"))
+                    .unwrap_or_default();
+                (label, format!("{}{saved}", time_ago(leaf.age)))
+            })
+            .collect();
+        self.show_listing(super::state::Listing {
+            title: "Undo branches — number, changes, when".into(),
+            rows,
+            empty: "Nothing to undo".into(),
+        });
+    }
+}
+
+/// `age` the way `:undolist` shows it: seconds, then minutes, then hours.
+fn time_ago(age: std::time::Duration) -> String {
+    let secs = age.as_secs();
+    if secs < 60 {
+        format!("{secs}s ago")
+    } else if secs < 3600 {
+        format!("{}m ago", secs / 60)
+    } else {
+        format!("{}h ago", secs / 3600)
+    }
 }
 
 /// A line ending in `text` opens a block, so the line after it goes a level
