@@ -3560,6 +3560,44 @@ mod tests {
     }
 
     #[test]
+    fn slash_searches_by_regex_and_n_takes_a_count() {
+        // x0 _1 a2 1 _4 b5 _6 a7 2 2 _10 c11 _12 a13 3 3 3
+        let mut app = app_with_keymaps("x a1 b a22 c a333\n", "");
+        press(&mut app, "/a\\d\\+");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.col, 2);
+        press(&mut app, "2n");
+        assert_eq!(app.window.cursor.col, 13);
+        let highlighted = app.line_search_matches_in(&app.buffer, 0);
+        assert_eq!(highlighted, vec![(2, 4), (7, 10), (13, 17)]);
+    }
+
+    #[test]
+    fn slash_moves_past_a_match_the_cursor_is_on() {
+        let mut app = app_with_keymaps("ab ab\n", "");
+        press(&mut app, "/ab");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.col, 3);
+    }
+
+    #[test]
+    fn star_takes_whole_words_and_g_star_does_not() {
+        let mut app = app_with_keymaps("foo food foo\n", "");
+        press(&mut app, "*");
+        assert_eq!(app.window.cursor.col, 9);
+
+        let mut app = app_with_keymaps("foo food foo\n", "");
+        press(&mut app, "g*");
+        assert_eq!(app.window.cursor.col, 4);
+
+        let mut app = app_with_keymaps("foo x foo\n", "");
+        app.window.cursor.col = 7;
+        app.window.cursor.want_col = 7;
+        press(&mut app, "#");
+        assert_eq!(app.window.cursor.col, 0);
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

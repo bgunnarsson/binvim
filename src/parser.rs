@@ -277,6 +277,8 @@ pub enum Action {
     },
     SearchWord {
         backward: bool,
+        /// `*` / `#` search `\<word\>`; `g*` / `g#` the bare word.
+        whole_word: bool,
     },
     JumpBack,
     JumpForward,
@@ -1819,6 +1821,14 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 style: PutStyle::CursorAfter,
             });
         }
+        // g* / g# — `*` / `#` without the word boundaries.
+        if matches!(ch, '*' | '#') && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::SearchWord {
+                backward: ch == '#',
+                whole_word: false,
+            });
+        }
         // gi — Insert where it was last left.
         if ch == 'i' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
@@ -2301,8 +2311,14 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             '~' => Some(Action::ToggleCase {
                 count: state.total_count(),
             }),
-            '*' => Some(Action::SearchWord { backward: false }),
-            '#' => Some(Action::SearchWord { backward: true }),
+            '*' => Some(Action::SearchWord {
+                backward: false,
+                whole_word: true,
+            }),
+            '#' => Some(Action::SearchWord {
+                backward: true,
+                whole_word: true,
+            }),
             'K' => Some(Action::LspHover),
             // `Q` re-runs the most recently replayed macro — same effect as
             // `@@`, but one keystroke. Vim's legacy Ex-mode `Q` isn't

@@ -195,7 +195,10 @@ impl super::App {
                     self.set_file_mark(name, line, col);
                 }
             }
-            Action::SearchWord { backward } => self.search_word_under_cursor(backward),
+            Action::SearchWord {
+                backward,
+                whole_word,
+            } => self.search_word_under_cursor(backward, whole_word),
             Action::StartMacro { name } => self.start_macro_recording(name),
             Action::ReplayMacro { name, count } => self.replay_macro(name, count),
             Action::BufferDelete { force } => {

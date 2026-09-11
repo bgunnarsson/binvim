@@ -17,24 +17,27 @@ use super::pair::{
 };
 
 impl super::App {
-    pub(super) fn search_word_under_cursor(&mut self, backward: bool) {
+    pub(super) fn search_word_under_cursor(&mut self, backward: bool, whole_word: bool) {
         let Some(word) = self.word_under_cursor() else {
             self.status_msg = "No word under cursor".into();
             return;
         };
-        self.last_search = Some((word.clone(), backward));
-        self.search_hl_off = false;
+        if !self.set_search(&word_pattern(&word, whole_word), backward) {
+            return;
+        }
         let cur_idx = self
             .buffer
             .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        let total = self.buffer.total_chars();
-        let from = if backward {
-            cur_idx.saturating_sub(1)
-        } else {
-            (cur_idx + 1).min(total)
-        };
-        match self.search(&word, from, !backward, true) {
-            Some(idx) => {
+        let from = if backward { cur_idx } else { cur_idx + 1 };
+        let mut hit = self.find_match(from, !backward, true);
+        // `#` from inside a word starts from that word, not its own match.
+        if backward
+            && let Some((start, _)) = hit.filter(|&(s, len)| s <= cur_idx && cur_idx < s + len)
+        {
+            hit = self.find_match(start, false, true);
+        }
+        match hit {
+            Some((idx, _)) => {
                 self.push_jump();
                 self.cursor_to_idx(idx);
                 self.clamp_cursor_normal();
@@ -291,45 +294,91 @@ impl super::App {
         )
     }
 
-    pub(super) fn run_search_next(&self, reverse: bool, _count: usize) -> MotionResult {
-        let Some((query, was_backward)) = self.last_search.clone() else {
-            return MotionResult {
-                target: self.window.cursor,
-                kind: MotionKind::CharExclusive,
-            };
+    pub(super) fn run_search_next(&self, reverse: bool, count: usize) -> MotionResult {
+        let stay = MotionResult {
+            target: self.window.cursor,
+            kind: MotionKind::CharExclusive,
+        };
+        let Some((_, was_backward)) = self.last_search.as_ref() else {
+            return stay;
         };
         // n continues original direction; N reverses it.
-        let forward = if reverse { was_backward } else { !was_backward };
-        let total = self.buffer.total_chars();
-        let cur_idx = self
+        let forward = if reverse {
+            *was_backward
+        } else {
+            !*was_backward
+        };
+        let mut at = self
             .buffer
             .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        let from = if forward {
-            (cur_idx + 1).min(total)
-        } else {
-            cur_idx.saturating_sub(1)
-        };
-        match self.search(&query, from, forward, true) {
-            Some(idx) => {
-                let line = self.buffer.rope.char_to_line(idx);
-                let col = idx - self.buffer.rope.line_to_char(line);
-                MotionResult {
-                    target: Cursor {
-                        line,
-                        col,
-                        want_col: col,
-                    },
-                    kind: MotionKind::CharExclusive,
-                }
-            }
-            None => MotionResult {
-                target: self.window.cursor,
-                kind: MotionKind::CharExclusive,
+        for _ in 0..count.max(1) {
+            let from = if forward { at + 1 } else { at };
+            let Some((start, _)) = self.find_match(from, forward, true) else {
+                return stay;
+            };
+            at = start;
+        }
+        let line = self.buffer.rope.char_to_line(at);
+        let col = at - self.buffer.rope.line_to_char(line);
+        MotionResult {
+            target: Cursor {
+                line,
+                col,
+                want_col: col,
             },
+            kind: MotionKind::CharExclusive,
         }
     }
 
-    pub(super) fn search(
+    /// `pattern` becomes the search `n` / `N` repeat and the highlight shows,
+    /// or the status line says why it can't.
+    pub(super) fn set_search(&mut self, pattern: &str, backward: bool) -> bool {
+        match compile_search(pattern) {
+            Ok(re) => {
+                self.search_pattern = Some(re);
+                self.last_search = Some((pattern.to_string(), backward));
+                self.search_hl_off = false;
+                true
+            }
+            Err(e) => {
+                self.status_msg = e;
+                false
+            }
+        }
+    }
+
+    /// The next match of the search pattern: starting at or after
+    /// `from_char` going forward, before it going back, round the buffer's
+    /// end when `wrap` is set. `(start, length)` in chars.
+    pub(super) fn find_match(
+        &self,
+        from_char: usize,
+        forward: bool,
+        wrap: bool,
+    ) -> Option<(usize, usize)> {
+        let re = self.search_pattern.as_ref()?;
+        let rope = &self.buffer.rope;
+        let text = rope.to_string();
+        let from = rope.char_to_byte(from_char.min(rope.len_chars()));
+        let all = hits(re, &text);
+        let pick = if forward {
+            all.iter()
+                .find(|h| h.0 >= from)
+                .or(all.first().filter(|_| wrap))
+        } else {
+            all.iter()
+                .rev()
+                .find(|h| h.0 < from)
+                .or(all.last().filter(|_| wrap))
+        };
+        let &(s, e) = pick?;
+        let start = rope.byte_to_char(s);
+        Some((start, rope.byte_to_char(e) - start))
+    }
+
+    /// The literal, case-insensitive text search a Visual selection's
+    /// `Ctrl-N` uses — no pattern syntax, and no effect on `n`.
+    pub(super) fn find_literal(
         &self,
         query: &str,
         from_char: usize,
@@ -424,14 +473,17 @@ impl super::App {
         } else {
             query.to_string()
         };
-        self.last_search = Some((q.clone(), backward));
-        self.search_hl_off = false;
+        if !self.set_search(&q, backward) {
+            return;
+        }
         let cur_idx = self
             .buffer
             .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        let forward = !backward;
-        match self.search(&q, cur_idx, forward, true) {
-            Some(idx) => {
+        // From the char after the cursor, as Vim does, so a match the cursor
+        // is already on isn't found again.
+        let from = if backward { cur_idx } else { cur_idx + 1 };
+        match self.find_match(from, !backward, true) {
+            Some((idx, _)) => {
                 self.push_jump();
                 self.cursor_to_idx(idx);
                 self.clamp_cursor_normal();
@@ -540,36 +592,23 @@ impl super::App {
         if self.search_hl_off {
             return Vec::new();
         }
-        let Some((q, _)) = &self.last_search else {
+        let Some(re) = self.search_pattern.as_ref() else {
             return Vec::new();
         };
-        if q.is_empty() {
-            return Vec::new();
-        }
         let line_len = buffer.line_len(line);
         if line_len == 0 {
             return Vec::new();
         }
         let line_start = buffer.line_start_idx(line);
-        let text_lower: String = buffer
+        let text = buffer
             .rope
             .slice(line_start..(line_start + line_len))
-            .to_string()
-            .to_ascii_lowercase();
-        let needle = q.to_ascii_lowercase();
-        let qlen = needle.chars().count();
-        let mut out = Vec::new();
-        let mut byte = 0usize;
-        while byte <= text_lower.len() {
-            let Some(rel) = text_lower[byte..].find(needle.as_str()) else {
-                break;
-            };
-            let abs_byte = byte + rel;
-            let char_start = text_lower[..abs_byte].chars().count();
-            out.push((char_start, char_start + qlen));
-            byte = abs_byte + needle.len().max(1);
-        }
-        out
+            .to_string();
+        hits(re, &text)
+            .into_iter()
+            .filter(|(s, e)| e > s)
+            .map(|(s, e)| (text[..s].chars().count(), text[..e].chars().count()))
+            .collect()
     }
 
     /// For visual mode rendering: return the half-open `[start_col, end_col)` of selected
@@ -665,5 +704,427 @@ impl super::App {
         let box_w = inner_w + 2;
         let left = total_w.saturating_sub(box_w + 1);
         row < visible_rows + 2 && col >= left && col < left + box_w
+    }
+}
+
+/// `*`'s pattern for `word`: the word as literal text, inside `\<` / `\>`
+/// when `whole` and it starts / ends on a keyword char, and without regard
+/// to case — Vim's `*` ignores 'smartcase'.
+fn word_pattern(word: &str, whole: bool) -> String {
+    let keyword = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out = String::new();
+    if whole && word.chars().next().is_some_and(keyword) {
+        out.push_str("\\<");
+    }
+    for c in word.chars() {
+        if matches!(c, '\\' | '.' | '*' | '$' | '^' | '~' | '[') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    if whole && word.chars().last().is_some_and(keyword) {
+        out.push_str("\\>");
+    }
+    out.push_str("\\c");
+    out
+}
+
+/// A search pattern in Vim's syntax, compiled: `^` and `$` match at every
+/// line, and case follows `translate`.
+pub(super) fn compile_search(pattern: &str) -> Result<regex::Regex, String> {
+    let (source, ignore_case) = translate(pattern).map_err(|e| format!("Invalid pattern: {e}"))?;
+    regex::RegexBuilder::new(&source)
+        .case_insensitive(ignore_case)
+        .multi_line(true)
+        .build()
+        .map_err(|_| format!("Invalid pattern: {pattern}"))
+}
+
+/// Where `re` matches in `text`, as byte ranges — narrowed to the `zs`
+/// group when the pattern has `\zs` / `\ze`.
+pub(super) fn hits(re: &regex::Regex, text: &str) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while from <= text.len() {
+        let Some(caps) = re.captures_at(text, from) else {
+            break;
+        };
+        let Some(whole) = caps.get(0) else {
+            break;
+        };
+        let part = caps.name("zs").unwrap_or(whole);
+        out.push((part.start(), part.end()));
+        // Past an empty match by one char, or the loop would stay on it.
+        let step = text[whole.end()..].chars().next().map_or(1, char::len_utf8);
+        from = if whole.end() > whole.start() {
+            whole.end()
+        } else {
+            whole.end() + step
+        };
+    }
+    out
+}
+
+/// How much of Vim's pattern syntax is special without a backslash: `\v`
+/// (very magic), the default `\m`, `\M` (nomagic) and `\V` (very nomagic).
+#[derive(Clone, Copy)]
+enum Magic {
+    Very,
+    On,
+    Off,
+    VeryOff,
+}
+
+/// The characters that can be special at all; which of them are special
+/// bare, and which only after a backslash, depends on the `Magic`.
+const SPECIALS: &str = ".*$^~[()|+?={<>%@";
+
+fn special_bare(magic: Magic, c: char) -> bool {
+    match magic {
+        Magic::Very => true,
+        Magic::On => matches!(c, '.' | '*' | '$' | '^' | '~' | '['),
+        Magic::Off => matches!(c, '$' | '^'),
+        Magic::VeryOff => false,
+    }
+}
+
+/// The pattern char at `i`: itself, or the one a backslash escapes — with
+/// whether it was escaped and how many chars it took.
+fn token(chars: &[char], i: usize) -> (char, bool, usize) {
+    match (chars[i], chars.get(i + 1)) {
+        ('\\', Some(&n)) => (n, true, 2),
+        (c, _) => (c, false, 1),
+    }
+}
+
+/// A backslashed letter's meaning, when it's a class or an escape.
+fn escape_class(c: char) -> Option<&'static str> {
+    let class = match c {
+        's' => "[ \\t]",
+        'S' => "[^ \\t]",
+        'd' => "[0-9]",
+        'D' => "[^0-9]",
+        'w' => "[0-9A-Za-z_]",
+        'W' => "[^0-9A-Za-z_]",
+        'a' => "[A-Za-z]",
+        'A' => "[^A-Za-z]",
+        // Case-exact even when the pattern ignores case.
+        'l' => "(?-i:[a-z])",
+        'L' => "(?-i:[^a-z])",
+        'u' => "(?-i:[A-Z])",
+        'U' => "(?-i:[^A-Z])",
+        'x' => "[0-9A-Fa-f]",
+        'X' => "[^0-9A-Fa-f]",
+        'h' => "[A-Za-z_]",
+        'H' => "[^A-Za-z_]",
+        'o' => "[0-7]",
+        'O' => "[^0-7]",
+        'n' => "\\n",
+        't' => "\\t",
+        'r' => "\\r",
+        'e' => "\\x1B",
+        _ => return None,
+    };
+    Some(class)
+}
+
+/// Vim's pattern syntax as a Rust regex, and whether it ignores case.
+///
+/// In the default `magic` mode `.`, `*`, `[…]`, `^` and `$` are special
+/// bare, while `\(…\)`, `\%(…\)`, `\|`, `\+`, `\?` / `\=`, `\{n,m}` /
+/// `\{-n,m}` and `\<` / `\>` need their backslash — a bare `+ ? = ( ) | {`
+/// is literal. `\v` makes them all special bare, `\M` only `^` and `$`,
+/// `\V` none. Classes: `\s \d \w \a \l \u \x \h \o` and capitals, `\_s`,
+/// `\_.`; escapes `\n \t \r \e`. `\zs` / `\ze` mark the part of a hit that
+/// counts as the match. Case is smart: an upper-case letter anywhere but
+/// after a backslash makes the pattern case-sensitive, and `\c` / `\C`
+/// decide outright. Backreferences, `\@` lookaround and the other `\%`
+/// items are refused rather than half-done.
+fn translate(pattern: &str) -> Result<(String, bool), String> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut out = String::new();
+    let mut magic = Magic::On;
+    let mut case: Option<bool> = None;
+    let mut has_upper = false;
+    // At the start of a branch `^` anchors and `*` is a plain star.
+    let mut branch_start = true;
+    let mut zs_open = false;
+    let mut zs_used = false;
+    let mut i = 0;
+    while i < chars.len() {
+        let (c, escaped, width) = token(&chars, i);
+        i += width;
+        if escaped && (c.is_ascii_alphanumeric() || c == '_') {
+            match c {
+                'c' => case = Some(true),
+                'C' => case = Some(false),
+                'v' => magic = Magic::Very,
+                'm' => magic = Magic::On,
+                'M' => magic = Magic::Off,
+                'V' => magic = Magic::VeryOff,
+                'z' => {
+                    match chars.get(i) {
+                        Some('s') if !zs_used => {
+                            out.push_str("(?P<zs>");
+                            zs_open = true;
+                            zs_used = true;
+                        }
+                        Some('e') if zs_open => {
+                            out.push(')');
+                            zs_open = false;
+                        }
+                        Some('e') if !zs_used => {
+                            out = format!("(?P<zs>{out})");
+                            zs_used = true;
+                        }
+                        _ => return Err("one \\zs and one \\ze at most".into()),
+                    }
+                    i += 1;
+                }
+                '_' => {
+                    let piece = match chars.get(i) {
+                        Some('s') => "[ \\t\\n]",
+                        Some('.') => "(?s:.)",
+                        _ => return Err("only \\_s and \\_. of the \\_ items".into()),
+                    };
+                    out.push_str(piece);
+                    branch_start = false;
+                    i += 1;
+                }
+                '0'..='9' => return Err("backreferences aren't supported".into()),
+                _ => match escape_class(c) {
+                    Some(class) => {
+                        out.push_str(class);
+                        branch_start = false;
+                    }
+                    None => return Err(format!("\\{c} isn't supported")),
+                },
+            }
+            continue;
+        }
+        let special = SPECIALS.contains(c) && escaped != special_bare(magic, c);
+        if !special {
+            if !escaped && c.is_uppercase() {
+                has_upper = true;
+            }
+            out.push_str(&regex::escape(&c.to_string()));
+            branch_start = false;
+            continue;
+        }
+        match c {
+            '^' if branch_start => out.push('^'),
+            '$' if ends_branch(&chars, i, magic) => out.push('$'),
+            '*' if branch_start => {
+                out.push_str("\\*");
+                branch_start = false;
+            }
+            '^' | '$' | '~' => {
+                out.push_str(&regex::escape(&c.to_string()));
+                branch_start = false;
+            }
+            '.' | '*' | '+' | ')' => {
+                out.push(c);
+                branch_start = false;
+            }
+            '?' | '=' => out.push('?'),
+            '(' | '|' => {
+                out.push(c);
+                branch_start = true;
+            }
+            '%' if chars.get(i) == Some(&'(') => {
+                out.push_str("(?:");
+                branch_start = true;
+                i += 1;
+            }
+            '[' => {
+                match bracket(&chars, i, &mut has_upper) {
+                    Some((class, end)) => {
+                        out.push_str(&class);
+                        i = end;
+                    }
+                    None => out.push_str("\\["),
+                }
+                branch_start = false;
+            }
+            '{' => {
+                let (quantifier, end) = brace(&chars, i)?;
+                out.push_str(&quantifier);
+                i = end;
+            }
+            '<' => {
+                out.push_str("\\b{start}");
+                branch_start = false;
+            }
+            '>' => {
+                out.push_str("\\b{end}");
+                branch_start = false;
+            }
+            _ => return Err(format!("{c} items (\\{c}) aren't supported")),
+        }
+    }
+    if zs_open {
+        out.push(')');
+    }
+    Ok((out, case.unwrap_or(!has_upper)))
+}
+
+/// Whether the pattern ends at `i`, or a branch does — so a `$` just before
+/// is an anchor and not a dollar sign.
+fn ends_branch(chars: &[char], i: usize, magic: Magic) -> bool {
+    if i >= chars.len() {
+        return true;
+    }
+    let (c, escaped, _) = token(chars, i);
+    matches!(c, '|' | ')') && escaped != special_bare(magic, c)
+}
+
+/// A `[…]` class, from `i` just after the `[`: the Rust class and where the
+/// pattern goes on, or `None` when there's no closing `]` and the `[` is a
+/// plain bracket.
+fn bracket(chars: &[char], mut i: usize, has_upper: &mut bool) -> Option<(String, usize)> {
+    let mut out = String::from("[");
+    if chars.get(i) == Some(&'^') {
+        out.push('^');
+        i += 1;
+    }
+    if chars.get(i) == Some(&']') {
+        out.push_str("\\]");
+        i += 1;
+    }
+    while let Some(&c) = chars.get(i) {
+        match c {
+            ']' => {
+                out.push(']');
+                return Some((out, i + 1));
+            }
+            '\\' => {
+                let n = *chars.get(i + 1)?;
+                let piece = match n {
+                    'n' => "\\n".to_string(),
+                    't' => "\\t".to_string(),
+                    'r' => "\\r".to_string(),
+                    'e' => "\\x1B".to_string(),
+                    _ => regex::escape(&n.to_string()),
+                };
+                out.push_str(&piece);
+                i += 2;
+            }
+            // `[:alpha:]` and its kind pass through as they are.
+            '[' if chars.get(i + 1) == Some(&':') => {
+                let end = (i + 2..chars.len().saturating_sub(1))
+                    .find(|&j| chars[j] == ':' && chars[j + 1] == ']')?;
+                out.extend(chars[i..end + 2].iter());
+                i = end + 2;
+            }
+            // Nested classes, `&&`, `~~` and `--` mean something in a Rust
+            // class and nothing in Vim's.
+            '[' | '&' | '~' => {
+                out.push('\\');
+                out.push(c);
+                i += 1;
+            }
+            '-' if out.ends_with('-') => {
+                out.push_str("\\-");
+                i += 1;
+            }
+            _ => {
+                if c.is_uppercase() {
+                    *has_upper = true;
+                }
+                out.push(c);
+                i += 1;
+            }
+        }
+    }
+    None
+}
+
+/// A `\{…}` count, from `i` just after the `{`: the Rust quantifier and
+/// where the pattern goes on. `\{-…}` is lazy, and the closing `}` may carry
+/// a backslash of its own.
+fn brace(chars: &[char], i: usize) -> Result<(String, usize), String> {
+    let close = (i..chars.len())
+        .find(|&j| chars[j] == '}')
+        .ok_or("\\{ without its }")?;
+    let mut body: String = chars[i..close].iter().collect();
+    if body.ends_with('\\') {
+        body.pop();
+    }
+    let lazy = body.starts_with('-');
+    let body = body.trim_start_matches('-');
+    let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+    let quantifier = match body.split_once(',') {
+        None if body.is_empty() => "*".to_string(),
+        None if digits(body) => format!("{{{body}}}"),
+        Some((lo, hi)) if digits(lo) && digits(hi) => {
+            let lo = if lo.is_empty() { "0" } else { lo };
+            format!("{{{lo},{hi}}}")
+        }
+        _ => return Err(format!("\\{{{body}}} isn't a count")),
+    };
+    let quantifier = if lazy { quantifier + "?" } else { quantifier };
+    Ok((quantifier, close + 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{compile_search, hits, word_pattern};
+
+    /// (pattern, text, where the first match starts and what it covers).
+    const TABLE: &[(&str, &str, Option<(usize, &str)>)] = &[
+        ("foo", "a foo", Some((2, "foo"))),
+        ("foo", "a FOO", Some((2, "FOO"))),
+        ("Foo", "a foo Foo", Some((6, "Foo"))),
+        ("\\cFoo", "a foo", Some((2, "foo"))),
+        ("\\Cfoo", "a FOO foo", Some((6, "foo"))),
+        ("a\\+", "caaat", Some((1, "aaa"))),
+        ("a+", "aa a+", Some((3, "a+"))),
+        ("\\v(ab)+", "x abab", Some((2, "abab"))),
+        ("\\(ab\\)\\+", "x abab", Some((2, "abab"))),
+        ("\\%(ab\\)\\+", "x abab", Some((2, "abab"))),
+        ("a\\{2}", "a aaa", Some((2, "aa"))),
+        ("a\\{-1,}", "aaa", Some((0, "a"))),
+        ("a\\{,2}b", "aaab", Some((1, "aab"))),
+        ("\\<is\\>", "this is", Some((5, "is"))),
+        ("foo\\|bar", "x bar", Some((2, "bar"))),
+        ("x\\zsy", "xy", Some((1, "y"))),
+        ("x\\zey", "xz xy", Some((3, "x"))),
+        ("\\Va.c", "abc a.c", Some((4, "a.c"))),
+        ("\\Mx.y", "xzy x.y", Some((4, "x.y"))),
+        ("a.c", "abc", Some((0, "abc"))),
+        ("a\\.c", "abc a.c", Some((4, "a.c"))),
+        ("[0-9]\\+", "ab12c", Some((2, "12"))),
+        ("[]x]", "a]", Some((1, "]"))),
+        ("\\d\\d", "a12", Some((1, "12"))),
+        ("\\s", "a b", Some((1, " "))),
+        ("\\u\\l", "aB Cd", Some((3, "Cd"))),
+        ("^b", "ab\nbc", Some((3, "b"))),
+        ("c$", "cab\nbc", Some((5, "c"))),
+        ("a^b", "a^b", Some((0, "a^b"))),
+        ("*a", "x*a", Some((1, "*a"))),
+        ("q", "abc", None),
+    ];
+
+    #[test]
+    fn the_translator_matches_the_way_vim_does() {
+        for &(pattern, text, want) in TABLE {
+            let re = compile_search(pattern).unwrap_or_else(|e| panic!("{pattern}: {e}"));
+            let got = hits(&re, text).first().map(|&(s, e)| (s, &text[s..e]));
+            assert_eq!(got, want, "{pattern} on {text:?}");
+        }
+    }
+
+    #[test]
+    fn what_the_translator_cannot_do_is_an_error() {
+        for pattern in ["\\(a\\)\\1", "a\\@=", "\\%d123", "\\(a", "a\\{x}"] {
+            assert!(compile_search(pattern).is_err(), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn star_patterns_take_the_word_literally() {
+        assert_eq!(word_pattern("foo", true), "\\<foo\\>\\c");
+        assert_eq!(word_pattern("foo", false), "foo\\c");
+        assert_eq!(word_pattern("a.b", true), "\\<a\\.b\\>\\c");
     }
 }
