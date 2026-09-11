@@ -646,7 +646,8 @@ impl super::App {
 
     pub(super) fn handle_search_key(&mut self, key: KeyEvent) {
         use super::cmdline_history::HistoryKind;
-        if self.keymap_take(key, MapMode::Command) {
+        // `Ctrl-R`'s register name is a literal, as on the `:` prompt.
+        if !self.cmdline_register_pending && self.keymap_take(key, MapMode::Command) {
             return;
         }
         let key = super::input::ctrl_c_as_esc(key);

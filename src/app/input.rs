@@ -1779,9 +1779,11 @@ impl super::App {
         // and never `<Tab>` from a Copilot ghost it would accept — every
         // other key has already dropped the ghost above.
         let ghost_tab = matches!(key.code, KeyCode::Tab) && self.copilot_ghost.is_some();
-        // The register name after `Ctrl-R`, and every key of a `Ctrl-V`
-        // sequence, is a literal — like `fH`'s target, never a mapping's key.
+        // The register name after `Ctrl-R`, the source key `Ctrl-X` is waiting
+        // on, and every key of a `Ctrl-V` sequence are literals — like `fH`'s
+        // target, never a mapping's key.
         let literal_next = self.insert_register_pending
+            || self.insert_ctrl_x_pending
             || self.insert_literal_pending.is_some()
             || self.insert_digraph.is_some();
         if !ghost_tab && !literal_next && self.keymap_take(key, MapMode::Insert) {
@@ -2505,7 +2507,10 @@ impl super::App {
 
     pub(super) fn handle_command_key(&mut self, key: KeyEvent) {
         use super::cmdline_history::HistoryKind;
-        if self.keymap_take(key, MapMode::Command) {
+        // The register name after `Ctrl-R` is a literal here as it is in
+        // Insert — the prompt has no parser state, so nothing else stops a
+        // mapping from taking it.
+        if !self.cmdline_register_pending && self.keymap_take(key, MapMode::Command) {
             return;
         }
         let key = ctrl_c_as_esc(key);
@@ -7080,6 +7085,38 @@ mod tests {
         assert_eq!(app.cmdline, "", "qq might follow");
         time_out(&mut app);
         assert_eq!(app.cmdline, "q");
+    }
+
+    #[test]
+    fn an_insert_mapping_never_takes_ctrl_xs_second_key() {
+        let mut app = app_with_keymaps("alphabet beta\nal\n", "[insert]\n\"<C-n>\" = \"<Esc>\"");
+        app.window.cursor.line = 1;
+        press(&mut app, "A");
+        app.replay_key(ctrl('x'));
+        app.replay_key(ctrl('n'));
+        assert!(
+            matches!(app.mode, Mode::Insert),
+            "the mapping took Ctrl-X's key"
+        );
+        let first = app.completion.as_ref().map(|c| c.items[0].label.clone());
+        assert_eq!(first.as_deref(), Some("alphabet"));
+    }
+
+    #[test]
+    fn a_command_line_mapping_never_takes_the_register_name_after_ctrl_r() {
+        let mut app = app_with_keymaps("a\n", "[command]\nqq = \"wq\"");
+        app.write_register(Some('q'), "xyz".into(), true);
+        press(&mut app, ":");
+        app.replay_key(ctrl('r'));
+        press(&mut app, "q");
+        assert_eq!(app.cmdline, "xyz");
+        tap(&mut app, KeyCode::Esc);
+        // The search prompt reads registers through the same helper.
+        press(&mut app, "/");
+        app.replay_key(ctrl('r'));
+        press(&mut app, "q");
+        assert_eq!(app.cmdline, "xyz");
+        tap(&mut app, KeyCode::Esc);
     }
 
     #[test]
