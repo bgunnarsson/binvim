@@ -230,6 +230,13 @@ follows [Semantic Versioning](https://semver.org/).
   of the pattern so far is highlighted, the one it would land on stands
   out, and the view moves to it. `Esc` puts the cursor and view back where
   they were, and only `Enter` changes what `n` searches for.
+- **Ex ranges take Vim's whole address grammar.** `.`, `$`, line numbers,
+  `+N` / `-N` on any address, marks (`'a`, `'<` / `'>`), `/pat/` and
+  `?pat?` (with `\/` / `\?` for the last search) and `%`, joined by `,` or
+  by `;`, which counts the second address from the first. A backwards range
+  is turned round, a range on its own goes to its last line, and an unset
+  mark or a pattern with no match says so. `:` on a Visual selection now
+  opens the command line with `'<,'>` filled in.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

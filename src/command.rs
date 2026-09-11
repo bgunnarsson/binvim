@@ -154,6 +154,13 @@ pub enum ExCommand {
         keep_flags: bool,
         flags: SubFlags,
     },
+    /// A command whose range names lines only the buffer knows — marks,
+    /// searches, `.`, `$`, offsets. The app resolves it, then parses the
+    /// rest with `parse_after_range`.
+    Ranged {
+        spec: RangeSpec,
+        rest: String,
+    },
 }
 
 /// AI-assistant launcher tags — one per shell command we know how
@@ -292,6 +299,65 @@ pub enum ExRange {
     Lines(usize, usize),
 }
 
+/// One line address, as typed: the app resolves it against the buffer,
+/// since marks, searches and `.` need one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Address {
+    /// `N`.
+    Line(usize),
+    /// `.`, and a bare `+N` / `-N`.
+    Current,
+    /// `$`.
+    Last,
+    /// `'x` — a mark, `'<` / `'>` included.
+    Mark(char),
+    /// `/pat/` or `?pat?`: the next line down, or up, with a match. An empty
+    /// pattern — `//`, or `\/` / `\?` — is the last search.
+    Search { pattern: String, backward: bool },
+}
+
+/// An address with the `+N` / `-N` offsets after it added up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineSpec {
+    pub base: Address,
+    pub offset: isize,
+}
+
+/// A range as typed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RangeSpec {
+    /// `%`.
+    Whole,
+    /// One address, or two joined by `,` — or by `;`, which counts the
+    /// second from the first rather than from the cursor.
+    Addresses {
+        first: LineSpec,
+        second: Option<(LineSpec, bool)>,
+    },
+}
+
+impl RangeSpec {
+    /// The range as plain line numbers, when that's all it is — so `:5,7d`
+    /// and `:%s` need nothing from the buffer.
+    fn as_numbers(&self) -> Option<ExRange> {
+        let number = |spec: &LineSpec| match spec.base {
+            Address::Line(n) if spec.offset == 0 => Some(n),
+            _ => None,
+        };
+        match self {
+            RangeSpec::Whole => Some(ExRange::Whole),
+            RangeSpec::Addresses {
+                first,
+                second: None,
+            } => number(first).map(ExRange::Single),
+            RangeSpec::Addresses {
+                first,
+                second: Some((second, _)),
+            } => Some(ExRange::Lines(number(first)?, number(second)?)),
+        }
+    }
+}
+
 pub fn parse(line: &str) -> ExCommand {
     let line = line.trim();
     if line.is_empty() {
@@ -302,9 +368,26 @@ pub fn parse(line: &str) -> ExCommand {
         return ExCommand::Goto(n);
     }
 
-    // Try to peel a range prefix off the front (`%`, `N`, `N,M`).
-    let (range, rest) = parse_range(line);
+    let (spec, rest) = match split_range(line) {
+        Ok(split) => split,
+        Err(e) => return ExCommand::Invalid(e),
+    };
+    let range = match spec.map(|spec| spec.as_numbers().ok_or(spec)) {
+        None => ExRange::Implicit,
+        Some(Ok(range)) => range,
+        Some(Err(spec)) => {
+            return ExCommand::Ranged {
+                spec,
+                rest: rest.trim().to_string(),
+            };
+        }
+    };
+    parse_after_range(range, rest, line)
+}
 
+/// The command after its range, once the range is plain line numbers.
+/// `line` is the whole command line, for the commands that take no range.
+pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
     let rest = rest.trim();
     // `:&` / `:~`, and `:&&` / `:~&`, which keep the last `:s`'s flags.
@@ -374,6 +457,14 @@ pub fn parse(line: &str) -> ExCommand {
         return ExCommand::YankRange { range };
     }
 
+    // A range and nothing after it goes to its last line, as `:'a` does.
+    if rest.is_empty() {
+        match range {
+            ExRange::Single(n) | ExRange::Lines(_, n) => return ExCommand::Goto(n),
+            ExRange::Whole => return ExCommand::Goto(usize::MAX),
+            ExRange::Implicit => {}
+        }
+    }
     // Anything left that opened with a range but didn't match → unknown.
     if !matches!(range, ExRange::Implicit) {
         return ExCommand::Unknown(line.to_string());
@@ -542,29 +633,124 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
     }
 }
 
-/// Peel an ex range prefix (`%`, `N`, `N,M`) off the front of `s`.
-/// Returns the parsed range (or `Implicit`) and the remaining text.
-fn parse_range(s: &str) -> (ExRange, &str) {
-    let s = s.trim_start();
+/// The range at the front of a command line, as typed, and the text after
+/// it: `%`, or one or two addresses joined by `,` / `;`. A missing address
+/// either side of the separator is `.`.
+pub fn split_range(line: &str) -> Result<(Option<RangeSpec>, &str), String> {
+    let s = line.trim_start();
     if let Some(rest) = s.strip_prefix('%') {
-        return (ExRange::Whole, rest);
+        return Ok((Some(RangeSpec::Whole), rest));
     }
-    let n_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    if n_end == 0 {
-        return (ExRange::Implicit, s);
-    }
-    let n: usize = s[..n_end].parse().unwrap_or(0);
-    let after = &s[n_end..];
-    if let Some(after_comma) = after.strip_prefix(',') {
-        let m_end = after_comma
+    let (first, rest) = parse_line_spec(s)?;
+    let Some(sep) = rest.chars().next().filter(|c| matches!(c, ',' | ';')) else {
+        let spec = first.map(|first| RangeSpec::Addresses {
+            first,
+            second: None,
+        });
+        return Ok((spec, rest));
+    };
+    let (second, rest) = parse_line_spec(&rest[1..])?;
+    let current = || LineSpec {
+        base: Address::Current,
+        offset: 0,
+    };
+    let spec = RangeSpec::Addresses {
+        first: first.unwrap_or_else(current),
+        second: Some((second.unwrap_or_else(current), sep == ';')),
+    };
+    Ok((Some(spec), rest))
+}
+
+/// One address and its offsets from the front of `s`, and the text after.
+fn parse_line_spec(s: &str) -> Result<(Option<LineSpec>, &str), String> {
+    let s = s.trim_start();
+    let mut chars = s.chars();
+    let (base, mut rest) = match chars.next() {
+        Some('.') => (Some(Address::Current), &s[1..]),
+        Some('$') => (Some(Address::Last), &s[1..]),
+        Some('\'') => {
+            let name = chars.next().ok_or("E20: Mark not set")?;
+            (Some(Address::Mark(name)), &s[1 + name.len_utf8()..])
+        }
+        Some(delim @ ('/' | '?')) => {
+            let (pattern, after) = split_pattern(&s[1..], delim);
+            let search = Address::Search {
+                pattern,
+                backward: delim == '?',
+            };
+            (Some(search), after.unwrap_or(""))
+        }
+        Some('\\') => match chars.next() {
+            Some(delim @ ('/' | '?')) => {
+                let search = Address::Search {
+                    pattern: String::new(),
+                    backward: delim == '?',
+                };
+                (Some(search), &s[2..])
+            }
+            _ => (None, s),
+        },
+        Some(c) if c.is_ascii_digit() => {
+            let end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+            let n = s[..end].parse().unwrap_or(usize::MAX);
+            (Some(Address::Line(n)), &s[end..])
+        }
+        _ => (None, s),
+    };
+    let mut offset: Option<isize> = None;
+    while let Some(sign) = rest.chars().next().filter(|c| matches!(c, '+' | '-')) {
+        let digits = rest[1..]
             .find(|c: char| !c.is_ascii_digit())
-            .unwrap_or(after_comma.len());
-        if m_end > 0 {
-            let m: usize = after_comma[..m_end].parse().unwrap_or(0);
-            return (ExRange::Lines(n, m), &after_comma[m_end..]);
+            .map_or(rest.len(), |i| i + 1);
+        // A bare `+` or `-` is one line.
+        let n = if digits == 1 {
+            1
+        } else {
+            rest[1..digits].parse().unwrap_or(isize::MAX)
+        };
+        let by = if sign == '+' { n } else { -n };
+        offset = Some(offset.unwrap_or(0).saturating_add(by));
+        rest = &rest[digits..];
+    }
+    let spec = match (base, offset) {
+        (Some(base), offset) => Some(LineSpec {
+            base,
+            offset: offset.unwrap_or(0),
+        }),
+        (None, Some(offset)) => Some(LineSpec {
+            base: Address::Current,
+            offset,
+        }),
+        (None, None) => None,
+    };
+    Ok((spec, rest))
+}
+
+/// Text split at its first unescaped `delim` into the pattern before it and
+/// what comes after, `None` when there's no closing delimiter — a `/pat/`
+/// address, or a search's `/pat/e` offset. Between `?`s a `\?` is a plain
+/// `?`, as in Vim.
+pub fn split_pattern(text: &str, delim: char) -> (String, Option<&str>) {
+    let mut pattern = String::new();
+    let mut chars = text.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == delim {
+            return (pattern, Some(&text[i + c.len_utf8()..]));
+        }
+        if c != '\\' {
+            pattern.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some((_, '?')) if delim == '?' => pattern.push('?'),
+            Some((_, n)) => {
+                pattern.push('\\');
+                pattern.push(n);
+            }
+            None => pattern.push('\\'),
         }
     }
-    (ExRange::Single(n), after)
+    (pattern, None)
 }
 
 /// The flags after `:s/pat/repl/`.
@@ -710,6 +896,80 @@ mod tests {
             }
         ));
         assert!(matches!(parse("&x"), ExCommand::Invalid(_)));
+    }
+
+    #[test]
+    fn a_pattern_splits_at_its_delimiter() {
+        let own = |p: &str| p.to_string();
+        assert_eq!(split_pattern("foo", '/'), (own("foo"), None));
+        assert_eq!(split_pattern("foo/e", '/'), (own("foo"), Some("e")));
+        assert_eq!(split_pattern("a\\/b/", '/'), (own("a\\/b"), Some("")));
+        assert_eq!(split_pattern("/e", '/'), (own(""), Some("e")));
+        assert_eq!(split_pattern("a\\?b?s", '?'), (own("a?b"), Some("s")));
+        assert_eq!(split_pattern("a/b", '?'), (own("a/b"), None));
+    }
+
+    #[test]
+    fn ranges_take_every_kind_of_address() {
+        let spec = |line: &str| split_range(line).map(|(spec, _)| spec);
+        let at = |base: Address, offset: isize| LineSpec { base, offset };
+        let search = |pattern: &str, backward: bool| Address::Search {
+            pattern: pattern.to_string(),
+            backward,
+        };
+        let two = |first, second, semicolon| {
+            Ok(Some(RangeSpec::Addresses {
+                first,
+                second: Some((second, semicolon)),
+            }))
+        };
+        let one = |first| {
+            Ok(Some(RangeSpec::Addresses {
+                first,
+                second: None,
+            }))
+        };
+        assert_eq!(
+            spec(".,$d"),
+            two(at(Address::Current, 0), at(Address::Last, 0), false)
+        );
+        assert_eq!(
+            spec("'a;+2y"),
+            two(at(Address::Mark('a'), 0), at(Address::Current, 2), true)
+        );
+        assert_eq!(
+            spec("/foo/+1,?bar?-d"),
+            two(
+                at(search("foo", false), 1),
+                at(search("bar", true), -1),
+                false
+            )
+        );
+        assert_eq!(spec("\\?d"), one(at(search("", true), 0)));
+        assert_eq!(
+            spec("'<,'>s/a/b/"),
+            two(at(Address::Mark('<'), 0), at(Address::Mark('>'), 0), false)
+        );
+        assert_eq!(
+            spec(",5d"),
+            two(at(Address::Current, 0), at(Address::Line(5), 0), false)
+        );
+        assert_eq!(spec("-3d"), one(at(Address::Current, -3)));
+        assert_eq!(spec("$-1+3"), one(at(Address::Last, 2)));
+        assert_eq!(spec("%d"), Ok(Some(RangeSpec::Whole)));
+        assert_eq!(spec("d"), Ok(None));
+        assert!(split_range("'").is_err());
+
+        // Numbers alone still parse as plain ranges, so nothing changes there.
+        assert!(matches!(
+            parse("5,7d"),
+            ExCommand::DeleteRange {
+                range: ExRange::Lines(5, 7)
+            }
+        ));
+        assert!(matches!(parse("'a,'bd"), ExCommand::Ranged { rest, .. } if rest == "d"));
+        assert!(matches!(parse("7"), ExCommand::Goto(7)));
+        assert!(matches!(parse("3,9"), ExCommand::Goto(9)));
     }
 
     #[test]
