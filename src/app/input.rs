@@ -2462,7 +2462,19 @@ impl super::App {
     }
 
     pub(super) fn exec_command(&mut self, line: &str) {
-        match command::parse(line) {
+        let cmd = match command::parse(line) {
+            ExCommand::Ranged { spec, rest } => match self.resolve_spec(&spec) {
+                Ok((l1, l2)) => {
+                    command::parse_after_range(ExRange::Lines(l1 + 1, l2 + 1), &rest, line)
+                }
+                Err(e) => {
+                    self.status_msg = e;
+                    return;
+                }
+            },
+            cmd => cmd,
+        };
+        match cmd {
             ExCommand::Write => match self.save_active() {
                 Ok(format_note) => {
                     // Show the basename only — full paths blow up the
@@ -2674,6 +2686,8 @@ impl super::App {
                 self.status_msg = format!("E492: Not an editor command: {s}");
             }
             ExCommand::Invalid(e) => self.status_msg = e,
+            // Resolved into plain line numbers above.
+            ExCommand::Ranged { .. } => {}
         }
     }
 
@@ -2856,6 +2870,43 @@ impl super::App {
                 if a <= b { (a, b) } else { (b, a) }
             }
         }
+    }
+
+    /// A typed range's lines, 0-based: marks, searches and offsets resolved
+    /// against the buffer, and a backwards range turned round.
+    fn resolve_spec(&self, spec: &command::RangeSpec) -> Result<(usize, usize), String> {
+        let cursor = self.window.cursor.line;
+        let (first, second) = match spec {
+            command::RangeSpec::Whole => return Ok((0, self.last_text_line())),
+            command::RangeSpec::Addresses { first, second } => (first, second),
+        };
+        let a = self.resolve_line_spec(first, cursor)?;
+        let Some((second, semicolon)) = second else {
+            return Ok((a, a));
+        };
+        // After `;` the second address counts from the first, not the cursor.
+        let from = if *semicolon { a } else { cursor };
+        let b = self.resolve_line_spec(second, from)?;
+        Ok((a.min(b), a.max(b)))
+    }
+
+    /// One address's line, 0-based: `from` is what `.` means and where a
+    /// search starts from.
+    fn resolve_line_spec(&self, spec: &command::LineSpec, from: usize) -> Result<usize, String> {
+        let last = self.last_text_line();
+        let base = match &spec.base {
+            command::Address::Line(n) => n.saturating_sub(1),
+            command::Address::Current => from,
+            command::Address::Last => last,
+            command::Address::Mark(name) => match self.buffer.mark(*name) {
+                Some((line, _)) => line,
+                None => return Err("E20: Mark not set".into()),
+            },
+            command::Address::Search { pattern, backward } => {
+                self.search_line(pattern, *backward, from)?
+            }
+        };
+        Ok(base.saturating_add_signed(spec.offset).min(last))
     }
 
     /// Runs a `:s` — asking about each match with `c` — and says how it went.
@@ -4182,6 +4233,43 @@ mod tests {
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
         press(&mut app, "n");
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (2, 6));
+    }
+
+    #[test]
+    fn ranges_resolve_marks_searches_and_offsets() {
+        let text = "a\nb\nc\nd\ne\nf\n";
+        let run = |cmd: &str| {
+            let mut app = app_with_keymaps(text, "");
+            app.buffer.set_mark('x', 4, 0);
+            app.exec_command(cmd);
+            let after = app.buffer.rope.to_string();
+            (after, app.window.cursor.line, app.status_msg.clone())
+        };
+        assert_eq!(run(".,+1d").0, "c\nd\ne\nf\n");
+        assert_eq!(run("/c/,$-1d").0, "a\nb\nf\n");
+        // `;` counts the second address from the first: `'x` is `e`, one up is `d`.
+        assert_eq!(run("'x;-1d").0, "a\nb\nc\nf\n");
+        // A range alone goes to its line; `?e?` wraps round from the top.
+        assert_eq!(run("?e?").1, 4);
+        assert_eq!(run("$").1, 5);
+        // Plain number ranges are as they were.
+        assert_eq!(run("2,3d").0, "a\nd\ne\nf\n");
+        let (after, _, status) = run("'q,.d");
+        assert_eq!(after, text);
+        assert!(status.contains("E20"), "{status}");
+        let (after, _, status) = run("/zz/d");
+        assert_eq!(after, text);
+        assert!(status.contains("E486"), "{status}");
+    }
+
+    #[test]
+    fn colon_on_a_selection_fills_in_its_lines() {
+        let mut app = app_with_keymaps("a\nb\nc\nd\n", "");
+        press(&mut app, "jVj:");
+        assert_eq!(app.cmdline, "'<,'>");
+        press(&mut app, "d");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.buffer.rope.to_string(), "a\nd\n");
     }
 
     #[test]

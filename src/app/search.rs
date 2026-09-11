@@ -6,6 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Instant;
 
+use crate::command::split_pattern;
 use crate::cursor::Cursor;
 use crate::keymap::MapMode;
 use crate::mode::{Mode, VisualKind};
@@ -504,6 +505,30 @@ impl super::App {
         }
     }
 
+    /// The line an ex address `/pat/` names — `?pat?` with `backward` — the
+    /// next line after `from` with a match (before it, going back), round
+    /// the buffer's end. An empty pattern is the last search.
+    pub(super) fn search_line(
+        &self,
+        pattern: &str,
+        backward: bool,
+        from: usize,
+    ) -> Result<usize, String> {
+        let pattern = match (pattern.is_empty(), self.last_search.as_ref()) {
+            (false, _) => pattern.to_string(),
+            (true, Some((last, _))) => last.clone(),
+            (true, None) => return Err("E35: No previous regular expression".into()),
+        };
+        let re = compile_search(&pattern)?;
+        let rope = &self.buffer.rope;
+        let line = if backward { from } else { from + 1 };
+        let at = rope.line_to_char(line.min(rope.len_lines()));
+        let (hit, _) = self
+            .find_match_with(&re, at, !backward, true)
+            .ok_or_else(|| format!("E486: Pattern not found: {pattern}"))?;
+        Ok(rope.char_to_line(hit))
+    }
+
     /// The literal, case-insensitive text search a Visual selection's
     /// `Ctrl-N` uses — no pattern syntax, and no effect on `n`.
     pub(super) fn find_literal(
@@ -623,7 +648,7 @@ impl super::App {
             return;
         };
         let delim = if backward { '?' } else { '/' };
-        let (typed, _) = split_offset(&self.cmdline, delim);
+        let (typed, _) = split_pattern(&self.cmdline, delim);
         // Half a pattern (`\(`) often doesn't compile; it previews nothing
         // rather than filling the status line with errors.
         let pattern = if typed.is_empty() {
@@ -662,7 +687,7 @@ impl super::App {
 
     fn execute_search(&mut self, query: &str, backward: bool) {
         let delim = if backward { '?' } else { '/' };
-        let (typed, offset) = split_offset(query, delim);
+        let (typed, offset) = split_pattern(query, delim);
         let pattern = if typed.is_empty() {
             match self.last_search.as_ref() {
                 Some((q, _)) => q.clone(),
@@ -1007,32 +1032,6 @@ impl SearchOffset {
             SearchOffset::None | SearchOffset::Start(_) => MotionKind::CharExclusive,
         }
     }
-}
-
-/// A typed search split at its first unescaped `delim` into the pattern and
-/// the offset after it, `None` when there's no closing delimiter. In a `?`
-/// search `\?` is a plain `?`, as in Vim.
-fn split_offset(query: &str, delim: char) -> (String, Option<&str>) {
-    let mut pattern = String::new();
-    let mut chars = query.char_indices();
-    while let Some((i, c)) = chars.next() {
-        if c == delim {
-            return (pattern, Some(&query[i + c.len_utf8()..]));
-        }
-        if c != '\\' {
-            pattern.push(c);
-            continue;
-        }
-        match chars.next() {
-            Some((_, '?')) if delim == '?' => pattern.push('?'),
-            Some((_, n)) => {
-                pattern.push('\\');
-                pattern.push(n);
-            }
-            None => pattern.push('\\'),
-        }
-    }
-    (pattern, None)
 }
 
 /// A search pattern in Vim's syntax as the Rust regex it means, with its
@@ -1525,8 +1524,8 @@ fn brace(chars: &[char], i: usize) -> Result<(String, usize), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        SearchOffset, compile_search, expand_replacement, hits, split_offset, substitute_line,
-        vim_groups, word_pattern,
+        SearchOffset, compile_search, expand_replacement, hits, substitute_line, vim_groups,
+        word_pattern,
     };
 
     /// (pattern, text, where the first match starts and what it covers).
@@ -1587,17 +1586,6 @@ mod tests {
         assert_eq!(word_pattern("foo", true), "\\<foo\\>\\c");
         assert_eq!(word_pattern("foo", false), "foo\\c");
         assert_eq!(word_pattern("a.b", true), "\\<a\\.b\\>\\c");
-    }
-
-    #[test]
-    fn a_search_splits_at_its_delimiter_into_pattern_and_offset() {
-        let own = |p: &str| p.to_string();
-        assert_eq!(split_offset("foo", '/'), (own("foo"), None));
-        assert_eq!(split_offset("foo/e", '/'), (own("foo"), Some("e")));
-        assert_eq!(split_offset("a\\/b/", '/'), (own("a\\/b"), Some("")));
-        assert_eq!(split_offset("/e", '/'), (own(""), Some("e")));
-        assert_eq!(split_offset("a\\?b?s", '?'), (own("a?b"), Some("s")));
-        assert_eq!(split_offset("a/b", '?'), (own("a/b"), None));
     }
 
     #[test]

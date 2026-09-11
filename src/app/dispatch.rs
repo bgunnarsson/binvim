@@ -177,6 +177,13 @@ impl super::App {
             }
             Action::EnterCommand => {
                 self.cmdline.clear();
+                // From Visual, `:` works on the selection's lines, which
+                // `after_key` marks `'<` / `'>` as Visual ends.
+                if matches!(self.mode, Mode::Visual(_)) {
+                    self.exit_visual();
+                    self.cmdline.push_str("'<,'>");
+                }
+                self.cmdline_cursor = self.cmdline.len();
                 self.history_reset();
                 self.mode = Mode::Command;
             }

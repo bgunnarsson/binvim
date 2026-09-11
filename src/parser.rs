@@ -1929,6 +1929,11 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // Visual-only mode-switch keys.
     if ctx == ParseCtx::Visual {
         match ch {
+            // `:` on a selection opens the command line on its lines, `'<,'>`.
+            ':' => {
+                state.reset();
+                return ParseResult::Action(Action::EnterCommand);
+            }
             'v' => {
                 state.reset();
                 return ParseResult::Action(Action::VisualSwitch(VisualKind::Char));
