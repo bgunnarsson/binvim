@@ -138,7 +138,7 @@ fn visual_col_to_char_col_with_hints(
     }
 }
 
-/// Find the char column to delete back to for an Alt/Ctrl-Backspace on
+/// Find the char column to delete back to for an Alt/Ctrl-Backspace or `Ctrl-W` on
 /// `line` from cursor column `col`. Matches the macOS Option-Delete
 /// convention: first eat any whitespace immediately before the cursor,
 /// then eat one contiguous run of word chars (alphanumeric + `_`) or one
@@ -1714,13 +1714,16 @@ impl super::App {
                 }
             }
             KeyCode::Enter => self.handle_insert_newline(),
-            KeyCode::Backspace => {
+            // Plain `w` never reaches this arm: `Char(c)` above takes every
+            // char typed without Ctrl.
+            KeyCode::Backspace | KeyCode::Char('w' | 'W') => {
                 let popup_was_open = self.completion.is_some();
                 // macOS-convention modifier shortcuts:
                 //   Alt / Option + Backspace → delete previous word
                 //   Cmd / Super  + Backspace → delete to start of line
                 //   Ctrl + Backspace         → also delete previous word
                 //                              (terminal / Linux alias)
+                //   Ctrl-W                   → Vim's word-delete, same rules
                 // Multi-cursor + a modifier falls back to plain mirror
                 // for v1; per-cursor word/line semantics would need more
                 // careful indexing and isn't urgent.
@@ -2662,6 +2665,41 @@ mod tests {
             let k = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
             app.replay_key(k);
         }
+    }
+
+    fn ctrl(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn insert_at(text: &str, line: usize, col: usize) -> crate::app::App {
+        let mut app = app_with_keymaps(text, "");
+        app.mode = Mode::Insert;
+        app.window.cursor.line = line;
+        app.window.cursor.col = col;
+        app
+    }
+
+    #[test]
+    fn ctrl_w_deletes_the_previous_word() {
+        let mut app = insert_at("foo bar\n", 0, 7);
+        app.replay_key(ctrl('w'));
+        assert_eq!(app.buffer.rope.to_string(), "foo \n");
+        assert_eq!(app.window.cursor.col, 4);
+    }
+
+    #[test]
+    fn ctrl_w_takes_trailing_whitespace_with_the_word() {
+        let mut app = insert_at("foo bar  \n", 0, 9);
+        app.replay_key(ctrl('w'));
+        assert_eq!(app.buffer.rope.to_string(), "foo \n");
+    }
+
+    #[test]
+    fn ctrl_w_at_column_zero_joins_the_previous_line() {
+        let mut app = insert_at("foo\nbar\n", 1, 0);
+        app.replay_key(ctrl('w'));
+        assert_eq!(app.buffer.rope.to_string(), "foobar\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 3));
     }
 
     #[test]
