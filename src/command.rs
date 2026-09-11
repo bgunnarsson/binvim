@@ -5,6 +5,18 @@ pub enum ExCommand {
     Quit,
     QuitForce,
     WriteQuit,
+    /// `:x` / `ZZ` — write only if modified, then quit.
+    WriteQuitIfModified,
+    /// `:wa` — write every modified buffer.
+    WriteAll,
+    /// `:qa` — quit unless a buffer has unsaved changes.
+    QuitAll,
+    /// `:qa!` — quit, discarding every unsaved change.
+    QuitAllForce,
+    /// `:wqa` / `:xa` — write every modified buffer, then quit.
+    WriteQuitAll,
+    /// `:e!` — reload the file from disk, discarding changes.
+    Revert,
     Edit(String),
     Goto(usize),
     BufferNext,
@@ -321,8 +333,15 @@ pub fn parse(line: &str) -> ExCommand {
         }
         "q" | "quit" => ExCommand::Quit,
         "q!" | "quit!" => ExCommand::QuitForce,
-        "wq" | "x" => ExCommand::WriteQuit,
+        "wq" => ExCommand::WriteQuit,
+        "x" | "xit" | "exit" => ExCommand::WriteQuitIfModified,
+        "wa" | "wall" => ExCommand::WriteAll,
+        "qa" | "qall" | "quitall" => ExCommand::QuitAll,
+        "qa!" | "qall!" | "quitall!" => ExCommand::QuitAllForce,
+        "wqa" | "wqall" | "xa" | "xall" => ExCommand::WriteQuitAll,
         "e" | "edit" => ExCommand::Edit(rest.to_string()),
+        "e!" | "edit!" if rest.is_empty() => ExCommand::Revert,
+        "e!" | "edit!" => ExCommand::Edit(rest.to_string()),
         // `:e#` / `:b#` are usually typed without the space.
         "e#" | "edit#" => ExCommand::Edit("#".into()),
         "b#" | "buffer#" => ExCommand::BufferSwitch("#".into()),
@@ -536,5 +555,18 @@ mod tests {
                 "{line}"
             );
         }
+    }
+
+    #[test]
+    fn write_and_quit_family() {
+        assert!(matches!(parse("x"), ExCommand::WriteQuitIfModified));
+        assert!(matches!(parse("wq"), ExCommand::WriteQuit));
+        assert!(matches!(parse("wa"), ExCommand::WriteAll));
+        assert!(matches!(parse("qa"), ExCommand::QuitAll));
+        assert!(matches!(parse("qa!"), ExCommand::QuitAllForce));
+        assert!(matches!(parse("wqa"), ExCommand::WriteQuitAll));
+        assert!(matches!(parse("xa"), ExCommand::WriteQuitAll));
+        assert!(matches!(parse("e!"), ExCommand::Revert));
+        assert!(matches!(parse("e! b.txt"), ExCommand::Edit(p) if p == "b.txt"));
     }
 }

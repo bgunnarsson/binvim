@@ -2268,7 +2268,30 @@ impl super::App {
         }
     }
 
-    fn exec_command(&mut self, line: &str) {
+    /// Drop every terminal before quitting so background processes (`pnpm
+    /// dev`, `cargo watch`, an SSH session, …) get SIGHUP when their master
+    /// PTY fd is released, rather than orphaning until we exit. Side-pane AI
+    /// sessions get the same treatment.
+    fn quit_now(&mut self) {
+        self.terminals.clear();
+        self.terminal_pane_open = false;
+        self.side_terminals.clear();
+        self.side_terminal_pane_open = false;
+        self.should_quit = true;
+    }
+
+    /// Quit, unless a buffer other than the active one has unsaved changes:
+    /// they'd be lost without the user ever seeing them go. Vim's E162.
+    fn quit_unless_background_dirty(&mut self) {
+        match self.dirty_background_buffer() {
+            Some(name) => {
+                self.status_msg = format!("E162: No write since last change for buffer \"{name}\"");
+            }
+            None => self.quit_now(),
+        }
+    }
+
+    pub(super) fn exec_command(&mut self, line: &str) {
         match command::parse(line) {
             ExCommand::Write => match self.save_active() {
                 Ok(format_note) => {
@@ -2311,36 +2334,50 @@ impl super::App {
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
-                    // Drop every terminal before quitting so any
-                    // background processes (`pnpm dev`, `cargo
-                    // watch`, an SSH session, …) get SIGHUP when
-                    // their master PTY fd is released, rather than
-                    // orphaning on the OS until we exit. Side-pane
-                    // AI sessions get the same treatment.
-                    self.terminals.clear();
-                    self.terminal_pane_open = false;
-                    self.side_terminals.clear();
-                    self.side_terminal_pane_open = false;
-                    self.should_quit = true;
+                    self.quit_unless_background_dirty();
                 }
             }
-            ExCommand::QuitForce => {
-                self.terminals.clear();
-                self.terminal_pane_open = false;
-                self.side_terminals.clear();
-                self.side_terminal_pane_open = false;
-                self.should_quit = true;
+            ExCommand::QuitAll => {
+                if self.buffer.dirty {
+                    self.status_msg = "E37: No write since last change (use :qa!)".into();
+                } else {
+                    self.quit_unless_background_dirty();
+                }
             }
+            ExCommand::QuitForce | ExCommand::QuitAllForce => self.quit_now(),
             ExCommand::WriteQuit => match self.save_active() {
-                Ok(_) => {
-                    self.terminals.clear();
-                    self.terminal_pane_open = false;
-                    self.side_terminals.clear();
-                    self.side_terminal_pane_open = false;
-                    self.should_quit = true;
+                Ok(_) => self.quit_unless_background_dirty(),
+                Err(e) => self.status_msg = format!("error: {e}"),
+            },
+            ExCommand::WriteQuitIfModified => {
+                let saved = if self.buffer.dirty {
+                    self.save_active().map(|_| ())
+                } else {
+                    Ok(())
+                };
+                match saved {
+                    Ok(()) => self.quit_unless_background_dirty(),
+                    Err(e) => self.status_msg = format!("error: {e}"),
+                }
+            }
+            ExCommand::WriteAll => match self.save_all() {
+                Ok(0) => self.status_msg = "No buffers were modified".into(),
+                Ok(n) => {
+                    self.status_msg = format!("{n} buffer{} written", if n == 1 { "" } else { "s" })
                 }
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
+            ExCommand::WriteQuitAll => match self.save_all() {
+                Ok(_) => self.quit_now(),
+                Err(e) => self.status_msg = format!("error: {e}"),
+            },
+            ExCommand::Revert => {
+                self.status_msg = match self.force_reload_from_disk() {
+                    Some(name) => format!("\"{name}\" reloaded"),
+                    None if self.buffer.path.is_none() => "E32: No file name".into(),
+                    None => "error: couldn't read the file back from disk".into(),
+                };
+            }
             ExCommand::Edit(p) if p.is_empty() => {
                 self.status_msg = "E32: No file name".into();
             }
@@ -3169,6 +3206,64 @@ mod tests {
         assert_eq!(app.buffer.path.as_deref(), Some(a.as_path()));
         app.exec_command("e#");
         assert_eq!(app.buffer.path.as_deref(), Some(b.as_path()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Two small files in a fresh temp dir; returns (dir, a, b).
+    fn two_files(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!("binvim-{tag}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "a\n").unwrap();
+        std::fs::write(&b, "b\n").unwrap();
+        (dir, a, b)
+    }
+
+    #[test]
+    fn q_refuses_while_another_buffer_has_unsaved_changes() {
+        let (dir, a, b) = two_files("q162");
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a).unwrap();
+        app.buffer.dirty = true;
+        app.open_buffer(b).unwrap();
+        app.exec_command("q");
+        assert!(app.status_msg.contains("E162"), "{}", app.status_msg);
+        assert!(!app.should_quit);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn wa_writes_every_modified_buffer_and_stays_put() {
+        let (dir, a, b) = two_files("wa");
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a.clone()).unwrap();
+        app.buffer.insert_str(0, 0, "x");
+        app.buffer.dirty = true;
+        app.open_buffer(b.clone()).unwrap();
+        app.exec_command("wa");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "xa\n");
+        assert_eq!(app.buffer.path.as_deref(), Some(b.as_path()));
+        assert_eq!(app.alternate_path.as_deref(), Some(a.as_path()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn zz_quits_a_clean_buffer() {
+        let mut app = app_with_keymaps("x\n", "");
+        press(&mut app, "ZZ");
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn e_bang_reverts_to_the_file_on_disk() {
+        let (dir, a, _) = two_files("revert");
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a).unwrap();
+        app.buffer.insert_str(0, 0, "junk");
+        app.buffer.dirty = true;
+        app.exec_command("e!");
+        assert_eq!(app.buffer.rope.to_string(), "a\n");
+        assert!(!app.buffer.dirty);
         std::fs::remove_dir_all(&dir).ok();
     }
 
