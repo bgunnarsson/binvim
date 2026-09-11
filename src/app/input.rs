@@ -3541,6 +3541,25 @@ mod tests {
     }
 
     #[test]
+    fn daf_takes_the_function_and_says_when_it_cannot() {
+        let mut app = app_with_keymaps("fn a() {\n    1\n}\n\nfn b() {}\n", "");
+        app.buffer.path = Some(std::path::PathBuf::from("x.rs"));
+        app.window.cursor.line = 1;
+        press(&mut app, "daf");
+        assert_eq!(app.buffer.rope.to_string(), "\nfn b() {}\n");
+
+        let mut app = app_with_keymaps("def f\nend\n", "");
+        app.buffer.path = Some(std::path::PathBuf::from("x.rb"));
+        press(&mut app, "daf");
+        assert_eq!(app.buffer.rope.to_string(), "def f\nend\n");
+        assert!(
+            app.status_msg.contains("no function objects"),
+            "{}",
+            app.status_msg
+        );
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

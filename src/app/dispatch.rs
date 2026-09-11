@@ -453,7 +453,12 @@ impl super::App {
         let range = match text_object::compute_counted(&self.buffer, self.window.cursor, obj, count)
         {
             Some(r) => r,
-            None => return,
+            None => {
+                if let Some(hint) = text_object::syntax_object_hint(&self.buffer, obj) {
+                    self.status_msg = hint;
+                }
+                return;
+            }
         };
         self.apply_op_to_range(op, range, target);
     }

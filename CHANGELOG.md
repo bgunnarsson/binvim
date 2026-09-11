@@ -181,6 +181,13 @@ follows [Semantic Versioning](https://semver.org/).
   the status line.
 - **`[(` / `[{` and `])` / `]}`.** They go to the unmatched bracket around
   the cursor, and work after an operator — `d])` deletes up to the `)`.
+- **`af` / `if` and `ac` / `ic` take functions and classes by syntax.**
+  `af` is the function or method around the cursor — whole lines when it
+  fills them — and `if` its body; `ac` / `ic` do the same for classes,
+  structs, impls and interfaces. They read the buffer's tree-sitter parse
+  in Rust, TypeScript, JavaScript, Python, Go, C#, Lua (functions only), C
+  and C++, and say so in the status line anywhere else. A count reaches
+  the ones further out.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number
