@@ -183,6 +183,13 @@ impl super::App {
             Action::EnterSearch { backward } => {
                 self.cmdline.clear();
                 self.history_reset();
+                self.incsearch = Some(crate::app::state::IncSearch {
+                    origin: self.window.cursor,
+                    view_top: self.window.view_top,
+                    view_left: self.window.view_left,
+                    pattern: None,
+                    current: None,
+                });
                 self.mode = Mode::Search { backward };
             }
             Action::Repeat => self.repeat_last_edit(),

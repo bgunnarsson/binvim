@@ -448,6 +448,17 @@ impl super::App {
         wrap: bool,
     ) -> Option<(usize, usize)> {
         let re = self.search_pattern.as_ref()?;
+        self.find_match_with(re, from_char, forward, wrap)
+    }
+
+    /// `find_match` for any pattern — the search being typed has its own.
+    fn find_match_with(
+        &self,
+        re: &regex::Regex,
+        from_char: usize,
+        forward: bool,
+        wrap: bool,
+    ) -> Option<(usize, usize)> {
         let rope = &self.buffer.rope;
         let text = rope.to_string();
         let from = rope.char_to_byte(from_char.min(rope.len_chars()));
@@ -545,6 +556,7 @@ impl super::App {
                 self.cmdline.clear();
                 self.cmdline_cursor = 0;
                 self.history_reset();
+                self.end_incsearch();
                 self.mode = Mode::Normal;
             }
             KeyCode::Enter => {
@@ -557,11 +569,14 @@ impl super::App {
                     _ => return,
                 };
                 self.mode = Mode::Normal;
+                // From where the typing began, not where the preview got to.
+                self.end_incsearch();
                 self.execute_search(&query, backward);
             }
             KeyCode::Backspace => {
                 if self.cmdline.is_empty() {
                     self.history_reset();
+                    self.end_incsearch();
                     self.mode = Mode::Normal;
                 } else {
                     self.cmdline_backspace_at_cursor();
@@ -578,6 +593,70 @@ impl super::App {
                 self.cmdline_insert_char_at_cursor(c);
             }
             _ => {}
+        }
+        if matches!(self.mode, Mode::Search { .. }) {
+            self.update_incsearch();
+        }
+    }
+
+    /// The search being typed, while one is.
+    fn typed_search(&self) -> Option<&super::state::IncSearch> {
+        match self.mode {
+            Mode::Search { .. } => self.incsearch.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Moves the cursor to where the search being typed would land from
+    /// where it began, and keeps the pattern so far for the highlight — or
+    /// puts cursor and view back while the pattern finds nothing, or isn't
+    /// one yet.
+    fn update_incsearch(&mut self) {
+        let Mode::Search { backward } = self.mode else {
+            return;
+        };
+        let Some((origin, view_top, view_left)) = self
+            .incsearch
+            .as_ref()
+            .map(|inc| (inc.origin, inc.view_top, inc.view_left))
+        else {
+            return;
+        };
+        let delim = if backward { '?' } else { '/' };
+        let (typed, _) = split_offset(&self.cmdline, delim);
+        // Half a pattern (`\(`) often doesn't compile; it previews nothing
+        // rather than filling the status line with errors.
+        let pattern = if typed.is_empty() {
+            None
+        } else {
+            compile_search(&typed).ok()
+        };
+        let at = self.buffer.pos_to_char(origin.line, origin.col);
+        let from = if backward { at } else { at + 1 };
+        let hit = pattern
+            .as_ref()
+            .and_then(|re| self.find_match_with(re, from, !backward, true));
+        match hit {
+            Some((start, _)) => self.cursor_to_idx(start),
+            None => {
+                self.window.cursor = origin;
+                self.window.view_top = view_top;
+                self.window.view_left = view_left;
+            }
+        }
+        if let Some(inc) = self.incsearch.as_mut() {
+            inc.pattern = pattern;
+            inc.current = hit.map(|(start, len)| (start, start + len));
+        }
+    }
+
+    /// Ends the search preview, putting the cursor and view back where the
+    /// search began.
+    fn end_incsearch(&mut self) {
+        if let Some(inc) = self.incsearch.take() {
+            self.window.cursor = inc.origin;
+            self.window.view_top = inc.view_top;
+            self.window.view_left = inc.view_left;
         }
     }
 
@@ -692,10 +771,17 @@ impl super::App {
     /// Per-line view of the active yank flash, returned as a char-column
     /// range on `line`. Returns `None` when the line is outside the range
     /// or the flash has expired.
-    /// Char-column range on `line` of the match `:s///c` is asking about —
-    /// a char wide when the match is empty, so it still shows.
-    pub fn line_confirm_match(&self, line: usize) -> Option<(usize, usize)> {
-        let (start, end) = self.sub_confirm.as_ref()?.current.as_ref()?.chars;
+    /// Char-column range on `line` of the match in focus — the one `:s///c`
+    /// is asking about, or the one a search being typed would land on — a
+    /// char wide when the match is empty, so it still shows.
+    pub fn line_current_match(&self, line: usize) -> Option<(usize, usize)> {
+        let confirm = self
+            .sub_confirm
+            .as_ref()
+            .and_then(|c| c.current.as_ref())
+            .map(|m| m.chars);
+        let typing = self.typed_search().and_then(|inc| inc.current);
+        let (start, end) = confirm.or(typing)?;
         if self.buffer.rope.char_to_line(start) != line {
             return None;
         }
@@ -729,10 +815,10 @@ impl super::App {
         buffer: &crate::buffer::Buffer,
         line: usize,
     ) -> Vec<(usize, usize)> {
-        if self.search_hl_off {
-            return Vec::new();
-        }
-        let Some(re) = self.search_pattern.as_ref() else {
+        // While a search is typed, the pattern so far shows instead.
+        let typing = self.typed_search().and_then(|inc| inc.pattern.as_ref());
+        let last = self.search_pattern.as_ref().filter(|_| !self.search_hl_off);
+        let Some(re) = typing.or(last) else {
             return Vec::new();
         };
         let line_len = buffer.line_len(line);

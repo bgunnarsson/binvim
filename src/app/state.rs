@@ -611,6 +611,18 @@ impl<'a> BufferState<'a> {
     }
 }
 
+/// A search being typed: where the cursor and view were when it began, so
+/// `Esc` can put them back, and what the pattern so far finds.
+pub struct IncSearch {
+    pub origin: crate::cursor::Cursor,
+    pub view_top: usize,
+    pub view_left: usize,
+    /// The pattern typed so far, once it compiles.
+    pub pattern: Option<regex::Regex>,
+    /// The match the search would land on, in chars.
+    pub current: Option<(usize, usize)>,
+}
+
 /// The last `:s`, for `&`, `g&`, `:&`, `:&&` and `:~` to run again — its
 /// pattern as it resolved, so a search since doesn't change it.
 #[derive(Clone)]

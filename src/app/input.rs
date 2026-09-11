@@ -4084,9 +4084,9 @@ mod tests {
             "{}",
             app.status_msg
         );
-        assert_eq!(app.line_confirm_match(0), Some((0, 1)));
+        assert_eq!(app.line_current_match(0), Some((0, 1)));
         press(&mut app, "yn");
-        assert_eq!(app.line_confirm_match(1), Some((0, 1)));
+        assert_eq!(app.line_current_match(1), Some((0, 1)));
         press(&mut app, "y");
         assert_eq!(app.buffer.rope.to_string(), "b a\nb\n");
         assert_eq!(app.status_msg, "2 substitutions");
@@ -4100,7 +4100,7 @@ mod tests {
             let mut app = app_with_keymaps("x x x\n", "");
             app.exec_command("s/x/y/gc");
             press(&mut app, keys);
-            (app.buffer.rope.to_string(), app.line_confirm_match(0))
+            (app.buffer.rope.to_string(), app.line_current_match(0))
         };
         assert_eq!(run("a"), ("y y y\n".to_string(), None));
         assert_eq!(run("nl"), ("x y x\n".to_string(), None));
@@ -4151,6 +4151,37 @@ mod tests {
         let mut app = app_with_keymaps("a\n", "");
         press(&mut app, "&");
         assert!(app.status_msg.contains("E35"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn a_search_being_typed_moves_to_its_first_match_and_esc_goes_back() {
+        let mut app = app_with_keymaps("one\ntwo\nthree two\n", "");
+        press(&mut app, "/tw");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
+        assert_eq!(app.line_current_match(1), Some((0, 2)));
+        assert_eq!(app.line_search_matches_in(&app.buffer, 2), vec![(6, 8)]);
+        // Nothing matches `twx`, so the cursor goes back to where it began.
+        press(&mut app, "x");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 0));
+        tap(&mut app, KeyCode::Backspace);
+        assert_eq!(app.window.cursor.line, 1);
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 0));
+        assert!(app.last_search.is_none());
+        assert_eq!(app.line_current_match(1), None);
+
+        // Half a pattern previews nothing and reports nothing.
+        press(&mut app, "/\\(");
+        assert_eq!(app.window.cursor.line, 0);
+        assert!(!app.status_msg.contains("Invalid"), "{}", app.status_msg);
+        tap(&mut app, KeyCode::Esc);
+
+        // Enter searches from where the typing began.
+        press(&mut app, "/two");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
+        press(&mut app, "n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (2, 6));
     }
 
     #[test]
