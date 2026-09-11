@@ -25,6 +25,13 @@ follows [Semantic Versioning](https://semver.org/).
   indent unit each way, taken from `.editorconfig`, and the cursor stays on the
   same character of text. `Ctrl-T` indents a blank line too — which is where
   it's most often wanted, right after `o`.
+- **Insert-mode `Ctrl-V` inserts the next key literally.** `Ctrl-V Tab` puts in
+  a real tab even when `.editorconfig` indents with spaces, and `Ctrl-V (` a
+  lone bracket with no auto-pair. Character codes work as in Vim —
+  `Ctrl-V u00e9` for `é`, `U` with 8 hex digits, `x` with 2, `o` with 3 octal,
+  or up to 3 decimal digits — and a code ends early on any other key, which is
+  then typed as usual. Control characters are refused with a note, because
+  binvim can't display them yet.
 
 ## [0.5.21] - 2026-09-10
 

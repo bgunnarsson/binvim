@@ -108,6 +108,22 @@ pub enum LastEdit {
     },
 }
 
+/// Where an Insert-mode `Ctrl-V` sequence is up to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LiteralPending {
+    /// `Ctrl-V` was pressed; the next key goes in literally.
+    Key,
+    /// `Ctrl-V` then `u` / `U` / `x` / `o` / a digit: collecting a character
+    /// code. `prefix` is the key that started it, inserted as-is if the code
+    /// ends before any digit arrives.
+    Code {
+        prefix: char,
+        radix: u32,
+        max: usize,
+        digits: String,
+    },
+}
+
 #[derive(Debug)]
 pub struct RecordingState {
     pub prelude: Action,
