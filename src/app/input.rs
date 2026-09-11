@@ -3490,6 +3490,56 @@ mod tests {
         assert_eq!(app.buffer.rope.to_string(), "call(1, two)\n");
     }
 
+    fn with_diagnostics(text: &str, spots: &[(usize, usize, &str)]) -> crate::app::App {
+        let mut app = app_with_keymaps(text, "");
+        let path = std::path::PathBuf::from("diag.rs");
+        app.buffer.path = Some(path.clone());
+        let diags = spots
+            .iter()
+            .map(|&(line, col, message)| crate::lsp::Diagnostic {
+                line,
+                col,
+                end_line: line,
+                end_col: col + 1,
+                severity: crate::lsp::Severity::Error,
+                message: message.to_string(),
+            })
+            .collect();
+        app.lsp.diagnostics.insert(path, diags);
+        app
+    }
+
+    #[test]
+    fn bracket_d_jumps_between_diagnostics_and_shows_them() {
+        let mut app = with_diagnostics("a\nb\nc\nd\n", &[(2, 0, "second\nmore"), (1, 0, "first")]);
+        press(&mut app, "]d");
+        assert_eq!(app.window.cursor.line, 1);
+        assert_eq!(app.status_msg, "error: first");
+        press(&mut app, "]d");
+        assert_eq!(app.window.cursor.line, 2);
+        assert_eq!(app.status_msg, "error: second");
+        press(&mut app, "]d");
+        assert_eq!(app.window.cursor.line, 1);
+        press(&mut app, "[d");
+        assert_eq!(app.window.cursor.line, 2);
+    }
+
+    #[test]
+    fn unmatched_bracket_motions_move_and_take_operators() {
+        // f0 (1 a2 ,3 _4 (5 b6 )7 ,8 _9 c10 )11
+        let mut app = app_with_keymaps("f(a, (b), c)\n", "");
+        app.window.cursor.col = 10;
+        app.window.cursor.want_col = 10;
+        press(&mut app, "[(");
+        assert_eq!(app.window.cursor.col, 1);
+
+        let mut app = app_with_keymaps("f(a, (b), c)\n", "");
+        app.window.cursor.col = 2;
+        app.window.cursor.want_col = 2;
+        press(&mut app, "d])");
+        assert_eq!(app.buffer.rope.to_string(), "f()\n");
+    }
+
     #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
