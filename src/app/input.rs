@@ -2694,7 +2694,7 @@ impl super::App {
                     .as_deref()
                     .map(|pat| {
                         self.pattern_or_last(pat)
-                            .and_then(|pat| super::search::compile_search(&pat))
+                            .and_then(|pat| super::search::compile_search(&self.cased(&pat)))
                     })
                     .transpose();
                 match re {
@@ -2791,6 +2791,7 @@ impl super::App {
             ExCommand::NoHighlight => {
                 self.search_hl_off = true;
             }
+            ExCommand::Set(args) => self.exec_set(args),
             ExCommand::ChangeDir(dir) => self.change_dir(&dir),
             ExCommand::Grep { args, jump } => self.grep_command(&args, jump),
             ExCommand::VimGrep {
@@ -3203,6 +3204,129 @@ impl super::App {
         });
     }
 
+    /// `:set` (D4), for the session only. Each option is read and written
+    /// where its live value is kept — `options`, the config for
+    /// `relativenumber` / `list`, the editorconfig (with `:set`'s overrides
+    /// laid over it) for the indent options — so `:set opt?` says what's in
+    /// effect.
+    fn exec_set(&mut self, args: Vec<command::SetArg>) {
+        if args.is_empty() {
+            let rows = command::SET_OPTIONS
+                .iter()
+                .map(|&(name, short, _)| (self.option_text(name), short.to_string()))
+                .collect();
+            self.show_listing(super::state::Listing {
+                title: "Options".into(),
+                rows,
+                empty: String::new(),
+            });
+            return;
+        }
+        let mut shown = Vec::new();
+        for arg in args {
+            match arg {
+                command::SetArg::Show(name) => shown.push(self.option_text(name)),
+                command::SetArg::Flag(name, on) => self.set_flag(name, on),
+                command::SetArg::Toggle(name) => {
+                    let on = !self.flag(name);
+                    self.set_flag(name, on);
+                }
+                command::SetArg::Number(name, value) => {
+                    if let Err(e) = self.set_number(name, value) {
+                        self.status_msg = e;
+                        return;
+                    }
+                }
+            }
+        }
+        if !shown.is_empty() {
+            self.status_msg = shown.join("  ");
+        }
+    }
+
+    /// An option as `:set` shows it: `name`, `noname`, or `name=value`.
+    fn option_text(&self, name: &str) -> String {
+        let number = command::SET_OPTIONS
+            .iter()
+            .any(|&(full, _, number)| full == name && number);
+        if number {
+            return format!("{name}={}", self.number_option(name));
+        }
+        if self.flag(name) {
+            name.to_string()
+        } else {
+            format!("no{name}")
+        }
+    }
+
+    fn flag(&self, name: &str) -> bool {
+        match name {
+            "ignorecase" => self.options.ignorecase,
+            "smartcase" => self.options.smartcase,
+            "wrapscan" => self.options.wrapscan,
+            "hlsearch" => self.options.hlsearch,
+            "incsearch" => self.options.incsearch,
+            "relativenumber" => self.config.line_numbers.relative,
+            "list" => self.config.whitespace.show,
+            "expandtab" => {
+                self.editorconfig.indent_style == crate::editorconfig::IndentStyle::Spaces
+            }
+            _ => false,
+        }
+    }
+
+    fn set_flag(&mut self, name: &str, on: bool) {
+        match name {
+            "ignorecase" => self.options.ignorecase = on,
+            "smartcase" => self.options.smartcase = on,
+            "wrapscan" => self.options.wrapscan = on,
+            // Turning it on shows the last search again, `:noh` or not.
+            "hlsearch" => {
+                self.options.hlsearch = on;
+                self.search_hl_off = false;
+            }
+            "incsearch" => self.options.incsearch = on,
+            "relativenumber" => self.config.line_numbers.relative = on,
+            "list" => self.config.whitespace.show = on,
+            "expandtab" => {
+                self.options.expandtab = Some(on);
+                self.refresh_editorconfig();
+            }
+            _ => {}
+        }
+        // `n` goes on with the pattern compiled under the new case rules.
+        if matches!(name, "ignorecase" | "smartcase")
+            && let Some((pattern, _)) = self.last_search.clone()
+        {
+            self.search_pattern = super::search::compile_search(&self.cased(&pattern)).ok();
+        }
+    }
+
+    fn number_option(&self, name: &str) -> usize {
+        match name {
+            "textwidth" => self.options.textwidth,
+            "shiftwidth" => self.editorconfig.indent_size,
+            "tabstop" => self.editorconfig.tab_width,
+            _ => 0,
+        }
+    }
+
+    fn set_number(&mut self, name: &str, value: usize) -> Result<(), String> {
+        match name {
+            "textwidth" => self.options.textwidth = value,
+            "shiftwidth" => self.options.shiftwidth = Some(value),
+            "tabstop" if value == 0 => {
+                return Err("E487: Argument must be positive: tabstop=0".into());
+            }
+            "tabstop" => self.options.tabstop = Some(value),
+            _ => {}
+        }
+        if matches!(name, "shiftwidth" | "tabstop") {
+            self.refresh_editorconfig();
+        }
+        Ok(())
+    }
+
     /// `:bufdo` / `:windo` / `:cdo` / `:cfdo` — `cmd` in each buffer, window,
     /// quickfix entry or quickfix file in turn, ending on the last one it ran
     /// in. An error stops the run there, as in Vim.
@@ -3385,7 +3509,7 @@ impl super::App {
                 return;
             }
         };
-        let re = match super::search::compile_search(&pattern) {
+        let re = match super::search::compile_search(&self.cased(&pattern)) {
             Ok(re) => re,
             Err(e) => {
                 self.status_msg = e;
@@ -3539,7 +3663,7 @@ impl super::App {
         flags: command::SubFlags,
     ) -> Result<regex::Regex, String> {
         let pattern = self.pattern_or_last(pat)?;
-        let cased = super::search::with_case(&pattern, flags.ignore_case);
+        let cased = self.cased(&super::search::with_case(&pattern, flags.ignore_case));
         let re = super::search::compile_search(&cased)?;
         let backward = self.last_search.as_ref().is_some_and(|(_, back)| *back);
         self.set_search(&pattern, backward);
@@ -3818,7 +3942,7 @@ impl super::App {
         }
         // ripgrep runs the same regex engine, so the translated pattern finds
         // exactly the files `:s` would change.
-        let cased = super::search::with_case(pattern, flags.ignore_case);
+        let cased = self.cased(&super::search::with_case(pattern, flags.ignore_case));
         let source = match super::search::search_source(&cased) {
             Ok(source) => source,
             Err(e) => {
@@ -5044,6 +5168,48 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn set_changes_and_reports_the_d4_options() {
+        let mut app = app_with_keymaps("abc ABC\n", "");
+        assert!(app.set_search("abc", false));
+        // Case folds by default, so the capitals match too.
+        assert_eq!(app.find_match(1, true, true), Some((4, 3)));
+        app.exec_command("set noic");
+        assert_eq!(app.find_match(1, true, true), Some((0, 3)));
+        app.exec_command("set nows");
+        assert_eq!(app.find_match(1, true, true), None);
+        app.exec_command("set ic? ws?");
+        assert_eq!(app.status_msg, "noignorecase  nowrapscan");
+        app.exec_command("set ic ws");
+
+        app.exec_command("set ts=8 sw=0 et");
+        assert_eq!(app.editorconfig.tab_width, 8);
+        assert_eq!(app.editorconfig.indent_size, 8);
+        assert_eq!(
+            app.editorconfig.indent_style,
+            crate::editorconfig::IndentStyle::Spaces
+        );
+        // The overrides outlive the editorconfig being read again.
+        app.refresh_editorconfig();
+        assert_eq!(app.editorconfig.tab_width, 8);
+        app.exec_command("set ts? sw? et?");
+        assert_eq!(app.status_msg, "tabstop=8  shiftwidth=8  expandtab");
+        app.exec_command("set ts=0");
+        assert!(app.status_msg.contains("E487"), "{}", app.status_msg);
+
+        app.exec_command("set rnu list tw=72");
+        assert!(app.config.line_numbers.relative && app.config.whitespace.show);
+        app.exec_command("set rnu! tw?");
+        assert!(!app.config.line_numbers.relative);
+        assert_eq!(app.status_msg, "textwidth=72");
+
+        app.exec_command("noh");
+        app.exec_command("set hls");
+        assert!(!app.search_hl_off);
+        app.exec_command("set bogus");
+        assert!(app.status_msg.contains("E518"), "{}", app.status_msg);
     }
 
     #[test]

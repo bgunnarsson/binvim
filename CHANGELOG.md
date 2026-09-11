@@ -284,6 +284,11 @@ follows [Semantic Versioning](https://semver.org/).
   pattern, a file with `*` in it being a glob. `:make [args]` runs the
   workspace's build — a `build` task, or plain `make` — in a task tab, and
   when it exits its errors become the list and the first is jumped to.
+- **`:set` changes options for the session.** `ignorecase`, `smartcase`,
+  `wrapscan`, `hlsearch`, `incsearch`, `textwidth`, `relativenumber`, `list`,
+  and `expandtab` / `shiftwidth` / `tabstop` over `.editorconfig`'s — as
+  `:set opt`, `noopt`, `opt!`, `opt=n` and `opt?`; `:set` alone lists them.
+  Search starts as it always has, `ignorecase` and `smartcase` both on.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

@@ -239,13 +239,22 @@ impl super::App {
         self.window.cursor.want_col = col;
     }
 
-    /// `gq` / `gw` — re-flows lines `l1..=l2` to `.editorconfig`'s
-    /// `max_line_length`, or 79 columns as Vim does without a `textwidth`.
+    /// The width text is filled to: `:set textwidth`, then `.editorconfig`'s
+    /// `max_line_length` (D7).
+    fn text_width(&self) -> Option<usize> {
+        let textwidth = self.options.textwidth;
+        (textwidth > 0)
+            .then_some(textwidth)
+            .or(self.editorconfig.max_line_length)
+    }
+
+    /// `gq` / `gw` — re-flows lines `l1..=l2` to `text_width`, or 79 columns
+    /// as Vim does without one.
     /// `gq` leaves the cursor on the last line it wrote, `gw` where it was.
     pub(super) fn format_lines(&mut self, l1: usize, l2: usize, keep_cursor: bool) {
         let last = crate::motion::vim_line_count(&self.buffer).saturating_sub(1);
         let l2 = l2.min(last);
-        let width = self.editorconfig.max_line_length.unwrap_or(79);
+        let width = self.text_width().unwrap_or(79);
         let marker = self
             .buffer
             .path
@@ -401,7 +410,7 @@ impl super::App {
 
     /// `:le` / `:ri` / `:ce` — lines `l1..=l2` indented to `width` columns
     /// for `Left`, or right-aligned / centred in `width` columns, which
-    /// default to `max_line_length`, else 80. Blank lines come out empty.
+    /// default to `text_width`, else 80. Blank lines come out empty.
     pub(super) fn align_lines(
         &mut self,
         l1: usize,
@@ -411,7 +420,7 @@ impl super::App {
     ) {
         use crate::command::Align;
         let tab = self.editorconfig.tab_width.max(1);
-        let text_width = width.unwrap_or(self.editorconfig.max_line_length.unwrap_or(80));
+        let text_width = width.or(self.text_width()).unwrap_or(80);
         for line in l1..=l2 {
             let start = self.buffer.line_start_idx(line);
             let len = self.buffer.line_len(line);

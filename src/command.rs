@@ -182,6 +182,8 @@ pub enum ExCommand {
         cmd: String,
     },
     NoHighlight,
+    /// `:se[t] [args]` (D4) — every option shown without any.
+    Set(Vec<SetArg>),
     /// `:cd [dir]` / `:chd[ir]` — the working directory moved to `dir`, the
     /// home directory without one, or the previous one for `-`.
     ChangeDir(String),
@@ -461,6 +463,87 @@ pub enum EachOver {
     Files,
 }
 
+/// `:set`'s options (D4): full name, short name, and whether it holds a
+/// number rather than being on or off.
+pub const SET_OPTIONS: &[(&str, &str, bool)] = &[
+    ("ignorecase", "ic", false),
+    ("smartcase", "scs", false),
+    ("wrapscan", "ws", false),
+    ("hlsearch", "hls", false),
+    ("incsearch", "is", false),
+    ("textwidth", "tw", true),
+    ("relativenumber", "rnu", false),
+    ("list", "list", false),
+    ("expandtab", "et", false),
+    ("shiftwidth", "sw", true),
+    ("tabstop", "ts", true),
+];
+
+/// One `:set` argument, its option named in full.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetArg {
+    /// `opt?`, or a number option named alone — its value shown.
+    Show(&'static str),
+    /// `opt` / `noopt`.
+    Flag(&'static str, bool),
+    /// `opt!` / `invopt`.
+    Toggle(&'static str),
+    /// `opt=n` / `opt:n`.
+    Number(&'static str, usize),
+}
+
+/// `:set`'s arguments, space-separated; `all`, or nothing, for every option.
+fn parse_set_args(args: &str) -> Result<Vec<SetArg>, String> {
+    if args == "all" {
+        return Ok(Vec::new());
+    }
+    args.split_whitespace().map(parse_set_arg).collect()
+}
+
+fn parse_set_arg(arg: &str) -> Result<SetArg, String> {
+    let option = |name: &str| {
+        SET_OPTIONS
+            .iter()
+            .find(|&&(full, short, _)| name == full || name == short)
+            .map(|&(full, _, number)| (full, number))
+    };
+    let unknown = || format!("E518: Unknown option: {arg}");
+    let invalid = || format!("E474: Invalid argument: {arg}");
+    if let Some((name, value)) = arg.split_once(['=', ':']) {
+        let (name, number) = option(name).ok_or_else(unknown)?;
+        if !number {
+            return Err(invalid());
+        }
+        let value = value
+            .parse()
+            .map_err(|_| format!("E521: Number required after =: {arg}"))?;
+        return Ok(SetArg::Number(name, value));
+    }
+    if let Some(name) = arg.strip_suffix('?') {
+        let (name, _) = option(name).ok_or_else(unknown)?;
+        return Ok(SetArg::Show(name));
+    }
+    if let Some(name) = arg.strip_suffix('!') {
+        return match option(name) {
+            Some((name, false)) => Ok(SetArg::Toggle(name)),
+            Some(_) => Err(invalid()),
+            None => Err(unknown()),
+        };
+    }
+    match option(arg) {
+        Some((name, true)) => return Ok(SetArg::Show(name)),
+        Some((name, false)) => return Ok(SetArg::Flag(name, true)),
+        None => {}
+    }
+    if let Some(Some((name, false))) = arg.strip_prefix("no").map(option) {
+        return Ok(SetArg::Flag(name, false));
+    }
+    if let Some(Some((name, false))) = arg.strip_prefix("inv").map(option) {
+        return Ok(SetArg::Toggle(name));
+    }
+    Err(unknown())
+}
+
 /// `:sort`'s options.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SortOpts {
@@ -705,6 +788,10 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "ls" | "buffers" => ExCommand::BufferList,
         "b" | "buffer" => ExCommand::BufferSwitch(rest.to_string()),
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
+        "se" | "set" => match parse_set_args(rest) {
+            Ok(args) => ExCommand::Set(args),
+            Err(e) => ExCommand::Invalid(e),
+        },
         "cd" | "chd" | "chdi" | "chdir" => ExCommand::ChangeDir(rest.to_string()),
         "pw" | "pwd" => ExCommand::PrintDir,
         "fmt" | "format" => ExCommand::Format,
@@ -1833,6 +1920,33 @@ mod tests {
         assert!(matches!(parse("spell"), ExCommand::SpellToggle));
         assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn set_parses_every_form() {
+        match parse("set ic noscs hls! invws tw=72 ts:4 sw? tw list") {
+            ExCommand::Set(args) => assert_eq!(
+                args,
+                vec![
+                    SetArg::Flag("ignorecase", true),
+                    SetArg::Flag("smartcase", false),
+                    SetArg::Toggle("hlsearch"),
+                    SetArg::Toggle("wrapscan"),
+                    SetArg::Number("textwidth", 72),
+                    SetArg::Number("tabstop", 4),
+                    SetArg::Show("shiftwidth"),
+                    SetArg::Show("textwidth"),
+                    SetArg::Flag("list", true),
+                ]
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(parse("se"), ExCommand::Set(args) if args.is_empty()));
+        assert!(matches!(parse("set all"), ExCommand::Set(args) if args.is_empty()));
+        assert!(matches!(parse("set bogus"), ExCommand::Invalid(e) if e.contains("E518")));
+        assert!(matches!(parse("set ic=1"), ExCommand::Invalid(e) if e.contains("E474")));
+        assert!(matches!(parse("set tw!"), ExCommand::Invalid(e) if e.contains("E474")));
+        assert!(matches!(parse("set tw=x"), ExCommand::Invalid(e) if e.contains("E521")));
     }
 
     #[test]

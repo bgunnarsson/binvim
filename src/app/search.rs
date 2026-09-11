@@ -23,7 +23,10 @@ impl super::App {
             self.status_msg = "No word under cursor".into();
             return;
         };
-        if !self.set_search(&word_pattern(&word, whole_word), backward) {
+        if !self.set_search(
+            &word_pattern(&word, whole_word, self.options.ignorecase),
+            backward,
+        ) {
             return;
         }
         self.search_offset = SearchOffset::None;
@@ -425,7 +428,7 @@ impl super::App {
     /// `pattern` becomes the search `n` / `N` repeat and the highlight shows,
     /// or the status line says why it can't.
     pub(super) fn set_search(&mut self, pattern: &str, backward: bool) -> bool {
-        match compile_search(pattern) {
+        match compile_search(&self.cased(pattern)) {
             Ok(re) => {
                 self.search_pattern = Some(re);
                 self.last_search = Some((pattern.to_string(), backward));
@@ -460,6 +463,8 @@ impl super::App {
         forward: bool,
         wrap: bool,
     ) -> Option<(usize, usize)> {
+        // `:set nowrapscan` stops every search at the buffer's end.
+        let wrap = wrap && self.options.wrapscan;
         let rope = &self.buffer.rope;
         let text = rope.to_string();
         let from = rope.char_to_byte(from_char.min(rope.len_chars()));
@@ -497,10 +502,41 @@ impl super::App {
         Some((start, end))
     }
 
+    /// `pattern` under `:set ignorecase` / `smartcase`, unless it says `\c` or
+    /// `\C` itself. The translator already folds case unless the pattern has
+    /// a capital — both options on, their defaults — so only turning one off
+    /// needs saying.
+    pub(super) fn cased(&self, pattern: &str) -> String {
+        if pattern.contains("\\c") || pattern.contains("\\C") {
+            return pattern.to_string();
+        }
+        let case = if !self.options.ignorecase {
+            Some(false)
+        } else if !self.options.smartcase {
+            Some(true)
+        } else {
+            None
+        };
+        with_case(pattern, case)
+    }
+
+    /// What a search that found nothing says — Vim's E384 / E385 once
+    /// `nowrapscan` stopped it at an end of the buffer.
+    fn not_found(&self, pattern: &str, forward: bool) -> String {
+        if self.options.wrapscan {
+            return format!("Pattern not found: {pattern}");
+        }
+        if forward {
+            format!("E385: Search hit BOTTOM without match for: {pattern}")
+        } else {
+            format!("E384: Search hit TOP without match for: {pattern}")
+        }
+    }
+
     /// Why `gn` found nothing, for the status line.
     pub(super) fn search_missing(&self) -> String {
         match self.last_search.as_ref() {
-            Some((pattern, _)) => format!("Pattern not found: {pattern}"),
+            Some((pattern, backward)) => self.not_found(pattern, !*backward),
             None => "E35: No previous regular expression".into(),
         }
     }
@@ -527,7 +563,7 @@ impl super::App {
         from: usize,
     ) -> Result<usize, String> {
         let pattern = self.pattern_or_last(pattern)?;
-        let re = compile_search(&pattern)?;
+        let re = compile_search(&self.cased(&pattern))?;
         let rope = &self.buffer.rope;
         let line = if backward { from } else { from + 1 };
         let at = rope.line_to_char(line.min(rope.len_lines()));
@@ -648,6 +684,9 @@ impl super::App {
         let Mode::Search { backward } = self.mode else {
             return;
         };
+        if !self.options.incsearch {
+            return;
+        }
         let Some((origin, view_top, view_left)) = self
             .incsearch
             .as_ref()
@@ -662,7 +701,7 @@ impl super::App {
         let pattern = if typed.is_empty() {
             None
         } else {
-            compile_search(&typed).ok()
+            compile_search(&self.cased(&typed)).ok()
         };
         let at = self.buffer.pos_to_char(origin.line, origin.col);
         let from = if backward { at } else { at + 1 };
@@ -730,7 +769,7 @@ impl super::App {
                 self.clamp_cursor_normal();
             }
             None => {
-                self.status_msg = format!("Pattern not found: {pattern}");
+                self.status_msg = self.not_found(&pattern, !backward);
             }
         }
     }
@@ -850,7 +889,10 @@ impl super::App {
     ) -> Vec<(usize, usize)> {
         // While a search is typed, the pattern so far shows instead.
         let typing = self.typed_search().and_then(|inc| inc.pattern.as_ref());
-        let last = self.search_pattern.as_ref().filter(|_| !self.search_hl_off);
+        let last = self
+            .search_pattern
+            .as_ref()
+            .filter(|_| self.options.hlsearch && !self.search_hl_off);
         let Some(re) = typing.or(last) else {
             return Vec::new();
         };
@@ -967,9 +1009,9 @@ impl super::App {
 }
 
 /// `*`'s pattern for `word`: the word as literal text, inside `\<` / `\>`
-/// when `whole` and it starts / ends on a keyword char, and without regard
-/// to case — Vim's `*` ignores 'smartcase'.
-fn word_pattern(word: &str, whole: bool) -> String {
+/// when `whole` and it starts / ends on a keyword char, its case by
+/// `ignore_case` — Vim's `*` follows 'ignorecase' but not 'smartcase'.
+fn word_pattern(word: &str, whole: bool, ignore_case: bool) -> String {
     let keyword = |c: char| c.is_alphanumeric() || c == '_';
     let mut out = String::new();
     if whole && word.chars().next().is_some_and(keyword) {
@@ -984,7 +1026,8 @@ fn word_pattern(word: &str, whole: bool) -> String {
     if whole && word.chars().last().is_some_and(keyword) {
         out.push_str("\\>");
     }
-    out.push_str("\\c");
+    let case = if ignore_case { "\\c" } else { "\\C" };
+    out.push_str(case);
     out
 }
 
@@ -1591,9 +1634,10 @@ mod tests {
 
     #[test]
     fn star_patterns_take_the_word_literally() {
-        assert_eq!(word_pattern("foo", true), "\\<foo\\>\\c");
-        assert_eq!(word_pattern("foo", false), "foo\\c");
-        assert_eq!(word_pattern("a.b", true), "\\<a\\.b\\>\\c");
+        assert_eq!(word_pattern("foo", true, true), "\\<foo\\>\\c");
+        assert_eq!(word_pattern("foo", false, true), "foo\\c");
+        assert_eq!(word_pattern("foo", false, false), "foo\\C");
+        assert_eq!(word_pattern("a.b", true, true), "\\<a\\.b\\>\\c");
     }
 
     #[test]

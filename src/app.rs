@@ -297,6 +297,8 @@ pub struct App {
     in_global: bool,
     /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
     pub search_hl_off: bool,
+    /// `:set`'s own options (D4).
+    pub options: crate::app::state::SessionOptions,
     pub last_edit: Option<LastEdit>,
     pub jumplist: Vec<(usize, usize)>,
     pub jump_idx: usize,
@@ -955,6 +957,7 @@ impl App {
             incsearch: None,
             in_global: false,
             search_hl_off: false,
+            options: Default::default(),
             last_edit: None,
             jumplist: Vec::new(),
             jump_idx: 0,

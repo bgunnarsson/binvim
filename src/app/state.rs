@@ -214,6 +214,42 @@ pub struct QuickfixState {
     pub current: usize,
 }
 
+/// `:set`'s own options (D4), for the session only. The rest of D4 lives
+/// where it's read: `relativenumber` / `list` in the config, and the indent
+/// options on the editorconfig, which `expandtab` / `shiftwidth` / `tabstop`
+/// here are laid over.
+#[derive(Debug, Clone)]
+pub struct SessionOptions {
+    /// The search already folds case unless a pattern has a capital — both
+    /// of these on, which is where they start.
+    pub ignorecase: bool,
+    pub smartcase: bool,
+    pub wrapscan: bool,
+    pub hlsearch: bool,
+    pub incsearch: bool,
+    /// `0` is off, as in Vim.
+    pub textwidth: usize,
+    pub expandtab: Option<bool>,
+    pub shiftwidth: Option<usize>,
+    pub tabstop: Option<usize>,
+}
+
+impl Default for SessionOptions {
+    fn default() -> Self {
+        Self {
+            ignorecase: true,
+            smartcase: true,
+            wrapscan: true,
+            hlsearch: true,
+            incsearch: true,
+            textwidth: 0,
+            expandtab: None,
+            shiftwidth: None,
+            tabstop: None,
+        }
+    }
+}
+
 /// Active snippet expansion — Tab cycles the cursor between stops.
 ///
 /// `stops` holds doc-char positions in tab-cycle order (`$1 → $2 → … → $0`).
