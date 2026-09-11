@@ -39,7 +39,7 @@ mod lazygit_glue;
 mod lsp_glue;
 mod multi_cursor;
 mod package_glue;
-mod pair;
+pub(crate) mod pair;
 mod picker_glue;
 mod quickfix;
 mod registers;

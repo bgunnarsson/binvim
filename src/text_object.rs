@@ -25,6 +25,11 @@ pub enum TextObjectVerb {
     Sentence {
         inner: bool,
     },
+    /// `it` / `at` — the element around the cursor, between its tags or with
+    /// them.
+    Tag {
+        inner: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +49,7 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::Pair { open, close, inner } => pair(buf, cur, open, close, inner),
         TextObjectVerb::Paragraph { inner } => paragraph(buf, cur, inner),
         TextObjectVerb::Sentence { inner } => sentence(buf, cur, inner),
+        TextObjectVerb::Tag { inner } => tag(buf, cur, inner, 1),
     }
 }
 
@@ -85,6 +91,7 @@ pub fn compute_counted(
         }
         TextObjectVerb::Paragraph { inner } => extend_paragraphs(buf, first, inner, count),
         TextObjectVerb::Sentence { inner } => extend_sentences(buf, first, inner, count),
+        TextObjectVerb::Tag { inner } => tag(buf, cur, inner, count),
     }
 }
 
@@ -229,6 +236,25 @@ fn extend_paragraphs(
         last = line_run(buf, last + 1, lines).1;
     }
     Some(line_span(buf, first_line, last))
+}
+
+/// `it` / `at`: the element around the cursor — `it` between its open and
+/// close tags, `at` with them — in any buffer, not only HTML-like ones. A
+/// count takes the element that many levels out. An empty `it` is no object
+/// at all, so `dit` on `<b></b>` does nothing and leaves the registers alone.
+fn tag(buf: &Buffer, cur: Cursor, inner: bool, count: usize) -> Option<TextRange> {
+    let at = buf.pos_to_char(cur.line, cur.col);
+    let (open, close) = crate::app::pair::enclosing_element(buf, at, count)?;
+    let (start, end) = if inner {
+        (open.1, close.0)
+    } else {
+        (open.0, close.1)
+    };
+    (end > start).then_some(TextRange {
+        start,
+        end,
+        linewise: false,
+    })
 }
 
 /// `is` / `as`. `is` is the sentence up to its end mark; `as` adds the spaces
@@ -949,5 +975,40 @@ mod tests {
         let s = "One. Two. Three.\n";
         assert_eq!(sentence_text(s, 0, false, 2), "One. Two. ");
         assert_eq!(sentence_text(s, 0, true, 3), "One. Two.");
+    }
+
+    fn tag_text(s: &str, col: usize, inner: bool, count: usize) -> Option<String> {
+        let b = buf(s);
+        let obj = TextObjectVerb::Tag { inner };
+        let r = compute_counted(&b, cur(0, col), obj, count)?;
+        Some(b.rope.slice(r.start..r.end).to_string())
+    }
+
+    #[test]
+    fn it_and_at_take_the_element_around_the_cursor() {
+        // <div> 0-4 · <b> 5-7 · hi 8-9 · </b> 10-13 · " there" 14-19 · </div> 20-25
+        let s = "<div><b>hi</b> there</div>";
+        assert_eq!(tag_text(s, 9, true, 1).as_deref(), Some("hi"));
+        assert_eq!(tag_text(s, 9, false, 1).as_deref(), Some("<b>hi</b>"));
+        assert_eq!(tag_text(s, 16, true, 1).as_deref(), Some("<b>hi</b> there"));
+        assert_eq!(tag_text(s, 2, true, 1).as_deref(), Some("<b>hi</b> there"));
+    }
+
+    #[test]
+    fn a_count_on_a_tag_object_reaches_outer_elements() {
+        let s = "<div><b>hi</b> there</div>";
+        assert_eq!(tag_text(s, 9, true, 2).as_deref(), Some("<b>hi</b> there"));
+        assert_eq!(tag_text(s, 9, false, 2).as_deref(), Some(s));
+        assert_eq!(tag_text(s, 9, true, 3), None);
+        assert_eq!(
+            tag_text("<i><i>x</i></i>", 6, false, 2).as_deref(),
+            Some("<i><i>x</i></i>")
+        );
+    }
+
+    #[test]
+    fn it_on_an_empty_element_is_no_object() {
+        assert_eq!(tag_text("<a></a>", 1, true, 1), None);
+        assert_eq!(tag_text("<a></a>", 1, false, 1).as_deref(), Some("<a></a>"));
     }
 }

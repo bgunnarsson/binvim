@@ -167,6 +167,10 @@ follows [Semantic Versioning](https://semver.org/).
   the sentence with the space after it (or before it, for the last one on
   a line) — `das`, `cis`, `yas`, `vis`, with counts. On the space between
   two sentences, `is` is that space.
+- **`it` / `at` tag text objects.** `it` takes what's between an element's
+  tags and `at` the element with them — `dit`, `cat`, `yit`, `vat` — in
+  any buffer, not only HTML. A count reaches that many elements out, and
+  `dit` on an empty element does nothing.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

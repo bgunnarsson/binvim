@@ -3462,6 +3462,19 @@ mod tests {
     }
 
     #[test]
+    fn dit_empties_an_element_and_again_does_nothing() {
+        let mut app = app_with_keymaps("<p>hello</p>\n", "");
+        app.window.cursor.col = 4;
+        app.window.cursor.want_col = 4;
+        press(&mut app, "dit");
+        assert_eq!(app.buffer.rope.to_string(), "<p></p>\n");
+        press(&mut app, "dit");
+        assert_eq!(app.buffer.rope.to_string(), "<p></p>\n");
+        let unnamed = app.read_register(None).map(|r| r.text);
+        assert_eq!(unnamed.as_deref(), Some("hello"));
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));
