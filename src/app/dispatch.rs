@@ -366,6 +366,8 @@ impl super::App {
             Action::VisualSelectTextObject { obj } => {
                 self.apply_visual_select_textobj(obj);
             }
+            Action::WriteQuitIfModified => self.exec_command("x"),
+            Action::QuitDiscard => self.exec_command("q!"),
             Action::AlternateBuffer { count } => {
                 if let Err(e) = self.switch_alternate(count) {
                     self.status_msg = format!("error: {e}");

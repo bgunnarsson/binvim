@@ -402,6 +402,61 @@ impl super::App {
         }
     }
 
+    /// Display name of the first buffer, other than the active one, with
+    /// unsaved changes.
+    pub(super) fn dirty_background_buffer(&self) -> Option<String> {
+        self.buffers
+            .iter()
+            .enumerate()
+            .find(|(i, stash)| *i != self.active && stash.buffer.dirty)
+            .map(|(_, stash)| {
+                stash
+                    .buffer
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "[No Name]".into())
+            })
+    }
+
+    /// `:wa` — write every modified buffer through the same path as `:w`
+    /// (formatter, `.editorconfig`, undo persistence). Only the active buffer
+    /// can be saved, so each one is switched to and back; the alternate file,
+    /// tab set and active tab are put back afterwards so writing leaves no
+    /// trace in navigation. Returns how many buffers were written.
+    pub(super) fn save_all(&mut self) -> Result<usize> {
+        let dirty: Vec<usize> = (0..self.buffers.len())
+            .filter(|&i| {
+                if i == self.active {
+                    self.buffer.dirty
+                } else {
+                    self.buffers[i].buffer.dirty
+                }
+            })
+            .collect();
+        if dirty.is_empty() {
+            return Ok(0);
+        }
+        let home = self.active;
+        let alternate = self.alternate_path.clone();
+        let tabs = self.tabs.clone();
+        let active_tab = self.active_tab;
+        let written = dirty.iter().try_for_each(|&idx| {
+            self.switch_to(idx)?;
+            self.refresh_editorconfig();
+            self.save_active().map(|_| ())
+        });
+        let back = self.switch_to(home);
+        self.refresh_editorconfig();
+        self.alternate_path = alternate;
+        self.tabs = tabs;
+        self.active_tab = active_tab;
+        written?;
+        back?;
+        Ok(dirty.len())
+    }
+
     /// Record the outgoing buffer as the alternate. An unnamed buffer has
     /// nothing to reopen, so it leaves the previous alternate in place.
     fn remember_alternate(&mut self) {

@@ -71,6 +71,18 @@ follows [Semantic Versioning](https://semver.org/).
   `:b#` do the same. An alternate that has been closed is reopened from disk.
   `N Ctrl-^` goes to buffer N. Terminals send `Ctrl-^` as either `Ctrl+^` or
   `Ctrl+6`, and both work.
+- **`ZZ` / `ZQ` and the rest of the write/quit family.** `ZZ` is `:x`, which
+  now writes only when the buffer is modified (it used to be an alias for
+  `:wq`), and `ZQ` is `:q!`. `:wa` writes every modified buffer through the
+  same path as `:w` — formatter and `.editorconfig` included — and leaves you
+  where you were. `:qa` / `:qa!` / `:wqa` / `:xa` quit the whole editor, and
+  `:e!` reloads the file from disk, discarding your changes.
+
+### Fixed
+- **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another
+  buffer.** They only checked the buffer on screen, so edits in a buffer you
+  had switched away from were lost without a word. They now refuse with
+  Vim's `E162`, naming the buffer; `:qa!` still quits regardless.
 
 ## [0.5.21] - 2026-09-10
 

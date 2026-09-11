@@ -318,6 +318,10 @@ pub enum Action {
     AlternateBuffer {
         count: Option<usize>,
     },
+    /// `ZZ` — `:x`: write if modified, then quit.
+    WriteQuitIfModified,
+    /// `ZQ` — `:q!`: quit without writing.
+    QuitDiscard,
     /// `]q` — jump to the next entry in the quickfix list.
     QuickfixNext,
     /// `[q` — jump to the previous entry in the quickfix list.
@@ -504,6 +508,9 @@ pub struct PendingCmd {
     pub count2: Option<usize>,
     pub awaiting_g: bool,
     pub awaiting_z: bool,
+    /// Set after `Z` — `ZZ` writes if modified and quits, `ZQ` quits
+    /// without writing.
+    pub awaiting_zz: bool,
     pub awaiting_leader: bool,
     /// `Some(true)` for inner (`i`), `Some(false)` for around (`a`).
     pub awaiting_textobj: Option<bool>,
@@ -650,6 +657,7 @@ impl PendingCmd {
     pub fn accepts_mapping(&self) -> bool {
         !self.awaiting_g
             && !self.awaiting_z
+            && !self.awaiting_zz
             && !self.awaiting_leader
             && self.awaiting_textobj.is_none()
             && self.awaiting_find.is_none()
@@ -984,6 +992,16 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'q' => ParseResult::Action(Action::QuickfixPrev),
             'h' => ParseResult::Action(Action::HunkPrev),
             's' => ParseResult::Action(Action::SpellPrev),
+            _ => ParseResult::Cancelled,
+        };
+    }
+
+    // Resolve pending `Z` — `ZZ` / `ZQ`.
+    if state.awaiting_zz {
+        state.reset();
+        return match ch {
+            'Z' => ParseResult::Action(Action::WriteQuitIfModified),
+            'Q' => ParseResult::Action(Action::QuitDiscard),
             _ => ParseResult::Cancelled,
         };
     }
@@ -1914,6 +1932,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(a);
         }
+        if ch == 'Z' {
+            state.awaiting_zz = true;
+            return ParseResult::Pending;
+        }
         if ch == 'r' {
             state.awaiting_replace = true;
             return ParseResult::Pending;
@@ -2509,6 +2531,24 @@ mod tests {
             parse(&mut state, k, ParseCtx::Normal),
             ParseResult::Action(Action::AlternateBuffer { count: Some(3) })
         ));
+    }
+
+    #[test]
+    fn zz_and_zq() {
+        let after_z = |c: char| {
+            let mut state = PendingCmd::default();
+            drive(&mut state, &keys("Z"));
+            parse(&mut state, key(c), ParseCtx::Normal)
+        };
+        assert!(matches!(
+            after_z('Z'),
+            ParseResult::Action(Action::WriteQuitIfModified)
+        ));
+        assert!(matches!(
+            after_z('Q'),
+            ParseResult::Action(Action::QuitDiscard)
+        ));
+        assert!(matches!(after_z('x'), ParseResult::Cancelled));
     }
 
     #[test]
