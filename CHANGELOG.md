@@ -264,6 +264,11 @@ follows [Semantic Versioning](https://semver.org/).
   `:w !cmd` hands the lines to a command's stdin without writing the file.
   In these and in `:{range}!filter`, `%` and `#` stand for the current and
   alternate file names.
+- **`:sp`, `:vs`, `:new`, `:vnew`, `:only` and `:close` manage windows.**
+  `:sp` / `:vs` split the window — stacked or side by side — onto a file or
+  the same buffer, `:new` / `:vnew` onto a new empty buffer, and `:only` /
+  `:close` close every other window or this one. `<C-w>v` / `<C-w>s` still
+  open the picker.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

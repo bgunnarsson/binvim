@@ -119,6 +119,18 @@ pub enum ExCommand {
         range: ExRange,
         opts: SortOpts,
     },
+    /// `:sp` / `:vs` / `:new` / `:vne[w]` — the window split, the new pane
+    /// showing `file`, a fresh empty buffer (`empty`, `:new` without a file)
+    /// or the same buffer.
+    Split {
+        vertical: bool,
+        file: Option<String>,
+        empty: bool,
+    },
+    /// `:on[ly]` — every window but this one closed.
+    OnlyWindow,
+    /// `:clo[se]` — this window closed.
+    CloseWindow,
     /// `:!cmd` — `cmd` run by the shell, its output shown.
     Shell {
         cmd: String,
@@ -592,6 +604,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         Some(i) => (&line[..i], line[i..].trim()),
         None => (line, ""),
     };
+    if let Some(command) = parse_window_command(head, rest) {
+        return command;
+    }
     match head {
         "w" | "write" => {
             if rest.is_empty() {
@@ -751,6 +766,44 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
     }
 }
 
+/// Whether `name` is `full` cut short, to no fewer than `min` letters, the
+/// way Vim abbreviates command names.
+fn abbreviates(name: &str, full: &str, min: usize) -> bool {
+    name.len() >= min && full.starts_with(name)
+}
+
+/// `:sp` / `:vs` / `:new` / `:vne[w]` `[file]`, `:on[ly]` and `:clo[se]`.
+fn parse_window_command(head: &str, rest: &str) -> Option<ExCommand> {
+    let name = head.trim_end_matches('!');
+    let file = (!rest.is_empty()).then(|| rest.to_string());
+    let split = |vertical: bool, empty: bool| {
+        Some(ExCommand::Split {
+            vertical,
+            file: file.clone(),
+            empty,
+        })
+    };
+    if abbreviates(name, "split", 2) {
+        return split(false, false);
+    }
+    if abbreviates(name, "vsplit", 2) {
+        return split(true, false);
+    }
+    if name == "new" {
+        return split(false, true);
+    }
+    if abbreviates(name, "vnew", 3) {
+        return split(true, true);
+    }
+    if abbreviates(name, "only", 2) && rest.is_empty() {
+        return Some(ExCommand::OnlyWindow);
+    }
+    if abbreviates(name, "close", 3) && rest.is_empty() {
+        return Some(ExCommand::CloseWindow);
+    }
+    None
+}
+
 /// `:g/pat/cmd`, `:g!/pat/cmd` and `:v/pat/cmd`, with any delimiter `:s`
 /// takes in place of `/`. The command after the pattern is kept as typed.
 fn parse_global(range: ExRange, rest: &str) -> Option<ExCommand> {
@@ -759,8 +812,8 @@ fn parse_global(range: ExRange, rest: &str) -> Option<ExCommand> {
         .find(|c: char| !c.is_ascii_alphabetic())
         .unwrap_or(rest.len());
     let (name, after) = rest.split_at(name_end);
-    let global = !name.is_empty() && "global".starts_with(name);
-    let vglobal = !name.is_empty() && "vglobal".starts_with(name);
+    let global = abbreviates(name, "global", 1);
+    let vglobal = abbreviates(name, "vglobal", 1);
     if !global && !vglobal {
         return None;
     }
@@ -792,7 +845,7 @@ fn parse_normal(range: ExRange, rest: &str) -> Option<ExCommand> {
         .find(|c: char| !c.is_ascii_alphabetic())
         .unwrap_or(rest.len());
     let (name, after) = rest.split_at(name_end);
-    if name.len() < 4 || !"normal".starts_with(name) {
+    if !abbreviates(name, "normal", 4) {
         return None;
     }
     let (remap, keys) = match after.strip_prefix('!') {
@@ -836,9 +889,7 @@ fn parse_line_command(range: ExRange, rest: &str) -> Option<ExCommand> {
         Some(args) => (true, args.trim()),
         None => (false, after.trim()),
     };
-    // `name` is `full` cut short, to no fewer than `min` letters, the way
-    // Vim abbreviates commands.
-    let is = |full: &str, min: usize| name.len() >= min && full.starts_with(name);
+    let is = |full: &str, min: usize| abbreviates(name, full, min);
     let align = [
         ("left", Align::Left),
         ("right", Align::Right),
@@ -1553,6 +1604,41 @@ mod tests {
         assert!(matches!(parse("w"), ExCommand::Write));
         assert!(matches!(parse("w out.txt"), ExCommand::WriteAs(p) if p == "out.txt"));
         assert!(matches!(parse("reg"), ExCommand::Registers));
+    }
+
+    #[test]
+    fn window_commands_parse() {
+        assert!(matches!(
+            parse("sp"),
+            ExCommand::Split {
+                vertical: false,
+                file: None,
+                empty: false,
+            }
+        ));
+        assert!(matches!(
+            parse("vsplit a.txt"),
+            ExCommand::Split { vertical: true, file: Some(f), .. } if f == "a.txt"
+        ));
+        assert!(matches!(
+            parse("new"),
+            ExCommand::Split {
+                vertical: false,
+                file: None,
+                empty: true,
+            }
+        ));
+        assert!(matches!(
+            parse("vne b.rs"),
+            ExCommand::Split { vertical: true, file: Some(f), empty: true } if f == "b.rs"
+        ));
+        assert!(matches!(parse("on"), ExCommand::OnlyWindow));
+        assert!(matches!(parse("only!"), ExCommand::OnlyWindow));
+        assert!(matches!(parse("clo"), ExCommand::CloseWindow));
+        // Commands that share the first letters are still themselves.
+        assert!(matches!(parse("spell"), ExCommand::SpellToggle));
+        assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
+        assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
     }
 
     #[test]
