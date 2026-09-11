@@ -877,6 +877,143 @@ impl super::App {
         }
     }
 
+    /// `Ctrl-G`: the file's name, whether it's modified, its length, and how
+    /// far down the cursor is, the way Vim puts it.
+    pub(super) fn file_info(&mut self) {
+        let name = self
+            .buffer
+            .path
+            .as_deref()
+            .map(display_path)
+            .unwrap_or_else(|| "[No Name]".into());
+        let modified = if self.buffer.dirty { " [Modified]" } else { "" };
+        let lines = crate::motion::vim_line_count(&self.buffer).max(1);
+        let s = if lines == 1 { "" } else { "s" };
+        let percent = (self.window.cursor.line + 1) * 100 / lines;
+        self.status_msg = format!("\"{name}\"{modified} {lines} line{s} --{percent}%--");
+    }
+
+    /// `g Ctrl-G`: where the cursor is in columns, lines, words and bytes —
+    /// or, in Visual, how much of each the selection holds.
+    pub(super) fn count_info(&mut self) {
+        let text = self.buffer.rope.to_string();
+        let lines = crate::motion::vim_line_count(&self.buffer).max(1);
+        let words = word_count(&text);
+        let bytes = text.len();
+        if let crate::mode::Mode::Visual(kind) = self.mode {
+            let (start, end, _) = self.visual_range_chars(kind);
+            let selected = self.buffer.rope.slice(start..end).to_string();
+            let first = self.buffer.rope.char_to_line(start);
+            let last = self
+                .buffer
+                .rope
+                .char_to_line(end.saturating_sub(1).max(start));
+            self.status_msg = format!(
+                "Selected {} of {lines} Lines; {} of {words} Words; {} of {bytes} Bytes",
+                last - first + 1,
+                word_count(&selected),
+                selected.len()
+            );
+            return;
+        }
+        let line = self.window.cursor.line;
+        let at = self.buffer.pos_to_char(line, self.window.cursor.col);
+        let total = self.buffer.rope.len_chars();
+        let upto = self.buffer.rope.slice(..(at + 1).min(total)).to_string();
+        let byte = self.buffer.rope.char_to_byte(at.min(total)) + 1;
+        self.status_msg = format!(
+            "Col {} of {}; Line {} of {lines}; Word {} of {words}; Byte {byte} of {bytes}",
+            self.window.cursor.col + 1,
+            self.buffer.line_len(line),
+            line + 1,
+            word_count(&upto)
+        );
+    }
+
+    /// `ga`: the character under the cursor as a number — decimal, hex and
+    /// octal, as Vim shows it; `NUL` on an empty line.
+    pub(super) fn char_info(&mut self) {
+        let c = self
+            .buffer
+            .char_at(self.window.cursor.line, self.window.cursor.col);
+        self.status_msg = match c {
+            Some(c) if c != '\n' => char_code(c),
+            _ => "NUL".into(),
+        };
+    }
+
+    /// `gx`: the URL under the cursor, opened by the system's opener.
+    pub(super) fn open_url_under_cursor(&mut self) {
+        let text = self.cursor_line_text();
+        match url_at(&text, self.window.cursor.col) {
+            Some(url) => self.open_url_in_browser(&url),
+            None => self.status_msg = "No URL under cursor".into(),
+        }
+    }
+
+    /// `gf` / `<C-w>f`: the file named under the cursor, looked up beside the
+    /// buffer's own file and then from the working directory; a `path:line`
+    /// goes to the line.
+    pub(super) fn open_file_under_cursor(&mut self, split: bool) {
+        let text = self.cursor_line_text();
+        let Some((name, line)) = file_at(&text, self.window.cursor.col) else {
+            self.status_msg = "E446: No file name under cursor".into();
+            return;
+        };
+        let Some(path) = self.find_file(&name) else {
+            self.status_msg = format!("E447: Can't find file \"{name}\" in path");
+            return;
+        };
+        if split {
+            let before = self.active_window;
+            self.window_split(crate::layout::SplitDir::Horizontal);
+            if self.active_window == before {
+                return;
+            }
+        }
+        if let Err(e) = self.open_buffer(path) {
+            if split {
+                self.window_close();
+            }
+            self.status_msg = format!("error: {e}");
+            return;
+        }
+        if let Some(n) = line {
+            let target = n.saturating_sub(1).min(self.last_text_line());
+            self.cursor_to_first_non_blank(target);
+        }
+    }
+
+    /// `name` as `gf` finds it: absolute as it is, `~/` from home, else beside
+    /// the buffer's file and then from the working directory.
+    fn find_file(&self, name: &str) -> Option<PathBuf> {
+        let named = match name.strip_prefix("~/") {
+            Some(rest) => crate::paths::home_dir()?.join(rest),
+            None => PathBuf::from(name),
+        };
+        if named.is_absolute() {
+            return named.is_file().then_some(named);
+        }
+        let beside = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(|dir| dir.join(&named));
+        let from_cwd = std::env::current_dir().ok().map(|cwd| cwd.join(&named));
+        beside.into_iter().chain(from_cwd).find(|p| p.is_file())
+    }
+
+    fn cursor_line_text(&self) -> String {
+        let line = self
+            .window
+            .cursor
+            .line
+            .min(self.buffer.line_count().saturating_sub(1));
+        let text = self.buffer.rope.line(line).to_string();
+        text.trim_end_matches(['\n', '\r']).to_string()
+    }
+
     pub(super) fn list_buffers(&self) -> String {
         let mut out = String::new();
         for (i, stash) in self.buffers.iter().enumerate() {
@@ -920,6 +1057,76 @@ pub(super) fn display_path(path: &std::path::Path) -> String {
     }
 }
 
+/// Words as `g Ctrl-G` counts them: runs of non-blanks.
+fn word_count(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+/// `c` as `ga` shows it: `<a> 97, Hex 61, Oct 141`, a control character as
+/// `^X`, and hex to four places past ASCII.
+fn char_code(c: char) -> String {
+    let n = c as u32;
+    let shown = match n {
+        0..=31 => format!("^{}", char::from_u32(n + 64).unwrap_or('?')),
+        127 => "^?".into(),
+        _ => c.to_string(),
+    };
+    let hex = if n < 0x80 {
+        format!("{n:02x}")
+    } else {
+        format!("{n:04x}")
+    };
+    format!("<{shown}> {n}, Hex {hex}, Oct {n:03o}")
+}
+
+/// The run of characters `keep` accepts at `col` in `line` — or, when the
+/// cursor isn't on one, the first run after it, as Vim's `gf` / `gx` look.
+fn run_at(line: &str, col: usize, keep: impl Fn(char) -> bool) -> Option<String> {
+    let chars: Vec<char> = line.chars().collect();
+    let at = (col.min(chars.len())..chars.len()).find(|&i| keep(chars[i]))?;
+    let start = (0..at)
+        .rev()
+        .take_while(|&i| keep(chars[i]))
+        .last()
+        .unwrap_or(at);
+    let end = (at..chars.len()).take_while(|&i| keep(chars[i])).last()? + 1;
+    Some(chars[start..end].iter().collect())
+}
+
+/// The URL under the cursor for `gx`: the non-blank run there, less the
+/// brackets and punctuation around it, if it has a `://`.
+fn url_at(line: &str, col: usize) -> Option<String> {
+    let run = run_at(line, col, |c| !c.is_whitespace())?;
+    let url = run
+        .trim_start_matches(['(', '<', '[', '"', '\''])
+        .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '}', '>', '"', '\'']);
+    url.contains("://").then(|| url.to_string())
+}
+
+/// The file name under the cursor for `gf`, in Vim's 'isfname' characters,
+/// and the line of a trailing `:N` (or `:N:M`).
+fn file_at(line: &str, col: usize) -> Option<(String, Option<usize>)> {
+    let run = run_at(line, col, |c| {
+        c.is_alphanumeric() || "/\\._-~+,#$%@{}[]=:".contains(c)
+    })?;
+    let mut path = run.trim_end_matches([':', '.', ',']);
+    let mut numbers = Vec::new();
+    while numbers.len() < 2 {
+        let Some((head, tail)) = path.rsplit_once(':') else {
+            break;
+        };
+        if tail.is_empty() || !tail.bytes().all(|b| b.is_ascii_digit()) {
+            break;
+        }
+        numbers.push(tail.parse::<usize>().ok()?);
+        path = head;
+    }
+    if path.is_empty() {
+        return None;
+    }
+    Some((path.to_string(), numbers.last().copied()))
+}
+
 fn recents_path() -> Option<PathBuf> {
     crate::paths::cache_dir().map(|d| d.join("recents"))
 }
@@ -944,4 +1151,30 @@ fn save_recents(list: &[PathBuf]) {
         .collect::<Vec<_>>()
         .join("\n");
     let _ = std::fs::write(&p, text);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn under_the_cursor_helpers() {
+        assert_eq!(char_code('a'), "<a> 97, Hex 61, Oct 141");
+        assert_eq!(char_code('é'), "<é> 233, Hex 00e9, Oct 351");
+        assert_eq!(char_code('\t'), "<^I> 9, Hex 09, Oct 011");
+        assert_eq!(
+            url_at("see (https://binvim.dev/docs). ok", 10).as_deref(),
+            Some("https://binvim.dev/docs")
+        );
+        assert_eq!(url_at("no link here", 3), None);
+        assert_eq!(
+            file_at("open src/main.rs:42:7 now", 7),
+            Some(("src/main.rs".to_string(), Some(42)))
+        );
+        assert_eq!(
+            file_at("x src/app.rs", 2),
+            Some(("src/app.rs".to_string(), None))
+        );
+        assert_eq!(word_count("one two  three\n"), 3);
+    }
 }

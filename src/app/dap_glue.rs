@@ -590,7 +590,7 @@ impl super::App {
     /// `xdg-open`, Windows → `start`. Best-effort: failures
     /// surface as a status-line message so the user knows the
     /// click registered but couldn't fire.
-    fn open_url_in_browser(&mut self, url: &str) {
+    pub(super) fn open_url_in_browser(&mut self, url: &str) {
         let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
             ("open", vec![url])
         } else if cfg!(target_os = "windows") {

@@ -608,6 +608,10 @@ impl super::App {
                 self.window.cursor.col = 0;
                 self.window.cursor.want_col = 0;
             }
+            InsertWhere::LineStart => {
+                self.window.cursor.col = 0;
+                self.window.cursor.want_col = 0;
+            }
             InsertWhere::LineFirstNonBlank => {
                 let line_len = self.buffer.line_len(self.window.cursor.line);
                 let mut col = 0;
