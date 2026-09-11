@@ -334,6 +334,10 @@ follows [Semantic Versioning](https://semver.org/).
   previous fold's end; `zv` opens whatever hides the cursor; `zO` / `zC` /
   `zA` open, close and toggle every fold at the cursor; `zm` / `zr` lower and
   raise the fold level by a count, and `zx` applies it again.
+- **`z<CR>`, `zs` and `ze` work.** `z<CR>` scrolls the line to the top with the
+  cursor on its first non-blank, as `z.` and `z-` now also do for the middle
+  and bottom; `zs` / `ze` scroll sideways to put the cursor at the left or
+  right edge. `z<CR>` used to leave the `z` waiting for another key.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

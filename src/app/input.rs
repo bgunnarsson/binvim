@@ -3235,7 +3235,7 @@ impl super::App {
         self.cursor_to_first_non_blank(at + lines.len() - 1);
     }
 
-    fn cursor_to_first_non_blank(&mut self, line: usize) {
+    pub(super) fn cursor_to_first_non_blank(&mut self, line: usize) {
         let from = crate::cursor::Cursor {
             line,
             col: 0,
@@ -5300,6 +5300,36 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn z_scroll_commands_place_the_view_and_the_cursor() {
+        let mut app = app_with_keymaps("a\nb\n    c\nd\n", "");
+        app.window.cursor.line = 2;
+        press(&mut app, "z");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.window.cursor.col, 4);
+        app.window.cursor.col = 0;
+        press(&mut app, "z.");
+        assert_eq!(app.window.cursor.col, 4);
+        app.window.cursor.col = 0;
+        press(&mut app, "z-");
+        assert_eq!(app.window.cursor.col, 4);
+        // zs / ze scroll sideways to put the cursor at the left / right edge.
+        let mut app = app_with_keymaps(&format!("{}\n", "x".repeat(300)), "");
+        app.width = 120;
+        app.height = 40;
+        app.window.cursor.col = 150;
+        app.window.cursor.want_col = 150;
+        press(&mut app, "zs");
+        let left = app.window.view_left;
+        assert!(
+            left > 0 && left <= 150 && 150 - left <= 5,
+            "zs left the view at {left}"
+        );
+        press(&mut app, "ze");
+        let right = app.window.view_left;
+        assert!(right < left, "ze left the view at {right}, zs at {left}");
     }
 
     #[test]
