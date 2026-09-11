@@ -553,6 +553,8 @@ pub struct App {
     /// go back to it. A path rather than a buffer index: closing buffers
     /// renumbers them, and a closed alternate can still be reopened.
     pub alternate_path: Option<std::path::PathBuf>,
+    /// Where `:cd -` goes back to: the directory before the last `:cd`.
+    pub previous_dir: Option<PathBuf>,
     /// Uppercase marks name a file as well as a place: the file, and the line
     /// and column last seen there. The live position stays on that file's
     /// buffer; this is what reopens it once the buffer is closed. Session only.
@@ -1031,6 +1033,7 @@ impl App {
             insert_oneshot: None,
             replace_session: None,
             alternate_path: None,
+            previous_dir: None,
             file_marks: HashMap::new(),
             quickfix: None,
             additional_selections: Vec::new(),

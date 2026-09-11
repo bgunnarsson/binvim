@@ -213,6 +213,9 @@ impl super::App {
     }
 
     pub fn open_buffer(&mut self, path: PathBuf) -> Result<()> {
+        // Buffer paths are absolute (`Buffer::from_path`), so the one asked
+        // for is made absolute before it's matched against them.
+        let path = std::path::absolute(&path).unwrap_or(path);
         // Switch to existing buffer if this path is already open.
         if self.buffer.path.as_deref() == Some(path.as_path()) {
             self.show_start_page = false;
@@ -879,12 +882,12 @@ impl super::App {
         for (i, stash) in self.buffers.iter().enumerate() {
             let (path, dirty) = if i == self.active {
                 (
-                    self.buffer.path.as_ref().map(|p| p.display().to_string()),
+                    self.buffer.path.as_ref().map(|p| display_path(p)),
                     self.buffer.dirty,
                 )
             } else {
                 (
-                    stash.buffer.path.as_ref().map(|p| p.display().to_string()),
+                    stash.buffer.path.as_ref().map(|p| display_path(p)),
                     stash.buffer.dirty,
                 )
             };
@@ -901,6 +904,19 @@ impl super::App {
         } else {
             out
         }
+    }
+}
+
+/// `path` as `:ls` and the buffer picker show it: relative to the working
+/// directory when it's under it, so what they read follows a `:cd`.
+pub(super) fn display_path(path: &std::path::Path) -> String {
+    match std::env::current_dir() {
+        Ok(cwd) => path
+            .strip_prefix(&cwd)
+            .unwrap_or(path)
+            .display()
+            .to_string(),
+        Err(_) => path.display().to_string(),
     }
 }
 

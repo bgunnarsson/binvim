@@ -175,6 +175,9 @@ impl Buffer {
     }
 
     pub fn from_path(path: PathBuf) -> Result<Self> {
+        // Absolute from the start, so a `:cd` can't move a buffer onto another
+        // file. Not canonicalised: the path stays the way it was named.
+        let path = std::path::absolute(&path).unwrap_or(path);
         if path.exists() {
             let mut file =
                 File::open(&path).with_context(|| format!("opening {}", path.display()))?;

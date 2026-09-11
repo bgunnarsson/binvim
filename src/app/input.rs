@@ -2502,7 +2502,8 @@ impl super::App {
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
             ExCommand::WriteAs(p) => {
-                self.buffer.path = Some(PathBuf::from(p));
+                let path = PathBuf::from(p);
+                self.buffer.path = Some(std::path::absolute(&path).unwrap_or(path));
                 self.refresh_editorconfig();
                 if let Err(e) = self.save_active() {
                     self.status_msg = format!("error: {e}");
@@ -2789,6 +2790,13 @@ impl super::App {
             }
             ExCommand::NoHighlight => {
                 self.search_hl_off = true;
+            }
+            ExCommand::ChangeDir(dir) => self.change_dir(&dir),
+            ExCommand::PrintDir => {
+                self.status_msg = match std::env::current_dir() {
+                    Ok(cwd) => cwd.display().to_string(),
+                    Err(e) => format!("error: {e}"),
+                };
             }
             ExCommand::Format => self.format_active(),
             ExCommand::Health => self.cmd_health(),
@@ -3184,6 +3192,48 @@ impl super::App {
             rows,
             empty: "(no output)".into(),
         });
+    }
+
+    /// `:cd` — the pickers, grep and new terminals read the working
+    /// directory as they start, so moving it re-roots them, and an open file
+    /// tree is rebuilt. Buffer paths are absolute, so no buffer changes file.
+    /// Language servers keep the root they started with; the message says so
+    /// while any are running.
+    fn change_dir(&mut self, arg: &str) {
+        let arg = match self.expand_file_names(arg) {
+            Ok(arg) => arg,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let home = crate::paths::home_dir();
+        let previous = self.previous_dir.as_deref();
+        let target = match crate::command::cd_target(&arg, previous, home.as_deref()) {
+            Ok(target) => target,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let before = std::env::current_dir().ok();
+        if std::env::set_current_dir(&target).is_err() {
+            self.status_msg = format!(
+                "E344: Can't find directory \"{}\" in cdpath",
+                target.display()
+            );
+            return;
+        }
+        self.previous_dir = before;
+        self.reroot_file_tree();
+        self.refresh_git_branch();
+        let cwd = std::env::current_dir().unwrap_or(target);
+        let note = if self.lsp.health_summary().is_empty() {
+            ""
+        } else {
+            " (language servers keep their workspace root)"
+        };
+        self.status_msg = format!("{}{note}", cwd.display());
     }
 
     /// `%` and `#` in a command's argument, as Vim reads them: the current
@@ -4901,6 +4951,41 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn cd_moves_the_working_directory_but_not_the_buffers() {
+        struct Restore(std::path::PathBuf);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let restore = Restore(std::env::current_dir().expect("cwd"));
+        let dir = std::env::temp_dir().join(format!("binvim-cd-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).expect("temp dir");
+        std::env::set_current_dir(&dir).expect("cd");
+        let base = std::env::current_dir().expect("cwd");
+        let mut app = app_with_keymaps("a\n", "");
+        app.exec_command("e f.txt");
+        app.exec_command("cd sub");
+        assert_eq!(std::env::current_dir().expect("cwd"), base.join("sub"));
+        assert_eq!(app.buffer.path, Some(base.join("f.txt")));
+        app.exec_command("cd -");
+        assert_eq!(std::env::current_dir().expect("cwd"), base);
+        app.exec_command("ls");
+        assert!(app.status_msg.contains("f.txt"), "{}", app.status_msg);
+        assert!(
+            !app.status_msg.contains(&base.display().to_string()),
+            "{}",
+            app.status_msg
+        );
+        app.exec_command("pwd");
+        assert_eq!(app.status_msg, base.display().to_string());
+        app.exec_command("cd nowhere");
+        assert!(app.status_msg.contains("E344"), "{}", app.status_msg);
+        drop(restore);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[cfg(unix)]
