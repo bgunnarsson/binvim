@@ -692,6 +692,17 @@ impl super::App {
     /// Per-line view of the active yank flash, returned as a char-column
     /// range on `line`. Returns `None` when the line is outside the range
     /// or the flash has expired.
+    /// Char-column range on `line` of the match `:s///c` is asking about —
+    /// a char wide when the match is empty, so it still shows.
+    pub fn line_confirm_match(&self, line: usize) -> Option<(usize, usize)> {
+        let (start, end) = self.sub_confirm.as_ref()?.current.as_ref()?.chars;
+        if self.buffer.rope.char_to_line(start) != line {
+            return None;
+        }
+        let line_start = self.buffer.line_start_idx(line);
+        Some((start - line_start, end.max(start + 1) - line_start))
+    }
+
     pub fn line_yank_highlight(&self, line: usize) -> Option<(usize, usize)> {
         let h = self.yank_highlight.as_ref()?;
         if Instant::now() >= h.expires_at {
@@ -998,9 +1009,55 @@ pub(super) fn vim_groups(re: &regex::Regex) -> Vec<usize> {
         .collect()
 }
 
+/// One replacement `:s` would make: the whole hit, the bytes it replaces —
+/// only the `\zs` / `\ze` part — and the text it puts there.
+pub(super) struct Hit {
+    pub whole: (usize, usize),
+    pub part: (usize, usize),
+    pub with: String,
+}
+
+impl Hit {
+    /// Where a search that passes this hit over goes on from: past an empty
+    /// one by a char, or the search would find it again.
+    pub(super) fn resume(&self, line: &str) -> usize {
+        let (start, end) = self.whole;
+        if start < end {
+            return end;
+        }
+        end + line[end..].chars().next().map_or(1, char::len_utf8)
+    }
+}
+
+/// The first match in `line` at or after byte `from`, with what `with`
+/// makes of it — passing over an empty one right where the last match
+/// ended (`last_end`), as Vim does.
+pub(super) fn next_hit(
+    re: &regex::Regex,
+    line: &str,
+    mut from: usize,
+    last_end: Option<usize>,
+    with: &dyn Fn(&regex::Captures, &str) -> String,
+) -> Option<Hit> {
+    while from <= line.len() {
+        let caps = re.captures_at(line, from)?;
+        let whole = caps.get(0)?;
+        if whole.is_empty() && last_end == Some(whole.start()) {
+            from = whole.end() + line[whole.end()..].chars().next().map_or(1, char::len_utf8);
+            continue;
+        }
+        let part = caps.name("zs").unwrap_or(whole);
+        return Some(Hit {
+            whole: (whole.start(), whole.end()),
+            part: (part.start(), part.end()),
+            with: with(&caps, part.as_str()),
+        });
+    }
+    None
+}
+
 /// `line` with `re`'s first match replaced by what `with` makes of it, or
-/// every match when `global`, and how many there were. As in Vim, an empty
-/// match right where the last one ended doesn't count.
+/// every match when `global`, and how many there were.
 pub(super) fn substitute_line(
     re: &regex::Regex,
     line: &str,
@@ -1009,34 +1066,19 @@ pub(super) fn substitute_line(
 ) -> (String, usize) {
     let mut out = String::new();
     let mut copied = 0;
+    let mut from = 0;
     let mut last_end = None;
     let mut count = 0;
-    let mut from = 0;
-    while from <= line.len() {
-        let Some(caps) = re.captures_at(line, from) else {
-            break;
-        };
-        let Some(whole) = caps.get(0) else {
-            break;
-        };
-        let step = line[whole.end()..].chars().next().map_or(1, char::len_utf8);
-        from = if whole.is_empty() {
-            whole.end() + step
-        } else {
-            whole.end()
-        };
-        if whole.is_empty() && last_end == Some(whole.start()) {
-            continue;
-        }
-        last_end = Some(whole.end());
-        let part = caps.name("zs").unwrap_or(whole);
-        out.push_str(&line[copied..part.start()]);
-        out.push_str(&with(&caps, part.as_str()));
-        copied = part.end();
+    while let Some(hit) = next_hit(re, line, from, last_end, with) {
+        out.push_str(&line[copied..hit.part.0]);
+        out.push_str(&hit.with);
+        copied = hit.part.1;
         count += 1;
         if !global {
             break;
         }
+        last_end = Some(hit.whole.1);
+        from = hit.resume(line);
     }
     out.push_str(&line[copied..]);
     (out, count)

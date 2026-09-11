@@ -545,6 +545,8 @@ pub struct SubFlags {
     pub ignore_case: Option<bool>,
     /// `n` — count the matches and change nothing.
     pub count_only: bool,
+    /// `c` — ask before each replacement.
+    pub confirm: bool,
 }
 
 /// `:s` / `:S` arguments — `/pat/repl/flags`, with any delimiter Vim
@@ -586,6 +588,7 @@ fn parse_sub_flags(text: &str) -> Result<SubFlags, String> {
             'i' => flags.ignore_case = Some(true),
             'I' => flags.ignore_case = Some(false),
             'n' => flags.count_only = true,
+            'c' => flags.confirm = true,
             // Once the switch to a regex; every pattern is one now.
             'r' => {}
             _ => return Err(format!("E488: Trailing characters: {text}")),
@@ -613,6 +616,7 @@ mod tests {
                     global: true,
                     ignore_case: Some(false),
                     count_only: false,
+                    confirm: false,
                 };
                 assert_eq!(flags, want);
             }

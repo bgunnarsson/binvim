@@ -5922,8 +5922,10 @@ fn draw_line_with_selection(
     } else {
         Vec::new()
     };
+    // `:s///c`'s current match borrows the yank flash's paint.
     let yank_flash = if is_active {
-        app.line_yank_highlight(line_idx)
+        app.line_confirm_match(line_idx)
+            .or_else(|| app.line_yank_highlight(line_idx))
     } else {
         None
     };

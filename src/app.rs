@@ -287,6 +287,8 @@ pub struct App {
     search_pattern: Option<regex::Regex>,
     /// Where `n` / `N` put the cursor relative to a match: `/pat/e` and the like.
     search_offset: search::SearchOffset,
+    /// A `:s///c` in progress.
+    sub_confirm: Option<state::SubConfirm>,
     /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
     pub search_hl_off: bool,
     pub last_edit: Option<LastEdit>,
@@ -937,6 +939,7 @@ impl App {
             last_search: None,
             search_pattern: None,
             search_offset: search::SearchOffset::None,
+            sub_confirm: None,
             search_hl_off: false,
             last_edit: None,
             jumplist: Vec::new(),
@@ -1456,7 +1459,8 @@ impl App {
                 self.status_msg_at = Some(Instant::now());
                 needs_render = true;
             }
-            if let Some(at) = self.status_msg_at {
+            // A `:s///c` question stays up for as long as it's being asked.
+            if let Some(at) = self.status_msg_at.filter(|_| self.sub_confirm.is_none()) {
                 if Instant::now() >= at + NOTIFICATION_TIMEOUT {
                     self.status_msg.clear();
                     self.status_msg_at = None;
