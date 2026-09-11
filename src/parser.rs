@@ -166,6 +166,14 @@ pub enum InsertWhere {
     LastInsert,
 }
 
+/// What `ys` wraps: a motion's range, a text object, or `count` lines.
+#[derive(Debug, Clone, Copy)]
+pub enum SurroundTarget {
+    Motion { motion: MotionVerb, count: usize },
+    TextObject { obj: TextObjectVerb, count: usize },
+    Lines { count: usize },
+}
+
 #[derive(Debug, Clone)]
 pub enum Action {
     Move {
@@ -289,6 +297,13 @@ pub enum Action {
     /// Visual `S{char}` — wrap the visual selection in the pair for `char`.
     SurroundVisual {
         ch: char,
+    },
+    /// `ys{motion}{char}` / `yss` / `yS…` — wrap `target` in the pair for
+    /// `ch`; `own_lines` (`yS`) puts the pair on lines of their own.
+    SurroundAdd {
+        target: SurroundTarget,
+        ch: char,
+        own_lines: bool,
     },
     Fold(FoldOp),
     LspHover,
@@ -548,6 +563,12 @@ pub struct PendingCmd {
     pub cs_old: Option<char>,
     /// Visual `S{char}` — next char names the surround pair to wrap with.
     pub awaiting_visual_surround: bool,
+    /// `ys` / `yS` typed: the pending `y` is a surround, and `yS` puts the
+    /// pair on lines of their own.
+    pub surround: Option<bool>,
+    /// `ys` done with its motion: what to wrap and `surround`'s flag, waiting
+    /// for the pair's char.
+    pub surround_target: Option<(SurroundTarget, bool)>,
     /// Set after `]` in Normal mode — next char (e.g. `q`) selects a
     /// "jump forward" target. Today consumers are the quickfix list
     /// (`]q`) and git hunks (`]h`). Cancels on any unrecognised follow-up.
@@ -681,6 +702,7 @@ impl PendingCmd {
             && !self.awaiting_cs_old
             && self.cs_old.is_none()
             && !self.awaiting_visual_surround
+            && self.surround_target.is_none()
             && !self.awaiting_bracket_close
             && !self.awaiting_bracket_open
             && !self.awaiting_hunk_leader
@@ -775,6 +797,50 @@ pub enum ParseResult {
 }
 
 pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResult {
+    // `ys{motion}` done: this key is the pair's char.
+    if let Some((target, own_lines)) = state.surround_target.take() {
+        state.reset();
+        return match key.code {
+            KeyCode::Char(ch) => ParseResult::Action(Action::SurroundAdd {
+                target,
+                ch,
+                own_lines,
+            }),
+            _ => ParseResult::Cancelled,
+        };
+    }
+    // After `ys` the motion or text object parses as it would for `y`; the
+    // yank it produces is held here instead, until the pair's char arrives.
+    let surround = state.surround;
+    let result = parse_key(state, key, ctx);
+    let Some(own_lines) = surround else {
+        return result;
+    };
+    let target = match result {
+        ParseResult::Action(Action::Operate {
+            op: Operator::Yank,
+            motion,
+            count,
+            ..
+        }) => SurroundTarget::Motion { motion, count },
+        ParseResult::Action(Action::OperateTextObject {
+            op: Operator::Yank,
+            obj,
+            count,
+            ..
+        }) => SurroundTarget::TextObject { obj, count },
+        ParseResult::Action(Action::OperateLine {
+            op: Operator::Yank,
+            count,
+            ..
+        }) => SurroundTarget::Lines { count },
+        other => return other,
+    };
+    state.surround_target = Some((target, own_lines));
+    ParseResult::Pending
+}
+
+fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResult {
     if matches!(key.code, KeyCode::Esc) {
         state.reset();
         return ParseResult::Cancelled;
@@ -1718,10 +1784,29 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         }
     }
 
+    // `ys` / `yS` make the pending `y` a surround: what follows parses as it
+    // would for `y`, and `parse` holds the result for the pair's char. `s` /
+    // `S` again (`yss`, `ySS`) takes the line.
+    if ctx == ParseCtx::Normal
+        && matches!(ch, 's' | 'S')
+        && matches!(state.operator, Some(Operator::Yank))
+    {
+        if state.surround.is_some() {
+            let count = state.total_count();
+            state.reset();
+            return ParseResult::Action(Action::OperateLine {
+                op: Operator::Yank,
+                count,
+                register: None,
+            });
+        }
+        state.surround = Some(ch == 'S');
+        return ParseResult::Pending;
+    }
+
     // Surround pivots: `ds`, `cs` — when an operator (Delete or Change) is
     // already pending and the user types `s`, redirect to the surround
-    // state machine instead of cancelling. `ys` (yank surround) is not
-    // wired in this version.
+    // state machine instead of cancelling.
     if ctx == ParseCtx::Normal && ch == 's' {
         if matches!(state.operator, Some(Operator::Delete)) {
             state.operator = None;

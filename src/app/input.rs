@@ -3438,6 +3438,37 @@ mod tests {
         assert_eq!(app.buffer.rope.to_string(), "ONE TWO\n");
     }
 
+    #[test]
+    fn ys_wraps_a_text_object_or_a_counted_motion() {
+        let mut app = app_with_keymaps("foo bar baz\n", "");
+        press(&mut app, "ysiw)");
+        assert_eq!(app.buffer.rope.to_string(), "(foo) bar baz\n");
+        press(&mut app, "fbys2w]");
+        assert_eq!(app.buffer.rope.to_string(), "(foo) [bar baz]\n");
+    }
+
+    #[test]
+    fn yss_wraps_the_line_from_its_first_non_blank() {
+        let mut app = app_with_keymaps("  foo bar\n", "");
+        press(&mut app, "yss\"");
+        assert_eq!(app.buffer.rope.to_string(), "  \"foo bar\"\n");
+    }
+
+    #[test]
+    fn ys_upper_s_puts_the_pair_on_lines_of_its_own() {
+        let mut app = app_with_keymaps("foo\n", "");
+        press(&mut app, "ySS}");
+        let unit = app.editorconfig.indent_string();
+        assert_eq!(app.buffer.rope.to_string(), format!("{{\n{unit}foo\n}}\n"));
+    }
+
+    #[test]
+    fn dot_repeats_ys() {
+        let mut app = app_with_keymaps("foo bar\n", "");
+        press(&mut app, "ysiw)W.");
+        assert_eq!(app.buffer.rope.to_string(), "(foo) (bar)\n");
+    }
+
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {
         let reg = crate::app::state::Register {
             text: text.into(),
