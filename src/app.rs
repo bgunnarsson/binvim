@@ -286,7 +286,6 @@ pub struct App {
     /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
     pub search_hl_off: bool,
     pub last_edit: Option<LastEdit>,
-    pub marks: HashMap<char, (usize, usize)>,
     pub jumplist: Vec<(usize, usize)>,
     pub jump_idx: usize,
     pub macros: HashMap<char, Vec<KeyEvent>>,
@@ -926,7 +925,6 @@ impl App {
             last_search: None,
             search_hl_off: false,
             last_edit: None,
-            marks: HashMap::new(),
             jumplist: Vec::new(),
             jump_idx: 0,
             macros: HashMap::new(),
@@ -1320,9 +1318,9 @@ impl App {
                 needs_render = true;
             }
             // A held `[keymaps]` sequence ran out of time — run what was typed.
-            let was = self.mode;
+            let start = self.key_start();
             if self.keymap_flush_if_due(Instant::now()) {
-                self.insert_oneshot_after(was);
+                self.after_key(start);
                 needs_render = true;
             }
             // Prefix timeout fired? Open the matching which-key popup.

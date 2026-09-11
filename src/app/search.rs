@@ -45,6 +45,7 @@ impl super::App {
 
     pub(super) fn push_jump(&mut self) {
         let pos = (self.window.cursor.line, self.window.cursor.col);
+        self.buffer.set_mark('\'', pos.0, pos.1);
         // If we've stepped back via Ctrl-O, drop the forward history before pushing.
         self.jumplist.truncate(self.jump_idx);
         // Avoid duplicate consecutive entries.

@@ -30,7 +30,6 @@ impl super::App {
             view_left: self.window.view_left,
             history: std::mem::take(&mut self.history),
             visual_anchor: self.window.visual_anchor,
-            marks: std::mem::take(&mut self.marks),
             jumplist: std::mem::take(&mut self.jumplist),
             jump_idx: std::mem::take(&mut self.jump_idx),
             highlight_cache: self.highlight_cache.take(),
@@ -59,7 +58,6 @@ impl super::App {
         self.window.view_left = stash.view_left;
         self.history = stash.history;
         self.window.visual_anchor = stash.visual_anchor;
-        self.marks = stash.marks;
         self.jumplist = stash.jumplist;
         self.jump_idx = stash.jump_idx;
         self.highlight_cache = stash.highlight_cache;
@@ -323,9 +321,7 @@ impl super::App {
         // CRLF files don't leak `\r` chars into the rope.
         let text = raw.replace("\r\n", "\n");
         let _ = Rope::from_str(&text); // touch ropey so caches invalidate downstream
-        let total = self.buffer.total_chars();
-        self.buffer.delete_range(0, total);
-        self.buffer.insert_at_idx(0, &text);
+        self.buffer.replace_all(&text);
         self.buffer.disk_mtime =
             disk_mtime.or_else(|| std::fs::metadata(path).and_then(|m| m.modified()).ok());
         self.buffer.dirty = false;
@@ -533,7 +529,6 @@ impl super::App {
             self.window.view_left = 0;
             self.history = History::default();
             self.window.visual_anchor = None;
-            self.marks.clear();
             self.jumplist.clear();
             self.jump_idx = 0;
             self.buffers[0] = BufferStash::default();
@@ -620,7 +615,6 @@ impl super::App {
         self.window.view_left = 0;
         self.history = History::default();
         self.window.visual_anchor = None;
-        self.marks.clear();
         self.jumplist.clear();
         self.jump_idx = 0;
         // Drop every split too — single fresh tab with single window.

@@ -83,6 +83,17 @@ follows [Semantic Versioning](https://semver.org/).
   line — or after `Ctrl-O $` — Insert resumes past the last character. The
   text typed before `Ctrl-O` and the text typed after it are separate inserts
   for `.`, and an insert left with nothing typed keeps `.` on the command.
+- **Vim's special marks.** `''` (or two backticks) goes back to where you
+  were before the latest jump, and again to return; `'.` goes to the last
+  change, `` `^ `` to where Insert was last left, `'[` / `']` to the start and
+  end of the last change or yank — a whole insert counts as one change — and
+  `'<` / `'>` to the last Visual selection. `m'`, `m[`, `m]`, `m<` and `m>`
+  set them by hand.
+- **Marks move with the text.** An edit before a mark shifts it along, and
+  deleting the text a mark was on moves it to where the deletion was, so
+  `'a` still finds the line you marked after you delete lines above it.
+  Formatting on save and reloading from disk keep marks on their line and
+  column.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

@@ -26,9 +26,7 @@ impl super::App {
                     return;
                 }
                 self.history.record(&self.buffer.rope, self.window.cursor);
-                let total = self.buffer.total_chars();
-                self.buffer.delete_range(0, total);
-                self.buffer.insert_at_idx(0, &formatted);
+                self.buffer.replace_all(&formatted);
                 let last_line = self.buffer.line_count().saturating_sub(1);
                 if self.window.cursor.line > last_line {
                     self.window.cursor.line = last_line;
@@ -53,9 +51,7 @@ impl super::App {
             match crate::format::format_buffer(&path, &source) {
                 Ok(formatted) if formatted != source => {
                     self.history.record(&self.buffer.rope, self.window.cursor);
-                    let total = self.buffer.total_chars();
-                    self.buffer.delete_range(0, total);
-                    self.buffer.insert_at_idx(0, &formatted);
+                    self.buffer.replace_all(&formatted);
                     let last_line = self.buffer.line_count().saturating_sub(1);
                     if self.window.cursor.line > last_line {
                         self.window.cursor.line = last_line;
