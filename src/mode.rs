@@ -77,6 +77,11 @@ pub enum PromptKind {
     /// `n`/`N` walks subsequent matches from the Console-mode key
     /// handler. Esc cancels without overwriting any prior query.
     DebugConsoleSearch,
+    /// `"=` — an arithmetic expression (D10) whose value the next `p` puts.
+    Expression,
+    /// Insert `Ctrl-R =` — the same, its value put in at the cursor, and
+    /// Insert resumed.
+    InsertExpression,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

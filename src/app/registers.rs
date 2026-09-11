@@ -213,6 +213,48 @@ impl super::App {
         self.status_msg = format!("recording @{}", name);
     }
 
+    /// `"=` in Normal, or `Ctrl-R =` in Insert (`insert`): the prompt for an
+    /// arithmetic expression (D10).
+    pub(super) fn open_expression_prompt(&mut self, insert: bool) {
+        self.cmdline.clear();
+        self.cmdline_cursor = 0;
+        let kind = if insert {
+            crate::mode::PromptKind::InsertExpression
+        } else {
+            crate::mode::PromptKind::Expression
+        };
+        self.mode = Mode::Prompt(kind);
+    }
+
+    /// The expression prompt's Enter: the value into `"=`, then put by the
+    /// next `p` — or, from Insert, in at the cursor. An empty prompt uses the
+    /// last value, which re-evaluating the last expression would give.
+    pub(super) fn finish_expression(&mut self, input: &str, insert: bool) {
+        self.mode = if insert { Mode::Insert } else { Mode::Normal };
+        if !input.trim().is_empty() || !self.registers.contains_key(&'=') {
+            match eval_expression(input) {
+                Ok(text) => {
+                    self.registers.insert(
+                        '=',
+                        Register {
+                            text,
+                            linewise: false,
+                        },
+                    );
+                }
+                Err(e) => {
+                    self.status_msg = e;
+                    return;
+                }
+            }
+        }
+        if insert {
+            self.insert_register_at_cursor('=');
+        } else {
+            self.pending.register = Some('=');
+        }
+    }
+
     /// `@:` — the last command line typed at the prompt, run again `count`
     /// times, as far as the first error; `@@` then runs it once more.
     fn repeat_command_line(&mut self, count: usize) {
@@ -467,6 +509,177 @@ impl super::App {
 /// True when a register write should also sync into the OS clipboard. Maps
 /// to: the unnamed register (no explicit target), the explicit unnamed
 /// (`""`), and the X11-flavour `+`/`*` clipboard registers.
+/// A number in a `"=` expression. Integers stay integers, as in Vim.
+#[derive(Debug, Clone, Copy)]
+enum Num {
+    Int(i64),
+    Float(f64),
+}
+
+impl Num {
+    fn float(self) -> f64 {
+        match self {
+            Num::Int(n) => n as f64,
+            Num::Float(f) => f,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Token {
+    Num(Num),
+    Op(char),
+}
+
+/// D10's `"=`: an arithmetic expression — integers and floats, `+ - * / %`,
+/// parentheses, unary minus — as the text it puts. Integer arithmetic stays
+/// integer (`/` truncates); a float anywhere makes a float, printed the way
+/// Vim's `%g` does, to six significant places.
+pub(super) fn eval_expression(text: &str) -> Result<String, String> {
+    let invalid = || format!("E15: Invalid expression: \"{}\"", text.trim());
+    let tokens = expression_tokens(text).ok_or_else(invalid)?;
+    let mut at = 0;
+    let value = expression_sum(&tokens, &mut at)?.ok_or_else(invalid)?;
+    if at != tokens.len() {
+        return Err(invalid());
+    }
+    Ok(match value {
+        Num::Int(n) => n.to_string(),
+        Num::Float(f) => float_text(f),
+    })
+}
+
+fn expression_tokens(text: &str) -> Option<Vec<Token>> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+        if "+-*/%()".contains(c) {
+            tokens.push(Token::Op(c));
+            i += 1;
+            continue;
+        }
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        let start = i;
+        while i < chars.len() && chars[i].is_ascii_digit() {
+            i += 1;
+        }
+        let fraction = i + 1 < chars.len() && chars[i] == '.' && chars[i + 1].is_ascii_digit();
+        if fraction {
+            i += 1;
+            while i < chars.len() && chars[i].is_ascii_digit() {
+                i += 1;
+            }
+        }
+        let literal: String = chars[start..i].iter().collect();
+        let num = if fraction {
+            Num::Float(literal.parse().ok()?)
+        } else {
+            Num::Int(literal.parse().ok()?)
+        };
+        tokens.push(Token::Num(num));
+    }
+    Some(tokens)
+}
+
+/// `term (('+' | '-') term)*`. `None` when there's no term at all.
+fn expression_sum(tokens: &[Token], at: &mut usize) -> Result<Option<Num>, String> {
+    let Some(mut value) = expression_product(tokens, at)? else {
+        return Ok(None);
+    };
+    while let Some(&Token::Op(op @ ('+' | '-'))) = tokens.get(*at) {
+        *at += 1;
+        let Some(rhs) = expression_product(tokens, at)? else {
+            return Ok(None);
+        };
+        value = arithmetic(op, value, rhs)?;
+    }
+    Ok(Some(value))
+}
+
+/// `unary (('*' | '/' | '%') unary)*`.
+fn expression_product(tokens: &[Token], at: &mut usize) -> Result<Option<Num>, String> {
+    let Some(mut value) = expression_unary(tokens, at)? else {
+        return Ok(None);
+    };
+    while let Some(&Token::Op(op @ ('*' | '/' | '%'))) = tokens.get(*at) {
+        *at += 1;
+        let Some(rhs) = expression_unary(tokens, at)? else {
+            return Ok(None);
+        };
+        value = arithmetic(op, value, rhs)?;
+    }
+    Ok(Some(value))
+}
+
+/// `('-' | '+') unary`, a number, or `( sum )`.
+fn expression_unary(tokens: &[Token], at: &mut usize) -> Result<Option<Num>, String> {
+    let Some(&token) = tokens.get(*at) else {
+        return Ok(None);
+    };
+    *at += 1;
+    match token {
+        Token::Num(num) => Ok(Some(num)),
+        Token::Op('-') => Ok(expression_unary(tokens, at)?.map(|num| match num {
+            Num::Int(n) => Num::Int(n.wrapping_neg()),
+            Num::Float(f) => Num::Float(-f),
+        })),
+        Token::Op('+') => expression_unary(tokens, at),
+        Token::Op('(') => {
+            let inner = expression_sum(tokens, at)?;
+            if !matches!(tokens.get(*at), Some(Token::Op(')'))) {
+                return Err("E110: Missing ')'".into());
+            }
+            *at += 1;
+            Ok(inner)
+        }
+        Token::Op(_) => Ok(None),
+    }
+}
+
+fn arithmetic(op: char, a: Num, b: Num) -> Result<Num, String> {
+    if let (Num::Int(x), Num::Int(y)) = (a, b) {
+        if matches!(op, '/' | '%') && y == 0 {
+            return Err("Division by zero".into());
+        }
+        return Ok(Num::Int(match op {
+            '+' => x.wrapping_add(y),
+            '-' => x.wrapping_sub(y),
+            '*' => x.wrapping_mul(y),
+            '/' => x.wrapping_div(y),
+            _ => x.wrapping_rem(y),
+        }));
+    }
+    let (x, y) = (a.float(), b.float());
+    match op {
+        '%' => Err("E804: Cannot use '%' with Float".into()),
+        '/' if y == 0.0 => Err("Division by zero".into()),
+        '+' => Ok(Num::Float(x + y)),
+        '-' => Ok(Num::Float(x - y)),
+        '*' => Ok(Num::Float(x * y)),
+        _ => Ok(Num::Float(x / y)),
+    }
+}
+
+/// A float as `"=` puts it: six decimal places with the trailing zeros
+/// dropped, keeping one so it still reads as a float (`3.0`).
+fn float_text(f: f64) -> String {
+    let text = format!("{f:.6}");
+    let text = text.trim_end_matches('0');
+    if text.ends_with('.') {
+        format!("{text}0")
+    } else {
+        text.to_string()
+    }
+}
+
 /// Registers Vim fills itself and won't let a yank or delete write.
 const READ_ONLY_REGISTERS: &[char] = &['.', '%', '#', ':', '/'];
 
@@ -749,6 +962,26 @@ fn clipboard_fallback_read() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn eval_expression_does_d10_arithmetic() {
+        assert_eq!(eval_expression("1 + 2 * 3").as_deref(), Ok("7"));
+        assert_eq!(eval_expression("(1 + 2) * 3").as_deref(), Ok("9"));
+        assert_eq!(eval_expression("7 / 2").as_deref(), Ok("3"));
+        assert_eq!(eval_expression("-7 % 3").as_deref(), Ok("-1"));
+        assert_eq!(eval_expression("--4").as_deref(), Ok("4"));
+        assert_eq!(eval_expression("7 / 2.0").as_deref(), Ok("3.5"));
+        assert_eq!(eval_expression("0.1 + 0.2").as_deref(), Ok("0.3"));
+        assert_eq!(eval_expression("6.0 / 2").as_deref(), Ok("3.0"));
+        assert_eq!(eval_expression("-(1.5)").as_deref(), Ok("-1.5"));
+        assert!(eval_expression("1 / 0").unwrap_err().contains("zero"));
+        assert!(eval_expression("5.0 % 2").unwrap_err().contains("E804"));
+        assert!(eval_expression("(1 + 2").unwrap_err().contains("E110"));
+        assert!(eval_expression("1 +").unwrap_err().contains("E15"));
+        assert!(eval_expression("2 3").unwrap_err().contains("E15"));
+        assert!(eval_expression("abc").unwrap_err().contains("E15"));
+        assert!(eval_expression("").unwrap_err().contains("E15"));
+    }
 
     #[test]
     fn append_register_joins_like_vim() {

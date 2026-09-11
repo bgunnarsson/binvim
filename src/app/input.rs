@@ -1784,6 +1784,16 @@ impl super::App {
         if self.insert_register_pending {
             self.insert_register_pending = false;
             match key.code {
+                // `Ctrl-R =` asks for an expression. The prompt's keys aren't
+                // recorded, so neither are the two that opened it.
+                KeyCode::Char('=') => {
+                    if !self.replaying
+                        && let Some(rec) = self.recording.as_mut()
+                    {
+                        rec.keys.truncate(rec.keys.len().saturating_sub(2));
+                    }
+                    self.open_expression_prompt(true);
+                }
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.insert_register_at_cursor(c);
                 }
@@ -2921,6 +2931,10 @@ impl super::App {
                         self.mode = Mode::DebugPane;
                         self.commit_dap_console_search(input);
                     }
+                    crate::mode::PromptKind::Expression => self.finish_expression(&input, false),
+                    crate::mode::PromptKind::InsertExpression => {
+                        self.finish_expression(&input, true);
+                    }
                 }
             }
             KeyCode::Backspace => {
@@ -3030,6 +3044,9 @@ impl super::App {
                 // so the user can dismiss the box and keep their
                 // existing highlights intact.
                 self.mode = Mode::DebugPane;
+            }
+            Some(crate::mode::PromptKind::InsertExpression) => {
+                self.mode = Mode::Insert;
             }
             _ => {
                 self.mode = Mode::Normal;
@@ -5172,6 +5189,34 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn expression_register_puts_and_inserts_a_value() {
+        let mut app = app_with_keymaps("x\n", "");
+        press(&mut app, "\"=");
+        assert!(matches!(
+            app.mode,
+            Mode::Prompt(crate::mode::PromptKind::Expression)
+        ));
+        press(&mut app, "6*7");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "p");
+        assert_eq!(app.buffer.rope.to_string(), "x42\n");
+        // Insert `Ctrl-R =` puts the value in at the cursor and stays in Insert.
+        press(&mut app, "A");
+        app.replay_key(ctrl('r'));
+        press(&mut app, "=1+1");
+        tap(&mut app, KeyCode::Enter);
+        assert!(matches!(app.mode, Mode::Insert));
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "x422\n");
+        // A bad expression says why and leaves nothing to put.
+        press(&mut app, "\"=1/0");
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.status_msg.contains("zero"), "{}", app.status_msg);
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.pending.register, None);
     }
 
     #[test]

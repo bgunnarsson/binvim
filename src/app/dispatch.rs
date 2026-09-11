@@ -215,6 +215,7 @@ impl super::App {
             } => self.search_word_under_cursor(backward, whole_word),
             Action::StartMacro { name } => self.start_macro_recording(name),
             Action::ReplayMacro { name, count } => self.replay_macro(name, count),
+            Action::ExpressionPrompt => self.open_expression_prompt(false),
             Action::BufferDelete { force } => {
                 if let Err(e) = self.delete_buffer(force) {
                     self.status_msg = format!("error: {e}");
