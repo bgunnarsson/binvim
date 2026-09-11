@@ -13,6 +13,89 @@ impl super::App {
         self.word_drag_origin = None;
     }
 
+    /// Visual `I` / `A`. In block mode (D11) every row of the block gets a
+    /// cursor of its own and typing mirrors on all of them — `I` before the
+    /// block, `A` after it, `$A` at each row's end. Char and line mode insert
+    /// at the selection's start or after its end.
+    pub(super) fn visual_insert(&mut self, append: bool) {
+        let Mode::Visual(kind) = self.mode else {
+            return;
+        };
+        if kind != crate::mode::VisualKind::Block {
+            let (start, end, _) = self.visual_range_chars(kind);
+            // After a line-wise selection's last line, not past its newline.
+            let before_newline = end > start && self.buffer.rope.char(end - 1) == '\n';
+            let end = if before_newline { end - 1 } else { end };
+            let at = if append { end } else { start };
+            self.exit_visual();
+            self.cursor_to_idx(at);
+            self.apply_action(crate::parser::Action::EnterInsert(
+                crate::parser::InsertWhere::Cursor,
+            ));
+            return;
+        }
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+        let l1 = anchor.line.min(self.window.cursor.line);
+        let l2 = anchor.line.max(self.window.cursor.line);
+        let c1 = anchor.col.min(self.window.cursor.col);
+        let c2 = anchor.col.max(self.window.cursor.col);
+        let to_eol = append && self.window.cursor.want_col == usize::MAX;
+        self.exit_visual();
+        self.window.cursor = crate::cursor::Cursor {
+            line: l1,
+            col: c1,
+            want_col: c1,
+        };
+        self.apply_action(crate::parser::Action::BlockInsert {
+            append,
+            to_eol,
+            rows: l2 - l1 + 1,
+            width: c2 - c1 + 1,
+        });
+    }
+
+    /// Block `I` / `A` / `$A` from the cursor, `rows` rows by `width` columns
+    /// — as `.` repeats it on a block of the same size. `A` pads a row that
+    /// stops short of the block with spaces; `I` leaves a row that doesn't
+    /// reach it alone, as Vim does. The padding and the typing undo together.
+    pub(super) fn block_insert(&mut self, append: bool, to_eol: bool, rows: usize, width: usize) {
+        let l1 = self.window.cursor.line;
+        let c1 = self.window.cursor.col;
+        let l2 = (l1 + rows.max(1) - 1).min(self.last_text_line());
+        let depth = self.history.depth();
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        if append && !to_eol {
+            for line in l1..=l2 {
+                let len = self.buffer.line_len(line);
+                if len < c1 + width {
+                    self.buffer
+                        .insert_str(line, len, &" ".repeat(c1 + width - len));
+                }
+            }
+        }
+        let column = |len: usize| match (to_eol, append) {
+            (true, _) => len,
+            (false, true) => c1 + width,
+            (false, false) => c1,
+        };
+        let mut positions: Vec<usize> = (l1..=l2)
+            .filter_map(|line| {
+                let len = self.buffer.line_len(line);
+                let at = column(len);
+                (at <= len).then(|| self.buffer.pos_to_char(line, at))
+            })
+            .collect();
+        if positions.is_empty() {
+            let len = self.buffer.line_len(l1);
+            positions.push(self.buffer.pos_to_char(l1, c1.min(len)));
+        }
+        let primary = positions.remove(0);
+        self.cursor_to_idx(primary);
+        self.additional_cursors = positions;
+        self.enter_insert(crate::parser::InsertWhere::Cursor);
+        self.history.squash_since(depth);
+    }
+
     /// Visual `J` / `gJ`: joins every line the selection covers — at least
     /// two, as in Vim.
     pub(super) fn visual_join(&mut self, spaces: bool) {

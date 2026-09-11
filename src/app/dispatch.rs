@@ -216,6 +216,13 @@ impl super::App {
             Action::StartMacro { name } => self.start_macro_recording(name),
             Action::ReplayMacro { name, count } => self.replay_macro(name, count),
             Action::ExpressionPrompt => self.open_expression_prompt(false),
+            Action::VisualInsert { append } => self.visual_insert(append),
+            Action::BlockInsert {
+                append,
+                to_eol,
+                rows,
+                width,
+            } => self.block_insert(append, to_eol, rows, width),
             Action::HistoryWindow { search, backward } => {
                 self.open_history_window(search, backward)
             }

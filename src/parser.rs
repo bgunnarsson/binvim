@@ -387,6 +387,19 @@ pub enum Action {
         search: bool,
         backward: bool,
     },
+    /// Visual `I` / `A` — Insert before the selection or after it; in block
+    /// mode on every row at once (D11).
+    VisualInsert {
+        append: bool,
+    },
+    /// Block `I` / `A` / `$A` from the cursor, `rows` by `width` — the form
+    /// `.` repeats, on a block of the same size.
+    BlockInsert {
+        append: bool,
+        to_eol: bool,
+        rows: usize,
+        width: usize,
+    },
     ReplayMacro {
         name: char,
         count: usize,
@@ -1965,6 +1978,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 return ParseResult::Action(Action::VisualSwap);
             }
+            'I' | 'A' => {
+                state.reset();
+                return ParseResult::Action(Action::VisualInsert { append: ch == 'A' });
+            }
             'd' | 'D' | 'x' => {
                 let register = state.take_register();
                 state.reset();
@@ -2777,6 +2794,17 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn visual_i_and_a_insert() {
+        for (ch, append) in [('I', false), ('A', true)] {
+            let mut state = PendingCmd::default();
+            match parse(&mut state, key(ch), ParseCtx::Visual) {
+                ParseResult::Action(Action::VisualInsert { append: a }) => assert_eq!(a, append),
+                _ => panic!("Visual {ch} did not insert"),
+            }
+        }
     }
 
     #[test]

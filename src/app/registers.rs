@@ -437,6 +437,7 @@ impl super::App {
             action,
             Action::EnterInsert(_)
                 | Action::EnterReplace { .. }
+                | Action::BlockInsert { .. }
                 | Action::Operate {
                     op: Operator::Change,
                     ..
