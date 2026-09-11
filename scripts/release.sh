@@ -511,7 +511,13 @@ echo "  tarball:      ${TARBALL_URL}"
 step "Local verification — fmt / test / clippy / build"
 
 cargo fmt --check
-cargo test --locked
+# Single-threaded: the register tests mirror yanks to the real OS
+# pasteboard, which is one machine-wide resource. Run in parallel they
+# overwrite each other's clipboard and a put reads back another test's
+# text — intermittent failures, and on macOS an occasional SIGSEGV from
+# concurrent pasteboard access. Serialising costs ~45s and makes the
+# release gate trustworthy.
+cargo test --locked -- --test-threads=1
 cargo clippy --locked --all-targets -- -A warnings
 cargo build --release --locked
 
