@@ -211,6 +211,52 @@ pub fn paragraph_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResu
     }
 }
 
+/// The line motions that land on the first non-blank — `+`, `<CR>`, `-`,
+/// `_`. Linewise, so `d+` takes this line and the next.
+fn line_first_non_blank(buf: &Buffer, line: usize) -> MotionResult {
+    let at_line = Cursor {
+        line,
+        col: 0,
+        want_col: 0,
+    };
+    MotionResult {
+        target: first_non_blank(buf, at_line).target,
+        kind: MotionKind::Linewise,
+    }
+}
+
+/// `+` / `<CR>` — `count` lines down, on the first non-blank.
+pub fn next_line_start(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let last = vim_line_count(buf).saturating_sub(1);
+    line_first_non_blank(buf, (cur.line + count.max(1)).min(last))
+}
+
+/// `-` — `count` lines up, on the first non-blank.
+pub fn prev_line_start(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    line_first_non_blank(buf, cur.line.saturating_sub(count.max(1)))
+}
+
+/// `_` — `count - 1` lines down, on the first non-blank, which makes `d_` the
+/// same as `dd`.
+pub fn line_start_down(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let last = vim_line_count(buf).saturating_sub(1);
+    line_first_non_blank(buf, (cur.line + count.max(1) - 1).min(last))
+}
+
+/// `|` — column `count`, 1-based, stopping at the end of the line. Counts
+/// chars, where Vim counts screen columns, so a tab is one column here.
+pub fn to_column(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let col = (count.max(1) - 1).min(buf.line_len(cur.line).saturating_sub(1));
+    MotionResult {
+        target: Cursor {
+            line: cur.line,
+            col,
+            want_col: col,
+        },
+        kind: MotionKind::CharExclusive,
+    }
+}
+
 pub fn first_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
     let line_len = buf.line_len(cur.line);
     let mut col = 0;
@@ -808,6 +854,30 @@ mod tests {
         assert_eq!(back(4, 1), 2);
         assert_eq!(back(7, 2), 2);
         assert_eq!(back(1, 1), 0);
+    }
+
+    #[test]
+    fn line_motions_land_on_the_first_non_blank() {
+        let b = buf("a\n  b\n    c\n");
+        let at = |r: MotionResult| (r.target.line, r.target.col);
+        assert_eq!(at(next_line_start(&b, cur(0, 0), 1)), (1, 2));
+        assert_eq!(at(next_line_start(&b, cur(0, 0), 2)), (2, 4));
+        assert_eq!(at(next_line_start(&b, cur(2, 0), 5)), (2, 4));
+        assert_eq!(at(prev_line_start(&b, cur(2, 0), 1)), (1, 2));
+        assert_eq!(at(line_start_down(&b, cur(0, 0), 1)), (0, 0));
+        assert_eq!(at(line_start_down(&b, cur(0, 0), 3)), (2, 4));
+        assert!(matches!(
+            next_line_start(&b, cur(0, 0), 1).kind,
+            MotionKind::Linewise
+        ));
+    }
+
+    #[test]
+    fn bar_goes_to_a_column_and_stops_at_the_line_end() {
+        let b = buf("hello\n");
+        assert_eq!(to_column(&b, cur(0, 0), 3).target.col, 2);
+        assert_eq!(to_column(&b, cur(0, 3), 1).target.col, 0);
+        assert_eq!(to_column(&b, cur(0, 0), 40).target.col, 4);
     }
 
     #[test]

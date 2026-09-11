@@ -3132,6 +3132,15 @@ mod tests {
     }
 
     #[test]
+    fn d_underscore_and_d_plus_delete_whole_lines() {
+        let mut app = app_with_keymaps("a\nb\nc\nd\n", "");
+        press(&mut app, "\"_d_");
+        assert_eq!(app.buffer.rope.to_string(), "b\nc\nd\n");
+        press(&mut app, "\"_d+");
+        assert_eq!(app.buffer.rope.to_string(), "d\n");
+    }
+
+    #[test]
     fn cip_leaves_an_empty_line_to_type_on() {
         let mut app = app_with_keymaps("a\nb\n\nc\n", "");
         press(&mut app, "\"_cip");

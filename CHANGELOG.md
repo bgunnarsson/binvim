@@ -55,6 +55,11 @@ follows [Semantic Versioning](https://semver.org/).
   linewise: `dap` deletes whole lines, `cip` leaves one empty line to type
   on, and `vip` starts a line-wise selection. A count takes more paragraphs,
   and a whitespace-only line counts as blank here, as in Vim.
+- **`<CR>`, `+`, `-`, `_` and `|` motions.** `<CR>` and `+` go N lines down
+  and `-` N lines up, landing on the first non-blank; `N_` goes to the first
+  non-blank N-1 lines down, so `d_` is `dd`; `N|` goes to column N. The line
+  motions are linewise with an operator (`d+` takes this line and the next).
+  `<CR>` on a line with a code lens still runs the lens.
 
 ## [0.5.21] - 2026-09-10
 

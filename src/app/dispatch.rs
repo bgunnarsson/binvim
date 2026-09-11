@@ -513,6 +513,16 @@ impl super::App {
             MotionVerb::ParagraphBackward => {
                 motion::paragraph_backward(&self.buffer, self.window.cursor, count)
             }
+            MotionVerb::NextLineStart => {
+                motion::next_line_start(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::PrevLineStart => {
+                motion::prev_line_start(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::LineStartDown => {
+                motion::line_start_down(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::ToColumn => motion::to_column(&self.buffer, self.window.cursor, count),
             MotionVerb::MatchPair => {
                 super::pair::match_pair_motion(&self.buffer, self.window.cursor).unwrap_or(
                     MotionResult {

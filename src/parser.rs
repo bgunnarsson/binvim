@@ -52,6 +52,14 @@ pub enum MotionVerb {
     ParagraphForward,
     /// `{` — to the empty line before the paragraph.
     ParagraphBackward,
+    /// `+` / `<CR>` — N lines down, on the first non-blank.
+    NextLineStart,
+    /// `-` — N lines up, on the first non-blank.
+    PrevLineStart,
+    /// `_` — N-1 lines down, on the first non-blank.
+    LineStartDown,
+    /// `|` — column N.
+    ToColumn,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -749,6 +757,9 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         KeyCode::Down => Some(MotionVerb::Down),
         KeyCode::Home => Some(MotionVerb::LineStart),
         KeyCode::End => Some(MotionVerb::LineEnd),
+        // `<CR>` is `+`, but only where a command or motion starts: after `r`
+        // it's the replacement, and turning it into a motion would lose that.
+        KeyCode::Enter if state.accepts_mapping() => Some(MotionVerb::NextLineStart),
         _ => None,
     };
     if let Some(motion) = arrow_motion {
@@ -1774,6 +1785,10 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         }),
         '}' => Some(MotionVerb::ParagraphForward),
         '{' => Some(MotionVerb::ParagraphBackward),
+        '+' => Some(MotionVerb::NextLineStart),
+        '-' => Some(MotionVerb::PrevLineStart),
+        '_' => Some(MotionVerb::LineStartDown),
+        '|' => Some(MotionVerb::ToColumn),
         _ => None,
     };
     if let Some(m) = motion {
@@ -2400,6 +2415,34 @@ mod tests {
             }) => {}
             _ => panic!("dap should delete the paragraph object"),
         }
+    }
+
+    #[test]
+    fn line_and_column_keys_are_motions() {
+        let motion_of = |k: KeyEvent| {
+            let mut state = PendingCmd::default();
+            match parse(&mut state, k, ParseCtx::Normal) {
+                ParseResult::Action(Action::Move { motion, .. }) => motion,
+                _ => panic!("{k:?} should be a motion"),
+            }
+        };
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(motion_of(key('+')), MotionVerb::NextLineStart));
+        assert!(matches!(motion_of(enter), MotionVerb::NextLineStart));
+        assert!(matches!(motion_of(key('-')), MotionVerb::PrevLineStart));
+        assert!(matches!(motion_of(key('_')), MotionVerb::LineStartDown));
+        assert!(matches!(motion_of(key('|')), MotionVerb::ToColumn));
+    }
+
+    #[test]
+    fn enter_after_r_is_not_a_motion() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("r"));
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(
+            parse(&mut state, enter, ParseCtx::Normal),
+            ParseResult::Pending
+        ));
     }
 
     #[test]
