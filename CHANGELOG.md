@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0]
+
 ### Added
 - **Insert-mode `Ctrl-W` deletes the previous word.** It follows the same rules
   as `Ctrl`/`Alt`+`Backspace` — the whitespace before the cursor, then one run
