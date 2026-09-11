@@ -291,6 +291,8 @@ pub struct App {
     sub_confirm: Option<state::SubConfirm>,
     /// The last `:s`, for `&` and its kind to run again.
     last_substitute: Option<state::LastSubstitute>,
+    /// The search being typed, previewed as it goes.
+    incsearch: Option<state::IncSearch>,
     /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
     pub search_hl_off: bool,
     pub last_edit: Option<LastEdit>,
@@ -943,6 +945,7 @@ impl App {
             search_offset: search::SearchOffset::None,
             sub_confirm: None,
             last_substitute: None,
+            incsearch: None,
             search_hl_off: false,
             last_edit: None,
             jumplist: Vec::new(),

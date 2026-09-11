@@ -226,6 +226,10 @@ follows [Semantic Versioning](https://semver.org/).
   both without its flags, which `:&&` keeps; `:~` uses the last search's
   pattern instead of its own, and `g&` runs it on every line with the last
   search and its flags, as `:%s//~/&`.
+- **Search highlights as you type.** While `/` or `?` is open, every match
+  of the pattern so far is highlighted, the one it would land on stands
+  out, and the view moves to it. `Esc` puts the cursor and view back where
+  they were, and only `Enter` changes what `n` searches for.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
