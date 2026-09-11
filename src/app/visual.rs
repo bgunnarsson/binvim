@@ -709,6 +709,10 @@ impl super::App {
     }
 
     pub(super) fn apply_visual_select_textobj(&mut self, obj: TextObjectVerb) {
+        if let TextObjectVerb::SearchMatch { forward } = obj {
+            self.select_search_match(forward);
+            return;
+        }
         let range = match text_object::compute(&self.buffer, self.window.cursor, obj) {
             Some(r) => r,
             None => {
@@ -731,6 +735,39 @@ impl super::App {
             self.mode = Mode::Visual(VisualKind::Line);
         }
         self.window.visual_anchor = Some(anchor);
+    }
+
+    /// `gn` / `gN`: from Normal, Visual over the match under the cursor or the
+    /// next one; from Visual, the selection stretched to that match's far end.
+    fn select_search_match(&mut self, forward: bool) {
+        let visual = matches!(self.mode, Mode::Visual(_)) && self.window.visual_anchor.is_some();
+        let cursor = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        // From Visual the search starts a char on, so it moves past the match
+        // the selection already ends on.
+        let at = match (visual, forward) {
+            (false, _) => cursor,
+            (true, true) => cursor + 1,
+            (true, false) => cursor.saturating_sub(1),
+        };
+        let Some((start, end)) = self.search_match_at(at, forward) else {
+            self.status_msg = self.search_missing();
+            return;
+        };
+        let last = end.saturating_sub(1).max(start);
+        let (from, to) = if forward {
+            (start, last)
+        } else {
+            (last, start)
+        };
+        if !visual {
+            self.cursor_to_idx(from);
+            self.additional_selections.clear();
+            self.mode = Mode::Visual(VisualKind::Char);
+            self.window.visual_anchor = Some(self.window.cursor);
+        }
+        self.cursor_to_idx(to);
     }
 }
 

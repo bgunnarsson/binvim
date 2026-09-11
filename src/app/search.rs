@@ -467,6 +467,32 @@ impl super::App {
         Some((start, rope.byte_to_char(e) - start))
     }
 
+    /// The match `gn` / `gN` takes from `at`: the one covering it, or else the
+    /// next one on (back, for `gN`), round the buffer's end. A zero-width
+    /// match still takes a char, as in Vim. Half-open char range.
+    pub(super) fn search_match_at(&self, at: usize, forward: bool) -> Option<(usize, usize)> {
+        let covering = self
+            .find_match(at + 1, false, false)
+            .filter(|&(start, len)| at < start + len);
+        let (start, len) = match covering {
+            Some(hit) => hit,
+            None => {
+                let from = if forward { at + 1 } else { at };
+                self.find_match(from, forward, true)?
+            }
+        };
+        let end = (start + len.max(1)).min(self.buffer.rope.len_chars());
+        Some((start, end))
+    }
+
+    /// Why `gn` found nothing, for the status line.
+    pub(super) fn search_missing(&self) -> String {
+        match self.last_search.as_ref() {
+            Some((pattern, _)) => format!("Pattern not found: {pattern}"),
+            None => "E35: No previous regular expression".into(),
+        }
+    }
+
     /// The literal, case-insensitive text search a Visual selection's
     /// `Ctrl-N` uses — no pattern syntax, and no effect on `n`.
     pub(super) fn find_literal(
