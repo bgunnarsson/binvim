@@ -66,6 +66,11 @@ follows [Semantic Versioning](https://semver.org/).
   non-blank, middle and last char of the part of the line on screen, as they
   do in Vim with `nowrap`; tabs and wide characters count at their screen
   width. `gM` goes to the middle of the line's text.
+- **`Ctrl-^` switches to the alternate buffer.** It goes back to the file that
+  was active before this one — in its own tab, with its splits — and `:e#` /
+  `:b#` do the same. An alternate that has been closed is reopened from disk.
+  `N Ctrl-^` goes to buffer N. Terminals send `Ctrl-^` as either `Ctrl+^` or
+  `Ctrl+6`, and both work.
 
 ## [0.5.21] - 2026-09-10
 

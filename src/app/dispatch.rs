@@ -366,6 +366,11 @@ impl super::App {
             Action::VisualSelectTextObject { obj } => {
                 self.apply_visual_select_textobj(obj);
             }
+            Action::AlternateBuffer { count } => {
+                if let Err(e) = self.switch_alternate(count) {
+                    self.status_msg = format!("error: {e}");
+                }
+            }
             Action::VisualSwap => {
                 if let Some(anchor) = self.window.visual_anchor {
                     self.window.visual_anchor = Some(self.window.cursor);

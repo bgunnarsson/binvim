@@ -322,6 +322,7 @@ Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j
 |-----------------------|----------------------------------------------|
 | `H` / `L`             | Previous / next buffer (same as `:bp`/`:bn`) |
 | `gt` / `gT`           | Same as `H` / `L` (Vim aliases)              |
+| `Ctrl-^`              | Alternate buffer — the file active before this one (same as `:e#` / `:b#`); `N Ctrl-^` goes to buffer N |
 | `Ctrl-O` / `Ctrl-I`   | Jumplist back / forward — persists across sessions per-buffer |
 | Click a tab           | Switch to it                                 |
 | Middle-click a tab    | Close it (refuses dirty, same as `:bd`)      |

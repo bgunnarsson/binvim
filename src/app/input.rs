@@ -2341,10 +2341,16 @@ impl super::App {
                 }
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
+            ExCommand::Edit(p) if p.is_empty() => {
+                self.status_msg = "E32: No file name".into();
+            }
             ExCommand::Edit(p) => {
-                if p.is_empty() {
-                    self.status_msg = "E32: No file name".into();
-                } else if let Err(e) = self.open_buffer(PathBuf::from(p)) {
+                let opened = if p == "#" {
+                    self.switch_alternate(None)
+                } else {
+                    self.open_buffer(PathBuf::from(p))
+                };
+                if let Err(e) = opened {
                     self.status_msg = format!("error: {e}");
                 }
             }
@@ -3147,6 +3153,30 @@ mod tests {
         app.window.cursor.col = 10;
         press(&mut app, "g0");
         assert_eq!(app.window.cursor.col, 5);
+    }
+
+    #[test]
+    fn ctrl_caret_and_e_hash_toggle_between_two_files() {
+        let dir = std::env::temp_dir().join(format!("binvim-alt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, "a\n").unwrap();
+        std::fs::write(&b, "b\n").unwrap();
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a.clone()).unwrap();
+        app.open_buffer(b.clone()).unwrap();
+        app.replay_key(ctrl('^'));
+        assert_eq!(app.buffer.path.as_deref(), Some(a.as_path()));
+        app.exec_command("e#");
+        assert_eq!(app.buffer.path.as_deref(), Some(b.as_path()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ctrl_caret_without_an_alternate_says_so() {
+        let mut app = app_with_keymaps("x\n", "");
+        app.replay_key(ctrl('^'));
+        assert!(app.status_msg.contains("E23"));
     }
 
     #[test]

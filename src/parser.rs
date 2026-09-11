@@ -314,6 +314,10 @@ pub enum Action {
     BufferOnly,
     BufferNext,
     BufferPrev,
+    /// `Ctrl-^` — the alternate buffer, or buffer N with a count.
+    AlternateBuffer {
+        count: Option<usize>,
+    },
     /// `]q` — jump to the next entry in the quickfix list.
     QuickfixNext,
     /// `[q` — jump to the previous entry in the quickfix list.
@@ -872,6 +876,12 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 let count = state.total_count();
                 state.reset();
                 ParseResult::Action(Action::MoveLine { down: false, count })
+            }
+            // `Ctrl-^` — terminals send it as `^` or as `6` with Ctrl held.
+            '^' | '6' if matches!(ctx, ParseCtx::Normal) => {
+                let count = state.count1;
+                state.reset();
+                ParseResult::Action(Action::AlternateBuffer { count })
             }
             // <C-w> in Normal mode opens the window-leader prefix —
             // the next char picks a split / focus / close action.
@@ -2480,6 +2490,25 @@ mod tests {
         assert!(matches!(g_motion('m'), MotionVerb::ScreenMiddle));
         assert!(matches!(g_motion('$'), MotionVerb::ScreenLineEnd));
         assert!(matches!(g_motion('M'), MotionVerb::LineMiddle));
+    }
+
+    #[test]
+    fn ctrl_caret_is_the_alternate_buffer_under_either_encoding() {
+        for c in ['^', '6'] {
+            let mut state = PendingCmd::default();
+            let k = KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+            assert!(matches!(
+                parse(&mut state, k, ParseCtx::Normal),
+                ParseResult::Action(Action::AlternateBuffer { count: None })
+            ));
+        }
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("3"));
+        let k = KeyEvent::new(KeyCode::Char('^'), KeyModifiers::CONTROL);
+        assert!(matches!(
+            parse(&mut state, k, ParseCtx::Normal),
+            ParseResult::Action(Action::AlternateBuffer { count: Some(3) })
+        ));
     }
 
     #[test]
