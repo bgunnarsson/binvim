@@ -32,6 +32,10 @@ follows [Semantic Versioning](https://semver.org/).
   or up to 3 decimal digits — and a code ends early on any other key, which is
   then typed as usual. Control characters are refused with a note, because
   binvim can't display them yet.
+- **Insert-mode `Ctrl-Y` / `Ctrl-E` copy the character above / below.** Each
+  press inserts the character at the cursor's column from the line above
+  (`Ctrl-Y`) or below (`Ctrl-E`), so holding it copies a run of the
+  neighbouring line. Nothing is inserted where that line is shorter.
 
 ## [0.5.21] - 2026-09-10
 

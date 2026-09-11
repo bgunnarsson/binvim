@@ -1743,6 +1743,27 @@ impl super::App {
             KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_literal_pending = Some(super::state::LiteralPending::Key);
             }
+            // Copy the char at the cursor's column from the line below (`Ctrl-E`)
+            // or above (`Ctrl-Y`). Multi-cursor leaves them alone — each cursor
+            // would need its own neighbour.
+            KeyCode::Char(c @ ('e' | 'E' | 'y' | 'Y'))
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.additional_cursors.is_empty() =>
+            {
+                let line = self.window.cursor.line;
+                let col = self.window.cursor.col;
+                let from = if c.eq_ignore_ascii_case(&'e') {
+                    Some(line + 1).filter(|l| *l < self.buffer.line_count())
+                } else {
+                    line.checked_sub(1)
+                };
+                let copied = from
+                    .filter(|l| col < self.buffer.line_len(*l))
+                    .and_then(|l| self.buffer.char_at(l, col));
+                if let Some(ch) = copied {
+                    self.insert_literal_char(ch);
+                }
+            }
             // Multi-cursor leaves these alone: shifting one line would leave
             // the other cursors' char indices pointing at the wrong text.
             KeyCode::Char('t' | 'T')
@@ -3062,6 +3083,30 @@ mod tests {
         press(&mut app, "u001b");
         assert_eq!(app.buffer.rope.to_string(), "a\n");
         assert!(app.status_msg.contains("U+001B"));
+    }
+
+    #[test]
+    fn ctrl_y_copies_the_char_above() {
+        let mut app = insert_at("abc\nx\n", 1, 1);
+        app.replay_key(ctrl('y'));
+        app.replay_key(ctrl('y'));
+        assert_eq!(app.buffer.rope.to_string(), "abc\nxbc\n");
+        assert_eq!(app.window.cursor.col, 3);
+    }
+
+    #[test]
+    fn ctrl_e_copies_the_char_below() {
+        let mut app = insert_at("x\nabc\n", 0, 1);
+        app.replay_key(ctrl('e'));
+        assert_eq!(app.buffer.rope.to_string(), "xb\nabc\n");
+    }
+
+    #[test]
+    fn ctrl_y_past_the_end_of_the_line_above_inserts_nothing() {
+        let mut app = insert_at("a\nxyz\n", 1, 2);
+        app.replay_key(ctrl('y'));
+        assert_eq!(app.buffer.rope.to_string(), "a\nxyz\n");
+        assert_eq!(app.window.cursor.col, 2);
     }
 
     #[test]
