@@ -15,6 +15,12 @@ follows [Semantic Versioning](https://semver.org/).
   first press keeps the line's indent; pressing it again from the indent takes
   the indent too. At column 0 it joins the line onto the one above, like
   `Ctrl-W`.
+- **Insert-mode `Ctrl-R {reg}` pastes a register.** `Ctrl-R a` puts register
+  `a` in at the cursor, `Ctrl-R "` the unnamed register and `Ctrl-R +` the
+  system clipboard. The text goes in literally, so pasted code isn't
+  re-indented or auto-paired, and a register holding several lines makes real
+  lines. A `"` marks the cursor while binvim waits for the register name;
+  `Esc` cancels and stays in Insert.
 
 ## [0.5.21] - 2026-09-10
 

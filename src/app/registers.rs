@@ -90,6 +90,27 @@ impl super::App {
         self.registers.get(&key).cloned()
     }
 
+    /// Insert-mode `Ctrl-R {reg}`. The text goes in literally — Vim's
+    /// `Ctrl-R Ctrl-R` — because inserting it as if typed would run
+    /// auto-pair and smart indent over pasted code.
+    pub(super) fn insert_register_at_cursor(&mut self, name: char) {
+        let Some(reg) = self.read_register(Some(name)) else {
+            return;
+        };
+        if !self.additional_cursors.is_empty() {
+            for c in reg.text.chars() {
+                self.mirror_insert_char(c);
+            }
+            return;
+        }
+        let at = self
+            .buffer
+            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+        self.buffer
+            .insert_str(self.window.cursor.line, self.window.cursor.col, &reg.text);
+        self.cursor_to_idx(at + reg.text.chars().count());
+    }
+
     pub(super) fn start_macro_recording(&mut self, name: char) {
         if self.recording_macro.is_some() {
             return;

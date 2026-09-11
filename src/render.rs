@@ -8287,6 +8287,11 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     // within `[view_left, view_left + buffer_cols)`, so subtraction is safe.
     let on_screen = visual.saturating_sub(app.window.view_left);
     let col = pane.x + (gutter + on_screen) as u16;
+    // A pending Insert-mode `Ctrl-R` shows Vim's `"` under the cursor; the
+    // next frame's full clear takes it away again.
+    if app.insert_register_pending {
+        queue!(out, MoveTo(col, row), Print('"'))?;
+    }
     queue!(out, MoveTo(col, row))?;
     Ok(())
 }

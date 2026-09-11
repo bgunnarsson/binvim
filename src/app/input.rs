@@ -1563,13 +1563,34 @@ impl super::App {
         // and never `<Tab>` from a Copilot ghost it would accept — every
         // other key has already dropped the ghost above.
         let ghost_tab = matches!(key.code, KeyCode::Tab) && self.copilot_ghost.is_some();
-        if !ghost_tab && self.keymap_take(key, MapMode::Insert) {
+        // The register name after `Ctrl-R` is a literal, like `fH`'s target —
+        // never the first key of a mapping.
+        if !ghost_tab && !self.insert_register_pending && self.keymap_take(key, MapMode::Insert) {
             return;
         }
         if !self.replaying && !is_esc {
             if let Some(rec) = self.recording.as_mut() {
                 rec.keys.push(key);
             }
+        }
+        if self.insert_register_pending {
+            self.insert_register_pending = false;
+            match key.code {
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.insert_register_at_cursor(c);
+                }
+                // Cancelled. Drop the recorded `Ctrl-R`, and the cancelling key
+                // unless it was Esc (never recorded), so `.` doesn't replay a
+                // `Ctrl-R` that swallows whatever was typed after it.
+                _ if !self.replaying => {
+                    if let Some(rec) = self.recording.as_mut() {
+                        let n = if is_esc { 1 } else { 2 };
+                        rec.keys.truncate(rec.keys.len().saturating_sub(n));
+                    }
+                }
+                _ => {}
+            }
+            return;
         }
         match key.code {
             KeyCode::Esc => {
@@ -1612,6 +1633,9 @@ impl super::App {
                 if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'n' || c == 'p') =>
             {
                 self.lsp_request_completion(None);
+            }
+            KeyCode::Char('r' | 'R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.insert_register_pending = true;
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Multi-cursor: skip the autopair / closer-skip dance and
@@ -2737,6 +2761,45 @@ mod tests {
         app.replay_key(ctrl('u'));
         assert_eq!(app.buffer.rope.to_string(), "foobar\n");
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 3));
+    }
+
+    fn with_register(app: &mut crate::app::App, name: char, text: &str) {
+        let reg = crate::app::state::Register {
+            text: text.into(),
+            linewise: false,
+        };
+        app.registers.insert(name, reg);
+    }
+
+    #[test]
+    fn ctrl_r_inserts_a_register_at_the_cursor() {
+        let mut app = insert_at("ab\n", 0, 1);
+        with_register(&mut app, 'a', "XY");
+        app.replay_key(ctrl('r'));
+        press(&mut app, "a");
+        assert_eq!(app.buffer.rope.to_string(), "aXYb\n");
+        assert_eq!(app.window.cursor.col, 3);
+        assert!(matches!(app.mode, Mode::Insert));
+    }
+
+    #[test]
+    fn ctrl_r_register_with_newlines_makes_real_lines() {
+        let mut app = insert_at("ab\n", 0, 1);
+        with_register(&mut app, 'a', "one\ntwo");
+        app.replay_key(ctrl('r'));
+        press(&mut app, "a");
+        assert_eq!(app.buffer.rope.to_string(), "aone\ntwob\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 3));
+    }
+
+    #[test]
+    fn esc_after_ctrl_r_cancels_and_stays_in_insert() {
+        let mut app = insert_at("ab\n", 0, 1);
+        app.replay_key(ctrl('r'));
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::Insert));
+        press(&mut app, "a");
+        assert_eq!(app.buffer.rope.to_string(), "aab\n");
     }
 
     #[test]
