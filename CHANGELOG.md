@@ -163,6 +163,10 @@ follows [Semantic Versioning](https://semver.org/).
   any closing brackets or quotes) followed by whitespace, and an empty line
   starts one of its own. They take counts, work after an operator (`d)`),
   and go in the jump list.
+- **`is` / `as` sentence text objects.** `is` takes the sentence and `as`
+  the sentence with the space after it (or before it, for the last one on
+  a line) — `das`, `cis`, `yas`, `vis`, with counts. On the space between
+  two sentences, `is` is that space.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

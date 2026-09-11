@@ -3446,6 +3446,22 @@ mod tests {
     }
 
     #[test]
+    fn das_and_cis_work_on_sentences() {
+        let mut app = app_with_keymaps("One. Two. Three.\n", "");
+        app.window.cursor.col = 5;
+        app.window.cursor.want_col = 5;
+        press(&mut app, "das");
+        assert_eq!(app.buffer.rope.to_string(), "One. Three.\n");
+
+        let mut app = app_with_keymaps("One. Two. Three.\n", "");
+        app.window.cursor.col = 5;
+        app.window.cursor.want_col = 5;
+        press(&mut app, "cisX.");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "One. X. Three.\n");
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));
