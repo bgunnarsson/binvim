@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Insert-mode `Ctrl-W` deletes the previous word.** It follows the same rules
+  as `Ctrl`/`Alt`+`Backspace` — the whitespace before the cursor, then one run
+  of word characters or of punctuation — and at column 0 joins the line onto
+  the one above, the way Vim does with `backspace=start,eol`.
+
 ## [0.5.21] - 2026-09-10
 
 ### Added
