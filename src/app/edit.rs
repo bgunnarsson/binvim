@@ -1431,6 +1431,20 @@ impl super::App {
             empty: "Nothing to undo".into(),
         });
     }
+
+    /// `:digraphs` — every `Ctrl-K` digraph with the character it makes and
+    /// that character's code.
+    pub(super) fn cmd_digraphs(&mut self) {
+        let rows = DIGRAPHS
+            .iter()
+            .map(|&(code, ch)| (code.to_string(), format!("{ch}  {}", u32::from(ch))))
+            .collect();
+        self.show_listing(super::state::Listing {
+            title: "Digraphs — Ctrl-K {a}{b} in Insert".into(),
+            rows,
+            empty: String::new(),
+        });
+    }
 }
 
 /// `age` the way `:undolist` shows it: seconds, then minutes, then hours.
@@ -1443,6 +1457,204 @@ fn time_ago(age: std::time::Duration) -> String {
     } else {
         format!("{}h ago", secs / 3600)
     }
+}
+
+/// Insert `Ctrl-K`'s digraphs (D9): a compact RFC 1345 subset, with the codes
+/// Vim uses — Latin accents, Greek, arrows, maths, currency and punctuation.
+pub(super) const DIGRAPHS: &[(&str, char)] = &[
+    ("a:", 'ä'),
+    ("a'", 'á'),
+    ("a!", 'à'),
+    ("a>", 'â'),
+    ("a?", 'ã'),
+    ("aa", 'å'),
+    ("ae", 'æ'),
+    ("c,", 'ç'),
+    ("e:", 'ë'),
+    ("e'", 'é'),
+    ("e!", 'è'),
+    ("e>", 'ê'),
+    ("i:", 'ï'),
+    ("i'", 'í'),
+    ("i!", 'ì'),
+    ("i>", 'î'),
+    ("n?", 'ñ'),
+    ("o:", 'ö'),
+    ("o'", 'ó'),
+    ("o!", 'ò'),
+    ("o>", 'ô'),
+    ("o?", 'õ'),
+    ("o/", 'ø'),
+    ("oe", 'œ'),
+    ("u:", 'ü'),
+    ("u'", 'ú'),
+    ("u!", 'ù'),
+    ("u>", 'û'),
+    ("y'", 'ý'),
+    ("y:", 'ÿ'),
+    ("ss", 'ß'),
+    ("th", 'þ'),
+    ("d-", 'ð'),
+    ("A:", 'Ä'),
+    ("A'", 'Á'),
+    ("A!", 'À'),
+    ("A>", 'Â'),
+    ("A?", 'Ã'),
+    ("AA", 'Å'),
+    ("AE", 'Æ'),
+    ("C,", 'Ç'),
+    ("E:", 'Ë'),
+    ("E'", 'É'),
+    ("E!", 'È'),
+    ("E>", 'Ê'),
+    ("I:", 'Ï'),
+    ("I'", 'Í'),
+    ("I!", 'Ì'),
+    ("I>", 'Î'),
+    ("N?", 'Ñ'),
+    ("O:", 'Ö'),
+    ("O'", 'Ó'),
+    ("O!", 'Ò'),
+    ("O>", 'Ô'),
+    ("O?", 'Õ'),
+    ("O/", 'Ø'),
+    ("OE", 'Œ'),
+    ("U:", 'Ü'),
+    ("U'", 'Ú'),
+    ("U!", 'Ù'),
+    ("U>", 'Û'),
+    ("Y'", 'Ý'),
+    ("TH", 'Þ'),
+    ("D-", 'Ð'),
+    ("a*", 'α'),
+    ("b*", 'β'),
+    ("g*", 'γ'),
+    ("d*", 'δ'),
+    ("e*", 'ε'),
+    ("z*", 'ζ'),
+    ("y*", 'η'),
+    ("h*", 'θ'),
+    ("i*", 'ι'),
+    ("k*", 'κ'),
+    ("l*", 'λ'),
+    ("m*", 'μ'),
+    ("n*", 'ν'),
+    ("c*", 'ξ'),
+    ("o*", 'ο'),
+    ("p*", 'π'),
+    ("r*", 'ρ'),
+    ("s*", 'σ'),
+    ("*s", 'ς'),
+    ("t*", 'τ'),
+    ("u*", 'υ'),
+    ("f*", 'φ'),
+    ("x*", 'χ'),
+    ("q*", 'ψ'),
+    ("w*", 'ω'),
+    ("A*", 'Α'),
+    ("B*", 'Β'),
+    ("G*", 'Γ'),
+    ("D*", 'Δ'),
+    ("E*", 'Ε'),
+    ("Z*", 'Ζ'),
+    ("Y*", 'Η'),
+    ("H*", 'Θ'),
+    ("I*", 'Ι'),
+    ("K*", 'Κ'),
+    ("L*", 'Λ'),
+    ("M*", 'Μ'),
+    ("N*", 'Ν'),
+    ("C*", 'Ξ'),
+    ("O*", 'Ο'),
+    ("P*", 'Π'),
+    ("R*", 'Ρ'),
+    ("S*", 'Σ'),
+    ("T*", 'Τ'),
+    ("U*", 'Υ'),
+    ("F*", 'Φ'),
+    ("X*", 'Χ'),
+    ("Q*", 'Ψ'),
+    ("W*", 'Ω'),
+    ("<-", '←'),
+    ("->", '→'),
+    ("-!", '↑'),
+    ("-v", '↓'),
+    ("<>", '↔'),
+    ("UD", '↕'),
+    ("=>", '⇒'),
+    ("==", '⇔'),
+    ("*X", '×'),
+    ("-:", '÷'),
+    ("+-", '±'),
+    ("!=", '≠'),
+    ("=<", '≤'),
+    (">=", '≥'),
+    ("?2", '≈'),
+    ("?=", '≅'),
+    ("3=", '≡'),
+    ("00", '∞'),
+    ("RT", '√'),
+    ("FA", '∀'),
+    ("TE", '∃'),
+    ("dP", '∂'),
+    ("/0", '∅'),
+    ("(-", '∈'),
+    ("-)", '∋'),
+    ("(U", '∩'),
+    (")U", '∪'),
+    ("(C", '⊂'),
+    (")C", '⊃'),
+    ("(_", '⊆'),
+    (")_", '⊇'),
+    ("AN", '∧'),
+    ("OR", '∨'),
+    ("NO", '¬'),
+    ("+Z", '∑'),
+    ("*P", '∏'),
+    ("In", '∫'),
+    ("DG", '°'),
+    ("My", 'µ'),
+    ("12", '½'),
+    ("14", '¼'),
+    ("34", '¾'),
+    ("1S", '¹'),
+    ("2S", '²'),
+    ("3S", '³'),
+    (".M", '·'),
+    ("Eu", '€'),
+    ("=e", '€'),
+    ("Pd", '£'),
+    ("Ye", '¥'),
+    ("Ct", '¢'),
+    ("<<", '«'),
+    (">>", '»'),
+    ("!I", '¡'),
+    ("?I", '¿'),
+    ("SE", '§'),
+    ("PI", '¶'),
+    ("Co", '©'),
+    ("Rg", '®'),
+    ("TM", '™'),
+    ("-N", '–'),
+    ("-M", '—'),
+    ("'6", '‘'),
+    ("'9", '’'),
+    ("\"6", '“'),
+    ("\"9", '”'),
+    (",.", '…'),
+    ("NS", '\u{a0}'),
+];
+
+/// The character digraph `a` `b` makes — tried the other way round too, as
+/// Vim does.
+pub(super) fn digraph(a: char, b: char) -> Option<char> {
+    let find = |first: char, second: char| {
+        DIGRAPHS.iter().find_map(|&(code, ch)| {
+            let mut code = code.chars();
+            (code.next() == Some(first) && code.next() == Some(second)).then_some(ch)
+        })
+    };
+    find(a, b).or_else(|| find(b, a))
 }
 
 /// A line ending in `text` opens a block, so the line after it goes a level
@@ -1974,6 +2186,26 @@ pub(super) fn shift_block_up_by_one(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn digraphs_look_up_either_way_round() {
+        use super::{DIGRAPHS, digraph};
+        assert_eq!(digraph('a', ':'), Some('ä'));
+        assert_eq!(digraph(':', 'a'), Some('ä'));
+        assert_eq!(digraph('t', 'h'), Some('þ'));
+        assert_eq!(digraph('d', '-'), Some('ð'));
+        assert_eq!(digraph('-', '>'), Some('→'));
+        assert_eq!(digraph('E', 'u'), Some('€'));
+        assert_eq!(digraph('a', '*'), Some('α'));
+        assert_eq!(digraph('q', 'q'), None);
+        let mut codes: Vec<&str> = DIGRAPHS.iter().map(|&(code, _)| code).collect();
+        let listed = codes.len();
+        codes.sort_unstable();
+        codes.dedup();
+        assert_eq!(codes.len(), listed, "a digraph code is listed twice");
+        assert!(DIGRAPHS.iter().all(|(code, _)| code.chars().count() == 2));
+    }
+
     use super::{retab, shift_block_down_by_one, shift_block_up_by_one, sort_lines};
     use crate::buffer::Buffer;
     use ropey::Rope;

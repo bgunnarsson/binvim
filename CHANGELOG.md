@@ -349,6 +349,10 @@ follows [Semantic Versioning](https://semver.org/).
   lines starting with what's typed (this line keeping its indent), and
   `Ctrl-X Ctrl-F` the files and directories of the path typed so far — all in
   the completion popup, narrowing as you type without asking the server.
+- **Insert `Ctrl-K` enters digraphs, and `:digraphs` lists them.** `Ctrl-K a:`
+  is `ä`, `Ctrl-K th` is `þ`, `Ctrl-K ->` is `→` — a compact RFC 1345 set of
+  Latin accents, Greek, arrows, maths, currency and punctuation, tried either
+  way round as in Vim. A `?` marks the cursor until the pair is typed.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

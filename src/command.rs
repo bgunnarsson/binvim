@@ -204,6 +204,8 @@ pub enum ExCommand {
     /// `:reg` / `:registers` — open a scrollable overlay listing every
     /// yank register and recorded macro register with a short preview.
     Registers,
+    /// `:dig[raphs]` — the Insert `Ctrl-K` digraphs.
+    Digraphs,
     /// `:changes` — the change list in the list overlay.
     Changes,
     /// `:marks` — the buffer's marks in the list overlay.
@@ -816,6 +818,7 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "health" | "checkhealth" => ExCommand::Health,
         "messages" | "message" | "mes" => ExCommand::Messages,
         "reg" | "registers" | "display" => ExCommand::Registers,
+        "dig" | "digr" | "digra" | "digrap" | "digraph" | "digraphs" => ExCommand::Digraphs,
         "changes" => ExCommand::Changes,
         "marks" => ExCommand::Marks,
         "jumps" | "ju" => ExCommand::Jumps,
@@ -1985,6 +1988,12 @@ mod tests {
         assert!(matches!(parse("spell"), ExCommand::SpellToggle));
         assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn digraphs_parse() {
+        assert!(matches!(parse("dig"), ExCommand::Digraphs));
+        assert!(matches!(parse("digraphs"), ExCommand::Digraphs));
     }
 
     #[test]

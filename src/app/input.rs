@@ -1781,7 +1781,9 @@ impl super::App {
         let ghost_tab = matches!(key.code, KeyCode::Tab) && self.copilot_ghost.is_some();
         // The register name after `Ctrl-R`, and every key of a `Ctrl-V`
         // sequence, is a literal — like `fH`'s target, never a mapping's key.
-        let literal_next = self.insert_register_pending || self.insert_literal_pending.is_some();
+        let literal_next = self.insert_register_pending
+            || self.insert_literal_pending.is_some()
+            || self.insert_digraph.is_some();
         if !ghost_tab && !literal_next && self.keymap_take(key, MapMode::Insert) {
             return;
         }
@@ -1854,6 +1856,33 @@ impl super::App {
                     }
                 }
                 _ => {}
+            }
+            return;
+        }
+        if let Some(mut typed) = self.insert_digraph.take() {
+            match key.code {
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    typed.push(c);
+                    let mut chars = typed.chars();
+                    match (chars.next(), chars.next()) {
+                        (Some(a), Some(b)) => {
+                            // Neither order a digraph: Vim puts in the second.
+                            let entered = super::edit::digraph(a, b).unwrap_or(b);
+                            self.insert_literal_char(entered);
+                        }
+                        _ => self.insert_digraph = Some(typed),
+                    }
+                }
+                // Anything else leaves it unfinished, so `.` shouldn't replay
+                // its keys either.
+                _ => {
+                    if !self.replaying
+                        && let Some(rec) = self.recording.as_mut()
+                    {
+                        let recorded = typed.chars().count() + 1 + usize::from(!is_esc);
+                        rec.keys.truncate(rec.keys.len().saturating_sub(recorded));
+                    }
+                }
             }
             return;
         }
@@ -1938,6 +1967,9 @@ impl super::App {
             }
             KeyCode::Char('x' | 'X') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_ctrl_x_pending = true;
+            }
+            KeyCode::Char('k' | 'K') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.insert_digraph = Some(String::new());
             }
             KeyCode::Char('a' | 'A') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_register_at_cursor('.');
@@ -2889,6 +2921,7 @@ impl super::App {
             ExCommand::Health => self.cmd_health(),
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Registers => self.cmd_registers(),
+            ExCommand::Digraphs => self.cmd_digraphs(),
             ExCommand::Changes => self.cmd_changes(),
             ExCommand::UndoTime { earlier, amount } => self.undo_jump(earlier, amount),
             ExCommand::UndoList => self.cmd_undolist(),
@@ -5343,6 +5376,23 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn insert_ctrl_k_enters_a_digraph() {
+        let mut app = app_with_keymaps("\n", "");
+        press(&mut app, "i");
+        app.replay_key(ctrl('k'));
+        press(&mut app, "a:");
+        app.replay_key(ctrl('k'));
+        press(&mut app, "th");
+        // No digraph either way round: the second character goes in.
+        app.replay_key(ctrl('k'));
+        press(&mut app, "qx");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "äþx\n");
+        app.exec_command("digraphs");
+        assert!(app.show_list_page);
     }
 
     #[test]
