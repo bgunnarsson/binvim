@@ -326,6 +326,10 @@ follows [Semantic Versioning](https://semver.org/).
   every state in the order it was made, branch or not, with a count. Only the
   current branch is saved with the file, as before, so undo files load
   unchanged.
+- **`:earlier` / `:later` go back and on by steps, time or writes, and
+  `:undolist` shows the branches.** `:earlier 3`, `:earlier 10m`, `:later 1h`,
+  and `:earlier 1f` for the text as last written; `:undolist` lists each
+  branch's last state with its number, changes and age in the overlay.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

@@ -2847,6 +2847,8 @@ impl super::App {
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Registers => self.cmd_registers(),
             ExCommand::Changes => self.cmd_changes(),
+            ExCommand::UndoTime { earlier, amount } => self.undo_jump(earlier, amount),
+            ExCommand::UndoList => self.cmd_undolist(),
             ExCommand::Marks => self.cmd_marks(),
             ExCommand::Jumps => self.cmd_jumps(),
             ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
@@ -5298,6 +5300,27 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn earlier_and_later_by_writes_bring_back_the_written_text() {
+        let mut app = app_with_keymaps("a\n", "");
+        press(&mut app, "Ab");
+        tap(&mut app, KeyCode::Esc);
+        // What `:w` does once the file is written; calling it keeps the test
+        // out of the real undo cache.
+        app.history.mark_written();
+        press(&mut app, "Ac");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "abc\n");
+        app.exec_command("earlier 1f");
+        assert_eq!(app.buffer.rope.to_string(), "ab\n");
+        app.exec_command("later 1f");
+        assert_eq!(app.buffer.rope.to_string(), "abc\n");
+        app.exec_command("earlier 2");
+        assert_eq!(app.buffer.rope.to_string(), "a\n");
+        app.exec_command("undolist");
+        assert!(app.show_list_page);
     }
 
     #[test]

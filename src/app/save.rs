@@ -74,6 +74,7 @@ impl super::App {
             self.buffer.line_ending = forced;
         }
         self.buffer.save()?;
+        self.history.mark_written();
         // Refresh git stripe after a successful write — the index hasn't
         // moved but the working tree just did, so hunks may have grown,
         // shrunk, or disappeared entirely.
