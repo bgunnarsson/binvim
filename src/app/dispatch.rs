@@ -92,6 +92,7 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 if !self.try_multi_op_motion(op, motion, count, register) {
                     let m = self.run_motion(motion, count);
+                    let m = self.paragraph_linewise(motion, m);
                     self.apply_op_with_motion(op, m, register);
                 }
             }
@@ -495,6 +496,12 @@ impl super::App {
             MotionVerb::LastLine => motion::last_line(&self.buffer, self.window.cursor),
             MotionVerb::GotoLine(n) => motion::goto_line(&self.buffer, n),
             MotionVerb::PercentLine(n) => motion::percent_line(&self.buffer, n),
+            MotionVerb::ParagraphForward => {
+                motion::paragraph_forward(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::ParagraphBackward => {
+                motion::paragraph_backward(&self.buffer, self.window.cursor, count)
+            }
             MotionVerb::MatchPair => {
                 super::pair::match_pair_motion(&self.buffer, self.window.cursor).unwrap_or(
                     MotionResult {
@@ -603,6 +610,43 @@ impl super::App {
                 target: r.target,
                 kind: MotionKind::Linewise,
             }
+        }
+    }
+
+    /// Vim's exclusive-linewise rule (`:h exclusive-linewise`): an exclusive
+    /// motion that ends in column 0 of a later line, from a start at or
+    /// before its line's first non-blank, covers whole lines — so `d}` from
+    /// the top of a paragraph takes its lines and leaves the blank one. Only
+    /// the paragraph motions opt in: `dw` leans on the plain
+    /// exclusive-to-inclusive rule in `range_from_motion`. A backward motion
+    /// moves the cursor to its first line, since the linewise span runs from
+    /// the cursor.
+    fn paragraph_linewise(&mut self, motion: MotionVerb, m: MotionResult) -> MotionResult {
+        if !matches!(
+            motion,
+            MotionVerb::ParagraphForward | MotionVerb::ParagraphBackward
+        ) || !matches!(m.kind, MotionKind::CharExclusive)
+        {
+            return m;
+        }
+        let cur = self.window.cursor;
+        let (start, end) = if (m.target.line, m.target.col) < (cur.line, cur.col) {
+            (m.target, cur)
+        } else {
+            (cur, m.target)
+        };
+        let first_non_blank = motion::first_non_blank(&self.buffer, start).target.col;
+        if end.col != 0 || end.line <= start.line || start.col > first_non_blank {
+            return m;
+        }
+        self.window.cursor = start;
+        MotionResult {
+            target: Cursor {
+                line: end.line - 1,
+                col: 0,
+                want_col: 0,
+            },
+            kind: MotionKind::Linewise,
         }
     }
 

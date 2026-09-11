@@ -48,6 +48,10 @@ pub enum MotionVerb {
     MatchPair,
     /// `N%` — the line N percent of the way through the file.
     PercentLine(usize),
+    /// `}` — to the empty line after the paragraph.
+    ParagraphForward,
+    /// `{` — to the empty line before the paragraph.
+    ParagraphBackward,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1767,6 +1771,8 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             Some(n) => MotionVerb::PercentLine(n),
             None => MotionVerb::MatchPair,
         }),
+        '}' => Some(MotionVerb::ParagraphForward),
+        '{' => Some(MotionVerb::ParagraphBackward),
         _ => None,
     };
     if let Some(m) = motion {
@@ -2359,6 +2365,25 @@ mod tests {
                 ..
             }) => {}
             _ => panic!("d% should delete over the match-pair motion"),
+        }
+    }
+
+    #[test]
+    fn braces_are_paragraph_motions() {
+        let mut state = PendingCmd::default();
+        match parse(&mut state, key('}'), ParseCtx::Normal) {
+            ParseResult::Action(Action::Move {
+                motion: MotionVerb::ParagraphForward,
+                ..
+            }) => {}
+            _ => panic!("}} should move a paragraph forward"),
+        }
+        match parse(&mut state, key('{'), ParseCtx::Normal) {
+            ParseResult::Action(Action::Move {
+                motion: MotionVerb::ParagraphBackward,
+                ..
+            }) => {}
+            _ => panic!("{{ should move a paragraph back"),
         }
     }
 
