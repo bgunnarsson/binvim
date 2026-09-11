@@ -98,6 +98,85 @@ impl super::App {
         self.cmdline_cursor = self.cmdline.len();
     }
 
+    /// `q:` / `q/` / `q?` — a split below listing the command or search
+    /// history, oldest first, with an empty line at the bottom to type a new
+    /// one on.
+    pub(super) fn open_history_window(&mut self, search: bool, backward: bool) {
+        if self.history_window.is_some() {
+            self.status_msg =
+                "E11: Invalid in command-line window; <CR> executes, CTRL-C quits".into();
+            return;
+        }
+        let entries = if search {
+            self.search_history.clone()
+        } else {
+            self.cmd_history.clone()
+        };
+        let before = self.active_window;
+        self.window_split(crate::layout::SplitDir::Horizontal);
+        if self.active_window == before {
+            return;
+        }
+        if let Err(e) = self.open_empty_buffer() {
+            self.window_close();
+            self.status_msg = format!("error: {e}");
+            return;
+        }
+        let mut text: String = entries.iter().map(|entry| format!("{entry}\n")).collect();
+        text.push('\n');
+        self.buffer.insert_str(0, 0, &text);
+        self.buffer.dirty = false;
+        self.buffer.display_name = Some("[Command Line]".into());
+        self.window.cursor = crate::cursor::Cursor {
+            line: entries.len(),
+            col: 0,
+            want_col: 0,
+        };
+        self.history_window = Some(crate::app::state::HistoryWindow {
+            window: self.active_window,
+            search,
+            backward,
+        });
+    }
+
+    /// Whether the focused pane is the `q:` / `q/` window.
+    pub(super) fn in_history_window(&self) -> bool {
+        self.history_window
+            .is_some_and(|history| history.window == self.active_window)
+    }
+
+    /// Closes the `q:` window and drops its buffer — deleted while the window
+    /// still shows it, since `delete_buffer` takes the active one.
+    pub(super) fn close_history_window(&mut self) {
+        if !self.in_history_window() {
+            return;
+        }
+        self.history_window = None;
+        let _ = self.delete_buffer(true);
+        self.window_close();
+    }
+
+    /// `<CR>` in the `q:` window: the line under the cursor run as a command
+    /// or a search, once the window is closed.
+    pub(super) fn run_history_line(&mut self) {
+        let Some(history) = self.history_window else {
+            return;
+        };
+        let line = self.buffer.rope.line(self.window.cursor.line).to_string();
+        let line = line.trim_end_matches(['\n', '\r']).to_string();
+        self.close_history_window();
+        if line.trim().is_empty() {
+            return;
+        }
+        if history.search {
+            self.history_record(HistoryKind::Search, &line);
+            self.execute_search(&line, history.backward);
+        } else {
+            self.history_record(HistoryKind::Command, &line);
+            self.exec_command(&line);
+        }
+    }
+
     /// Drop cycling state — call when leaving Command / Search mode by
     /// any path (Enter, Esc, Backspace-out, mode swap).
     pub(super) fn history_reset(&mut self) {

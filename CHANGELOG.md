@@ -308,6 +308,9 @@ follows [Semantic Versioning](https://semver.org/).
   and everything before it; `Ctrl-B` / `Ctrl-E` go to the start and end; and
   `Ctrl-P` / `Ctrl-N` walk the history. Before, a Ctrl key there typed its
   letter.
+- **`q:` / `q/` / `q?` open the command-line window.** A split below lists the
+  ex or search history with an empty line at the bottom; edit it in Normal
+  mode, `<CR>` runs the line under the cursor, and `Ctrl-C` or `:q` closes it.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

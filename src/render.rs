@@ -8047,7 +8047,11 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
             };
             truncate_left(&display, path_room.max(1))
         }
-        None => "[No Name]".into(),
+        None => app
+            .buffer
+            .display_name
+            .clone()
+            .unwrap_or_else(|| "[No Name]".into()),
     };
 
     // === Mode segment ===

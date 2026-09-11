@@ -1700,6 +1700,21 @@ impl super::App {
         if self.keymap_take(key, ctx.into()) {
             return;
         }
+        // The `q:` / `q/` window: `<CR>` runs the line, `Ctrl-C` closes it.
+        if matches!(ctx, parser::ParseCtx::Normal)
+            && self.pending.is_clean()
+            && self.in_history_window()
+        {
+            let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL;
+            if ctrl_c {
+                self.close_history_window();
+                return;
+            }
+            if key.code == KeyCode::Enter && key.modifiers.is_empty() {
+                self.run_history_line();
+                return;
+            }
+        }
         // Bare ENTER on a lens-bearing line invokes the lens, same as
         // `<leader>l` and the mouse click. Only fires when the parser
         // has no partial state (no pending operator / count / prefix)
@@ -2535,6 +2550,8 @@ impl super::App {
                     self.show_list_page = false;
                 } else if self.show_test_results_page {
                     self.show_test_results_page = false;
+                } else if self.in_history_window() {
+                    self.close_history_window();
                 } else if self.buffer.dirty {
                     self.status_msg = "E37: No write since last change (use :q!)".into();
                 } else {
@@ -5281,6 +5298,32 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn history_window_lists_runs_and_closes() {
+        let mut app = app_with_keymaps("abc\n", "");
+        app.cmd_history.clear();
+        app.cmd_history.push("s/a/x/".into());
+        press(&mut app, "q:");
+        assert!(app.in_history_window());
+        assert_eq!(app.windows.len(), 1);
+        assert_eq!(app.buffer.rope.to_string(), "s/a/x/\n\n");
+        assert_eq!(app.window.cursor.line, 1);
+        // Normal-mode motions work in it; `<CR>` runs the line under the cursor.
+        press(&mut app, "k");
+        tap(&mut app, KeyCode::Enter);
+        assert!(app.history_window.is_none());
+        assert!(app.windows.is_empty());
+        assert_eq!(app.buffer.rope.to_string(), "xbc\n");
+        // `Ctrl-C` and `:q` close it without running anything.
+        press(&mut app, "q:");
+        app.replay_key(ctrl('c'));
+        assert!(app.history_window.is_none() && app.windows.is_empty());
+        press(&mut app, "q/");
+        app.exec_command("q");
+        assert!(app.history_window.is_none() && app.windows.is_empty());
+        assert_eq!(app.buffer.rope.to_string(), "xbc\n");
     }
 
     #[test]

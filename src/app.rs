@@ -550,6 +550,8 @@ pub struct App {
     pub insert_register_pending: bool,
     /// `Ctrl-R` on the `:` / `/` prompt: the next key names what to insert.
     pub cmdline_register_pending: bool,
+    /// The `q:` / `q/` window, while one is open.
+    pub history_window: Option<crate::app::state::HistoryWindow>,
     /// Insert-mode `Ctrl-V` sequence in flight — waiting for the literal key,
     /// or collecting a character code's digits. `None` when not in one.
     pub insert_literal_pending: Option<crate::app::state::LiteralPending>,
@@ -1042,6 +1044,7 @@ impl App {
             snippet_session: None,
             insert_register_pending: false,
             cmdline_register_pending: false,
+            history_window: None,
             insert_literal_pending: None,
             insert_oneshot: None,
             replace_session: None,
