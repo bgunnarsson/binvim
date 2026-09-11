@@ -38,6 +38,17 @@ impl History {
         }
     }
 
+    /// How many steps `undo` can take back.
+    pub fn depth(&self) -> usize {
+        self.past.len()
+    }
+
+    /// Everything recorded since the history was `depth` steps deep made one
+    /// step: the first of them, from before any of those changes.
+    pub fn squash_since(&mut self, depth: usize) {
+        self.past.truncate(depth + 1);
+    }
+
     /// Undo: take the last recorded snapshot and push current onto redo stack.
     pub fn undo(&mut self, current_rope: &Rope, current_cursor: Cursor) -> Option<Snapshot> {
         let snap = self.past.pop()?;
@@ -159,4 +170,29 @@ pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
     p.push("undo");
     p.push(format!("{id}.json"));
     Some(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn squashed_steps_undo_as_one() {
+        let mut history = History::new();
+        let cursor = Cursor {
+            line: 0,
+            col: 0,
+            want_col: 0,
+        };
+        for text in ["a", "b", "c"] {
+            history.record(&Rope::from_str(text), cursor);
+        }
+        history.squash_since(0);
+        assert_eq!(history.depth(), 1);
+        let snap = history
+            .undo(&Rope::from_str("d"), cursor)
+            .expect("one step");
+        assert_eq!(snap.rope.to_string(), "a");
+        assert!(history.undo(&Rope::from_str("a"), cursor).is_none());
+    }
 }

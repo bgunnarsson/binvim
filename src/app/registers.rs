@@ -200,6 +200,58 @@ impl super::App {
         true
     }
 
+    /// `:normal` — `keys` typed in Normal mode on each line of `lines`, from
+    /// its first column, or once where the cursor is without a range. A
+    /// command left open at the end, Insert mode included, is closed as if by
+    /// `Esc`, and each line undoes as one step. Without `remap` (`:normal!`)
+    /// the keys aren't mapped.
+    pub(super) fn exec_normal(&mut self, lines: Option<(usize, usize)>, keys: &str, remap: bool) {
+        let expanding = self.expanding_keymap;
+        self.expanding_keymap = expanding || !remap;
+        match lines {
+            None => self.normal_keys(keys),
+            Some((l1, l2)) => {
+                for line in l1..=l2 {
+                    // Lines the keys deleted on the way are gone, as in Vim.
+                    if line >= crate::motion::vim_line_count(&self.buffer) {
+                        break;
+                    }
+                    self.window.cursor = crate::cursor::Cursor {
+                        line,
+                        col: 0,
+                        want_col: 0,
+                    };
+                    self.normal_keys(keys);
+                }
+            }
+        }
+        self.expanding_keymap = expanding;
+    }
+
+    /// One run of `:normal`'s keys, closed off and made a single undo step.
+    fn normal_keys(&mut self, keys: &str) {
+        let depth = self.history.depth();
+        self.mode = Mode::Normal;
+        for c in keys.chars() {
+            if !self.replay_key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)) {
+                break;
+            }
+        }
+        // A key held as the start of a longer mapping would wait for more.
+        if !self.keymap_held.is_empty() {
+            self.keymap_flush(self.keymap_mode());
+        }
+        // Whatever the keys left open — Insert, a waiting operator, a `:`
+        // line — ends the way `Esc` would end it.
+        for _ in 0..3 {
+            if self.mode == Mode::Normal && self.pending.is_clean() {
+                break;
+            }
+            self.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        }
+        self.history.squash_since(depth);
+    }
+
     /// `:reg` / `:registers` — toggle the registers overlay. Yank
     /// registers and macro registers both render. Scroll resets so the
     /// user lands on the first row (the header).

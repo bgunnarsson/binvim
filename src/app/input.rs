@@ -1557,7 +1557,7 @@ impl super::App {
     /// that is a mapping of its own runs, as in Vim; with none, the first key
     /// goes through as typed. The keys after it are fed again, so they can
     /// start a mapping of their own.
-    fn keymap_flush(&mut self, mode: MapMode) {
+    pub(super) fn keymap_flush(&mut self, mode: MapMode) {
         let held = std::mem::take(&mut self.keymap_held);
         self.keymap_held_at = None;
         let mapped = (1..=held.len()).rev().find_map(|n| {
@@ -1592,14 +1592,18 @@ impl super::App {
         if now < at + self.config.keymaps.timeout {
             return false;
         }
-        let mode = match self.mode {
+        self.keymap_flush(self.keymap_mode());
+        true
+    }
+
+    /// The `[keymaps]` table that applies in the current mode.
+    pub(super) fn keymap_mode(&self) -> MapMode {
+        match self.mode {
             Mode::Visual(_) => MapMode::Visual,
             Mode::Insert => MapMode::Insert,
             Mode::Command | Mode::Search { .. } => MapMode::Command,
             _ => MapMode::Normal,
-        };
-        self.keymap_flush(mode);
-        true
+        }
     }
 
     /// The parser state the held keys would leave if they went through
@@ -2627,6 +2631,13 @@ impl super::App {
             } => {
                 let (l1, l2) = self.counted_range(range, count);
                 self.yank_lines(l1, l2, register);
+            }
+            ExCommand::Normal { range, keys, remap } => {
+                let lines = match range {
+                    ExRange::Implicit => None,
+                    _ => Some(self.counted_range(range, None)),
+                };
+                self.exec_normal(lines, &keys, remap);
             }
             ExCommand::MoveLines { range, to, copy } => {
                 let (l1, l2) = self.counted_range(range, None);
@@ -4456,6 +4467,46 @@ mod tests {
         app.exec_command("retab! 2");
         assert_eq!(app.buffer.rope.to_string(), "\t\tx\n\t\ty\na\t b\n");
         assert_eq!(app.editorconfig.tab_width, 2);
+    }
+
+    #[test]
+    fn normal_types_its_keys_on_every_line() {
+        let mut app = app_with_keymaps("a\nb\nc\n", "");
+        app.exec_command("%norm Ax");
+        assert_eq!(app.buffer.rope.to_string(), "ax\nbx\ncx\n");
+        assert_eq!(app.mode, Mode::Normal);
+        // Each line undoes on its own.
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), "ax\nbx\nc\n");
+
+        // Without a range, once where the cursor is.
+        let mut app = app_with_keymaps("abc\n", "");
+        app.window.cursor.col = 1;
+        app.window.cursor.want_col = 1;
+        app.exec_command("norm x");
+        assert_eq!(app.buffer.rope.to_string(), "ac\n");
+
+        // An operator left waiting is dropped, not left pending.
+        let mut app = app_with_keymaps("abc\n", "");
+        app.exec_command("norm d");
+        press(&mut app, "l");
+        assert_eq!(app.buffer.rope.to_string(), "abc\n");
+
+        // Blanks at the end of the keys are typed too.
+        let mut app = app_with_keymaps("a\n", "");
+        app.exec_command("norm A  ");
+        assert_eq!(app.buffer.rope.to_string(), "a  \n");
+    }
+
+    #[test]
+    fn normal_bang_leaves_the_keymaps_out() {
+        let keymaps = "[normal]\nx = \"dd\"";
+        let mut app = app_with_keymaps("ab\ncd\n", keymaps);
+        app.exec_command("norm x");
+        assert_eq!(app.buffer.rope.to_string(), "cd\n");
+        let mut app = app_with_keymaps("ab\ncd\n", keymaps);
+        app.exec_command("norm! x");
+        assert_eq!(app.buffer.rope.to_string(), "b\ncd\n");
     }
 
     #[test]
