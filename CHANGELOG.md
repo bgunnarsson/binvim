@@ -297,6 +297,8 @@ follows [Semantic Versioning](https://semver.org/).
   register no longer overwrites `"0`.
 - **`@:` repeats the last command line.** `3@:` runs it three times, stopping
   at an error, and `@@` afterwards runs it again.
+- **Insert `Ctrl-A` inserts the text the last Insert session typed** — the
+  `".` register, put in literally.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

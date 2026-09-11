@@ -1879,6 +1879,9 @@ impl super::App {
             KeyCode::Char('r' | 'R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_register_pending = true;
             }
+            KeyCode::Char('a' | 'A') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.insert_register_at_cursor('.');
+            }
             KeyCode::Char('v' | 'V') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_literal_pending = Some(super::state::LiteralPending::Key);
             }
@@ -5169,6 +5172,22 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn insert_ctrl_a_inserts_the_last_inserted_text() {
+        let mut app = app_with_keymaps("x\n", "");
+        // Nothing inserted yet: `Ctrl-A` adds nothing.
+        press(&mut app, "i");
+        app.replay_key(ctrl('a'));
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "x\n");
+        press(&mut app, "ihi ");
+        tap(&mut app, KeyCode::Esc);
+        press(&mut app, "A");
+        app.replay_key(ctrl('a'));
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "hi xhi \n");
     }
 
     #[test]
