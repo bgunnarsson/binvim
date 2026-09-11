@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.0]
+## [0.6.0] - 2026-09-11
 
 ### Added
 - **Insert-mode `Ctrl-W` deletes the previous word.** It follows the same rules
