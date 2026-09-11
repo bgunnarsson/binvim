@@ -128,6 +128,13 @@ follows [Semantic Versioning](https://semver.org/).
 - **`gJ` and Visual `J` / `gJ`.** `gJ` joins lines without adding or
   removing any whitespace. In Visual, `J` and `gJ` join every line the
   selection covers.
+- **`R` Replace mode.** What you type goes over the text instead of before
+  it, and on past the end of the line. `Backspace` takes a char back and
+  puts back the one it replaced, `Enter` breaks the line without taking
+  one, and `3R` types the text three times. `.` repeats it. The status line
+  reads `REPLACE`, with an underline cursor.
+- **Visual `r{char}`.** Every selected character becomes `{char}`, in block
+  selections too; the line breaks between them stay.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

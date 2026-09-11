@@ -198,6 +198,10 @@ pub enum Action {
         register: Option<char>,
     },
     EnterInsert(InsertWhere),
+    /// `R` — Replace mode; `count` types the text that many times in all.
+    EnterReplace {
+        count: usize,
+    },
     DeleteCharForward {
         count: usize,
         register: Option<char>,
@@ -205,6 +209,10 @@ pub enum Action {
     ReplaceChar {
         ch: char,
         count: usize,
+    },
+    /// Visual `r{c}` — every selected char becomes `ch`.
+    VisualReplace {
+        ch: char,
     },
     /// `J` / `gJ` — join `count` lines; `spaces` (`J`) trims the next line's
     /// indent and leaves one space, `gJ` only takes out the line break.
@@ -1025,6 +1033,9 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         state.awaiting_replace = false;
         let count = state.total_count();
         state.reset();
+        if ctx == ParseCtx::Visual {
+            return ParseResult::Action(Action::VisualReplace { ch });
+        }
         return ParseResult::Action(Action::ReplaceChar { ch, count });
     }
 
@@ -1784,6 +1795,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                     register: None,
                 });
             }
+            'r' => {
+                state.awaiting_replace = true;
+                return ParseResult::Pending;
+            }
             'J' => {
                 state.reset();
                 return ParseResult::Action(Action::VisualJoin { spaces: true });
@@ -2061,6 +2076,9 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'O' => Some(Action::EnterInsert(InsertWhere::LineAbove)),
             'I' => Some(Action::EnterInsert(InsertWhere::LineFirstNonBlank)),
             'A' => Some(Action::EnterInsert(InsertWhere::LineEnd)),
+            'R' => Some(Action::EnterReplace {
+                count: state.total_count(),
+            }),
             'x' => Some(Action::DeleteCharForward {
                 count: state.total_count(),
                 register: state.register,

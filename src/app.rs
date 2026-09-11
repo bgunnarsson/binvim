@@ -535,6 +535,8 @@ pub struct App {
     /// Insert-mode `Ctrl-O` is running one Normal-mode command; Insert
     /// resumes once it finishes. `None` otherwise.
     pub insert_oneshot: Option<crate::app::state::InsertOneshot>,
+    /// `R` — Insert types over the text while this is set. `None` otherwise.
+    pub replace_session: Option<crate::app::state::ReplaceSession>,
     /// The file that was active before this one — `Ctrl-^`, `:e#` and `:b#`
     /// go back to it. A path rather than a buffer index: closing buffers
     /// renumbers them, and a closed alternate can still be reopened.
@@ -1009,6 +1011,7 @@ impl App {
             insert_register_pending: false,
             insert_literal_pending: None,
             insert_oneshot: None,
+            replace_session: None,
             alternate_path: None,
             file_marks: HashMap::new(),
             quickfix: None,

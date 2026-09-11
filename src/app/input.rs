@@ -588,6 +588,11 @@ impl super::App {
                 .set_mark('^', start.cursor.line, start.cursor.col);
         }
         self.insert_oneshot_after(start.mode);
+        // Replace mode is Insert with a session; leaving Insert ends it, unless
+        // a `Ctrl-O` command is on its way back.
+        if self.mode != Mode::Insert && self.insert_oneshot.is_none() {
+            self.replace_session = None;
+        }
     }
 
     /// After a key routed from any mode but Insert: once an Insert `Ctrl-O`
@@ -621,8 +626,14 @@ impl super::App {
             cursor.col = line_len;
         }
         self.mode = Mode::Insert;
+        // Replace mode's session outlives the command, so `.` replays an `R`.
+        let prelude = if self.replace_session.is_some() {
+            parser::Action::EnterReplace { count: 1 }
+        } else {
+            parser::Action::EnterInsert(parser::InsertWhere::Cursor)
+        };
         self.recording = Some(state::RecordingState {
-            prelude: parser::Action::EnterInsert(parser::InsertWhere::Cursor),
+            prelude,
             keys: Vec::new(),
             resumed: true,
         });
@@ -1789,6 +1800,9 @@ impl super::App {
                 return;
             }
         }
+        if self.replace_session.is_some() && self.replace_mode_key(key) {
+            return;
+        }
         match key.code {
             KeyCode::Esc => {
                 // Vim convention: if the cursor's line is all whitespace
@@ -2157,6 +2171,51 @@ impl super::App {
                 self.window.cursor.want_col = len;
             }
             _ => {}
+        }
+    }
+
+    /// Replace mode's own keys. A typed char overwrites, `Backspace` takes it
+    /// back, `Enter` breaks the line without overwriting anything, and `Esc`
+    /// types the text again for a count before Insert's `Esc` runs. Any other
+    /// key goes to Insert as usual — it may move the cursor or change the
+    /// text, so `Backspace` stops putting chars back from there.
+    fn replace_mode_key(&mut self, key: KeyEvent) -> bool {
+        let modified = key.modifiers.intersects(
+            KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META,
+        );
+        match key.code {
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.replace_mode_char(c);
+                true
+            }
+            KeyCode::Backspace if !modified => {
+                self.replace_mode_backspace();
+                true
+            }
+            KeyCode::Enter => {
+                let at = self
+                    .buffer
+                    .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                let before = self.buffer.total_chars();
+                self.handle_insert_newline();
+                let len = self.buffer.total_chars() - before;
+                if let Some(session) = self.replace_session.as_mut() {
+                    session.undo.push(state::ReplaceUndo::Added { at, len });
+                    session.typed.push('\n');
+                }
+                true
+            }
+            KeyCode::Esc => {
+                self.replace_mode_finish();
+                false
+            }
+            _ => {
+                if let Some(session) = self.replace_session.as_mut() {
+                    session.undo.clear();
+                    session.typed.clear();
+                }
+                false
+            }
         }
     }
 
@@ -3050,6 +3109,94 @@ mod tests {
         app.window.cursor.line = line;
         app.window.cursor.col = col;
         app
+    }
+
+    fn tap(app: &mut crate::app::App, code: KeyCode) {
+        app.replay_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn r_upper_types_over_the_text_and_on_past_the_line_end() {
+        let mut app = app_with_keymaps("abc\n", "");
+        app.window.cursor.col = 1;
+        press(&mut app, "Rxyz");
+        assert_eq!(app.buffer.rope.to_string(), "axyz\n");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.window.cursor.col, 3);
+    }
+
+    #[test]
+    fn backspace_in_replace_mode_puts_back_what_was_typed_over() {
+        let mut app = app_with_keymaps("abc\n", "");
+        app.window.cursor.col = 1;
+        press(&mut app, "Rxyz");
+        for _ in 0..3 {
+            tap(&mut app, KeyCode::Backspace);
+        }
+        assert_eq!(app.buffer.rope.to_string(), "abc\n");
+        assert_eq!(app.window.cursor.col, 1);
+        tap(&mut app, KeyCode::Backspace);
+        assert_eq!(app.buffer.rope.to_string(), "abc\n");
+        assert_eq!(app.window.cursor.col, 0);
+    }
+
+    #[test]
+    fn a_count_on_r_upper_types_the_text_that_many_times() {
+        let mut app = app_with_keymaps("abcdefgh\n", "");
+        press(&mut app, "3Rxy");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "xyxyxygh\n");
+        assert_eq!(app.window.cursor.col, 5);
+    }
+
+    #[test]
+    fn dot_repeats_a_replace() {
+        let mut app = app_with_keymaps("abcdef\n", "");
+        press(&mut app, "Rxy");
+        tap(&mut app, KeyCode::Esc);
+        press(&mut app, "l.");
+        assert_eq!(app.buffer.rope.to_string(), "xyxyef\n");
+    }
+
+    #[test]
+    fn enter_in_replace_mode_breaks_the_line_and_backspace_joins_it_again() {
+        let mut app = app_with_keymaps("abcd\n", "");
+        press(&mut app, "Rx");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "y");
+        assert_eq!(app.buffer.rope.to_string(), "x\nycd\n");
+        tap(&mut app, KeyCode::Backspace);
+        tap(&mut app, KeyCode::Backspace);
+        assert_eq!(app.buffer.rope.to_string(), "xbcd\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 1));
+    }
+
+    #[test]
+    fn insert_after_replace_mode_inserts_again() {
+        let mut app = app_with_keymaps("ab\n", "");
+        press(&mut app, "Rx");
+        tap(&mut app, KeyCode::Esc);
+        press(&mut app, "iy");
+        assert_eq!(app.buffer.rope.to_string(), "yxb\n");
+    }
+
+    #[test]
+    fn visual_r_replaces_every_selected_char_but_the_line_breaks() {
+        let mut app = app_with_keymaps("abc\ndef\n", "");
+        app.window.cursor.col = 1;
+        app.window.cursor.want_col = 1;
+        press(&mut app, "vjrx");
+        assert_eq!(app.buffer.rope.to_string(), "axx\nxxf\n");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 1));
+
+        let mut app = app_with_keymaps("abcd\nefgh\n", "");
+        app.window.cursor.col = 1;
+        app.window.cursor.want_col = 1;
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jlrx");
+        assert_eq!(app.buffer.rope.to_string(), "axxd\nexxh\n");
     }
 
     #[test]

@@ -230,6 +230,7 @@ impl super::App {
         let enters_insert = matches!(
             action,
             Action::EnterInsert(_)
+                | Action::EnterReplace { .. }
                 | Action::Operate {
                     op: Operator::Change,
                     ..

@@ -140,6 +140,35 @@ pub struct InsertOneshot {
     pub stepped_back: Option<(usize, usize)>,
 }
 
+/// Insert typing over the text rather than before it: Vim's Replace mode
+/// (`R`). A session on Insert rather than a mode of its own, so everything
+/// Insert does — keymaps, `Ctrl-O`, the `^` mark, `.` — works the same.
+#[derive(Debug, Clone, Default)]
+pub struct ReplaceSession {
+    /// Each char typed, newest last, with what it overwrote, for `Backspace`
+    /// to put back. Any other key that edits or moves empties it: Vim only
+    /// restores what was typed since.
+    pub undo: Vec<ReplaceUndo>,
+    /// The text typed, which `3R` types twice more on `Esc`.
+    pub typed: String,
+    pub count: usize,
+}
+
+/// What a char typed in Replace mode did, at char index `at`.
+#[derive(Debug, Clone, Copy)]
+pub enum ReplaceUndo {
+    Replaced {
+        at: usize,
+        old: char,
+    },
+    /// Past the line end nothing is overwritten, and `Enter` breaks the line
+    /// (with its indent) without taking a char either.
+    Added {
+        at: usize,
+        len: usize,
+    },
+}
+
 /// What a key found when it arrived — `App::after_key` compares it with what
 /// the key left behind.
 #[derive(Debug, Clone, Copy)]
