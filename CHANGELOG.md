@@ -98,6 +98,9 @@ follows [Semantic Versioning](https://semver.org/).
   kind — char, line or block — with the cursor on the end it was on, and
   follows any edits made since. Inside Visual, `gv` swaps the current
   selection with the previous one, so pressing it again swaps back.
+- **`gi` inserts where Insert was last left.** It goes to the `` `^ `` mark,
+  which moves with any edits since, and starts Insert there. Before the
+  first insert it starts Insert at the cursor.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

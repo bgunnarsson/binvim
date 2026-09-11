@@ -162,6 +162,8 @@ pub enum InsertWhere {
     LineAbove,
     LineFirstNonBlank,
     LineEnd,
+    /// `gi` — where Insert was last left (the `^` mark).
+    LastInsert,
 }
 
 #[derive(Debug, Clone)]
@@ -1527,6 +1529,11 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         if ch == 'T' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
             return ParseResult::Action(Action::BufferPrev);
+        }
+        // gi — Insert where it was last left.
+        if ch == 'i' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::EnterInsert(InsertWhere::LastInsert));
         }
         // gv — the last Visual selection, from Normal or (swapping) Visual.
         if ch == 'v' && state.operator.is_none() {
