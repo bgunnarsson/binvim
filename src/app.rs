@@ -548,6 +548,8 @@ pub struct App {
     pub snippet_session: Option<crate::app::state::SnippetSession>,
     /// Insert-mode `Ctrl-R` is waiting for the name of the register to paste.
     pub insert_register_pending: bool,
+    /// `Ctrl-R` on the `:` / `/` prompt: the next key names what to insert.
+    pub cmdline_register_pending: bool,
     /// Insert-mode `Ctrl-V` sequence in flight — waiting for the literal key,
     /// or collecting a character code's digits. `None` when not in one.
     pub insert_literal_pending: Option<crate::app::state::LiteralPending>,
@@ -1039,6 +1041,7 @@ impl App {
             additional_cursors: Vec::new(),
             snippet_session: None,
             insert_register_pending: false,
+            cmdline_register_pending: false,
             insert_literal_pending: None,
             insert_oneshot: None,
             replace_session: None,

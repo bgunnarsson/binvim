@@ -209,6 +209,35 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
+    /// The WORD under the cursor — its run of non-blank characters — for
+    /// `Ctrl-R Ctrl-A` on a prompt.
+    pub(super) fn big_word_under_cursor(&self) -> Option<String> {
+        let line = self.window.cursor.line;
+        let line_len = self.buffer.line_len(line);
+        let blank = |col: usize| {
+            self.buffer
+                .char_at(line, col)
+                .is_none_or(char::is_whitespace)
+        };
+        let col = self.window.cursor.col;
+        if col >= line_len || blank(col) {
+            return None;
+        }
+        let mut start = col;
+        while start > 0 && !blank(start - 1) {
+            start -= 1;
+        }
+        let mut end = col + 1;
+        while end < line_len && !blank(end) {
+            end += 1;
+        }
+        Some(
+            (start..end)
+                .filter_map(|c| self.buffer.char_at(line, c))
+                .collect(),
+        )
+    }
+
     pub(super) fn word_under_cursor(&self) -> Option<String> {
         let line_len = self.buffer.line_len(self.window.cursor.line);
         if line_len == 0 {
@@ -618,6 +647,10 @@ impl super::App {
     pub(super) fn handle_search_key(&mut self, key: KeyEvent) {
         use super::cmdline_history::HistoryKind;
         if self.keymap_take(key, MapMode::Command) {
+            return;
+        }
+        if self.cmdline_edit_key(key, HistoryKind::Search) {
+            self.update_incsearch();
             return;
         }
         match key.code {

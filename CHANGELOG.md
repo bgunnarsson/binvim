@@ -302,6 +302,12 @@ follows [Semantic Versioning](https://semver.org/).
 - **`"=` evaluates arithmetic.** `"=6*7<CR>p` puts `42`, and Insert
   `Ctrl-R =` puts the value in at the cursor. Integers and floats, `+ - * /
   %`, parentheses and unary minus; integer division truncates, as in Vim.
+- **The `:` and `/` prompts take Vim's editing keys.** `Ctrl-R {reg}`
+  inserts a register, and `Ctrl-R Ctrl-W` / `Ctrl-R Ctrl-A` the word / WORD
+  under the cursor; `Ctrl-W` and `Ctrl-U` delete the word before the cursor
+  and everything before it; `Ctrl-B` / `Ctrl-E` go to the start and end; and
+  `Ctrl-P` / `Ctrl-N` walk the history. Before, a Ctrl key there typed its
+  letter.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

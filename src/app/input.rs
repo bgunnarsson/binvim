@@ -2404,6 +2404,9 @@ impl super::App {
         if self.keymap_take(key, MapMode::Command) {
             return;
         }
+        if self.cmdline_edit_key(key, HistoryKind::Command) {
+            return;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.cmdline.clear();
@@ -2960,6 +2963,61 @@ impl super::App {
             }
             _ => {}
         }
+    }
+
+    /// The `:` and `/` prompts' Ctrl keys: `Ctrl-R {reg}` — or `Ctrl-R Ctrl-W`
+    /// / `Ctrl-R Ctrl-A` for the word / WORD under the cursor — `Ctrl-W` and
+    /// `Ctrl-U` deletion, `Ctrl-B` / `Ctrl-E`, and `Ctrl-P` / `Ctrl-N` through
+    /// the history. Whether it took the key; any other Ctrl chord is left to
+    /// the prompt.
+    pub(super) fn cmdline_edit_key(
+        &mut self,
+        key: KeyEvent,
+        history: super::cmdline_history::HistoryKind,
+    ) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if self.cmdline_register_pending {
+            self.cmdline_register_pending = false;
+            self.cmdline_completion_reset();
+            let text = match key.code {
+                KeyCode::Char('w' | 'W') if ctrl => self.word_under_cursor(),
+                KeyCode::Char('a' | 'A') if ctrl => self.big_word_under_cursor(),
+                KeyCode::Char(name) if !ctrl => self
+                    .read_register(Some(name))
+                    .map(|reg| cmdline_text(&reg.text)),
+                _ => None,
+            };
+            for c in text.unwrap_or_default().chars() {
+                self.cmdline_insert_char_at_cursor(c);
+            }
+            return true;
+        }
+        let KeyCode::Char(c) = key.code else {
+            return false;
+        };
+        if !ctrl {
+            return false;
+        }
+        let cursor = self.cmdline_cursor.min(self.cmdline.len());
+        match c.to_ascii_lowercase() {
+            'r' => self.cmdline_register_pending = true,
+            'w' => {
+                let start = cmdline_word_start(&self.cmdline, cursor);
+                self.cmdline.replace_range(start..cursor, "");
+                self.cmdline_cursor = start;
+            }
+            'u' => {
+                self.cmdline.replace_range(..cursor, "");
+                self.cmdline_cursor = 0;
+            }
+            'b' => self.cmdline_cursor = 0,
+            'e' => self.cmdline_cursor = self.cmdline.len(),
+            'p' => self.history_walk_back(history),
+            'n' => self.history_walk_forward(history),
+            _ => return false,
+        }
+        self.cmdline_completion_reset();
+        true
     }
 
     /// Insert `c` at `cmdline_cursor` and advance past it.
@@ -4101,6 +4159,40 @@ fn remap_lines(
     });
 }
 
+/// Where `Ctrl-W` on a prompt deletes back to from `cursor` (a byte index):
+/// past any blanks, then over a run of keyword characters or else a run of
+/// other non-blank ones — Vim's word before the cursor.
+fn cmdline_word_start(text: &str, cursor: usize) -> usize {
+    let keyword = |c: char| c.is_alphanumeric() || c == '_';
+    let mut chars = text[..cursor].char_indices().rev().peekable();
+    let mut start = cursor;
+    while let Some(&(i, c)) = chars.peek() {
+        if !c.is_whitespace() {
+            break;
+        }
+        start = i;
+        chars.next();
+    }
+    let Some(&(_, first)) = chars.peek() else {
+        return start;
+    };
+    let word = keyword(first);
+    while let Some(&(i, c)) = chars.peek() {
+        if c.is_whitespace() || keyword(c) != word {
+            break;
+        }
+        start = i;
+        chars.next();
+    }
+    start
+}
+
+/// A register's text as `Ctrl-R` puts it on a one-line prompt: without its
+/// last line break, and any others as spaces.
+fn cmdline_text(text: &str) -> String {
+    text.strip_suffix('\n').unwrap_or(text).replace('\n', " ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5189,6 +5281,51 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn prompt_keys_insert_registers_delete_and_walk_history() {
+        let mut app = app_with_keymaps("foo.bar baz\n", "");
+        app.cmd_history.clear();
+        app.cmd_history.push("set ic".into());
+        app.write_register(Some('a'), "xyz\n".into(), true);
+        press(&mut app, ":e ");
+        app.replay_key(ctrl('r'));
+        app.replay_key(ctrl('w'));
+        app.replay_key(ctrl('r'));
+        app.replay_key(ctrl('a'));
+        assert_eq!(app.cmdline, "e foofoo.bar");
+        app.replay_key(ctrl('w'));
+        assert_eq!(app.cmdline, "e foofoo.");
+        app.replay_key(ctrl('r'));
+        press(&mut app, "a");
+        assert_eq!(app.cmdline, "e foofoo.xyz");
+        app.replay_key(ctrl('b'));
+        assert_eq!(app.cmdline_cursor, 0);
+        app.replay_key(ctrl('e'));
+        assert_eq!(app.cmdline_cursor, app.cmdline.len());
+        app.replay_key(ctrl('u'));
+        assert_eq!(app.cmdline, "");
+        app.replay_key(ctrl('p'));
+        assert_eq!(app.cmdline, "set ic");
+        tap(&mut app, KeyCode::Esc);
+        // The search prompt takes the same keys.
+        press(&mut app, "/");
+        app.replay_key(ctrl('r'));
+        app.replay_key(ctrl('w'));
+        assert_eq!(app.cmdline, "foo");
+        app.replay_key(ctrl('u'));
+        assert_eq!(app.cmdline, "");
+        tap(&mut app, KeyCode::Esc);
+    }
+
+    #[test]
+    fn prompt_ctrl_w_takes_the_word_before_the_cursor() {
+        assert_eq!(cmdline_word_start("e foo.bar", 9), 6);
+        assert_eq!(cmdline_word_start("e foo.", 6), 5);
+        assert_eq!(cmdline_word_start("e foo  ", 7), 2);
+        assert_eq!(cmdline_word_start("", 0), 0);
+        assert_eq!(cmdline_text("a\nb\n"), "a b");
     }
 
     #[test]
