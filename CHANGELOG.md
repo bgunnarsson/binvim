@@ -269,6 +269,10 @@ follows [Semantic Versioning](https://semver.org/).
   the same buffer, `:new` / `:vnew` onto a new empty buffer, and `:only` /
   `:close` close every other window or this one. `<C-w>v` / `<C-w>s` still
   open the picker.
+- **`:cd [dir]` and `:pwd` change and show the working directory.** `:cd`
+  alone goes home, `:cd -` goes back, and `~`, `%` and `#` expand. The
+  pickers, grep and the file tree follow the new directory, and open buffers
+  keep their files; language servers keep the root they started with.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

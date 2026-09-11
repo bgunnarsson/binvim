@@ -153,6 +153,11 @@ pub enum ExCommand {
         cmd: String,
     },
     NoHighlight,
+    /// `:cd [dir]` / `:chd[ir]` — the working directory moved to `dir`, the
+    /// home directory without one, or the previous one for `-`.
+    ChangeDir(String),
+    /// `:pw[d]` — the working directory shown.
+    PrintDir,
     Format,
     Health,
     /// `:messages` — open the captured `window/showMessage` /
@@ -636,6 +641,8 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "ls" | "buffers" => ExCommand::BufferList,
         "b" | "buffer" => ExCommand::BufferSwitch(rest.to_string()),
         "noh" | "nohlsearch" => ExCommand::NoHighlight,
+        "cd" | "chd" | "chdi" | "chdir" => ExCommand::ChangeDir(rest.to_string()),
+        "pw" | "pwd" => ExCommand::PrintDir,
         "fmt" | "format" => ExCommand::Format,
         "health" | "checkhealth" => ExCommand::Health,
         "messages" | "message" | "mes" => ExCommand::Messages,
@@ -764,6 +771,32 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
             ":dapb expected `if <expr>` | `hit <expr>` | `plain`, got `{rest}`"
         )),
     }
+}
+
+/// Where `:cd arg` goes: the home directory without an argument, the
+/// previous directory for `-`, `~` expanded, and anything else as typed —
+/// relative to the working directory.
+pub fn cd_target(
+    arg: &str,
+    previous: Option<&std::path::Path>,
+    home: Option<&std::path::Path>,
+) -> Result<std::path::PathBuf, String> {
+    let home_or_fail = || {
+        home.map(std::path::Path::to_path_buf)
+            .ok_or_else(|| "E472: Command failed".to_string())
+    };
+    if arg.is_empty() || arg == "~" {
+        return home_or_fail();
+    }
+    if arg == "-" {
+        return previous
+            .map(std::path::Path::to_path_buf)
+            .ok_or_else(|| "E186: No previous directory".to_string());
+    }
+    if let Some(rest) = arg.strip_prefix("~/") {
+        return home_or_fail().map(|home| home.join(rest));
+    }
+    Ok(std::path::PathBuf::from(arg))
 }
 
 /// Whether `name` is `full` cut short, to no fewer than `min` letters, the
@@ -1639,6 +1672,31 @@ mod tests {
         assert!(matches!(parse("spell"), ExCommand::SpellToggle));
         assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn cd_and_pwd_parse() {
+        assert!(matches!(parse("cd src"), ExCommand::ChangeDir(d) if d == "src"));
+        assert!(matches!(parse("chdir"), ExCommand::ChangeDir(d) if d.is_empty()));
+        assert!(matches!(parse("pwd"), ExCommand::PrintDir));
+        assert!(matches!(parse("pw"), ExCommand::PrintDir));
+    }
+
+    #[test]
+    fn cd_target_goes_home_back_and_expands_the_tilde() {
+        use std::path::{Path, PathBuf};
+        let home = Some(Path::new("/home/u"));
+        let previous = Some(Path::new("/work"));
+        assert_eq!(cd_target("", None, home), Ok(PathBuf::from("/home/u")));
+        assert_eq!(cd_target("~", None, home), Ok(PathBuf::from("/home/u")));
+        assert_eq!(
+            cd_target("~/src", None, home),
+            Ok(PathBuf::from("/home/u/src"))
+        );
+        assert_eq!(cd_target("-", previous, home), Ok(PathBuf::from("/work")));
+        assert_eq!(cd_target("src", previous, home), Ok(PathBuf::from("src")));
+        assert!(cd_target("-", None, home).unwrap_err().contains("E186"));
+        assert!(cd_target("", None, None).unwrap_err().contains("E472"));
     }
 
     #[test]

@@ -55,14 +55,14 @@ impl super::App {
                         self.buffer
                             .path
                             .as_ref()
-                            .map(|p| p.display().to_string())
+                            .map(|p| super::buffers::display_path(p))
                             .unwrap_or_else(|| "[No Name]".into())
                     } else {
                         stash
                             .buffer
                             .path
                             .as_ref()
-                            .map(|p| p.display().to_string())
+                            .map(|p| super::buffers::display_path(p))
                             .unwrap_or_else(|| "[No Name]".into())
                     };
                     items.push((name, PickerPayload::BufferIdx(i)));

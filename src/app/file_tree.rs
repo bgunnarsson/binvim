@@ -269,6 +269,19 @@ impl super::App {
     }
 
     pub(super) fn open_file_tree(&mut self) {
+        self.file_tree = Some(self.file_tree_at_cwd());
+        self.mode = Mode::FileTree;
+    }
+
+    /// `:cd` with the pane open: the tree rebuilt on the new directory, and
+    /// focus left where it was.
+    pub(super) fn reroot_file_tree(&mut self) {
+        if self.file_tree.is_some() {
+            self.file_tree = Some(self.file_tree_at_cwd());
+        }
+    }
+
+    fn file_tree_at_cwd(&self) -> FileTreeState {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut state = FileTreeState::new(cwd);
         // Seed the cursor on the active buffer's path if the file
@@ -277,8 +290,7 @@ impl super::App {
         if let Some(active_path) = self.buffer.path.clone() {
             seed_cursor_on_path(&mut state, &active_path);
         }
-        self.file_tree = Some(state);
-        self.mode = Mode::FileTree;
+        state
     }
 
     pub(super) fn close_file_tree(&mut self) {
