@@ -216,6 +216,11 @@ follows [Semantic Versioning](https://semver.org/).
   without changing anything. `r` is still accepted and changes nothing, and
   a flag `:s` doesn't know is now an error rather than ignored. `:S` takes
   the same syntax and flags.
+- **`:s///c` asks before each replacement.** The match it's asking about
+  is highlighted and the cursor sits on it: `y` replaces it, `n` passes it
+  over, `a` replaces it and every one after, `l` replaces it and stops, `q`
+  or `Esc` stop, and `Ctrl-E` / `Ctrl-Y` scroll to see around it. Every
+  replacement it made undoes as one step.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

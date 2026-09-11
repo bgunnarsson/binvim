@@ -1687,6 +1687,11 @@ impl super::App {
     }
 
     pub(super) fn handle_keyboard(&mut self, key: KeyEvent, ctx: ParseCtx) {
+        // `:s///c` takes every key while it asks, before a mapping could.
+        if self.sub_confirm.is_some() {
+            self.sub_confirm_key(key);
+            return;
+        }
         if self.keymap_take(key, ctx.into()) {
             return;
         }
@@ -2576,6 +2581,16 @@ impl super::App {
                 pattern,
                 replacement,
                 flags,
+            } if flags.confirm && !flags.count_only => {
+                if let Err(e) = self.substitute_confirm(range, &pattern, &replacement, flags) {
+                    self.status_msg = format!("s: {e}");
+                }
+            }
+            ExCommand::Substitute {
+                range,
+                pattern,
+                replacement,
+                flags,
             } => {
                 if !flags.count_only {
                     self.history.record(&self.buffer.rope, self.window.cursor);
@@ -2873,6 +2888,24 @@ impl super::App {
         repl: &str,
         flags: command::SubFlags,
     ) -> Result<(usize, usize), String> {
+        let re = self.substitute_regex(pat, flags)?;
+        let groups = super::search::vim_groups(&re);
+        Ok(self.replace_matches(
+            range,
+            &re,
+            flags.global,
+            flags.count_only,
+            &|caps, matched| super::search::expand_replacement(repl, caps, &groups, matched),
+        ))
+    }
+
+    /// The regex `:s` runs: its pattern, or the last search when that's
+    /// empty, with the case flags — made the one `n` repeats, as in Vim.
+    fn substitute_regex(
+        &mut self,
+        pat: &str,
+        flags: command::SubFlags,
+    ) -> Result<regex::Regex, String> {
         let pattern = if pat.is_empty() {
             match self.last_search.as_ref() {
                 Some((last, _)) => last.clone(),
@@ -2883,18 +2916,9 @@ impl super::App {
         };
         let cased = super::search::with_case(&pattern, flags.ignore_case);
         let re = super::search::compile_search(&cased)?;
-        let groups = super::search::vim_groups(&re);
-        let counts = self.replace_matches(
-            range,
-            &re,
-            flags.global,
-            flags.count_only,
-            &|caps, matched| super::search::expand_replacement(repl, caps, &groups, matched),
-        );
-        // `:s` leaves its pattern as the one `n` repeats, as in Vim.
         let backward = self.last_search.as_ref().is_some_and(|(_, back)| *back);
         self.set_search(&pattern, backward);
-        Ok(counts)
+        Ok(re)
     }
 
     /// Every match of `re` in `range` — the first on each line, or all of
@@ -2941,6 +2965,182 @@ impl super::App {
         (total, lines)
     }
 
+    /// `:s///c` — sets up the walk and asks about the first match. Each
+    /// answer comes through `sub_confirm_key`.
+    fn substitute_confirm(
+        &mut self,
+        range: ExRange,
+        pat: &str,
+        repl: &str,
+        flags: command::SubFlags,
+    ) -> Result<(), String> {
+        let re = self.substitute_regex(pat, flags)?;
+        let (l1, l2) = self.resolve_range(range, true);
+        self.sub_confirm = Some(super::state::SubConfirm {
+            groups: super::search::vim_groups(&re),
+            re,
+            replacement: repl.to_string(),
+            global: flags.global,
+            line: l1,
+            last_line: l2.min(self.last_text_line()),
+            from: 0,
+            last_end: None,
+            current: None,
+            made: 0,
+            recorded: false,
+        });
+        self.sub_confirm_seek();
+        if self.sub_confirm.is_none() {
+            self.status_msg = format!("Pattern not found: {pat}");
+        }
+        self.sub_confirm_ask();
+        Ok(())
+    }
+
+    /// A key while `:s///c` asks about a match: `y` replaces it, `n` passes
+    /// it over, `a` replaces it and every one after, `l` replaces it and
+    /// stops, `q` / `Esc` stop, and `Ctrl-E` / `Ctrl-Y` scroll.
+    fn sub_confirm_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match (key.code, ctrl) {
+            (KeyCode::Char('e'), true) => self.page_scroll(parser::PageScrollKind::LineDown),
+            (KeyCode::Char('y'), true) => self.page_scroll(parser::PageScrollKind::LineUp),
+            (KeyCode::Char('y'), false) => {
+                self.sub_confirm_accept();
+                self.sub_confirm_seek();
+            }
+            (KeyCode::Char('n'), false) => {
+                self.sub_confirm_pass();
+                self.sub_confirm_seek();
+            }
+            (KeyCode::Char('a'), false) => {
+                while self
+                    .sub_confirm
+                    .as_ref()
+                    .is_some_and(|c| c.current.is_some())
+                {
+                    self.sub_confirm_accept();
+                    self.sub_confirm_seek();
+                }
+            }
+            (KeyCode::Char('l'), false) => {
+                self.sub_confirm_accept();
+                self.sub_confirm_finish();
+            }
+            (KeyCode::Char('q'), false) | (KeyCode::Esc, _) => self.sub_confirm_finish(),
+            _ => {}
+        }
+        // Every keypress clears the status line, and the question has to stay.
+        self.sub_confirm_ask();
+    }
+
+    /// Puts the `:s///c` question on the status line.
+    fn sub_confirm_ask(&mut self) {
+        if let Some(c) = self.sub_confirm.as_ref() {
+            self.status_msg = format!("replace with {} (y/n/a/q/l/^E/^Y)?", c.replacement);
+        }
+    }
+
+    /// Moves the `:s///c` walk on to the next match and puts the cursor on
+    /// it, or ends the walk when there's none left.
+    fn sub_confirm_seek(&mut self) {
+        while let Some(c) = self.sub_confirm.as_mut() {
+            if c.line > c.last_line {
+                break;
+            }
+            let line_start = self.buffer.line_start_idx(c.line);
+            let line_len = self.buffer.line_len(c.line);
+            let text = self
+                .buffer
+                .rope
+                .slice(line_start..line_start + line_len)
+                .to_string();
+            let (replacement, groups) = (&c.replacement, &c.groups);
+            let hit =
+                super::search::next_hit(&c.re, &text, c.from, c.last_end, &|caps, matched| {
+                    super::search::expand_replacement(replacement, caps, groups, matched)
+                });
+            let Some(hit) = hit else {
+                c.line += 1;
+                c.from = 0;
+                c.last_end = None;
+                continue;
+            };
+            let start = line_start + text[..hit.part.0].chars().count();
+            let end = line_start + text[..hit.part.1].chars().count();
+            c.current = Some(super::state::ConfirmMatch {
+                part: hit.part,
+                end: hit.whole.1,
+                resume: hit.resume(&text),
+                chars: (start, end),
+                with: hit.with,
+            });
+            self.cursor_to_idx(start);
+            return;
+        }
+        self.sub_confirm_finish();
+    }
+
+    /// Replaces the match `:s///c` is asking about, and moves the walk on to
+    /// just past the new text.
+    fn sub_confirm_accept(&mut self) {
+        let Some(c) = self.sub_confirm.as_mut() else {
+            return;
+        };
+        let Some(m) = c.current.take() else {
+            return;
+        };
+        let first = !c.recorded;
+        c.recorded = true;
+        c.made += 1;
+        let breaks = m.with.matches('\n').count();
+        c.last_line += breaks;
+        c.line += breaks;
+        c.from = match m.with.rfind('\n') {
+            Some(at) => m.with.len() - at - 1,
+            None => m.part.0 + m.with.len(),
+        };
+        c.last_end = Some(c.from);
+        if !c.global {
+            c.line += 1;
+            c.from = 0;
+            c.last_end = None;
+        }
+        if first {
+            self.history.record(&self.buffer.rope, self.window.cursor);
+        }
+        self.buffer.delete_range(m.chars.0, m.chars.1);
+        self.buffer.insert_at_idx(m.chars.0, &m.with);
+    }
+
+    /// Passes over the match `:s///c` is asking about.
+    fn sub_confirm_pass(&mut self) {
+        let Some(c) = self.sub_confirm.as_mut() else {
+            return;
+        };
+        let Some(m) = c.current.take() else {
+            return;
+        };
+        if c.global {
+            c.from = m.resume;
+            c.last_end = Some(m.end);
+        } else {
+            c.line += 1;
+            c.from = 0;
+            c.last_end = None;
+        }
+    }
+
+    /// Ends `:s///c`, saying how many replacements it made.
+    fn sub_confirm_finish(&mut self) {
+        let Some(c) = self.sub_confirm.take() else {
+            return;
+        };
+        let s = if c.made == 1 { "" } else { "s" };
+        self.status_msg = format!("{} substitution{s}", c.made);
+        self.clamp_cursor_normal();
+    }
+
     fn delete_lines(&mut self, range: ExRange) {
         let (l1, l2) = self.resolve_range(range, true);
         let last_line = self.buffer.line_count().saturating_sub(1);
@@ -2981,6 +3181,10 @@ impl super::App {
     fn project_substitute(&mut self, pattern: &str, replacement: &str, flags: command::SubFlags) {
         if pattern.is_empty() {
             self.status_msg = "S: empty pattern".into();
+            return;
+        }
+        if flags.confirm {
+            self.status_msg = "S: c isn't supported across files".into();
             return;
         }
         // ripgrep runs the same regex engine, so the translated pattern finds
@@ -3817,6 +4021,50 @@ mod tests {
         app.exec_command("s/a/b/q");
         assert_eq!(app.buffer.rope.to_string(), "a\n");
         assert!(app.status_msg.contains("E488"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn substitute_c_asks_about_each_match_and_undoes_as_one() {
+        let mut app = app_with_keymaps("a a\na\n", "");
+        app.exec_command("%s/a/b/gc");
+        assert!(
+            app.status_msg.starts_with("replace with b"),
+            "{}",
+            app.status_msg
+        );
+        assert_eq!(app.line_confirm_match(0), Some((0, 1)));
+        press(&mut app, "yn");
+        assert_eq!(app.line_confirm_match(1), Some((0, 1)));
+        press(&mut app, "y");
+        assert_eq!(app.buffer.rope.to_string(), "b a\nb\n");
+        assert_eq!(app.status_msg, "2 substitutions");
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), "a a\na\n");
+    }
+
+    #[test]
+    fn substitute_c_takes_all_last_and_quit() {
+        let run = |keys: &str| {
+            let mut app = app_with_keymaps("x x x\n", "");
+            app.exec_command("s/x/y/gc");
+            press(&mut app, keys);
+            (app.buffer.rope.to_string(), app.line_confirm_match(0))
+        };
+        assert_eq!(run("a"), ("y y y\n".to_string(), None));
+        assert_eq!(run("nl"), ("x y x\n".to_string(), None));
+        assert_eq!(run("yq"), ("y x x\n".to_string(), None));
+
+        // Without `g`, one match a line.
+        let mut app = app_with_keymaps("a a\na\n", "");
+        app.exec_command("%s/a/b/c");
+        press(&mut app, "yy");
+        assert_eq!(app.buffer.rope.to_string(), "b a\nb\n");
+
+        // A line break in the replacement moves the rest of the walk down.
+        let mut app = app_with_keymaps("a,b,c\n", "");
+        app.exec_command("s/,/\\r/gc");
+        press(&mut app, "yy");
+        assert_eq!(app.buffer.rope.to_string(), "a\nb\nc\n");
     }
 
     #[test]

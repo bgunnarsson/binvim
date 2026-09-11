@@ -611,6 +611,42 @@ impl<'a> BufferState<'a> {
     }
 }
 
+/// A `:s///c` walking its range one match at a time, top-down.
+pub struct SubConfirm {
+    pub re: regex::Regex,
+    pub groups: Vec<usize>,
+    pub replacement: String,
+    pub global: bool,
+    /// The line being searched, and the range's last line — which moves
+    /// down when a replacement adds line breaks.
+    pub line: usize,
+    pub last_line: usize,
+    /// Where on `line` the search goes on from, in bytes, and where the
+    /// last match there ended: an empty match right after it doesn't count.
+    pub from: usize,
+    pub last_end: Option<usize>,
+    /// The match being asked about.
+    pub current: Option<ConfirmMatch>,
+    /// Replacements made so far.
+    pub made: usize,
+    /// The undo point is taken, so every accepted replacement undoes as one.
+    pub recorded: bool,
+}
+
+/// A match `:s///c` is asking about.
+pub struct ConfirmMatch {
+    /// The bytes on the line it replaces — only the `\zs` / `\ze` part.
+    pub part: (usize, usize),
+    /// Where the whole hit ends, and where a search that passes it over
+    /// goes on from.
+    pub end: usize,
+    pub resume: usize,
+    /// Its chars in the buffer, for the highlight and the edit.
+    pub chars: (usize, usize),
+    /// What it would become.
+    pub with: String,
+}
+
 /// A char-index range that's currently flashing in the buffer to confirm a
 /// yank. Cleared automatically once `expires_at` passes.
 pub struct YankHighlight {
