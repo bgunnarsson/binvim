@@ -248,6 +248,11 @@ follows [Semantic Versioning](https://semver.org/).
   Insert mode included — is closed as `Esc` would close it, and each line
   undoes on its own. `:normal!` leaves `[keymaps]` out, and without a range
   the keys run once where the cursor is.
+- **`:g/pat/cmd`, `:g!` and `:v` run a command on every matching line.**
+  Any `:` command works, `:normal` included. Every matching line is marked
+  before the first runs, so `:g/x/d` doesn't skip lines and `:g/^/m0` turns
+  the file round, and the whole run undoes as one step. Without a command,
+  `:g/pat/` goes to the last matching line.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

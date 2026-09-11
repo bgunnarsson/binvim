@@ -406,6 +406,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:le` / `:ri` / `:ce`      | Align the lines left (`:le 4` indents by 4), right or centred in a width (`:ce 60`; default `max_line_length`, else 80). |
 | `:retab[!] [N]`            | Lay tabs and spaces out again for tabstop `N` — spaces or tabs as the file indents; `!` takes runs of spaces too. |
 | `:norm[al][!] {keys}`      | Type `keys` in Normal mode on each line of the range (`:%norm A;`), each line its own undo step; `!` leaves `[keymaps]` out. |
+| `:g/pat/cmd` / `:g!` / `:v` | Run `cmd` — any `:` command, `:normal` included — on every line matching `pat`, or with `:g!` / `:v` every line that doesn't (`:g/TODO/d`, `:g/^/m0`). One undo step. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. `:dapb` accepts arg forms: `:dapb if <expr>` for a conditional breakpoint, `:dapb hit <expr>` for hit-count, `:dapb plain` to strip both. Conditional breakpoints render as `◆` in the gutter; the breakpoints pane lists each row's expression inline. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:x` / `ZZ` / `ZQ`        | `:x` and `ZZ` write only if the buffer is modified, then quit; `ZQ` is `:q!`. `:q`, `:wq` and `:x` refuse (`E162`) while another buffer has unsaved changes. |
