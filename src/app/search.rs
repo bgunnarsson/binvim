@@ -118,15 +118,72 @@ impl super::App {
                 let (line, col) = self.buffer.pos_of(at);
                 let here = if i == idx { '>' } else { ' ' };
                 let label = format!("{here}{:>5} {:>5} {:>4}", i.abs_diff(idx), line + 1, col);
-                let text = self.buffer.rope.line(line).to_string().trim().to_string();
-                (label, text)
+                (label, self.line_preview(line))
             })
             .collect();
-        self.listing = Some(super::state::Listing {
+        self.show_listing(super::state::Listing {
             title: "change  line   col  text".into(),
             rows,
             empty: "(no changes yet)".into(),
         });
+    }
+
+    /// `:marks` — this buffer's marks in the list overlay, in Vim's order:
+    /// `'`, the letters, then the ones Vim keeps itself.
+    pub(super) fn cmd_marks(&mut self) {
+        let mut names: Vec<char> = self.buffer.marks.keys().copied().collect();
+        names.sort_by_key(|&name| match name {
+            '\'' => (0, 0),
+            'a'..='z' => (1, name as usize),
+            'A'..='Z' => (2, name as usize),
+            '0'..='9' => (3, name as usize),
+            _ => (4, "\"[]^.<>".find(name).unwrap_or(usize::MAX)),
+        });
+        let rows = names
+            .into_iter()
+            .map(|name| {
+                let (line, col) = self.buffer.pos_of(self.buffer.marks[&name]);
+                let label = format!("{name} {:>6} {:>4}", line + 1, col);
+                (label, self.line_preview(line))
+            })
+            .collect();
+        self.show_listing(super::state::Listing {
+            title: "mark   line   col  text".into(),
+            rows,
+            empty: "(no marks set)".into(),
+        });
+    }
+
+    /// `:jumps` — the jump list in the list overlay, oldest first, each row
+    /// numbered by its distance from where `Ctrl-O` / `Ctrl-I` are, as in Vim.
+    pub(super) fn cmd_jumps(&mut self) {
+        let idx = self.jump_idx.min(self.jumplist.len());
+        let rows = self
+            .jumplist
+            .iter()
+            .enumerate()
+            .map(|(i, &(line, col))| {
+                let here = if i == idx { '>' } else { ' ' };
+                let label = format!("{here}{:>4} {:>5} {:>4}", i.abs_diff(idx), line + 1, col);
+                (label, self.line_preview(line))
+            })
+            .collect();
+        self.show_listing(super::state::Listing {
+            title: "jump  line   col  text".into(),
+            rows,
+            empty: "(no jumps yet)".into(),
+        });
+    }
+
+    /// A line's text, trimmed, for a list-overlay row. Clamped: the jump list
+    /// doesn't move with edits, so it can name a line that's gone.
+    fn line_preview(&self, line: usize) -> String {
+        let line = line.min(self.buffer.rope.len_lines().saturating_sub(1));
+        self.buffer.rope.line(line).to_string().trim().to_string()
+    }
+
+    fn show_listing(&mut self, listing: super::state::Listing) {
+        self.listing = Some(listing);
         self.show_list_page = true;
         self.list_scroll = 0;
     }

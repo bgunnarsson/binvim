@@ -2560,6 +2560,8 @@ impl super::App {
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Registers => self.cmd_registers(),
             ExCommand::Changes => self.cmd_changes(),
+            ExCommand::Marks => self.cmd_marks(),
+            ExCommand::Jumps => self.cmd_jumps(),
             ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
             ExCommand::Workspaces => self.cmd_workspaces(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
@@ -3356,6 +3358,31 @@ mod tests {
             app.listing.is_none(),
             ":registers shows the registers again"
         );
+    }
+
+    #[test]
+    fn marks_command_lists_marks_in_vim_order() {
+        let mut app = app_with_keymaps("one\ntwo\nthree\n", "");
+        press(&mut app, "jmbggma");
+        app.exec_command("marks");
+        let listing = app.listing.as_ref().expect("listing");
+        let names: String = listing
+            .rows
+            .iter()
+            .filter_map(|(label, _)| label.chars().next())
+            .collect();
+        assert_eq!(names, "'ab", "`gg` was a jump, so `'` is set too");
+        assert_eq!(listing.rows[1].1, "one");
+    }
+
+    #[test]
+    fn jumps_command_lists_the_jump_list() {
+        let mut app = app_with_keymaps("a\nb\nc\nd", "");
+        press(&mut app, "Ggg");
+        app.exec_command("jumps");
+        let listing = app.listing.as_ref().expect("listing");
+        let texts: Vec<&str> = listing.rows.iter().map(|(_, text)| text.as_str()).collect();
+        assert_eq!(texts, ["a", "d"]);
     }
 
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {

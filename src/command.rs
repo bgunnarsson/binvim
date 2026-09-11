@@ -61,6 +61,10 @@ pub enum ExCommand {
     Registers,
     /// `:changes` — the change list in the list overlay.
     Changes,
+    /// `:marks` — the buffer's marks in the list overlay.
+    Marks,
+    /// `:jumps` — the jump list in the list overlay.
+    Jumps,
     /// `:codelens` — dump the active buffer's code-lens cache to the
     /// status line. Diagnostic aid for when the lens row isn't
     /// showing up: surfaces whether lenses were received, what lines
@@ -359,6 +363,8 @@ pub fn parse(line: &str) -> ExCommand {
         "messages" | "message" | "mes" => ExCommand::Messages,
         "reg" | "registers" | "display" => ExCommand::Registers,
         "changes" => ExCommand::Changes,
+        "marks" => ExCommand::Marks,
+        "jumps" | "ju" => ExCommand::Jumps,
         "codelens" | "codelenses" => ExCommand::CodeLensStatus,
         "workspaces" | "ws" => ExCommand::Workspaces,
         "terminal" | "term" => {

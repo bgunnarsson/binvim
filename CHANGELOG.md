@@ -106,6 +106,10 @@ follows [Semantic Versioning](https://semver.org/).
   that many. Each buffer keeps its last 100 changes, a change on the same
   line as the one before counts once, and the places move with the text.
   `:changes` lists them in the same overlay as `:registers`.
+- **`:marks` and `:jumps`.** `:marks` lists this buffer's marks — yours and
+  the ones Vim keeps itself — with the line, column and text of each, in
+  Vim's order. `:jumps` lists the jump list the way `:changes` lists
+  changes, with `>` where `Ctrl-O` / `Ctrl-I` are.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another
