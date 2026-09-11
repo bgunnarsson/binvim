@@ -34,6 +34,15 @@ pub enum TextObjectVerb {
     Argument {
         inner: bool,
     },
+    /// `if` / `af` — the function or method around the cursor, from the
+    /// buffer's tree-sitter parse.
+    Function {
+        inner: bool,
+    },
+    /// `ic` / `ac` — the class, struct, impl or interface around the cursor.
+    Class {
+        inner: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,6 +64,8 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::Sentence { inner } => sentence(buf, cur, inner),
         TextObjectVerb::Tag { inner } => tag(buf, cur, inner, 1),
         TextObjectVerb::Argument { inner } => argument(buf, cur, inner, 1),
+        TextObjectVerb::Function { inner } => syntax_object(buf, cur, false, inner, 1),
+        TextObjectVerb::Class { inner } => syntax_object(buf, cur, true, inner, 1),
     }
 }
 
@@ -98,6 +109,8 @@ pub fn compute_counted(
         TextObjectVerb::Sentence { inner } => extend_sentences(buf, first, inner, count),
         TextObjectVerb::Tag { inner } => tag(buf, cur, inner, count),
         TextObjectVerb::Argument { inner } => argument(buf, cur, inner, count),
+        TextObjectVerb::Function { inner } => syntax_object(buf, cur, false, inner, count),
+        TextObjectVerb::Class { inner } => syntax_object(buf, cur, true, inner, count),
     }
 }
 
@@ -242,6 +255,179 @@ fn extend_paragraphs(
         last = line_run(buf, last + 1, lines).1;
     }
     Some(line_span(buf, first_line, last))
+}
+
+/// The tree-sitter node kinds `af` / `ac` take, as (functions, classes), in
+/// each language that has a table.
+fn syntax_kinds(
+    lang: crate::lang::Lang,
+) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    use crate::lang::Lang;
+    let kinds: (&'static [&'static str], &'static [&'static str]) = match lang {
+        Lang::Rust => (
+            &["function_item", "closure_expression"],
+            &[
+                "struct_item",
+                "enum_item",
+                "union_item",
+                "trait_item",
+                "impl_item",
+            ],
+        ),
+        Lang::TypeScript | Lang::Tsx | Lang::JavaScript => (
+            &[
+                "function_declaration",
+                "function_expression",
+                "generator_function_declaration",
+                "generator_function",
+                "arrow_function",
+                "method_definition",
+            ],
+            &[
+                "class_declaration",
+                "abstract_class_declaration",
+                "class",
+                "interface_declaration",
+            ],
+        ),
+        Lang::Python => (&["function_definition", "lambda"], &["class_definition"]),
+        Lang::Go => (
+            &["function_declaration", "method_declaration", "func_literal"],
+            &["type_declaration"],
+        ),
+        Lang::CSharp => (
+            &[
+                "method_declaration",
+                "constructor_declaration",
+                "local_function_statement",
+                "lambda_expression",
+            ],
+            &[
+                "class_declaration",
+                "struct_declaration",
+                "interface_declaration",
+                "record_declaration",
+                "enum_declaration",
+            ],
+        ),
+        Lang::Lua => (&["function_declaration", "function_definition"], &[]),
+        Lang::C => (
+            &["function_definition"],
+            &["struct_specifier", "union_specifier", "enum_specifier"],
+        ),
+        Lang::Cpp => (
+            &["function_definition", "lambda_expression"],
+            &[
+                "class_specifier",
+                "struct_specifier",
+                "union_specifier",
+                "enum_specifier",
+            ],
+        ),
+        _ => return None,
+    };
+    Some(kinds)
+}
+
+/// `af` / `if` and `ac` / `ic`: the `count`th function (or class) node
+/// around the cursor in the buffer's tree-sitter parse. `af` / `ac` is the
+/// whole node — whole lines when it fills them, as `ap` does — and `if` /
+/// `ic` its body, inside the braces and trimmed.
+fn syntax_object(
+    buf: &Buffer,
+    cur: Cursor,
+    class: bool,
+    inner: bool,
+    count: usize,
+) -> Option<TextRange> {
+    let lang = buf.path.as_deref().and_then(crate::lang::Lang::detect)?;
+    let (functions, classes) = syntax_kinds(lang)?;
+    let kinds = if class { classes } else { functions };
+    if kinds.is_empty() {
+        return None;
+    }
+    let source = buf.rope.to_string();
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(&lang.ts_language()).ok()?;
+    let tree = parser.parse(&source, None)?;
+    let at = buf.pos_to_char(cur.line, cur.col).min(buf.total_chars());
+    let byte = buf.rope.char_to_byte(at);
+    let mut node = tree.root_node().descendant_for_byte_range(byte, byte)?;
+    let mut left = count.max(1);
+    loop {
+        if kinds.contains(&node.kind()) {
+            left -= 1;
+            if left == 0 {
+                break;
+            }
+        }
+        node = node.parent()?;
+    }
+    let start = buf.rope.byte_to_char(node.start_byte());
+    let end = buf.rope.byte_to_char(node.end_byte());
+    if inner {
+        let body = match node.child_by_field_name("body") {
+            Some(b) => (
+                buf.rope.byte_to_char(b.start_byte()),
+                buf.rope.byte_to_char(b.end_byte()),
+            ),
+            // Go's `type T struct { … }` keeps its braces further down.
+            None => ((start..end).find(|&i| buf.rope.char(i) == '{')?, end),
+        };
+        let (start, end) = unbrace(buf, body.0, body.1)?;
+        return Some(TextRange {
+            start,
+            end,
+            linewise: false,
+        });
+    }
+    let first_line = buf.rope.char_to_line(start);
+    let last_line = buf.rope.char_to_line(end.saturating_sub(1).max(start));
+    let line_start = buf.line_start_idx(first_line);
+    let line_end = buf.line_start_idx(last_line) + buf.line_len(last_line);
+    let blank = |from: usize, to: usize| (from..to).all(|i| buf.rope.char(i).is_whitespace());
+    if blank(line_start, start) && blank(end.min(line_end), line_end) {
+        return Some(line_span(buf, first_line, last_line));
+    }
+    Some(TextRange {
+        start,
+        end,
+        linewise: false,
+    })
+}
+
+/// Inside `[start, end)`: between its braces when it's a `{ … }` span, and
+/// trimmed either way; `None` when nothing's left.
+fn unbrace(buf: &Buffer, start: usize, end: usize) -> Option<(usize, usize)> {
+    let braced = end > start + 1 && buf.rope.char(start) == '{' && buf.rope.char(end - 1) == '}';
+    if braced {
+        trimmed(buf, start + 1, end - 1)
+    } else {
+        trimmed(buf, start, end)
+    }
+}
+
+/// Why `af` / `ac` found nothing when the reason is the language, not the
+/// cursor — for the status line.
+pub fn syntax_object_hint(buf: &Buffer, obj: TextObjectVerb) -> Option<String> {
+    let class = match obj {
+        TextObjectVerb::Function { .. } => false,
+        TextObjectVerb::Class { .. } => true,
+        _ => return None,
+    };
+    let what = if class { "class" } else { "function" };
+    let Some(lang) = buf.path.as_deref().and_then(crate::lang::Lang::detect) else {
+        return Some(format!("no {what} objects in a file of unknown language"));
+    };
+    let supported = match syntax_kinds(lang) {
+        Some((_, classes)) if class => !classes.is_empty(),
+        Some((functions, _)) => !functions.is_empty(),
+        None => false,
+    };
+    if supported {
+        return None;
+    }
+    Some(format!("no {what} objects for {lang:?}"))
 }
 
 /// `it` / `at`: the element around the cursor — `it` between its open and
@@ -1211,5 +1397,151 @@ mod tests {
             Some(", y")
         );
         assert_eq!(arg_text("f()", 2, true, 1), None);
+    }
+
+    fn syntax_text(
+        file: &str,
+        s: &str,
+        at: &str,
+        obj: TextObjectVerb,
+        count: usize,
+    ) -> Option<String> {
+        let mut b = buf(s);
+        b.path = Some(std::path::PathBuf::from(file));
+        let idx = s.find(at).unwrap();
+        let line = b.rope.char_to_line(idx);
+        let col = idx - b.rope.line_to_char(line);
+        let r = compute_counted(&b, cur(line, col), obj, count)?;
+        Some(b.rope.slice(r.start..r.end).to_string())
+    }
+
+    const F_IN: TextObjectVerb = TextObjectVerb::Function { inner: true };
+    const F_OUT: TextObjectVerb = TextObjectVerb::Function { inner: false };
+    const C_IN: TextObjectVerb = TextObjectVerb::Class { inner: true };
+    const C_OUT: TextObjectVerb = TextObjectVerb::Class { inner: false };
+
+    #[test]
+    fn syntax_objects_in_rust() {
+        let s = "struct S {\n    a: u8,\n}\n\nimpl S {\n    fn f(&self) -> u8 {\n        self.a\n    }\n}\n";
+        assert_eq!(
+            syntax_text("x.rs", s, "self.a", F_IN, 1).as_deref(),
+            Some("self.a")
+        );
+        assert_eq!(
+            syntax_text("x.rs", s, "self.a", F_OUT, 1).as_deref(),
+            Some("    fn f(&self) -> u8 {\n        self.a\n    }\n")
+        );
+        assert_eq!(
+            syntax_text("x.rs", s, "a: u8", C_IN, 1).as_deref(),
+            Some("a: u8,")
+        );
+        assert!(
+            syntax_text("x.rs", s, "self.a", C_OUT, 1)
+                .unwrap()
+                .starts_with("impl S {")
+        );
+        let nested = "fn a() {\n    let c = || {\n        1\n    };\n}\n";
+        assert_eq!(
+            syntax_text("x.rs", nested, "1", F_IN, 1).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            syntax_text("x.rs", nested, "1", F_IN, 2).as_deref(),
+            Some("let c = || {\n        1\n    };")
+        );
+    }
+
+    #[test]
+    fn syntax_objects_in_python_typescript_and_javascript() {
+        let py = "class A:\n    def f(self):\n        return 1\n";
+        assert_eq!(
+            syntax_text("x.py", py, "return", F_IN, 1).as_deref(),
+            Some("return 1")
+        );
+        assert_eq!(
+            syntax_text("x.py", py, "return", C_OUT, 1).as_deref(),
+            Some(py)
+        );
+        let ts = "class C {\n  m() {\n    return 1;\n  }\n}\n";
+        assert_eq!(
+            syntax_text("x.ts", ts, "return", F_IN, 1).as_deref(),
+            Some("return 1;")
+        );
+        assert_eq!(
+            syntax_text("x.ts", ts, "return", C_IN, 1).as_deref(),
+            Some("m() {\n    return 1;\n  }")
+        );
+        let js = "const f = (x) => x + 1;\n";
+        assert_eq!(
+            syntax_text("x.js", js, "x + 1", F_IN, 1).as_deref(),
+            Some("x + 1")
+        );
+        assert_eq!(
+            syntax_text("x.js", js, "x + 1", F_OUT, 1).as_deref(),
+            Some("(x) => x + 1")
+        );
+    }
+
+    #[test]
+    fn syntax_objects_in_go_csharp_lua_c_and_cpp() {
+        let go = "type T struct {\n\tA int\n}\n\nfunc (t T) M() int {\n\treturn t.A\n}\n";
+        assert_eq!(
+            syntax_text("x.go", go, "return", F_IN, 1).as_deref(),
+            Some("return t.A")
+        );
+        assert_eq!(
+            syntax_text("x.go", go, "A int", C_IN, 1).as_deref(),
+            Some("A int")
+        );
+        let cs = "class K {\n    int M() {\n        return 1;\n    }\n}\n";
+        assert_eq!(
+            syntax_text("x.cs", cs, "return", F_IN, 1).as_deref(),
+            Some("return 1;")
+        );
+        assert_eq!(
+            syntax_text("x.cs", cs, "return", C_OUT, 1).as_deref(),
+            Some(cs)
+        );
+        let lua = "local function f()\n  return 1\nend\n";
+        assert_eq!(
+            syntax_text("x.lua", lua, "return", F_IN, 1).as_deref(),
+            Some("return 1")
+        );
+        assert_eq!(
+            syntax_text("x.lua", lua, "return", F_OUT, 1).as_deref(),
+            Some(lua)
+        );
+        let c = "int f(void) {\n    return 1;\n}\n";
+        assert_eq!(
+            syntax_text("x.c", c, "return", F_IN, 1).as_deref(),
+            Some("return 1;")
+        );
+        let cpp = "class K {\n  int m() { return 1; }\n};\n";
+        assert_eq!(
+            syntax_text("x.cpp", cpp, "return", F_IN, 1).as_deref(),
+            Some("return 1;")
+        );
+        assert_eq!(
+            syntax_text("x.cpp", cpp, "return", C_OUT, 1).as_deref(),
+            Some("class K {\n  int m() { return 1; }\n}")
+        );
+    }
+
+    #[test]
+    fn syntax_objects_say_when_the_language_has_no_table() {
+        let mut b = buf("def f\nend\n");
+        b.path = Some(std::path::PathBuf::from("x.rb"));
+        assert!(
+            syntax_object_hint(&b, F_IN)
+                .unwrap()
+                .contains("no function objects")
+        );
+        b.path = Some(std::path::PathBuf::from("x.lua"));
+        assert!(
+            syntax_object_hint(&b, C_IN)
+                .unwrap()
+                .contains("no class objects")
+        );
+        assert_eq!(syntax_object_hint(&b, F_IN), None);
     }
 }

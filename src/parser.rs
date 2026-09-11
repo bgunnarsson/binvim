@@ -1328,6 +1328,8 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             's' => Some(TextObjectVerb::Sentence { inner }),
             't' => Some(TextObjectVerb::Tag { inner }),
             'a' => Some(TextObjectVerb::Argument { inner }),
+            'f' => Some(TextObjectVerb::Function { inner }),
+            'c' => Some(TextObjectVerb::Class { inner }),
             _ => None,
         };
         let count = state.total_count();

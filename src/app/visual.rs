@@ -711,7 +711,12 @@ impl super::App {
     pub(super) fn apply_visual_select_textobj(&mut self, obj: TextObjectVerb) {
         let range = match text_object::compute(&self.buffer, self.window.cursor, obj) {
             Some(r) => r,
-            None => return,
+            None => {
+                if let Some(hint) = text_object::syntax_object_hint(&self.buffer, obj) {
+                    self.status_msg = hint;
+                }
+                return;
+            }
         };
         // Anchor → start, cursor → end-1 (inclusive endpoint for visual).
         self.cursor_to_idx(range.start);
