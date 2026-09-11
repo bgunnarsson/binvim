@@ -266,7 +266,7 @@ fn sentence_target(buf: &Buffer, idx: usize) -> MotionResult {
 
 /// Whether a sentence starts at char `i`: an empty line, or the first
 /// non-blank after a sentence's end, after a blank line, or in the buffer.
-fn is_sentence_start(buf: &Buffer, i: usize) -> bool {
+pub(crate) fn is_sentence_start(buf: &Buffer, i: usize) -> bool {
     let rope = &buf.rope;
     let c = rope.char(i);
     if c == '\n' {

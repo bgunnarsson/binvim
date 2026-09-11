@@ -21,6 +21,10 @@ pub enum TextObjectVerb {
     Paragraph {
         inner: bool,
     },
+    /// `is` / `as` — a sentence, as `(` / `)` find them.
+    Sentence {
+        inner: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -39,6 +43,7 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::Quotes { ch, inner } => quoted(buf, cur, ch, inner),
         TextObjectVerb::Pair { open, close, inner } => pair(buf, cur, open, close, inner),
         TextObjectVerb::Paragraph { inner } => paragraph(buf, cur, inner),
+        TextObjectVerb::Sentence { inner } => sentence(buf, cur, inner),
     }
 }
 
@@ -79,6 +84,7 @@ pub fn compute_counted(
             expand_pairs(buf, first, open, close, inner, count)
         }
         TextObjectVerb::Paragraph { inner } => extend_paragraphs(buf, first, inner, count),
+        TextObjectVerb::Sentence { inner } => extend_sentences(buf, first, inner, count),
     }
 }
 
@@ -223,6 +229,109 @@ fn extend_paragraphs(
         last = line_run(buf, last + 1, lines).1;
     }
     Some(line_span(buf, first_line, last))
+}
+
+/// `is` / `as`. `is` is the sentence up to its end mark; `as` adds the spaces
+/// after it, or the ones before it when there are none after. On the
+/// whitespace between two sentences, `is` is that whitespace and `as` runs on
+/// through the sentence after it. Neither takes a line break the sentence
+/// ends on, so `das` never joins lines.
+fn sentence(buf: &Buffer, cur: Cursor, inner: bool) -> Option<TextRange> {
+    let total = buf.total_chars();
+    if total == 0 {
+        return None;
+    }
+    let at = buf.pos_to_char(cur.line, cur.col).min(total - 1);
+    let start = (0..=at)
+        .rev()
+        .find(|&i| crate::motion::is_sentence_start(buf, i))
+        .unwrap_or(0);
+    let (body_end, next) = sentence_bounds(buf, start);
+    if at >= body_end {
+        let end = if inner {
+            next
+        } else {
+            sentence_bounds(buf, next).0
+        };
+        return (end > body_end).then_some(TextRange {
+            start: body_end,
+            end,
+            linewise: false,
+        });
+    }
+    if inner {
+        return Some(TextRange {
+            start,
+            end: body_end,
+            linewise: false,
+        });
+    }
+    let trailing = (body_end..next)
+        .take_while(|&i| matches!(buf.rope.char(i), ' ' | '\t'))
+        .count();
+    if trailing > 0 {
+        return Some(TextRange {
+            start,
+            end: body_end + trailing,
+            linewise: false,
+        });
+    }
+    let leading = (0..start)
+        .rev()
+        .take_while(|&i| matches!(buf.rope.char(i), ' ' | '\t'))
+        .count();
+    Some(TextRange {
+        start: start - leading,
+        end: body_end,
+        linewise: false,
+    })
+}
+
+/// Where the sentence starting at `start` ends, before the whitespace after
+/// it, and where the next one starts.
+fn sentence_bounds(buf: &Buffer, start: usize) -> (usize, usize) {
+    let total = buf.total_chars();
+    let next = (start + 1..total)
+        .find(|&i| crate::motion::is_sentence_start(buf, i))
+        .unwrap_or(total);
+    let mut end = next;
+    while end > start && matches!(buf.rope.char(end - 1), ' ' | '\t' | '\n') {
+        end -= 1;
+    }
+    (end, next)
+}
+
+/// `2is` / `3as`: each next object starts where the last one ended — for
+/// `is` that alternates sentence and whitespace, as in Vim.
+fn extend_sentences(
+    buf: &Buffer,
+    first: TextRange,
+    inner: bool,
+    count: usize,
+) -> Option<TextRange> {
+    let total = buf.total_chars();
+    let mut end = first.end;
+    for _ in 1..count {
+        if end >= total {
+            break;
+        }
+        let line = buf.rope.char_to_line(end);
+        let col = end - buf.rope.line_to_char(line);
+        let at = Cursor {
+            line,
+            col,
+            want_col: col,
+        };
+        let Some(next) = sentence(buf, at, inner) else {
+            break;
+        };
+        end = next.end.max(end);
+    }
+    Some(TextRange {
+        start: first.start,
+        end,
+        linewise: false,
+    })
 }
 
 fn cls_word(c: char) -> Class {
@@ -814,5 +923,31 @@ mod tests {
                 prop_assert!(a.end >= i.end);
             }
         }
+    }
+
+    fn sentence_text(s: &str, col: usize, inner: bool, count: usize) -> String {
+        let b = buf(s);
+        let obj = TextObjectVerb::Sentence { inner };
+        let r = compute_counted(&b, cur(0, col), obj, count).unwrap();
+        assert!(!r.linewise);
+        b.rope.slice(r.start..r.end).to_string()
+    }
+
+    #[test]
+    fn is_is_the_sentence_and_as_adds_the_space_after_it() {
+        let s = "One two. Three four! Five.\n";
+        assert_eq!(sentence_text(s, 10, true, 1), "Three four!");
+        assert_eq!(sentence_text(s, 10, false, 1), "Three four! ");
+        // The last one has no space after it, so `as` takes the one before.
+        assert_eq!(sentence_text(s, 22, false, 1), " Five.");
+        // On the space between two, `is` is that space.
+        assert_eq!(sentence_text(s, 8, true, 1), " ");
+    }
+
+    #[test]
+    fn a_count_on_a_sentence_object_takes_that_many() {
+        let s = "One. Two. Three.\n";
+        assert_eq!(sentence_text(s, 0, false, 2), "One. Two. ");
+        assert_eq!(sentence_text(s, 0, true, 3), "One. Two.");
     }
 }
