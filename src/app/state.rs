@@ -1256,6 +1256,8 @@ pub fn is_jump_motion(m: MotionVerb) -> bool {
             | MotionVerb::SearchNext { .. }
             | MotionVerb::MatchPair
             | MotionVerb::PercentLine(_)
+            | MotionVerb::ParagraphForward
+            | MotionVerb::ParagraphBackward
     )
 }
 

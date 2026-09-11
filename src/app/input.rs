@@ -3110,6 +3110,21 @@ mod tests {
     }
 
     #[test]
+    fn d_brace_from_the_start_of_a_line_takes_whole_lines() {
+        let mut app = app_with_keymaps("a\nb\n\nc\n", "");
+        press(&mut app, "\"_d}");
+        assert_eq!(app.buffer.rope.to_string(), "\nc\n");
+    }
+
+    #[test]
+    fn d_open_brace_takes_the_lines_above_but_not_the_cursors() {
+        let mut app = app_with_keymaps("a\n\nb\nc\n", "");
+        app.window.cursor.line = 3;
+        press(&mut app, "\"_d{");
+        assert_eq!(app.buffer.rope.to_string(), "a\nc\n");
+    }
+
+    #[test]
     fn mapped_key_runs_its_expansion() {
         let mut app = app_with_keymaps("    foo\n", "[normal]\nH = \"^\"");
         app.window.cursor.col = 6;

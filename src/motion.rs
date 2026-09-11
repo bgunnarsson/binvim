@@ -133,18 +133,82 @@ pub fn goto_line(buf: &Buffer, n: usize) -> MotionResult {
     }
 }
 
-/// `N%` — the line `percent` of the way through the file, rounded up the way
-/// Vim does it: `(N * lines + 99) / 100`.
-pub fn percent_line(buf: &Buffer, percent: usize) -> MotionResult {
-    // Ropey counts the empty line after a trailing newline; Vim doesn't, and
-    // counting it would shift every percentage by up to a line.
+/// The lines Vim counts. Ropey adds an empty line after a trailing newline and
+/// Vim doesn't; counting it would shift every `N%` and hand `}` a paragraph
+/// boundary that isn't in the file.
+fn vim_line_count(buf: &Buffer) -> usize {
     let len = buf.rope.len_chars();
-    let lines = if len > 0 && buf.rope.char(len - 1) == '\n' {
+    if len > 0 && buf.rope.char(len - 1) == '\n' {
         buf.line_count() - 1
     } else {
         buf.line_count()
-    };
-    goto_line(buf, (percent.min(100) * lines.max(1)).div_ceil(100).max(1))
+    }
+}
+
+/// `N%` — the line `percent` of the way through the file, rounded up the way
+/// Vim does it: `(N * lines + 99) / 100`.
+pub fn percent_line(buf: &Buffer, percent: usize) -> MotionResult {
+    let lines = vim_line_count(buf).max(1);
+    goto_line(buf, (percent.min(100) * lines).div_ceil(100).max(1))
+}
+
+/// `}` — forward to the empty line that ends the paragraph, `count` times. A
+/// run of empty lines is one boundary, and only a truly empty line is one —
+/// whitespace doesn't end a paragraph. Past the last paragraph it goes to the
+/// buffer's last char, inclusive, so `d}` there takes the rest of the file.
+pub fn paragraph_forward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let lines = vim_line_count(buf);
+    let mut line = cur.line;
+    for _ in 0..count.max(1) {
+        while line < lines && buf.line_len(line) == 0 {
+            line += 1;
+        }
+        while line < lines && buf.line_len(line) > 0 {
+            line += 1;
+        }
+        if line >= lines {
+            let last = lines.saturating_sub(1);
+            let col = buf.line_len(last).saturating_sub(1);
+            return MotionResult {
+                target: Cursor {
+                    line: last,
+                    col,
+                    want_col: col,
+                },
+                kind: MotionKind::CharInclusive,
+            };
+        }
+    }
+    MotionResult {
+        target: Cursor {
+            line,
+            col: 0,
+            want_col: 0,
+        },
+        kind: MotionKind::CharExclusive,
+    }
+}
+
+/// `{` — back to the empty line that starts the paragraph, `count` times, or
+/// the start of the buffer when there isn't one.
+pub fn paragraph_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let mut line = cur.line;
+    for _ in 0..count.max(1) {
+        while line > 0 && buf.line_len(line) == 0 {
+            line -= 1;
+        }
+        while line > 0 && buf.line_len(line) > 0 {
+            line -= 1;
+        }
+    }
+    MotionResult {
+        target: Cursor {
+            line,
+            col: 0,
+            want_col: 0,
+        },
+        kind: MotionKind::CharExclusive,
+    }
 }
 
 pub fn first_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
@@ -701,6 +765,49 @@ mod tests {
         assert_eq!(percent_line(&b, 50).target.line, 4);
         assert_eq!(percent_line(&b, 100).target.line, 9);
         assert_eq!(percent_line(&b, 250).target.line, 9);
+    }
+
+    // 0 a · 1 b · 2 "" · 3 c · 4 d · 5 "" · 6 "" · 7 e
+    const PARAS: &str = "a\nb\n\nc\nd\n\n\ne\n";
+
+    fn fwd(line: usize, count: usize) -> (usize, usize) {
+        let r = paragraph_forward(&buf(PARAS), cur(line, 0), count);
+        (r.target.line, r.target.col)
+    }
+
+    fn back(line: usize, count: usize) -> usize {
+        paragraph_backward(&buf(PARAS), cur(line, 0), count)
+            .target
+            .line
+    }
+
+    #[test]
+    fn paragraph_forward_stops_on_the_empty_line_after() {
+        assert_eq!(fwd(0, 1), (2, 0));
+        assert_eq!(fwd(2, 1), (5, 0));
+        assert_eq!(fwd(0, 2), (5, 0));
+    }
+
+    #[test]
+    fn paragraph_forward_past_the_last_paragraph_ends_on_the_last_char() {
+        let r = paragraph_forward(&buf(PARAS), cur(5, 0), 1);
+        assert_eq!((r.target.line, r.target.col), (7, 0));
+        assert!(matches!(r.kind, MotionKind::CharInclusive));
+    }
+
+    #[test]
+    fn whitespace_only_lines_do_not_end_a_paragraph() {
+        let r = paragraph_forward(&buf("a\n  \nb\n\nc\n"), cur(0, 0), 1);
+        assert_eq!(r.target.line, 3);
+    }
+
+    #[test]
+    fn paragraph_backward_stops_on_the_empty_line_before() {
+        assert_eq!(back(7, 1), 6);
+        assert_eq!(back(6, 1), 2);
+        assert_eq!(back(4, 1), 2);
+        assert_eq!(back(7, 2), 2);
+        assert_eq!(back(1, 1), 0);
     }
 
     #[test]

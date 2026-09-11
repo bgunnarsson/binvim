@@ -43,6 +43,12 @@ follows [Semantic Versioning](https://semver.org/).
   HTML-like file (`.html`, `.tsx`, `.vue`, `.md`, …) it jumps to the partner
   tag. `N%` goes to the line N percent of the way through the file. Both are
   jumps, so `Ctrl-O` comes back.
+- **`{` and `}` move by paragraph.** `}` goes to the empty line after the
+  paragraph and `{` to the one before it; a count skips that many, a run of
+  empty lines counts as one boundary, and a whitespace-only line doesn't end
+  a paragraph. With an operator from the start of a line they work on whole
+  lines, as in Vim — `d}` takes the paragraph and leaves the blank line
+  after it. Both are jumps, so `Ctrl-O` comes back.
 
 ## [0.5.21] - 2026-09-10
 
