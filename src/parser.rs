@@ -126,6 +126,15 @@ pub enum ViewportAdjust {
     Right,
     HalfLeft,
     HalfRight,
+    /// `z<CR>` / `z.` / `z-` — `zt` / `zz` / `zb` with the cursor on the
+    /// line's first non-blank.
+    TopFirstNonBlank,
+    CenterFirstNonBlank,
+    BottomFirstNonBlank,
+    /// `zs` / `ze` — scrolled sideways to put the cursor at the left / right
+    /// edge.
+    CursorLeft,
+    CursorRight,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1026,6 +1035,12 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Action(Action::PageScroll(p));
     }
 
+    // `z<CR>` is `zt` with the cursor on the first non-blank. Enter isn't a
+    // char, so the `z` table would never see it and `z` would hang pending.
+    if state.awaiting_z && key.code == KeyCode::Enter {
+        state.reset();
+        return ParseResult::Action(Action::AdjustViewport(ViewportAdjust::TopFirstNonBlank));
+    }
     let ch = match key.code {
         KeyCode::Char(c) => c,
         _ => return ParseResult::Pending,
@@ -1316,13 +1331,17 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     if state.awaiting_z {
         state.awaiting_z = false;
         let kind = match ch {
-            'z' | '.' => Some(ViewportAdjust::Center),
+            'z' => Some(ViewportAdjust::Center),
+            '.' => Some(ViewportAdjust::CenterFirstNonBlank),
             't' => Some(ViewportAdjust::Top),
-            'b' | '-' => Some(ViewportAdjust::Bottom),
+            'b' => Some(ViewportAdjust::Bottom),
+            '-' => Some(ViewportAdjust::BottomFirstNonBlank),
             'h' => Some(ViewportAdjust::Left),
             'l' => Some(ViewportAdjust::Right),
             'H' => Some(ViewportAdjust::HalfLeft),
             'L' => Some(ViewportAdjust::HalfRight),
+            's' => Some(ViewportAdjust::CursorLeft),
+            'e' => Some(ViewportAdjust::CursorRight),
             _ => None,
         };
         if let Some(k) = kind {
@@ -2866,6 +2885,35 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn z_enter_s_e_dot_and_minus_adjust_the_view() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("z"));
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(matches!(
+            parse(&mut state, enter, ParseCtx::Normal),
+            ParseResult::Action(Action::AdjustViewport(ViewportAdjust::TopFirstNonBlank))
+        ));
+        let adjust = |typed: &str| {
+            let mut state = PendingCmd::default();
+            match drive(&mut state, &keys(typed)) {
+                ParseResult::Action(Action::AdjustViewport(kind)) => Some(kind),
+                _ => None,
+            }
+        };
+        assert!(matches!(adjust("zs"), Some(ViewportAdjust::CursorLeft)));
+        assert!(matches!(adjust("ze"), Some(ViewportAdjust::CursorRight)));
+        assert!(matches!(
+            adjust("z."),
+            Some(ViewportAdjust::CenterFirstNonBlank)
+        ));
+        assert!(matches!(
+            adjust("z-"),
+            Some(ViewportAdjust::BottomFirstNonBlank)
+        ));
+        assert!(matches!(adjust("zz"), Some(ViewportAdjust::Center)));
     }
 
     #[test]

@@ -140,6 +140,29 @@ impl super::App {
                 let step = (buffer_cols / 2).max(1) as i64;
                 self.scroll_horizontal(step);
             }
+            ViewportAdjust::TopFirstNonBlank => {
+                self.adjust_viewport_to(ViewportAdjust::Top);
+                self.cursor_to_first_non_blank(cur);
+            }
+            ViewportAdjust::CenterFirstNonBlank => {
+                self.adjust_viewport_to(ViewportAdjust::Center);
+                self.cursor_to_first_non_blank(cur);
+            }
+            ViewportAdjust::BottomFirstNonBlank => {
+                self.adjust_viewport_to(ViewportAdjust::Bottom);
+                self.cursor_to_first_non_blank(cur);
+            }
+            // The side margin `adjust_viewport` keeps, so the next redraw
+            // leaves the view where these put it.
+            ViewportAdjust::CursorLeft if buffer_cols > 0 => {
+                let margin = 5.min(buffer_cols / 4);
+                self.window.view_left = self.cursor_visual_col().saturating_sub(margin);
+            }
+            ViewportAdjust::CursorRight if buffer_cols > 0 => {
+                let margin = 5.min(buffer_cols / 4);
+                self.window.view_left =
+                    (self.cursor_visual_col() + margin + 1).saturating_sub(buffer_cols);
+            }
             _ => {}
         }
     }
