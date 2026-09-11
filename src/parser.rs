@@ -60,6 +60,16 @@ pub enum MotionVerb {
     LineStartDown,
     /// `|` — column N.
     ToColumn,
+    /// `g0` — the first char on screen.
+    ScreenLineStart,
+    /// `g^` — the first non-blank char on screen.
+    ScreenFirstNonBlank,
+    /// `gm` — half a screen width right of `g0`.
+    ScreenMiddle,
+    /// `g$` — the last char on screen.
+    ScreenLineEnd,
+    /// `gM` — the middle of the line's text.
+    LineMiddle,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1486,6 +1496,14 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'e' => Some(MotionVerb::EndWordBackward),
             'E' => Some(MotionVerb::BigEndWordBackward),
             '_' => Some(MotionVerb::LastNonBlank),
+            // No soft wrap, so a screen line is a buffer line.
+            'j' => Some(MotionVerb::Down),
+            'k' => Some(MotionVerb::Up),
+            '0' => Some(MotionVerb::ScreenLineStart),
+            '^' => Some(MotionVerb::ScreenFirstNonBlank),
+            'm' => Some(MotionVerb::ScreenMiddle),
+            '$' => Some(MotionVerb::ScreenLineEnd),
+            'M' => Some(MotionVerb::LineMiddle),
             _ => None,
         };
         if let Some(motion) = mv {
@@ -2443,6 +2461,25 @@ mod tests {
             parse(&mut state, enter, ParseCtx::Normal),
             ParseResult::Pending
         ));
+    }
+
+    #[test]
+    fn g_screen_and_line_motions() {
+        let g_motion = |c: char| {
+            let mut state = PendingCmd::default();
+            drive(&mut state, &keys("g"));
+            match parse(&mut state, key(c), ParseCtx::Normal) {
+                ParseResult::Action(Action::Move { motion, .. }) => motion,
+                _ => panic!("g{c} should be a motion"),
+            }
+        };
+        assert!(matches!(g_motion('j'), MotionVerb::Down));
+        assert!(matches!(g_motion('k'), MotionVerb::Up));
+        assert!(matches!(g_motion('0'), MotionVerb::ScreenLineStart));
+        assert!(matches!(g_motion('^'), MotionVerb::ScreenFirstNonBlank));
+        assert!(matches!(g_motion('m'), MotionVerb::ScreenMiddle));
+        assert!(matches!(g_motion('$'), MotionVerb::ScreenLineEnd));
+        assert!(matches!(g_motion('M'), MotionVerb::LineMiddle));
     }
 
     #[test]

@@ -523,6 +523,36 @@ impl super::App {
                 motion::line_start_down(&self.buffer, self.window.cursor, count)
             }
             MotionVerb::ToColumn => motion::to_column(&self.buffer, self.window.cursor, count),
+            MotionVerb::ScreenLineStart => motion::screen_col(
+                &self.buffer,
+                self.window.cursor,
+                self.window.view_left,
+                MotionKind::CharExclusive,
+            ),
+            MotionVerb::ScreenFirstNonBlank => motion::screen_first_non_blank(
+                &self.buffer,
+                self.window.cursor,
+                self.window.view_left,
+            ),
+            MotionVerb::ScreenMiddle => {
+                let middle = self.window.view_left + self.text_area_cols() / 2;
+                motion::screen_col(
+                    &self.buffer,
+                    self.window.cursor,
+                    middle,
+                    MotionKind::CharExclusive,
+                )
+            }
+            MotionVerb::ScreenLineEnd => {
+                let right = self.window.view_left + self.text_area_cols().saturating_sub(1);
+                motion::screen_col(
+                    &self.buffer,
+                    self.window.cursor,
+                    right,
+                    MotionKind::CharInclusive,
+                )
+            }
+            MotionVerb::LineMiddle => motion::line_middle(&self.buffer, self.window.cursor),
             MotionVerb::MatchPair => {
                 super::pair::match_pair_motion(&self.buffer, self.window.cursor).unwrap_or(
                     MotionResult {
