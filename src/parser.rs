@@ -1005,11 +1005,10 @@ fn g_operator(ch: char) -> Option<Operator> {
 }
 
 fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResult {
-    // Visual `Ctrl-C` leaves the way `Esc` does.
-    let visual_ctrl_c = ctx == ParseCtx::Visual
-        && key.code == KeyCode::Char('c')
-        && key.modifiers.contains(KeyModifiers::CONTROL);
-    if matches!(key.code, KeyCode::Esc) || visual_ctrl_c {
+    // `Ctrl-C` leaves the way `Esc` does: a pending count or operator, and
+    // Visual.
+    let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+    if matches!(key.code, KeyCode::Esc) || ctrl_c {
         state.reset();
         return ParseResult::Cancelled;
     }
@@ -2932,6 +2931,21 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn ctrl_c_cancels_a_pending_operator() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("d"));
+        let ctrl_c = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(matches!(
+            parse(&mut state, ctrl_c, ParseCtx::Normal),
+            ParseResult::Cancelled
+        ));
+        assert!(matches!(
+            parse(&mut state, key('w'), ParseCtx::Normal),
+            ParseResult::Action(Action::Move { .. })
+        ));
     }
 
     #[test]

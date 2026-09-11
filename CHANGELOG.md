@@ -353,6 +353,10 @@ follows [Semantic Versioning](https://semver.org/).
   is `ä`, `Ctrl-K th` is `þ`, `Ctrl-K ->` is `→` — a compact RFC 1345 set of
   Latin accents, Greek, arrows, maths, currency and punctuation, tried either
   way round as in Vim. A `?` marks the cursor until the pair is typed.
+- **`Ctrl-C` leaves Insert, Visual, a pending command and the prompts.** It
+  acts as `Esc` does, except that in Insert, as in Vim, it keeps nothing for
+  `.` and leaves a blank line alone. It used to leave an operator pending, and
+  typed a `c` on the `:` and `/` prompts.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
