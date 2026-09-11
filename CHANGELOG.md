@@ -367,6 +367,15 @@ follows [Semantic Versioning](https://semver.org/).
   buffer.** They only checked the buffer on screen, so edits in a buffer you
   had switched away from were lost without a word. They now refuse with
   Vim's `E162`, naming the buffer; `:qa!` still quits regardless.
+- **A `[keymaps]` mapping no longer takes the second key of Insert's `Ctrl-X`
+  completion.** A mapping starting `<C-n>`, `<C-p>`, `<C-l>` or `<C-f>` fired
+  instead of picking the completion source. Insert already held back its other
+  literal keys — the register name after `Ctrl-R`, a `Ctrl-V` sequence, a
+  `Ctrl-K` digraph — and this one was missed when it landed.
+- **A `[keymaps]` mapping no longer takes the register name after `Ctrl-R` on
+  the `:` and `/` prompts.** With `qq` mapped, `Ctrl-R q` held the `q` toward
+  the mapping rather than inserting register `q`. The prompts have no parser
+  state, so nothing else stood between a mapping and a literal.
 
 ## [0.5.21] - 2026-09-10
 
