@@ -2792,6 +2792,7 @@ impl super::App {
                 self.search_hl_off = true;
             }
             ExCommand::ChangeDir(dir) => self.change_dir(&dir),
+            ExCommand::Each { range, over, cmd } => self.exec_each(range, over, &cmd),
             ExCommand::PrintDir => {
                 self.status_msg = match std::env::current_dir() {
                     Ok(cwd) => cwd.display().to_string(),
@@ -3192,6 +3193,90 @@ impl super::App {
             rows,
             empty: "(no output)".into(),
         });
+    }
+
+    /// `:bufdo` / `:windo` / `:cdo` / `:cfdo` — `cmd` in each buffer, window,
+    /// quickfix entry or quickfix file in turn, ending on the last one it ran
+    /// in. An error stops the run there, as in Vim.
+    fn exec_each(&mut self, range: ExRange, over: command::EachOver, cmd: &str) {
+        match over {
+            command::EachOver::Buffers => self.each_buffer(range, cmd),
+            command::EachOver::Windows => self.each_window(range, cmd),
+            command::EachOver::Entries => self.qf_each(range, cmd, false),
+            command::EachOver::Files => self.qf_each(range, cmd, true),
+        }
+    }
+
+    fn each_buffer(&mut self, range: ExRange, cmd: &str) {
+        let Some((first, mut last)) = range.pick(self.buffers.len()) else {
+            self.status_msg = "E16: Invalid range".into();
+            return;
+        };
+        let mut i = first;
+        while i <= last && i < self.buffers.len() {
+            if let Err(e) = self.switch_to(i) {
+                self.status_msg = format!("error: {e}");
+                return;
+            }
+            let count = self.buffers.len();
+            if !self.run_each(cmd) {
+                return;
+            }
+            // A command that deleted this buffer (`:bufdo bd`) moved the next
+            // one down into its slot.
+            let gone = count.saturating_sub(self.buffers.len());
+            if gone == 0 {
+                i += 1;
+            } else if last < gone {
+                return;
+            } else {
+                last -= gone;
+            }
+        }
+    }
+
+    fn each_window(&mut self, range: ExRange, cmd: &str) {
+        let ids = self.layout.ids();
+        let Some((first, last)) = range.pick(ids.len()) else {
+            self.status_msg = "E16: Invalid range".into();
+            return;
+        };
+        for &id in &ids[first..=last] {
+            // Skip a window an earlier command closed.
+            if !self.layout.ids().contains(&id) {
+                continue;
+            }
+            self.focus_window(id);
+            if !self.run_each(cmd) {
+                return;
+            }
+        }
+    }
+
+    /// One command of a `:bufdo`-style run — whether it went through without
+    /// reporting an error.
+    pub(super) fn run_each(&mut self, cmd: &str) -> bool {
+        self.status_msg.clear();
+        self.exec_command(cmd);
+        !self.status_reports_error()
+    }
+
+    /// Whether the status line reports an error — `E123: …` or `error: …`,
+    /// alone or behind the `s: ` that `:s` puts in front. Commands report
+    /// errors only there.
+    pub(super) fn status_reports_error(&self) -> bool {
+        let msg = self
+            .status_msg
+            .strip_prefix("s: ")
+            .unwrap_or(&self.status_msg);
+        if msg.starts_with("error:") {
+            return true;
+        }
+        let Some(rest) = msg.strip_prefix('E') else {
+            return false;
+        };
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        digits > 0 && rest[digits..].starts_with(':')
     }
 
     /// `:cd` — the pickers, grep and new terminals read the working
@@ -4951,6 +5036,65 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn each_command_runs_in_every_buffer_window_and_quickfix_stop() {
+        fn text_of(app: &crate::app::App, path: &std::path::Path) -> String {
+            if app.buffer.path.as_deref() == Some(path) {
+                return app.buffer.rope.to_string();
+            }
+            app.buffers
+                .iter()
+                .find(|s| s.buffer.path.as_deref() == Some(path))
+                .map(|s| s.buffer.rope.to_string())
+                .unwrap_or_default()
+        }
+        let dir = std::env::temp_dir().join(format!("binvim-each-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let a = dir.join("a.txt");
+        let b = dir.join("b.txt");
+        std::fs::write(&a, "1\n2\n").expect("a");
+        std::fs::write(&b, "1\n").expect("b");
+        let mut app = app_with_keymaps("x\n", "");
+        app.exec_command(&format!("e {}", a.display()));
+        app.exec_command(&format!("e {}", b.display()));
+        std::fs::remove_dir_all(&dir).ok();
+
+        // An error stops the run in the first buffer.
+        app.exec_command("bufdo cd /binvim-no-such-dir");
+        assert!(app.status_msg.contains("E344"), "{}", app.status_msg);
+        assert_eq!(app.active, 0);
+
+        app.exec_command("bufdo s/$/!/");
+        assert_eq!(app.active, app.buffers.len() - 1);
+        assert_eq!(text_of(&app, &a), "1!\n2\n");
+        assert_eq!(text_of(&app, &b), "1!\n");
+
+        // Both windows show b, so it's changed twice; focus ends in the last.
+        app.exec_command("vs");
+        app.exec_command("windo s/$/?/");
+        assert_eq!(text_of(&app, &b), "1!??\n");
+        assert_eq!(Some(&app.active_window), app.layout.ids().last());
+        app.exec_command("only");
+
+        let entry = |path: &std::path::Path, line: usize| crate::app::state::QuickfixEntry {
+            path: path.to_path_buf(),
+            line,
+            col: 1,
+            text: String::new(),
+        };
+        app.quickfix = Some(crate::app::state::QuickfixState {
+            entries: vec![entry(&a, 1), entry(&a, 2), entry(&b, 1)],
+            current: 0,
+        });
+        app.exec_command("cdo s/^/>/");
+        assert_eq!(text_of(&app, &a), ">1!\n>2\n");
+        assert_eq!(text_of(&app, &b), ">1!??\n");
+        app.exec_command("cfdo s/^/#/");
+        assert_eq!(text_of(&app, &a), "#>1!\n>2\n");
+        assert_eq!(text_of(&app, &b), "#>1!??\n");
+        assert_eq!(app.buffer.path.as_deref(), Some(b.as_path()));
     }
 
     #[test]

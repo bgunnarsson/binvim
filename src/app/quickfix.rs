@@ -135,6 +135,40 @@ impl super::App {
         self.status_msg = format!("[{total} qf] {preview}{more}");
     }
 
+    /// `:cdo` / `:cfdo` — `cmd` at each entry of the list, or with `files` at
+    /// the first entry of each run of entries in one file, `range` picking
+    /// them by number. An error, the jump's or the command's, stops the run.
+    pub(super) fn qf_each(&mut self, range: crate::command::ExRange, cmd: &str, files: bool) {
+        let Some(qf) = self.quickfix.as_ref() else {
+            self.status_msg = "E42: No quickfix list".into();
+            return;
+        };
+        let stops: Vec<usize> = (0..qf.entries.len())
+            .filter(|&i| !files || i == 0 || qf.entries[i].path != qf.entries[i - 1].path)
+            .collect();
+        let Some((first, last)) = range.pick(stops.len()) else {
+            self.status_msg = "E16: Invalid range".into();
+            return;
+        };
+        for &stop in &stops[first..=last] {
+            // The command may have replaced or cleared the list.
+            let Some(qf) = self.quickfix.as_mut() else {
+                return;
+            };
+            if stop >= qf.entries.len() {
+                return;
+            }
+            qf.current = stop;
+            self.qf_jump_current();
+            if self.status_reports_error() {
+                return;
+            }
+            if !self.run_each(cmd) {
+                return;
+            }
+        }
+    }
+
     pub(super) fn qf_close(&mut self) {
         if self.quickfix.is_some() {
             self.quickfix = None;
