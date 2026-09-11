@@ -649,6 +649,7 @@ impl super::App {
         if self.keymap_take(key, MapMode::Command) {
             return;
         }
+        let key = super::input::ctrl_c_as_esc(key);
         if self.cmdline_edit_key(key, HistoryKind::Search) {
             self.update_incsearch();
             return;

@@ -1929,6 +1929,20 @@ impl super::App {
                 self.snippet_session = None;
                 self.end_insert_recording();
             }
+            // `Ctrl-C` leaves like Esc but, as in Vim, without Insert's
+            // leave-time work: no blank-line strip, and nothing kept for `.`.
+            KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if self.window.cursor.col > 0 {
+                    self.window.cursor.col -= 1;
+                    self.window.cursor.want_col = self.window.cursor.col;
+                }
+                self.mode = Mode::Normal;
+                self.signature_help = None;
+                self.additional_cursors.clear();
+                self.snippet_session = None;
+                self.replace_session = None;
+                self.recording = None;
+            }
             // One Normal-mode command, then back to Insert. The session so far
             // ends here as Esc would end it, minus the step back and the
             // whitespace-line strip.
@@ -2494,6 +2508,7 @@ impl super::App {
         if self.keymap_take(key, MapMode::Command) {
             return;
         }
+        let key = ctrl_c_as_esc(key);
         if self.cmdline_edit_key(key, HistoryKind::Command) {
             return;
         }
@@ -2991,6 +3006,7 @@ impl super::App {
     }
 
     pub(super) fn handle_prompt_key(&mut self, key: KeyEvent) {
+        let key = ctrl_c_as_esc(key);
         match key.code {
             KeyCode::Esc => {
                 self.cancel_prompt();
@@ -4254,6 +4270,16 @@ fn remap_lines(
     });
 }
 
+/// `Ctrl-C` on a prompt, as the `Esc` that abandons it.
+pub(super) fn ctrl_c_as_esc(key: KeyEvent) -> KeyEvent {
+    let ctrl_c = key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL);
+    if ctrl_c {
+        KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)
+    } else {
+        key
+    }
+}
+
 /// Where `Ctrl-W` on a prompt deletes back to from `cursor` (a byte index):
 /// past any blanks, then over a run of keyword characters or else a run of
 /// other non-blank ones — Vim's word before the cursor.
@@ -5376,6 +5402,33 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn ctrl_c_leaves_insert_prompts_and_pending_commands() {
+        let mut app = app_with_keymaps("\n", "");
+        press(&mut app, "ihello");
+        app.replay_key(ctrl('c'));
+        assert!(matches!(app.mode, Mode::Normal));
+        assert_eq!(app.buffer.rope.to_string(), "hello\n");
+        assert_eq!(app.window.cursor.col, 4);
+        // Unlike Esc, the insert isn't kept for `.`.
+        press(&mut app, ".");
+        assert_eq!(app.buffer.rope.to_string(), "hello\n");
+        press(&mut app, ":abc");
+        app.replay_key(ctrl('c'));
+        assert!(matches!(app.mode, Mode::Normal));
+        assert!(app.cmdline.is_empty());
+        press(&mut app, "/x");
+        app.replay_key(ctrl('c'));
+        assert!(matches!(app.mode, Mode::Normal));
+        // A pending operator is dropped, so `w` only moves.
+        let mut app = app_with_keymaps("one two\n", "");
+        press(&mut app, "d");
+        app.replay_key(ctrl('c'));
+        press(&mut app, "w");
+        assert_eq!(app.buffer.rope.to_string(), "one two\n");
+        assert_eq!(app.window.cursor.col, 4);
     }
 
     #[test]
