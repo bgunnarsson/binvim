@@ -3469,6 +3469,31 @@ mod tests {
         assert_eq!(app.buffer.rope.to_string(), "(foo) (bar)\n");
     }
 
+    #[test]
+    fn g_upper_j_joins_without_touching_whitespace() {
+        let mut app = app_with_keymaps("foo\n    bar\n", "");
+        press(&mut app, "gJ");
+        assert_eq!(app.buffer.rope.to_string(), "foo    bar\n");
+    }
+
+    #[test]
+    fn a_count_on_j_joins_that_many_lines() {
+        let mut app = app_with_keymaps("a\nb\nc\nd\n", "");
+        press(&mut app, "3J");
+        assert_eq!(app.buffer.rope.to_string(), "a b c\nd\n");
+    }
+
+    #[test]
+    fn visual_j_and_g_upper_j_join_the_selected_lines() {
+        let mut app = app_with_keymaps("a\n  b\n  c\nd\n", "");
+        press(&mut app, "VjjJ");
+        assert_eq!(app.buffer.rope.to_string(), "a b c\nd\n");
+        assert_eq!(app.mode, Mode::Normal);
+        let mut app = app_with_keymaps("a\n  b\nc\n", "");
+        press(&mut app, "vjgJ");
+        assert_eq!(app.buffer.rope.to_string(), "a  b\nc\n");
+    }
+
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {
         let reg = crate::app::state::Register {
             text: text.into(),

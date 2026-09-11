@@ -133,9 +133,14 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.replace_char(ch, count);
             }
-            Action::JoinLines { count } => {
+            Action::JoinLines { count, spaces } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
-                self.join_lines(count);
+                // `NJ` joins N lines — N - 1 joins, and never fewer than one.
+                self.join_lines(count.saturating_sub(1).max(1), spaces);
+            }
+            Action::VisualJoin { spaces } => {
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.visual_join(spaces);
             }
             Action::AdjustNumber { delta, count } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);

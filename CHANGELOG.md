@@ -125,8 +125,13 @@ follows [Semantic Versioning](https://semver.org/).
   work (`ys2w]`) — and `yss{char}` wraps the line from its first non-blank.
   `yS` and `ySS` put the pair on lines of their own, with the text between
   them indented a level. `.` repeats them.
+- **`gJ` and Visual `J` / `gJ`.** `gJ` joins lines without adding or
+  removing any whitespace. In Visual, `J` and `gJ` join every line the
+  selection covers.
 
 ### Fixed
+- **`3J` joins three lines, as in Vim.** The count was taken as the number
+  of joins, so `3J` merged four lines; a count below two still joins two.
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another
   buffer.** They only checked the buffer on screen, so edits in a buffer you
   had switched away from were lost without a word. They now refuse with

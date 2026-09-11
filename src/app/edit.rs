@@ -415,15 +415,21 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
-    pub(super) fn join_lines(&mut self, count: usize) {
-        let times = count.max(1);
-        for _ in 0..times {
+    pub(super) fn join_lines(&mut self, joins: usize, spaces: bool) {
+        for _ in 0..joins {
             let cur_line = self.window.cursor.line;
             if cur_line + 1 >= self.buffer.line_count() {
                 break;
             }
             let line_len = self.buffer.line_len(cur_line);
             let nl_idx = self.buffer.pos_to_char(cur_line, line_len);
+            // `gJ`: only the line break goes.
+            if !spaces {
+                self.buffer.delete_range(nl_idx, nl_idx + 1);
+                self.window.cursor.col = line_len;
+                self.window.cursor.want_col = line_len;
+                continue;
+            }
             // Skip leading whitespace on the next line.
             let next_len = self.buffer.line_len(cur_line + 1);
             let mut skip = 0usize;
