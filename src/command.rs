@@ -127,6 +127,27 @@ pub enum ExCommand {
         file: Option<String>,
         empty: bool,
     },
+    /// `:gr[ep][!] args` — `rg --vimgrep args` through the shell, its matches
+    /// the quickfix list, the first jumped to unless `!`.
+    Grep {
+        args: String,
+        jump: bool,
+    },
+    /// `:vim[grep] /pat/[g][j] files` — a Vim pattern searched for over
+    /// `files` into the quickfix list; `g` keeps every match on a line, `j`
+    /// stays put.
+    VimGrep {
+        pattern: String,
+        files: String,
+        all: bool,
+        jump: bool,
+    },
+    /// `:mak[e][!] [args]` — the workspace's build run in a task tab, its
+    /// errors the quickfix list when it exits, the first jumped to unless `!`.
+    Make {
+        args: String,
+        jump: bool,
+    },
     /// `:bufdo` / `:windo` / `:cdo` / `:cfdo` `{cmd}` — `cmd` run in each
     /// buffer, window, quickfix entry or quickfix file, `range` picking them
     /// by number.
@@ -645,6 +666,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         return ExCommand::Unknown(line.to_string());
     }
 
+    if let Some(command) = parse_quickfix_command(rest) {
+        return command;
+    }
     let (head, rest) = match line.find(char::is_whitespace) {
         Some(i) => (&line[..i], line[i..].trim()),
         None => (line, ""),
@@ -875,6 +899,70 @@ fn parse_window_command(head: &str, rest: &str) -> Option<ExCommand> {
         return Some(ExCommand::CloseWindow);
     }
     None
+}
+
+/// `:gr[ep][!]`, `:vim[grep][!]` and `:mak[e][!]`, read from the whole line
+/// so `:vimgrep/pat/ file` needs no space.
+fn parse_quickfix_command(line: &str) -> Option<ExCommand> {
+    let name_end = line
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(line.len());
+    let (name, after) = line.split_at(name_end);
+    let (bang, after) = match after.strip_prefix('!') {
+        Some(after) => (true, after),
+        None => (false, after),
+    };
+    let args = after.trim();
+    if abbreviates(name, "grep", 2) {
+        if args.is_empty() {
+            return Some(ExCommand::Invalid("E471: Argument required".into()));
+        }
+        return Some(ExCommand::Grep {
+            args: args.to_string(),
+            jump: !bang,
+        });
+    }
+    if abbreviates(name, "make", 3) {
+        return Some(ExCommand::Make {
+            args: args.to_string(),
+            jump: !bang,
+        });
+    }
+    if abbreviates(name, "vimgrep", 3) {
+        return Some(parse_vimgrep_args(args));
+    }
+    None
+}
+
+/// `:vimgrep`'s `/pat/[g][j] files`, any non-identifier character standing
+/// in for `/`, or a bare `pat files` — as Vim reads them.
+fn parse_vimgrep_args(args: &str) -> ExCommand {
+    let invalid = || ExCommand::Invalid("E683: File name missing or invalid pattern".into());
+    let Some(delim) = args.chars().next() else {
+        return invalid();
+    };
+    if delim.is_alphanumeric() || delim == '_' {
+        let (pattern, files) = args.split_once(char::is_whitespace).unwrap_or((args, ""));
+        return ExCommand::VimGrep {
+            pattern: pattern.to_string(),
+            files: files.trim().to_string(),
+            all: false,
+            jump: true,
+        };
+    }
+    let (pattern, Some(rest)) = split_pattern(&args[delim.len_utf8()..], delim) else {
+        return invalid();
+    };
+    let flags_end = rest
+        .find(|c: char| c != 'g' && c != 'j')
+        .unwrap_or(rest.len());
+    let (flags, files) = rest.split_at(flags_end);
+    ExCommand::VimGrep {
+        pattern,
+        files: files.trim().to_string(),
+        all: flags.contains('g'),
+        jump: !flags.contains('j'),
+    }
 }
 
 /// `:bufd[o]`, `:wind[o]`, `:cdo` and `:cfd[o]`, each with an optional `!`,
@@ -1745,6 +1833,45 @@ mod tests {
         assert!(matches!(parse("spell"), ExCommand::SpellToggle));
         assert!(matches!(parse("cl"), ExCommand::Quickfix(_)));
         assert!(matches!(parse("copilot"), ExCommand::Copilot(_)));
+    }
+
+    #[test]
+    fn grep_vimgrep_and_make_parse() {
+        assert!(matches!(
+            parse("grep -w foo src"),
+            ExCommand::Grep { args, jump: true } if args == "-w foo src"
+        ));
+        assert!(matches!(
+            parse("gr! foo"),
+            ExCommand::Grep { jump: false, .. }
+        ));
+        assert!(matches!(parse("grep"), ExCommand::Invalid(e) if e.contains("E471")));
+        assert!(matches!(
+            parse("vimgrep /a b/gj *.rs %"),
+            ExCommand::VimGrep { pattern, files, all: true, jump: false }
+                if pattern == "a b" && files == "*.rs %"
+        ));
+        // `\#` stays escaped, as `:s#…#` keeps it; the search reads it as `#`.
+        assert!(
+            matches!(
+                parse("vim#a\\#b# x.rs"),
+                ExCommand::VimGrep { pattern, files, all: false, jump: true }
+                    if pattern == "a\\#b" && files == "x.rs"
+            ),
+            "{:?}",
+            parse("vim#a\\#b# x.rs")
+        );
+        // A bare pattern takes no flags, so `generated.rs` stays a file.
+        assert!(matches!(
+            parse("vimgrep foo generated.rs"),
+            ExCommand::VimGrep { pattern, files, .. } if pattern == "foo" && files == "generated.rs"
+        ));
+        assert!(matches!(parse("vimgrep /a"), ExCommand::Invalid(e) if e.contains("E683")));
+        assert!(matches!(
+            parse("make --release"),
+            ExCommand::Make { args, jump: true } if args == "--release"
+        ));
+        assert!(matches!(parse("mak!"), ExCommand::Make { jump: false, .. }));
     }
 
     #[test]

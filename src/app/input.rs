@@ -2792,6 +2792,14 @@ impl super::App {
                 self.search_hl_off = true;
             }
             ExCommand::ChangeDir(dir) => self.change_dir(&dir),
+            ExCommand::Grep { args, jump } => self.grep_command(&args, jump),
+            ExCommand::VimGrep {
+                pattern,
+                files,
+                all,
+                jump,
+            } => self.vimgrep_command(&pattern, &files, all, jump),
+            ExCommand::Make { args, jump } => self.cmd_make(&args, jump),
             ExCommand::Each { range, over, cmd } => self.exec_each(range, over, &cmd),
             ExCommand::PrintDir => {
                 self.status_msg = match std::env::current_dir() {
@@ -5036,6 +5044,59 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn grep_and_vimgrep_fill_the_quickfix_list() {
+        if std::process::Command::new("rg")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return; // ripgrep is an optional install — nothing to assert.
+        }
+        struct Restore(std::path::PathBuf);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                let _ = std::env::set_current_dir(&self.0);
+            }
+        }
+        let restore = Restore(std::env::current_dir().expect("cwd"));
+        let dir = std::env::temp_dir().join(format!("binvim-qfgrep-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        std::fs::write(dir.join("a.txt"), "one\ntwo one one\n").expect("a");
+        std::fs::write(dir.join("b.md"), "one\n").expect("b");
+        std::env::set_current_dir(&dir).expect("cd");
+        let name = |app: &crate::app::App| {
+            app.buffer
+                .path
+                .as_deref()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_string())
+        };
+        let count = |app: &crate::app::App| app.quickfix.as_ref().map_or(0, |qf| qf.entries.len());
+        let mut app = app_with_keymaps("x\n", "");
+
+        app.exec_command("grep one a.txt");
+        assert_eq!(count(&app), 3, "{}", app.status_msg);
+        assert_eq!(name(&app).as_deref(), Some("a.txt"));
+        assert_eq!(app.window.cursor.line, 0);
+
+        app.exec_command("vimgrep /one/ a.txt");
+        assert_eq!(count(&app), 2);
+        app.exec_command("vimgrep /one/g a.txt");
+        assert_eq!(count(&app), 3);
+
+        // A glob searches the working directory; `j` stays put.
+        app.exec_command("vimgrep /\\<one\\>/j *.md");
+        assert_eq!(count(&app), 1);
+        assert_eq!(name(&app).as_deref(), Some("a.txt"));
+
+        app.exec_command("grep zzz a.txt");
+        assert!(app.status_msg.contains("E480"), "{}", app.status_msg);
+        assert!(app.quickfix.is_none());
+        drop(restore);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

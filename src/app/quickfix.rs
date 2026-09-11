@@ -169,6 +169,22 @@ impl super::App {
         }
     }
 
+    /// A fresh list from `:grep`, `:vimgrep` or `:make`, and the first entry
+    /// jumped to when `jump`.
+    pub(super) fn qf_replace(&mut self, entries: Vec<QuickfixEntry>, jump: bool) {
+        let n = entries.len();
+        self.quickfix = Some(QuickfixState {
+            entries,
+            current: 0,
+        });
+        if jump {
+            self.qf_jump_current();
+        } else {
+            let es = if n == 1 { "" } else { "es" };
+            self.status_msg = format!("{n} match{es} → quickfix");
+        }
+    }
+
     pub(super) fn qf_close(&mut self) {
         if self.quickfix.is_some() {
             self.quickfix = None;
@@ -209,6 +225,27 @@ impl super::App {
     }
 }
 
+/// `rg --vimgrep` rows (`path:line:col:text`) as quickfix entries, `path`
+/// joined to `cwd`. Rows of any other shape — ripgrep's notices, a shell's
+/// stderr — are skipped.
+pub(super) fn vimgrep_entries(text: &str, cwd: &std::path::Path) -> Vec<QuickfixEntry> {
+    text.lines()
+        .filter_map(|row| {
+            let mut parts = row.splitn(4, ':');
+            let path = parts.next()?;
+            let line = parts.next()?.parse().ok()?;
+            let col = parts.next()?.parse().ok()?;
+            let text = parts.next()?.trim().to_string();
+            Some(QuickfixEntry {
+                path: cwd.join(path),
+                line,
+                col,
+                text,
+            })
+        })
+        .collect()
+}
+
 /// Lift Location entries out of a Grep / References picker. Other
 /// picker kinds (Files, Buffers, …) return an empty list. Exposed at
 /// `pub(super)` so `picker_glue` can snapshot the list at accept time
@@ -245,5 +282,21 @@ fn severity_rank(s: crate::lsp::Severity) -> u8 {
         Severity::Warning => 1,
         Severity::Info => 2,
         Severity::Hint => 3,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vimgrep_rows_become_entries_and_other_lines_are_skipped() {
+        let text = "src/a.rs:3:5:let x = 1;\nrg: nope: No such file\nb.rs:10:1:fn b()\n";
+        let entries = vimgrep_entries(text, std::path::Path::new("/w"));
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].path, std::path::PathBuf::from("/w/src/a.rs"));
+        assert_eq!((entries[0].line, entries[0].col), (3, 5));
+        assert_eq!(entries[0].text, "let x = 1;");
+        assert_eq!(entries[1].path, std::path::PathBuf::from("/w/b.rs"));
     }
 }
