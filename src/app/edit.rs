@@ -154,6 +154,9 @@ impl super::App {
         if end <= start {
             return;
         }
+        // Every yank flashes its range, so this is where `'[` / `']` learn it.
+        self.buffer.marks.insert('[', start);
+        self.buffer.marks.insert(']', end - 1);
         self.yank_highlight = Some(YankHighlight {
             start,
             end,

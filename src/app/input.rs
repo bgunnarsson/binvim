@@ -513,7 +513,7 @@ impl super::App {
                         _ => return Ok(()),
                     }
                 }
-                let was = self.mode;
+                let start = self.key_start();
                 match self.mode {
                     Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
                     Mode::Insert => self.handle_insert_key(k),
@@ -530,7 +530,7 @@ impl super::App {
                     Mode::RenamePreview => self.handle_rename_preview_key(k),
                     Mode::Installer => self.handle_installer_key(k),
                 }
-                self.insert_oneshot_after(was);
+                self.after_key(start);
             }
             crossterm::event::Event::Paste(text) => {
                 self.handle_paste(text);
@@ -553,6 +553,46 @@ impl super::App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// What `after_key` needs to see what a key changed.
+    pub(super) fn key_start(&self) -> state::KeyStart {
+        let selection = match self.mode {
+            Mode::Visual(_) => self.window.visual_anchor.map(|a| (a, self.window.cursor)),
+            _ => None,
+        };
+        state::KeyStart {
+            mode: self.mode,
+            cursor: self.window.cursor,
+            selection,
+        }
+    }
+
+    /// Bookkeeping after every key, whichever mode handled it: closes the
+    /// change `'[` / `']` follow unless Insert is still typing into it, sets
+    /// `'<` / `'>` when a key leaves Visual and `^` when one leaves Insert, and
+    /// brings a finished `Ctrl-O` command back to Insert.
+    pub(super) fn after_key(&mut self, start: state::KeyStart) {
+        if self.mode != Mode::Insert {
+            self.buffer.close_change();
+        }
+        let left_visual = start
+            .selection
+            .filter(|_| !matches!(self.mode, Mode::Visual(_)));
+        if let Some((anchor, cursor)) = left_visual {
+            let (first, last) = if (anchor.line, anchor.col) <= (cursor.line, cursor.col) {
+                (anchor, cursor)
+            } else {
+                (cursor, anchor)
+            };
+            self.buffer.set_mark('<', first.line, first.col);
+            self.buffer.set_mark('>', last.line, last.col);
+        }
+        if start.mode == Mode::Insert && self.mode != Mode::Insert {
+            self.buffer
+                .set_mark('^', start.cursor.line, start.cursor.col);
+        }
+        self.insert_oneshot_after(start.mode);
     }
 
     /// After a key routed from any mode but Insert: once an Insert `Ctrl-O`
@@ -3142,6 +3182,75 @@ mod tests {
         app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         press(&mut app, ".");
         assert_eq!(app.buffer.rope.to_string(), "c\nd\n");
+    }
+
+    #[test]
+    fn marks_follow_the_text_they_were_set_on() {
+        let mut app = app_with_keymaps("a\nb\nc\nd\n", "");
+        press(&mut app, "jjma");
+        press(&mut app, "ggdd");
+        press(&mut app, "'a");
+        assert_eq!(app.window.cursor.line, 1);
+    }
+
+    #[test]
+    fn quote_quote_goes_back_to_before_the_latest_jump() {
+        let mut app = app_with_keymaps("a\nb\nc\nd", "");
+        press(&mut app, "jG");
+        assert_eq!(app.window.cursor.line, 3);
+        press(&mut app, "''");
+        assert_eq!(app.window.cursor.line, 1);
+        press(&mut app, "``");
+        assert_eq!(app.window.cursor.line, 3);
+    }
+
+    #[test]
+    fn dot_mark_is_the_last_change() {
+        let mut app = app_with_keymaps("one\ntwo\nthree\n", "");
+        press(&mut app, "jlx");
+        press(&mut app, "gg`.");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 1));
+    }
+
+    #[test]
+    fn caret_mark_is_where_insert_stopped() {
+        let mut app = app_with_keymaps("foo bar\n", "");
+        press(&mut app, "ixy");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "$`^");
+        assert_eq!(app.window.cursor.col, 2);
+    }
+
+    #[test]
+    fn bracket_marks_span_the_last_yank() {
+        let mut app = app_with_keymaps("one\ntwo\nthree\n", "");
+        press(&mut app, "jyj");
+        press(&mut app, "gg`[");
+        assert_eq!(app.window.cursor.line, 1);
+        press(&mut app, "`]");
+        assert_eq!(app.window.cursor.line, 2);
+    }
+
+    #[test]
+    fn bracket_marks_span_a_whole_insert() {
+        let mut app = app_with_keymaps("ab\n", "");
+        press(&mut app, "lifoo");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "0`]");
+        assert_eq!(app.window.cursor.col, 3);
+        press(&mut app, "`[");
+        assert_eq!(app.window.cursor.col, 1);
+    }
+
+    #[test]
+    fn angle_marks_are_the_last_visual_selection() {
+        let mut app = app_with_keymaps("one\ntwo\nthree\n", "");
+        press(&mut app, "lvjl");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "gg`>");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 2));
+        press(&mut app, "`<");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 1));
     }
 
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {

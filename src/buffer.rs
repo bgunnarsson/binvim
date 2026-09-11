@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use ropey::Rope;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Read, Write};
 use std::path::PathBuf;
@@ -120,6 +121,13 @@ pub struct Buffer {
     /// buffers). `save` emits the matching ending; `.editorconfig`'s
     /// `end_of_line` overrides this when set.
     pub line_ending: LineEnding,
+    /// Marks by name — `ma`, and the ones Vim keeps itself (`'.`, `'[`, …) —
+    /// as char indices, so every edit can move them with the text it shifts.
+    pub marks: HashMap<char, usize>,
+    /// Edits keep growing `'[` / `']` until the app closes the change — at the
+    /// end of each Normal-mode command, and when Insert is left — so a whole
+    /// insert session counts as one change.
+    pub change_open: bool,
 }
 
 impl Default for Buffer {
@@ -138,6 +146,8 @@ impl Buffer {
             disk_mtime: None,
             display_name: None,
             line_ending: LineEnding::platform_default(),
+            marks: HashMap::new(),
+            change_open: false,
         }
     }
 
@@ -165,6 +175,8 @@ impl Buffer {
                 disk_mtime: mtime,
                 display_name: None,
                 line_ending,
+                marks: HashMap::new(),
+                change_open: false,
             })
         } else {
             Ok(Self {
@@ -175,6 +187,8 @@ impl Buffer {
                 disk_mtime: None,
                 display_name: None,
                 line_ending: LineEnding::platform_default(),
+                marks: HashMap::new(),
+                change_open: false,
             })
         }
     }
@@ -244,6 +258,7 @@ impl Buffer {
         let idx = self.pos_to_char(line, col);
         let mut buf = [0u8; 4];
         self.rope.insert(idx, ch.encode_utf8(&mut buf));
+        self.track_edit(idx, 0, 1);
         self.dirty = true;
         self.version = self.version.wrapping_add(1);
     }
@@ -251,6 +266,7 @@ impl Buffer {
     pub fn insert_str(&mut self, line: usize, col: usize, s: &str) {
         let idx = self.pos_to_char(line, col);
         self.rope.insert(idx, s);
+        self.track_edit(idx, 0, s.chars().count());
         self.dirty = true;
         self.version = self.version.wrapping_add(1);
     }
@@ -259,6 +275,7 @@ impl Buffer {
     pub fn insert_at_idx(&mut self, idx: usize, s: &str) {
         self.rope.insert(idx, s);
         if !s.is_empty() {
+            self.track_edit(idx, 0, s.chars().count());
             self.dirty = true;
             self.version = self.version.wrapping_add(1);
         }
@@ -272,10 +289,73 @@ impl Buffer {
         let removed = self.rope.slice(start..end).to_string();
         self.rope.remove(start..end);
         if !removed.is_empty() {
+            self.track_edit(start, end - start, 0);
             self.dirty = true;
             self.version = self.version.wrapping_add(1);
         }
         removed
+    }
+
+    /// Moves every mark with the text around it once `removed` chars at `at`
+    /// have been replaced by `inserted`, and records the edit for `'.`, `'[`
+    /// and `']`. A mark inside deleted text lands where the deletion was.
+    fn track_edit(&mut self, at: usize, removed: usize, inserted: usize) {
+        let end = at + removed;
+        for m in self.marks.values_mut() {
+            if *m >= end {
+                *m = *m - removed + inserted;
+            } else if *m > at {
+                *m = at;
+            }
+        }
+        let last = at + inserted.saturating_sub(1);
+        let span = match (self.marks.get(&'['), self.marks.get(&']')) {
+            (Some(&first), Some(&end)) if self.change_open => (first.min(at), end.max(last)),
+            _ => (at, last),
+        };
+        self.marks.insert('[', span.0);
+        self.marks.insert(']', span.1);
+        self.marks.insert('.', at);
+        self.change_open = true;
+    }
+
+    /// Ends the change `'[` / `']` have been growing over; the next edit
+    /// starts a new one.
+    pub fn close_change(&mut self) {
+        self.change_open = false;
+    }
+
+    pub fn set_mark(&mut self, name: char, line: usize, col: usize) {
+        let idx = self.pos_to_char(line, col);
+        self.marks.insert(name, idx);
+    }
+
+    /// Where mark `name` is now. Clamped, since undo swaps the text without
+    /// moving marks.
+    pub fn mark(&self, name: char) -> Option<(usize, usize)> {
+        let idx = (*self.marks.get(&name)?).min(self.total_chars());
+        let line = self.rope.char_to_line(idx);
+        Some((line, idx - self.rope.line_to_char(line)))
+    }
+
+    /// Replaces the whole text, keeping each mark at its line and column — a
+    /// formatter or a reload rewrites everything, and following the text char
+    /// by char would pile every mark up at the start.
+    pub fn replace_all(&mut self, text: &str) {
+        let kept: Vec<(char, (usize, usize))> = self
+            .marks
+            .keys()
+            .filter_map(|&name| Some((name, self.mark(name)?)))
+            .collect();
+        let open = self.change_open;
+        let total = self.total_chars();
+        self.delete_range(0, total);
+        self.insert_at_idx(0, text);
+        self.marks.clear();
+        for (name, (line, col)) in kept {
+            self.set_mark(name, line, col);
+        }
+        self.change_open = open;
     }
 
     pub fn total_chars(&self) -> usize {
@@ -299,6 +379,45 @@ mod tests {
         let mut b = Buffer::empty();
         b.rope = ropey::Rope::from_str(s);
         b
+    }
+
+    #[test]
+    fn marks_move_with_inserted_and_deleted_text() {
+        let mut b = buf_with_text("abc def\n");
+        b.set_mark('a', 0, 4);
+        b.insert_at_idx(0, "xx");
+        assert_eq!(b.mark('a'), Some((0, 6)));
+        b.insert_at_idx(7, "yy");
+        assert_eq!(b.mark('a'), Some((0, 6)), "text after the mark leaves it");
+        b.delete_range(0, 2);
+        assert_eq!(b.mark('a'), Some((0, 4)));
+        b.delete_range(3, 6);
+        assert_eq!(
+            b.mark('a'),
+            Some((0, 3)),
+            "deleted under it: lands at the deletion"
+        );
+    }
+
+    #[test]
+    fn edits_grow_the_change_until_it_is_closed() {
+        let mut b = buf_with_text("ab\n");
+        b.insert_at_idx(1, "x");
+        b.insert_at_idx(2, "y");
+        assert_eq!((b.mark('['), b.mark(']')), (Some((0, 1)), Some((0, 2))));
+        b.close_change();
+        b.insert_at_idx(0, "z");
+        assert_eq!((b.mark('['), b.mark(']')), (Some((0, 0)), Some((0, 0))));
+        assert_eq!(b.mark('.'), Some((0, 0)));
+    }
+
+    #[test]
+    fn replace_all_keeps_marks_on_their_line_and_column() {
+        let mut b = buf_with_text("one\ntwo\nthree\n");
+        b.set_mark('a', 2, 1);
+        b.replace_all("ONE\nTWO\nTHREE\n");
+        assert_eq!(b.mark('a'), Some((2, 1)));
+        assert_eq!(b.mark('['), None, "the rewrite isn't a change of its own");
     }
 
     #[test]

@@ -3,7 +3,6 @@
 //! them directly via `super::state::Foo`.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use std::collections::HashMap;
 use std::process::Child;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
@@ -60,7 +59,6 @@ pub struct BufferStash {
     /// closed-state survives small edits that don't shift line numbers.
     pub closed_folds: std::collections::HashSet<usize>,
     pub visual_anchor: Option<Cursor>,
-    pub marks: HashMap<char, (usize, usize)>,
     pub jumplist: Vec<(usize, usize)>,
     pub jump_idx: usize,
     /// Per-buffer syntax-highlight cache. Stashed alongside the buffer so a
@@ -140,6 +138,16 @@ pub struct InsertOneshot {
     /// back onto the last character, here. Insert resumes past the end again
     /// if the command leaves it there.
     pub stepped_back: Option<(usize, usize)>,
+}
+
+/// What a key found when it arrived — `App::after_key` compares it with what
+/// the key left behind.
+#[derive(Debug, Clone, Copy)]
+pub struct KeyStart {
+    pub mode: crate::mode::Mode,
+    pub cursor: Cursor,
+    /// Anchor and cursor, when the key arrived in Visual.
+    pub selection: Option<(Cursor, Cursor)>,
 }
 
 /// One row in the quickfix list — populated from grep results, LSP

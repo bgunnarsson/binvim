@@ -76,10 +76,11 @@ impl super::App {
                     }
                 }
                 self.phantom_lens_idx = None;
+                // Target first: `''` reads the `'` mark that `push_jump` moves.
+                let m = self.run_motion(motion, count);
                 if is_jump_motion(motion) {
                     self.push_jump();
                 }
-                let m = self.run_motion(motion, count);
                 self.window.cursor = m.target;
                 self.clamp_cursor_normal();
             }
@@ -165,8 +166,8 @@ impl super::App {
             Action::PageScroll(kind) => self.page_scroll(kind),
             Action::AdjustViewport(kind) => self.adjust_viewport_to(kind),
             Action::SetMark { name } => {
-                self.marks
-                    .insert(name, (self.window.cursor.line, self.window.cursor.col));
+                let Cursor { line, col, .. } = self.window.cursor;
+                self.buffer.set_mark(name, line, col);
             }
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
             Action::StartMacro { name } => self.start_macro_recording(name),
@@ -635,7 +636,7 @@ impl super::App {
     }
 
     fn mark_motion(&self, name: char, exact: bool) -> MotionResult {
-        let Some((mline, mcol)) = self.marks.get(&name).copied() else {
+        let Some((mline, mcol)) = self.buffer.mark(name) else {
             return MotionResult {
                 target: self.window.cursor,
                 kind: MotionKind::CharExclusive,

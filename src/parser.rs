@@ -948,11 +948,18 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 
     // Resolve pending mark register.
     if let Some(act) = state.awaiting_mark.take() {
-        if !ch.is_ascii_alphabetic() {
+        // Vim keeps these itself; `m` may only move the settable ones.
+        let special = match act {
+            MarkAction::Set => "'`[]<>",
+            MarkAction::JumpLine | MarkAction::JumpExact => "'`.^[]<>",
+        };
+        if !ch.is_ascii_alphabetic() && !special.contains(ch) {
             state.reset();
             return ParseResult::Cancelled;
         }
         state.reset();
+        // `` ` `` and `'` name the same mark.
+        let ch = if ch == '`' { '\'' } else { ch };
         return ParseResult::Action(match act {
             MarkAction::Set => Action::SetMark { name: ch },
             MarkAction::JumpLine => Action::Move {
