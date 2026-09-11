@@ -791,6 +791,79 @@ impl super::App {
         self.window.cursor.want_col = new_end_col;
     }
 
+    /// Visual `Ctrl-A` / `Ctrl-X`: the first number in the selected part of
+    /// each line. `progressive` (`g Ctrl-A`) takes each line that has one a
+    /// step further than the last, so a column of zeros becomes 1, 2, 3.
+    pub(super) fn visual_adjust_number(&mut self, delta: i64, count: usize, progressive: bool) {
+        let Mode::Visual(kind) = self.mode else {
+            return;
+        };
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+        let cursor = self.window.cursor;
+        let (first, last) = if (anchor.line, anchor.col) <= (cursor.line, cursor.col) {
+            (anchor, cursor)
+        } else {
+            (cursor, anchor)
+        };
+        let c1 = anchor.col.min(cursor.col);
+        let c2 = anchor.col.max(cursor.col);
+        let step = delta.saturating_mul(count.max(1) as i64);
+        let mut found: i64 = 0;
+        for line in first.line..=last.line {
+            let line_len = self.buffer.line_len(line);
+            let (from, to) = match kind {
+                VisualKind::Block => (c1, c2 + 1),
+                VisualKind::Line => (0, line_len),
+                VisualKind::Char => {
+                    let from = if line == first.line { first.col } else { 0 };
+                    let to = if line == last.line {
+                        last.col + 1
+                    } else {
+                        line_len
+                    };
+                    (from, to)
+                }
+            };
+            let to = to.min(line_len);
+            if from >= to {
+                continue;
+            }
+            // Only the selected part of the line is searched.
+            let line_start = self.buffer.line_start_idx(line);
+            let chars: Vec<char> = self
+                .buffer
+                .rope
+                .slice(line_start..line_start + to)
+                .chars()
+                .collect();
+            let Some(num) = find_number_on_line(&chars, from) else {
+                continue;
+            };
+            found += 1;
+            let steps = if progressive { found } else { 1 };
+            let value = num.value.saturating_add(step.saturating_mul(steps));
+            let formatted = format_number(&num, value);
+            self.buffer.replace_range(
+                line_start + num.start_col,
+                line_start + num.end_col,
+                &formatted,
+            );
+        }
+        if found == 0 {
+            self.status_msg = "no numbers found".into();
+        }
+        let start_col = match kind {
+            VisualKind::Block => c1,
+            VisualKind::Line => 0,
+            VisualKind::Char => first.col,
+        };
+        self.exit_visual();
+        self.window.cursor.line = first.line;
+        self.window.cursor.col = start_col;
+        self.window.cursor.want_col = start_col;
+        self.clamp_cursor_normal();
+    }
+
     pub(super) fn toggle_case(&mut self, count: usize) {
         let line = self.window.cursor.line;
         let line_len = self.buffer.line_len(line);

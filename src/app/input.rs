@@ -3252,6 +3252,47 @@ mod tests {
     }
 
     #[test]
+    fn visual_ctrl_a_adds_to_the_first_number_on_each_line() {
+        let mut app = app_with_keymaps("x 1 5\ny 2\nz 3\n", "");
+        press(&mut app, "Vj");
+        app.replay_key(ctrl('a'));
+        assert_eq!(app.buffer.rope.to_string(), "x 2 5\ny 3\nz 3\n");
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 0));
+    }
+
+    #[test]
+    fn g_ctrl_a_counts_up_line_by_line() {
+        let mut app = app_with_keymaps("0\n0\n0\n0\n", "");
+        press(&mut app, "Vjjjg");
+        app.replay_key(ctrl('a'));
+        assert_eq!(app.buffer.rope.to_string(), "1\n2\n3\n4\n");
+
+        let mut app = app_with_keymaps("0\n0\n0\n", "");
+        press(&mut app, "Vjj2g");
+        app.replay_key(ctrl('a'));
+        assert_eq!(app.buffer.rope.to_string(), "2\n4\n6\n");
+    }
+
+    #[test]
+    fn visual_ctrl_x_only_sees_the_selected_columns() {
+        let mut app = app_with_keymaps("1 1\n1 1\n", "");
+        app.window.cursor.col = 2;
+        app.window.cursor.want_col = 2;
+        app.replay_key(ctrl('v'));
+        press(&mut app, "j");
+        app.replay_key(ctrl('x'));
+        assert_eq!(app.buffer.rope.to_string(), "1 0\n1 0\n");
+
+        let mut app = app_with_keymaps("5 7\n", "");
+        app.window.cursor.col = 2;
+        app.window.cursor.want_col = 2;
+        press(&mut app, "v");
+        app.replay_key(ctrl('a'));
+        assert_eq!(app.buffer.rope.to_string(), "5 8\n");
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

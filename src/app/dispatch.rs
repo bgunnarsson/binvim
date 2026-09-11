@@ -151,6 +151,14 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.adjust_number(delta, count);
             }
+            Action::VisualAdjustNumber {
+                delta,
+                count,
+                progressive,
+            } => {
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.visual_adjust_number(delta, count, progressive);
+            }
             Action::MoveLine { down, count } => self.move_lines(down, count),
             Action::ToggleCase { count } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
