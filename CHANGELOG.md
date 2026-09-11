@@ -77,6 +77,12 @@ follows [Semantic Versioning](https://semver.org/).
   same path as `:w` — formatter and `.editorconfig` included — and leaves you
   where you were. `:qa` / `:qa!` / `:wqa` / `:xa` quit the whole editor, and
   `:e!` reloads the file from disk, discarding your changes.
+- **Insert-mode `Ctrl-O` runs one Normal-mode command.** `Ctrl-O dd`,
+  `Ctrl-O 0`, `Ctrl-O :w` and the like run the command and go straight back
+  to Insert; the mode chip reads `(INSERT)` in between. From the end of a
+  line — or after `Ctrl-O $` — Insert resumes past the last character. The
+  text typed before `Ctrl-O` and the text typed after it are separate inserts
+  for `.`, and an insert left with nothing typed keeps `.` on the command.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

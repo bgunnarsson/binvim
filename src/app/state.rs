@@ -128,6 +128,18 @@ pub enum LiteralPending {
 pub struct RecordingState {
     pub prelude: Action,
     pub keys: Vec<KeyEvent>,
+    /// Started by the return to Insert after a `Ctrl-O` command, not by the
+    /// user — closed with nothing typed, it leaves `.` on that command.
+    pub resumed: bool,
+}
+
+/// Insert-mode `Ctrl-O` is running one Normal-mode command.
+#[derive(Debug, Clone, Copy)]
+pub struct InsertOneshot {
+    /// `Ctrl-O` was pressed past the end of the line, so the cursor stepped
+    /// back onto the last character, here. Insert resumes past the end again
+    /// if the command leaves it there.
+    pub stepped_back: Option<(usize, usize)>,
 }
 
 /// One row in the quickfix list — populated from grep results, LSP
