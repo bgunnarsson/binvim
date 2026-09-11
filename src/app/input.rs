@@ -2632,6 +2632,26 @@ impl super::App {
                 let (l1, l2) = self.counted_range(range, count);
                 self.yank_lines(l1, l2, register);
             }
+            ExCommand::Sort { range, opts } => {
+                // `:sort` takes the whole file unless given a range.
+                let (l1, l2) = self.resolve_range(range, false);
+                let l2 = l2.min(self.last_text_line());
+                let re = opts
+                    .pattern
+                    .as_deref()
+                    .map(|pat| {
+                        self.pattern_or_last(pat)
+                            .and_then(|pat| super::search::compile_search(&pat))
+                    })
+                    .transpose();
+                match re {
+                    Ok(re) => {
+                        self.sort_range(l1, l2, &opts, re.as_ref());
+                        self.clamp_cursor_normal();
+                    }
+                    Err(e) => self.status_msg = e,
+                }
+            }
             ExCommand::Global {
                 range,
                 pattern,
@@ -3066,11 +3086,10 @@ impl super::App {
             self.status_msg = "E147: Cannot do :global recursive".into();
             return;
         }
-        let pattern = match (pattern.is_empty(), self.last_search.as_ref()) {
-            (false, _) => pattern.to_string(),
-            (true, Some((last, _))) => last.clone(),
-            (true, None) => {
-                self.status_msg = "E35: No previous regular expression".into();
+        let pattern = match self.pattern_or_last(pattern) {
+            Ok(pattern) => pattern,
+            Err(e) => {
+                self.status_msg = e;
                 return;
             }
         };
@@ -3227,14 +3246,7 @@ impl super::App {
         repl: &str,
         flags: command::SubFlags,
     ) -> Result<regex::Regex, String> {
-        let pattern = if pat.is_empty() {
-            match self.last_search.as_ref() {
-                Some((last, _)) => last.clone(),
-                None => return Err("E35: No previous regular expression".into()),
-            }
-        } else {
-            pat.to_string()
-        };
+        let pattern = self.pattern_or_last(pat)?;
         let cased = super::search::with_case(&pattern, flags.ignore_case);
         let re = super::search::compile_search(&cased)?;
         let backward = self.last_search.as_ref().is_some_and(|(_, back)| *back);
@@ -4668,6 +4680,27 @@ mod tests {
         let app = run("x\n", "g/x/g/x/d");
         assert_eq!(text(&app), "x\n");
         assert!(app.status_msg.contains("E147"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn sort_takes_the_whole_file_by_default() {
+        let mut app = app_with_keymaps("c\na\nb\na\n", "");
+        app.exec_command("sort u");
+        assert_eq!(app.buffer.rope.to_string(), "a\nb\nc\n");
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), "c\na\nb\na\n");
+
+        let mut app = app_with_keymaps("z\nc\na\nb\n", "");
+        app.exec_command("2,$sort!");
+        assert_eq!(app.buffer.rope.to_string(), "z\nc\nb\na\n");
+
+        let mut app = app_with_keymaps("x 2\nx 10\nx 1\n", "");
+        app.exec_command("sort n");
+        assert_eq!(app.buffer.rope.to_string(), "x 1\nx 2\nx 10\n");
+
+        let mut app = app_with_keymaps("a\n", "");
+        app.exec_command("sort q");
+        assert!(app.status_msg.contains("E474"), "{}", app.status_msg);
     }
 
     #[test]

@@ -113,6 +113,12 @@ pub enum ExCommand {
         invert: bool,
         cmd: String,
     },
+    /// `:sor[t][!] [i n x u r] [/pat/]` — the lines sorted, the whole file
+    /// without a range.
+    Sort {
+        range: ExRange,
+        opts: SortOpts,
+    },
     NoHighlight,
     Format,
     Health,
@@ -357,6 +363,25 @@ pub enum ExRange {
     Single(usize),
     /// `N,M` — line range.
     Lines(usize, usize),
+}
+
+/// `:sort`'s options.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SortOpts {
+    /// `!` — the other way round.
+    pub reverse: bool,
+    /// `i`.
+    pub ignore_case: bool,
+    /// `n` — on the first decimal number in the line.
+    pub numeric: bool,
+    /// `x` — on the first hex number.
+    pub hex: bool,
+    /// `u` — only the first of lines that sort the same.
+    pub unique: bool,
+    /// `r` — on what `pattern` matches rather than what follows it.
+    pub on_match: bool,
+    /// `/pat/`; empty is the last search.
+    pub pattern: Option<String>,
 }
 
 /// Where `:le` / `:ri` / `:ce` put lines.
@@ -840,10 +865,40 @@ fn parse_line_command(range: ExRange, rest: &str) -> Option<ExCommand> {
             bang,
             tabstop,
         })
+    } else if is("sort", 3) {
+        parse_sort_args(args, bang).map(|opts| ExCommand::Sort { range, opts })
     } else {
         return None;
     };
     Some(command.unwrap_or_else(ExCommand::Invalid))
+}
+
+/// `:sort`'s flags and `/pat/`, in any order, with blanks between.
+fn parse_sort_args(args: &str, reverse: bool) -> Result<SortOpts, String> {
+    let mut opts = SortOpts {
+        reverse,
+        ..SortOpts::default()
+    };
+    let mut rest = args.trim_start();
+    while let Some(c) = rest.chars().next() {
+        match c {
+            'i' => opts.ignore_case = true,
+            'n' => opts.numeric = true,
+            'x' => opts.hex = true,
+            'u' => opts.unique = true,
+            'r' => opts.on_match = true,
+            _ if c.is_whitespace() => {}
+            _ if !c.is_alphanumeric() && !matches!(c, '"' | '\\' | '|') => {
+                let (pattern, after) = split_pattern(&rest[c.len_utf8()..], c);
+                opts.pattern = Some(pattern);
+                rest = after.unwrap_or("");
+                continue;
+            }
+            _ => return Err(format!("E474: Invalid argument: {rest}")),
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    Ok(opts)
 }
 
 /// `[x] [count]` after `:d` / `:y`: a register name, then a count.
@@ -1389,6 +1444,37 @@ mod tests {
         assert!(matches!(parse("global/x"), ExCommand::Global { cmd, .. } if cmd.is_empty()));
         assert!(matches!(parse("g"), ExCommand::Invalid(e) if e.contains("E476")));
         assert!(matches!(parse("gblame"), ExCommand::GitBlame));
+    }
+
+    #[test]
+    fn sort_reads_its_flags_and_pattern() {
+        let opts = |line: &str| match parse(line) {
+            ExCommand::Sort { opts, .. } => opts,
+            other => panic!("{line}: {other:?}"),
+        };
+        assert_eq!(opts("sort"), SortOpts::default());
+        let want = SortOpts {
+            reverse: true,
+            ignore_case: true,
+            unique: true,
+            ..SortOpts::default()
+        };
+        assert_eq!(opts("sor! iu"), want);
+        let want = SortOpts {
+            pattern: Some("\\d\\+".into()),
+            on_match: true,
+            numeric: true,
+            ..SortOpts::default()
+        };
+        assert_eq!(opts("sort /\\d\\+/ r n"), want);
+        let want = SortOpts {
+            hex: true,
+            pattern: Some(String::new()),
+            ..SortOpts::default()
+        };
+        assert_eq!(opts("sort x //"), want);
+        assert!(matches!(parse("sort q"), ExCommand::Invalid(e) if e.contains("E474")));
+        assert!(matches!(parse("so"), ExCommand::Unknown(_)));
     }
 
     #[test]

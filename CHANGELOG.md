@@ -253,6 +253,11 @@ follows [Semantic Versioning](https://semver.org/).
   before the first runs, so `:g/x/d` doesn't skip lines and `:g/^/m0` turns
   the file round, and the whole run undoes as one step. Without a command,
   `:g/pat/` goes to the last matching line.
+- **`:sort` sorts lines, the whole file by default.** `!` reverses it, `i`
+  ignores case, `n` / `x` sort on the first decimal / hex number (lines
+  with none come first), `u` drops repeats, and `/pat/` sorts on what
+  follows the match — or on the match itself with `r` — keeping the lines
+  it misses ahead, in their order. It's stable, and undoes as one step.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
