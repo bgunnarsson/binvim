@@ -579,14 +579,8 @@ impl super::App {
         let left_visual = start
             .selection
             .filter(|_| !matches!(self.mode, Mode::Visual(_)));
-        if let Some((anchor, cursor)) = left_visual {
-            let (first, last) = if (anchor.line, anchor.col) <= (cursor.line, cursor.col) {
-                (anchor, cursor)
-            } else {
-                (cursor, anchor)
-            };
-            self.buffer.set_mark('<', first.line, first.col);
-            self.buffer.set_mark('>', last.line, last.col);
+        if let (Some((anchor, cursor)), Mode::Visual(kind)) = (left_visual, start.mode) {
+            self.remember_visual(kind, anchor, cursor);
         }
         if start.mode == Mode::Insert && self.mode != Mode::Insert {
             self.buffer
@@ -3251,6 +3245,53 @@ mod tests {
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 2));
         press(&mut app, "`<");
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 1));
+    }
+
+    fn visual_ends(app: &crate::app::App) -> Option<((usize, usize), (usize, usize))> {
+        let anchor = app.window.visual_anchor?;
+        let cursor = app.window.cursor;
+        Some(((anchor.line, anchor.col), (cursor.line, cursor.col)))
+    }
+
+    #[test]
+    fn gv_reselects_the_last_visual_area() {
+        let mut app = app_with_keymaps("one\ntwo\nthree\n", "");
+        press(&mut app, "lVj");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "gggv");
+        assert_eq!(app.mode, Mode::Visual(VisualKind::Line));
+        assert_eq!(visual_ends(&app), Some(((0, 1), (1, 1))));
+    }
+
+    #[test]
+    fn gv_puts_the_cursor_back_on_its_end() {
+        let mut app = app_with_keymaps("one two three\n", "");
+        press(&mut app, "wvb");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "$gv");
+        assert_eq!(visual_ends(&app), Some(((0, 4), (0, 0))));
+    }
+
+    #[test]
+    fn gv_in_visual_swaps_with_the_previous_selection() {
+        let mut app = app_with_keymaps("one two three\n", "");
+        press(&mut app, "vl");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "wvl");
+        press(&mut app, "gv");
+        assert_eq!(app.mode, Mode::Visual(VisualKind::Char));
+        assert_eq!(visual_ends(&app), Some(((0, 0), (0, 1))));
+        press(&mut app, "gv");
+        assert_eq!(visual_ends(&app), Some(((0, 4), (0, 5))));
+    }
+
+    #[test]
+    fn gv_follows_edits_above_the_selection() {
+        let mut app = app_with_keymaps("a\nb\nc\n", "");
+        press(&mut app, "jVj");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "ggyyPgv");
+        assert_eq!(visual_ends(&app), Some(((2, 0), (3, 0))));
     }
 
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {

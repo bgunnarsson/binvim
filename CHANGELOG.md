@@ -94,6 +94,10 @@ follows [Semantic Versioning](https://semver.org/).
   `'a` still finds the line you marked after you delete lines above it.
   Formatting on save and reloading from disk keep marks on their line and
   column.
+- **`gv` reselects the last Visual selection.** It comes back as the same
+  kind — char, line or block — with the cursor on the end it was on, and
+  follows any edits made since. Inside Visual, `gv` swaps the current
+  selection with the previous one, so pressing it again swaps back.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

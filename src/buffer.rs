@@ -128,6 +128,17 @@ pub struct Buffer {
     /// end of each Normal-mode command, and when Insert is left — so a whole
     /// insert session counts as one change.
     pub change_open: bool,
+    /// The last Visual selection's kind and cursor end; `'<` / `'>` hold its
+    /// ends. `gv` rebuilds the selection from the three.
+    pub last_visual: Option<LastVisual>,
+}
+
+/// How the last Visual selection was made — the part `'<` / `'>` can't say.
+#[derive(Debug, Clone, Copy)]
+pub struct LastVisual {
+    pub kind: crate::mode::VisualKind,
+    /// The cursor was on `'<` rather than `'>`.
+    pub cursor_at_start: bool,
 }
 
 impl Default for Buffer {
@@ -148,6 +159,7 @@ impl Buffer {
             line_ending: LineEnding::platform_default(),
             marks: HashMap::new(),
             change_open: false,
+            last_visual: None,
         }
     }
 
@@ -177,6 +189,7 @@ impl Buffer {
                 line_ending,
                 marks: HashMap::new(),
                 change_open: false,
+                last_visual: None,
             })
         } else {
             Ok(Self {
@@ -189,6 +202,7 @@ impl Buffer {
                 line_ending: LineEnding::platform_default(),
                 marks: HashMap::new(),
                 change_open: false,
+                last_visual: None,
             })
         }
     }

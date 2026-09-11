@@ -13,6 +13,55 @@ impl super::App {
         self.word_drag_origin = None;
     }
 
+    /// Keeps a selection for `'<` / `'>` and `gv`.
+    pub(super) fn remember_visual(&mut self, kind: VisualKind, anchor: Cursor, cursor: Cursor) {
+        let cursor_at_start = (cursor.line, cursor.col) < (anchor.line, anchor.col);
+        let (first, last) = if cursor_at_start {
+            (cursor, anchor)
+        } else {
+            (anchor, cursor)
+        };
+        self.buffer.set_mark('<', first.line, first.col);
+        self.buffer.set_mark('>', last.line, last.col);
+        self.buffer.last_visual = Some(crate::buffer::LastVisual {
+            kind,
+            cursor_at_start,
+        });
+    }
+
+    /// `gv`: the last Visual selection again — same kind, the cursor on the
+    /// same end, and ends that have moved with any edits since. From Visual it
+    /// swaps, so a second `gv` comes back.
+    pub(super) fn reselect_visual(&mut self) {
+        let Some(last) = self.buffer.last_visual else {
+            return;
+        };
+        let (Some(first), Some(end)) = (self.buffer.mark('<'), self.buffer.mark('>')) else {
+            return;
+        };
+        let at = |(line, col): (usize, usize)| {
+            let line = line.min(self.buffer.line_count().saturating_sub(1));
+            let col = col.min(self.buffer.line_len(line).saturating_sub(1));
+            Cursor {
+                line,
+                col,
+                want_col: col,
+            }
+        };
+        let (first, end) = (at(first), at(end));
+        let (anchor, cursor) = if last.cursor_at_start {
+            (end, first)
+        } else {
+            (first, end)
+        };
+        if let (Mode::Visual(kind), Some(current)) = (self.mode, self.window.visual_anchor) {
+            self.remember_visual(kind, current, self.window.cursor);
+        }
+        self.mode = Mode::Visual(last.kind);
+        self.window.visual_anchor = Some(anchor);
+        self.window.cursor = cursor;
+    }
+
     /// `Ctrl-N` in Visual-char mode — find the next literal-text match of
     /// the current primary selection and add it as an additional
     /// selection. The primary cursor jumps to the new occurrence (so a
