@@ -509,18 +509,17 @@ impl super::App {
             return;
         }
         // Indent / outdent on a text-object range: derive line span and shift them.
-        if matches!(op, Operator::Indent | Operator::Outdent) {
+        if matches!(
+            op,
+            Operator::Indent | Operator::Outdent | Operator::Reindent
+        ) {
             let l1 = self.buffer.rope.char_to_line(range.start);
             let l2_idx = range.end.saturating_sub(1);
             let l2 = self
                 .buffer
                 .rope
                 .char_to_line(l2_idx.min(self.buffer.total_chars()));
-            if matches!(op, Operator::Indent) {
-                self.indent_lines(l1, l2);
-            } else {
-                self.outdent_lines(l1, l2);
-            }
+            self.shift_lines(op, l1, l2);
             return;
         }
         let removed = self.buffer.rope.slice(range.start..range.end).to_string();
@@ -552,7 +551,9 @@ impl super::App {
                 self.cursor_to_idx(range.start);
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -797,14 +798,13 @@ impl super::App {
     fn apply_op_with_motion(&mut self, op: Operator, m: MotionResult, target: Option<char>) {
         // Indent/outdent operate on whole lines from cursor to motion target,
         // regardless of motion kind. Bypass the byte-range path used by d/c/y.
-        if matches!(op, Operator::Indent | Operator::Outdent) {
+        if matches!(
+            op,
+            Operator::Indent | Operator::Outdent | Operator::Reindent
+        ) {
             let l1 = self.window.cursor.line.min(m.target.line);
             let l2 = self.window.cursor.line.max(m.target.line);
-            if matches!(op, Operator::Indent) {
-                self.indent_lines(l1, l2);
-            } else {
-                self.outdent_lines(l1, l2);
-            }
+            self.shift_lines(op, l1, l2);
             return;
         }
         let (start, end) = self.range_from_motion(m);
@@ -837,7 +837,9 @@ impl super::App {
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+                unreachable!()
+            }
         }
     }
 
@@ -846,12 +848,11 @@ impl super::App {
         let l1 = self.window.cursor.line;
         let l2 = (l1 + count - 1).min(last_line);
         // Indent / outdent (>>, <<, count-prefixed) operate purely on line content.
-        if matches!(op, Operator::Indent) {
-            self.indent_lines(l1, l2);
-            return;
-        }
-        if matches!(op, Operator::Outdent) {
-            self.outdent_lines(l1, l2);
+        if matches!(
+            op,
+            Operator::Indent | Operator::Outdent | Operator::Reindent
+        ) {
+            self.shift_lines(op, l1, l2);
             return;
         }
         if let Operator::Case(how) = op {
@@ -911,7 +912,9 @@ impl super::App {
                 self.window.cursor.want_col = 0;
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Reindent | Operator::Case(_) => {
+                unreachable!()
+            }
         }
     }
 

@@ -256,7 +256,10 @@ impl super::App {
             Action::Operate { op, .. }
             | Action::OperateLine { op, .. }
             | Action::OperateTextObject { op, .. } => {
-                matches!(op, Operator::Delete | Operator::Case(_))
+                matches!(
+                    op,
+                    Operator::Delete | Operator::Reindent | Operator::Case(_)
+                )
             }
             Action::DeleteCharForward { .. }
             | Action::Put { .. }
