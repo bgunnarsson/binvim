@@ -315,6 +315,12 @@ follows [Semantic Versioning](https://semver.org/).
   before the block, `A` after it — padding rows that stop short — and `$A` at
   each row's own end; `.` repeats it on a block of the same size, and one undo
   takes it back.
+- **Visual `Y` / `D` / `X` / `C` / `R` work on whole lines, and block `O`
+  jumps corners.** As in Vim, the uppercase keys take every line the
+  selection touches; in block mode `D` / `C` run to each row's end instead, as
+  do `$` blocks for every operator. Block `O` moves to the other corner on the
+  same row, and `Ctrl-C` leaves Visual like `Esc`. Char and line `I` / `A`
+  insert at the first line's start, or after the cursor on the last line.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

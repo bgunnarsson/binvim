@@ -5301,6 +5301,59 @@ mod tests {
     }
 
     #[test]
+    fn visual_star_extends_the_selection_to_the_next_match() {
+        let mut app = app_with_keymaps("foo bar foo\n", "");
+        press(&mut app, "v*");
+        assert!(matches!(app.mode, Mode::Visual(_)));
+        assert_eq!(app.window.cursor.col, 8);
+        assert_eq!(app.window.visual_anchor.map(|a| a.col), Some(0));
+    }
+
+    #[test]
+    fn visual_uppercase_keys_work_on_lines_or_to_the_row_end() {
+        let text = |app: &crate::app::App| app.buffer.rope.to_string();
+        // Char-mode `D` / `C` / `Y` take whole lines, as Vim does.
+        let mut app = app_with_keymaps("abc\ndef\nghi\n", "");
+        press(&mut app, "lvjD");
+        assert_eq!(text(&app), "ghi\n");
+        let mut app = app_with_keymaps("abc\ndef\nghi\n", "");
+        press(&mut app, "lvjCZ");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(text(&app), "Z\nghi\n");
+        let mut app = app_with_keymaps("abc\ndef\nghi\n", "");
+        // `jj`, not `G`: `G` can land on ropey's phantom last line (a known finding).
+        press(&mut app, "lvjYjjP");
+        assert_eq!(text(&app), "abc\ndef\nabc\ndef\nghi\n");
+        // Block `D` runs to each row's end.
+        let mut app = app_with_keymaps("abc\ndef\nghi\n", "");
+        press(&mut app, "l");
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jD");
+        assert_eq!(text(&app), "a\nd\nghi\n");
+        // Block `O` swaps the columns only.
+        let mut app = app_with_keymaps("abc\ndef\nghi\n", "");
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jlO");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
+        assert_eq!(
+            app.window.visual_anchor.map(|a| (a.line, a.col)),
+            Some((0, 1))
+        );
+        // `Ctrl-C` leaves Visual as `Esc` does.
+        app.replay_key(ctrl('c'));
+        assert!(matches!(app.mode, Mode::Normal));
+        // Char-mode `I` / `A`: the first line's start, after the cursor on the last.
+        let mut app = app_with_keymaps("abc\ndef\n", "");
+        press(&mut app, "lvjIX");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(text(&app), "Xabc\ndef\n");
+        let mut app = app_with_keymaps("abc\ndef\n", "");
+        press(&mut app, "lvjAX");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(text(&app), "abc\ndeXf\n");
+    }
+
+    #[test]
     fn visual_block_insert_and_append_mirror_on_every_row() {
         let mut app = app_with_keymaps("abc\nabc\nabc\n", "");
         app.window.cursor.col = 1;

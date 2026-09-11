@@ -22,13 +22,19 @@ impl super::App {
             return;
         };
         if kind != crate::mode::VisualKind::Block {
-            let (start, end, _) = self.visual_range_chars(kind);
-            // After a line-wise selection's last line, not past its newline.
-            let before_newline = end > start && self.buffer.rope.char(end - 1) == '\n';
-            let end = if before_newline { end - 1 } else { end };
-            let at = if append { end } else { start };
+            // Vim makes these line-wise: `I` at the first line's column 0, `A`
+            // after the cursor's column on the last line.
+            let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+            let first = anchor.line.min(self.window.cursor.line);
+            let last = anchor.line.max(self.window.cursor.line);
+            let after = (self.window.cursor.col + 1).min(self.buffer.line_len(last));
+            let (line, col) = if append { (last, after) } else { (first, 0) };
             self.exit_visual();
-            self.cursor_to_idx(at);
+            self.window.cursor = crate::cursor::Cursor {
+                line,
+                col,
+                want_col: col,
+            };
             self.apply_action(crate::parser::Action::EnterInsert(
                 crate::parser::InsertWhere::Cursor,
             ));
@@ -52,6 +58,41 @@ impl super::App {
             rows: l2 - l1 + 1,
             width: c2 - c1 + 1,
         });
+    }
+
+    /// Visual `D` `X` `Y` `C` `R`: Vim's uppercase forms work on whole lines —
+    /// except in block mode, where `D` / `C` run to each row's end and `X` /
+    /// `Y` stay on the block. `R` changes whole lines in every mode.
+    pub(super) fn visual_linewise(&mut self, key: char, register: Option<char>) {
+        let Mode::Visual(kind) = self.mode else {
+            return;
+        };
+        let op = match key {
+            'Y' => Operator::Yank,
+            'C' | 'R' => Operator::Change,
+            _ => Operator::Delete,
+        };
+        let block = kind == crate::mode::VisualKind::Block;
+        if block && matches!(key, 'D' | 'C') {
+            self.window.cursor.want_col = usize::MAX;
+        } else if !block || key == 'R' {
+            self.mode = Mode::Visual(crate::mode::VisualKind::Line);
+        }
+        self.apply_action(crate::parser::Action::VisualOperate { op, register });
+    }
+
+    /// Visual `O`: in block mode the cursor moves to the other corner on its
+    /// own row — the columns swap, the lines stay. Elsewhere it's `o`.
+    pub(super) fn visual_swap_corner(&mut self) {
+        if !matches!(self.mode, Mode::Visual(crate::mode::VisualKind::Block)) {
+            self.apply_action(crate::parser::Action::VisualSwap);
+            return;
+        }
+        if let Some(anchor) = self.window.visual_anchor.as_mut() {
+            std::mem::swap(&mut anchor.col, &mut self.window.cursor.col);
+            anchor.want_col = anchor.col;
+            self.window.cursor.want_col = self.window.cursor.col;
+        }
     }
 
     /// Block `I` / `A` / `$A` from the cursor, `rows` rows by `width` columns
@@ -694,6 +735,9 @@ impl super::App {
         let l2 = anchor.line.max(self.window.cursor.line);
         let c1 = anchor.col.min(self.window.cursor.col);
         let c2 = anchor.col.max(self.window.cursor.col);
+        // `$` (or Visual `D` / `C`) takes every row to its own end.
+        let to_eol = self.window.cursor.want_col == usize::MAX;
+        let row_end = |len: usize| if to_eol { len } else { (c2 + 1).min(len) };
 
         if matches!(op, Operator::Indent) {
             self.indent_lines(l1, l2);
@@ -708,7 +752,7 @@ impl super::App {
                 let line_len = self.buffer.line_len(line);
                 let line_start = self.buffer.line_start_idx(line);
                 let start = line_start + c1.min(line_len);
-                let end = line_start + (c2 + 1).min(line_len);
+                let end = line_start + row_end(line_len);
                 self.recase_range(start, end, how);
             }
             self.window.cursor.line = l1;
@@ -724,7 +768,7 @@ impl super::App {
         for line in l1..=l2 {
             let line_len = self.buffer.line_len(line);
             let start = c1.min(line_len);
-            let end = (c2 + 1).min(line_len);
+            let end = row_end(line_len);
             if end <= start {
                 chunks.push(String::new());
                 continue;
@@ -762,7 +806,7 @@ impl super::App {
                 for line in (l1..=l2).rev() {
                     let line_len = self.buffer.line_len(line);
                     let start = c1.min(line_len);
-                    let end = (c2 + 1).min(line_len);
+                    let end = row_end(line_len);
                     if end > start {
                         let line_start = self.buffer.line_start_idx(line);
                         self.buffer
