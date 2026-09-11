@@ -136,7 +136,7 @@ pub fn goto_line(buf: &Buffer, n: usize) -> MotionResult {
 /// The lines Vim counts. Ropey adds an empty line after a trailing newline and
 /// Vim doesn't; counting it would shift every `N%` and hand `}` a paragraph
 /// boundary that isn't in the file.
-fn vim_line_count(buf: &Buffer) -> usize {
+pub(crate) fn vim_line_count(buf: &Buffer) -> usize {
     let len = buf.rope.len_chars();
     if len > 0 && buf.rope.char(len - 1) == '\n' {
         buf.line_count() - 1

@@ -555,6 +555,13 @@ impl super::App {
         let anchor = self.window.cursor;
         let end_idx = range.end.saturating_sub(1).max(range.start);
         self.cursor_to_idx(end_idx);
+        // A linewise object (`ip` / `ap`) selects whole lines, as in Vim.
+        if range.linewise {
+            self.window.cursor.col = 0;
+            self.window.cursor.want_col = 0;
+            self.additional_selections.clear();
+            self.mode = Mode::Visual(VisualKind::Line);
+        }
         self.window.visual_anchor = Some(anchor);
     }
 }

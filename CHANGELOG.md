@@ -49,6 +49,12 @@ follows [Semantic Versioning](https://semver.org/).
   a paragraph. With an operator from the start of a line they work on whole
   lines, as in Vim — `d}` takes the paragraph and leaves the blank line
   after it. Both are jumps, so `Ctrl-O` comes back.
+- **`ip` / `ap` paragraph text objects.** `ip` is the paragraph around the
+  cursor (or the blank lines it's on), `ap` adds the blank lines after it —
+  or, for the last paragraph in the file, the ones before it. Both are
+  linewise: `dap` deletes whole lines, `cip` leaves one empty line to type
+  on, and `vip` starts a line-wise selection. A count takes more paragraphs,
+  and a whitespace-only line counts as blank here, as in Vim.
 
 ## [0.5.21] - 2026-09-10
 
