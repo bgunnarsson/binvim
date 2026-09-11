@@ -10,7 +10,7 @@ use crate::mode::{Mode, VisualKind};
 use crate::parser::InsertWhere;
 
 use super::pair::{is_paired_bracket, surround_open_close};
-use super::state::{YANK_FLASH_DURATION, YankHighlight};
+use super::state::{ReplaceSession, ReplaceUndo, YANK_FLASH_DURATION, YankHighlight};
 
 impl super::App {
     /// Mirror a single-char insert at the primary cursor across all
@@ -353,6 +353,92 @@ impl super::App {
         self.window.cursor.col += actual.saturating_sub(1);
         self.window.cursor.want_col = self.window.cursor.col;
         self.clamp_cursor_normal();
+    }
+
+    /// `R` — Insert, typing over the text instead of before it. One cursor:
+    /// what each char overwrites is the primary's to put back.
+    pub(super) fn enter_replace(&mut self, count: usize) {
+        self.enter_insert(InsertWhere::Cursor);
+        self.additional_cursors.clear();
+        self.replace_session = Some(ReplaceSession {
+            count: count.max(1),
+            ..ReplaceSession::default()
+        });
+    }
+
+    /// A char typed in Replace mode takes the place of the one under the
+    /// cursor, or goes on the end once the line runs out.
+    pub(super) fn replace_mode_char(&mut self, c: char) {
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
+        let at = self.buffer.pos_to_char(line, col);
+        let under = self
+            .buffer
+            .char_at(line, col)
+            .filter(|_| col < self.buffer.line_len(line));
+        let typed = c.to_string();
+        let undo = match under {
+            Some(old) => {
+                self.buffer.replace_range(at, at + 1, &typed);
+                ReplaceUndo::Replaced { at, old }
+            }
+            None => {
+                self.buffer.insert_at_idx(at, &typed);
+                ReplaceUndo::Added { at, len: 1 }
+            }
+        };
+        self.cursor_to_idx(at + 1);
+        if let Some(session) = self.replace_session.as_mut() {
+            session.undo.push(undo);
+            session.typed.push(c);
+        }
+    }
+
+    /// `Backspace` in Replace mode takes back the last char typed and puts
+    /// back what it overwrote. With nothing left to take back it only moves
+    /// left, as Vim's does over text the session didn't type.
+    pub(super) fn replace_mode_backspace(&mut self) {
+        let undo = self.replace_session.as_mut().and_then(|session| {
+            session.typed.pop();
+            session.undo.pop()
+        });
+        match undo {
+            Some(ReplaceUndo::Replaced { at, old }) => {
+                self.buffer.replace_range(at, at + 1, &old.to_string());
+                self.cursor_to_idx(at);
+            }
+            Some(ReplaceUndo::Added { at, len }) => {
+                self.buffer.delete_range(at, at + len);
+                self.cursor_to_idx(at);
+            }
+            None if self.window.cursor.col > 0 => {
+                self.window.cursor.col -= 1;
+                self.window.cursor.want_col = self.window.cursor.col;
+            }
+            None => {}
+        }
+    }
+
+    /// `Esc` ends Replace mode, typing the text again first for a count:
+    /// `3Rab` puts `ab` in three times. A line break goes in bare the
+    /// second time round — Enter's indent came from the line it split.
+    pub(super) fn replace_mode_finish(&mut self) {
+        let Some(session) = self.replace_session.take() else {
+            return;
+        };
+        for _ in 1..session.count {
+            for c in session.typed.chars() {
+                if c == '\n' {
+                    let at = self
+                        .buffer
+                        .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+                    self.buffer.insert_at_idx(at, "\n");
+                    self.cursor_to_idx(at + 1);
+                } else {
+                    self.replace_mode_char(c);
+                }
+            }
+        }
     }
 
     /// Ctrl-J / Ctrl-K — move the cursor's line (Normal mode) or the

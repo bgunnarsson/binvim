@@ -25,6 +25,44 @@ impl super::App {
         self.join_lines((l2 - l1).max(1), spaces);
     }
 
+    /// Visual `r{c}`: every selected char becomes `c`, and the line breaks
+    /// between them stay. Block mode takes each line's slice of columns.
+    pub(super) fn visual_replace(&mut self, c: char) {
+        let Mode::Visual(kind) = self.mode else {
+            return;
+        };
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+        let spans: Vec<(usize, usize)> = if kind == VisualKind::Block {
+            let l1 = anchor.line.min(self.window.cursor.line);
+            let l2 = anchor.line.max(self.window.cursor.line);
+            let c1 = anchor.col.min(self.window.cursor.col);
+            let c2 = anchor.col.max(self.window.cursor.col);
+            (l1..=l2)
+                .map(|line| {
+                    let line_len = self.buffer.line_len(line);
+                    let line_start = self.buffer.line_start_idx(line);
+                    (
+                        line_start + c1.min(line_len),
+                        line_start + (c2 + 1).min(line_len),
+                    )
+                })
+                .collect()
+        } else {
+            let (start, end, _) = self.visual_range_chars(kind);
+            vec![(start, end)]
+        };
+        let keep_breaks = |old: char| if old == '\n' { old } else { c };
+        for &(start, end) in spans.iter().filter(|(start, end)| end > start) {
+            let old = self.buffer.rope.slice(start..end).to_string();
+            let new: String = old.chars().map(keep_breaks).collect();
+            self.buffer.replace_range(start, end, &new);
+        }
+        let first = spans.first().map_or(0, |(start, _)| *start);
+        self.cursor_to_idx(first);
+        self.clamp_cursor_normal();
+        self.exit_visual();
+    }
+
     /// Keeps a selection for `'<` / `'>` and `gv`.
     pub(super) fn remember_visual(&mut self, kind: VisualKind, anchor: Cursor, cursor: Cursor) {
         let cursor_at_start = (cursor.line, cursor.col) < (anchor.line, anchor.col);

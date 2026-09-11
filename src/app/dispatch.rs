@@ -123,6 +123,7 @@ impl super::App {
                 }
             }
             Action::EnterInsert(w) => self.enter_insert(w),
+            Action::EnterReplace { count } => self.enter_replace(count),
             Action::DeleteCharForward { count, register } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 if !self.try_multi_delete_char(count, register) {
@@ -132,6 +133,10 @@ impl super::App {
             Action::ReplaceChar { ch, count } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.replace_char(ch, count);
+            }
+            Action::VisualReplace { ch } => {
+                self.history.record(&self.buffer.rope, self.window.cursor);
+                self.visual_replace(ch);
             }
             Action::JoinLines { count, spaces } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);

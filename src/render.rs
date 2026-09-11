@@ -7970,10 +7970,13 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
         .map(|c| format!(" @{c}"))
         .unwrap_or_default();
     // Vim's `-- (insert) --`: Normal for one `Ctrl-O` command, then Insert.
-    let mode_label = if app.insert_oneshot.is_some() && app.mode == Mode::Normal {
-        "(INSERT)"
-    } else {
-        app.mode.label()
+    // Replace mode is Insert with a session running.
+    let replacing = app.replace_session.is_some();
+    let mode_label = match (app.mode, app.insert_oneshot.is_some(), replacing) {
+        (Mode::Normal, true, false) => "(INSERT)",
+        (Mode::Normal, true, true) => "(REPLACE)",
+        (Mode::Insert, _, true) => "REPLACE",
+        _ => app.mode.label(),
     };
     let mode_text = format!(" {}{} ", mode_label, recording);
     let branch_text = app
@@ -8224,6 +8227,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         return Ok(());
     }
     let style = match app.mode {
+        Mode::Insert if app.replace_session.is_some() => SetCursorStyle::SteadyUnderScore,
         Mode::Insert => SetCursorStyle::SteadyBar,
         _ => SetCursorStyle::SteadyBlock,
     };
