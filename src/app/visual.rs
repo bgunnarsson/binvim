@@ -170,9 +170,10 @@ impl super::App {
         }
         // Multi-selection (Ctrl-N): operator applies to every range —
         // primary plus each stored `additional_selections`. Indent /
-        // outdent fall through to the single-selection line path below.
+        // outdent fall through to the single-selection line path below,
+        // and so do the case operators, which change the primary only.
         if !self.additional_selections.is_empty()
-            && !matches!(op, Operator::Indent | Operator::Outdent)
+            && !matches!(op, Operator::Indent | Operator::Outdent | Operator::Case(_))
         {
             self.apply_multi_selection_operate(op, target);
             return;
@@ -212,6 +213,13 @@ impl super::App {
             self.exit_visual();
             return;
         }
+        if let Operator::Case(how) = op {
+            self.recase_range(start, end, how);
+            self.cursor_to_idx(start);
+            self.clamp_cursor_normal();
+            self.exit_visual();
+            return;
+        }
         let removed = self.buffer.rope.slice(start..end).to_string();
         match op {
             Operator::Yank => {
@@ -238,7 +246,7 @@ impl super::App {
                 self.mode = Mode::Insert;
                 self.window.visual_anchor = None;
             }
-            Operator::Indent | Operator::Outdent => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
         }
     }
 
@@ -321,7 +329,7 @@ impl super::App {
                     self.exit_visual();
                 }
             }
-            Operator::Indent | Operator::Outdent => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
         }
     }
 
@@ -527,6 +535,20 @@ impl super::App {
             self.outdent_lines(l1, l2);
             return;
         }
+        if let Operator::Case(how) = op {
+            for line in l1..=l2 {
+                let line_len = self.buffer.line_len(line);
+                let line_start = self.buffer.line_start_idx(line);
+                let start = line_start + c1.min(line_len);
+                let end = line_start + (c2 + 1).min(line_len);
+                self.recase_range(start, end, how);
+            }
+            self.window.cursor.line = l1;
+            self.window.cursor.col = c1.min(self.buffer.line_len(l1).saturating_sub(1));
+            self.window.cursor.want_col = self.window.cursor.col;
+            self.exit_visual();
+            return;
+        }
 
         // Build the yanked text by snapping the column slice on every line.
         // Lines shorter than `c1` contribute an empty row, matching Vim.
@@ -590,7 +612,7 @@ impl super::App {
                     self.exit_visual();
                 }
             }
-            Operator::Indent | Operator::Outdent => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
         }
     }
 

@@ -116,4 +116,51 @@ pub enum Operator {
     Yank,
     Indent,
     Outdent,
+    /// `gu` / `gU` / `g~` / `g?` — rewrite the range's case in place.
+    Case(CaseOp),
+}
+
+/// What a case operator does to each character.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseOp {
+    Lower,
+    Upper,
+    Toggle,
+    Rot13,
+}
+
+impl CaseOp {
+    /// The case operator a key names after `g`: `u`, `U`, `~` or `?`.
+    pub fn for_key(ch: char) -> Option<Self> {
+        match ch {
+            'u' => Some(CaseOp::Lower),
+            'U' => Some(CaseOp::Upper),
+            '~' => Some(CaseOp::Toggle),
+            '?' => Some(CaseOp::Rot13),
+            _ => None,
+        }
+    }
+
+    pub fn apply(self, s: &str) -> String {
+        let mut out = String::with_capacity(s.len());
+        for c in s.chars() {
+            match self {
+                CaseOp::Lower => out.extend(c.to_lowercase()),
+                CaseOp::Upper => out.extend(c.to_uppercase()),
+                CaseOp::Toggle if c.is_uppercase() => out.extend(c.to_lowercase()),
+                CaseOp::Toggle => out.extend(c.to_uppercase()),
+                CaseOp::Rot13 => out.push(rot13(c)),
+            }
+        }
+        out
+    }
+}
+
+fn rot13(c: char) -> char {
+    let base = match c {
+        'a'..='z' => b'a',
+        'A'..='Z' => b'A',
+        _ => return c,
+    };
+    ((c as u8 - base + 13) % 26 + base) as char
 }

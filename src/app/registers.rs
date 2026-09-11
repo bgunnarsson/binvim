@@ -254,7 +254,9 @@ impl super::App {
         let plain_recordable = match action {
             Action::Operate { op, .. }
             | Action::OperateLine { op, .. }
-            | Action::OperateTextObject { op, .. } => matches!(op, Operator::Delete),
+            | Action::OperateTextObject { op, .. } => {
+                matches!(op, Operator::Delete | Operator::Case(_))
+            }
             Action::DeleteCharForward { .. }
             | Action::Put { .. }
             | Action::VisualPut { .. }

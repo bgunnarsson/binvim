@@ -432,6 +432,12 @@ impl super::App {
         if range.end <= range.start {
             return;
         }
+        if let Operator::Case(how) = op {
+            self.recase_range(range.start, range.end, how);
+            self.cursor_to_idx(range.start);
+            self.clamp_cursor_normal();
+            return;
+        }
         // Indent / outdent on a text-object range: derive line span and shift them.
         if matches!(op, Operator::Indent | Operator::Outdent) {
             let l1 = self.buffer.rope.char_to_line(range.start);
@@ -476,7 +482,7 @@ impl super::App {
                 self.cursor_to_idx(range.start);
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
         }
     }
 
@@ -735,6 +741,12 @@ impl super::App {
         if end <= start {
             return;
         }
+        if let Operator::Case(how) = op {
+            self.recase_range(start, end, how);
+            self.cursor_to_idx(start);
+            self.clamp_cursor_normal();
+            return;
+        }
         let removed = self.buffer.rope.slice(start..end).to_string();
         let linewise = matches!(m.kind, MotionKind::Linewise);
 
@@ -755,7 +767,7 @@ impl super::App {
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
         }
     }
 
@@ -770,6 +782,13 @@ impl super::App {
         }
         if matches!(op, Operator::Outdent) {
             self.outdent_lines(l1, l2);
+            return;
+        }
+        if let Operator::Case(how) = op {
+            let start = self.buffer.line_start_idx(l1);
+            let end = self.buffer.line_start_idx(l2 + 1);
+            self.recase_range(start, end, how);
+            self.clamp_cursor_normal();
             return;
         }
         let start = self.buffer.line_start_idx(l1);
@@ -822,7 +841,7 @@ impl super::App {
                 self.window.cursor.want_col = 0;
                 self.mode = Mode::Insert;
             }
-            Operator::Indent | Operator::Outdent => unreachable!(),
+            Operator::Indent | Operator::Outdent | Operator::Case(_) => unreachable!(),
         }
     }
 
