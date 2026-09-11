@@ -114,6 +114,12 @@ follows [Semantic Versioning](https://semver.org/).
   `` `A ``) from any other, switches back to that file at the mark —
   reopening it if you had closed it. Setting `mA` again moves the mark to
   the new file. File marks last for the session.
+- **Case operators `gu`, `gU`, `g~` and `g?`.** They lowercase, uppercase,
+  toggle the case of, or ROT13 whatever a motion or text object covers
+  (`gUiw`, `g~$`), and `guu` / `gugu`, `gUU`, `g~~` and `g??` do the whole
+  line. In Visual, `u`, `U`, `~` and `g?` do the same to the selection,
+  block selections included. They don't write any register, and `.`
+  repeats them.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

@@ -325,16 +325,27 @@ impl Buffer {
         removed
     }
 
+    /// Replaces chars in [start, end) with `text` as one edit, so a same-length
+    /// rewrite — a case change — leaves the marks inside it where they were.
+    pub fn replace_range(&mut self, start: usize, end: usize, text: &str) {
+        self.rope.remove(start..end);
+        self.rope.insert(start, text);
+        self.track_edit(start, end - start, text.chars().count());
+        self.dirty = true;
+        self.version = self.version.wrapping_add(1);
+    }
+
     /// Moves every mark with the text around it once `removed` chars at `at`
     /// have been replaced by `inserted`, and records the edit for `'.`, `'[`
-    /// and `']`. A mark inside deleted text lands where the deletion was.
+    /// and `']`. A mark inside the replaced text keeps its offset as far as the
+    /// new text reaches, so one inside deleted text lands where it was cut.
     fn track_edit(&mut self, at: usize, removed: usize, inserted: usize) {
         let end = at + removed;
         for m in self.marks.values_mut().chain(self.changes.iter_mut()) {
             if *m >= end {
                 *m = *m - removed + inserted;
             } else if *m > at {
-                *m = at;
+                *m = at + (*m - at).min(inserted.saturating_sub(1));
             }
         }
         let last = at + inserted.saturating_sub(1);
@@ -505,6 +516,20 @@ mod tests {
         }
         assert_eq!(b.changes.len(), CHANGE_LIST_MAX);
         assert_eq!(b.pos_of(b.changes[0]).0, 50);
+    }
+
+    #[test]
+    fn replace_range_keeps_marks_inside_same_length_text() {
+        let mut b = buf_with_text("hello\n");
+        b.set_mark('a', 0, 3);
+        b.replace_range(0, 5, "HELLO");
+        assert_eq!(b.mark('a'), Some((0, 3)));
+        b.replace_range(0, 5, "HI");
+        assert_eq!(
+            b.mark('a'),
+            Some((0, 1)),
+            "past the shorter text: its last char"
+        );
     }
 
     #[test]

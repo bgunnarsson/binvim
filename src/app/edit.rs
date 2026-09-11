@@ -164,6 +164,19 @@ impl super::App {
         });
     }
 
+    /// `gu` / `gU` / `g~` / `g?` over `[start, end)`: rewritten in place, and
+    /// no register — the case operators don't take the text anywhere.
+    pub(super) fn recase_range(&mut self, start: usize, end: usize, how: crate::mode::CaseOp) {
+        if end <= start {
+            return;
+        }
+        let old = self.buffer.rope.slice(start..end).to_string();
+        let new = how.apply(&old);
+        if new != old {
+            self.buffer.replace_range(start, end, &new);
+        }
+    }
+
     /// Insert one indent unit (per .editorconfig) at the start of every line
     /// in `[l1, l2]`. Skips empty lines.
     pub(super) fn indent_lines(&mut self, l1: usize, l2: usize) {

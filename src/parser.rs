@@ -1,4 +1,4 @@
-use crate::mode::{Operator, VisualKind};
+use crate::mode::{CaseOp, Operator, VisualKind};
 use crate::text_object::TextObjectVerb;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -1535,6 +1535,34 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(Action::BufferPrev);
         }
+        // gu / gU / g~ / g? — the case operators. Typed again in full (`gugu`)
+        // they take the line, as their last key again does (`guu`, below).
+        if let Some(how) = CaseOp::for_key(ch) {
+            let op = Operator::Case(how);
+            if ctx == ParseCtx::Visual {
+                state.reset();
+                return ParseResult::Action(Action::VisualOperate { op, register: None });
+            }
+            match state.operator {
+                None => {
+                    state.operator = Some(op);
+                    return ParseResult::Pending;
+                }
+                Some(pending) if pending == op => {
+                    let count = state.count1.unwrap_or(1);
+                    state.reset();
+                    return ParseResult::Action(Action::OperateLine {
+                        op,
+                        count,
+                        register: None,
+                    });
+                }
+                Some(_) => {
+                    state.reset();
+                    return ParseResult::Cancelled;
+                }
+            }
+        }
         // g; / g, — older / newer places in the change list.
         if matches!(ch, ';' | ',') && ctx == ParseCtx::Normal && state.operator.is_none() {
             let count = state.total_count();
@@ -1596,6 +1624,15 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let d = ch.to_digit(10).unwrap() as usize;
         state.push_digit(d);
         return ParseResult::Pending;
+    }
+
+    // `u` / `U` / `~` in Visual: the case operators, on the selection.
+    if let Some(how) = CaseOp::for_key(ch).filter(|_| ctx == ParseCtx::Visual && ch != '?') {
+        state.reset();
+        return ParseResult::Action(Action::VisualOperate {
+            op: Operator::Case(how),
+            register: None,
+        });
     }
 
     // Visual-only mode-switch keys.
@@ -1721,6 +1758,20 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         let target = ch;
         state.reset();
         return ParseResult::Action(Action::SurroundVisual { ch: target });
+    }
+
+    // `guu`, `gUU`, `g~~`, `g??`: a case operator's own last key again takes
+    // the line, as `dd` does for `d`.
+    if let Some(op) = state.operator.filter(|&op| {
+        ctx == ParseCtx::Normal && Some(op) == CaseOp::for_key(ch).map(Operator::Case)
+    }) {
+        let count = state.count1.unwrap_or(1);
+        state.reset();
+        return ParseResult::Action(Action::OperateLine {
+            op,
+            count,
+            register: None,
+        });
     }
 
     // Operators (only in normal mode — visual handles d/c/y/>/< above).

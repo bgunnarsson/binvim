@@ -3386,6 +3386,58 @@ mod tests {
         assert_eq!(texts, ["a", "d"]);
     }
 
+    #[test]
+    fn case_operators_work_with_motions_and_text_objects() {
+        let mut app = app_with_keymaps("hello world\n", "");
+        press(&mut app, "gUiw");
+        assert_eq!(app.buffer.rope.to_string(), "HELLO world\n");
+        press(&mut app, "wg~$");
+        assert_eq!(app.buffer.rope.to_string(), "HELLO WORLD\n");
+        press(&mut app, "0g?e");
+        assert_eq!(app.buffer.rope.to_string(), "URYYB WORLD\n");
+    }
+
+    #[test]
+    fn case_operators_take_the_line_doubled() {
+        let mut app = app_with_keymaps("Abc\nDef\n", "");
+        press(&mut app, "guu");
+        assert_eq!(app.buffer.rope.to_string(), "abc\nDef\n");
+        press(&mut app, "jgUgU");
+        assert_eq!(app.buffer.rope.to_string(), "abc\nDEF\n");
+        press(&mut app, "g~~");
+        assert_eq!(app.buffer.rope.to_string(), "abc\ndef\n");
+        press(&mut app, "kg??");
+        assert_eq!(app.buffer.rope.to_string(), "nop\ndef\n");
+    }
+
+    #[test]
+    fn case_operators_leave_the_registers_alone() {
+        let mut app = app_with_keymaps("abc\n", "");
+        with_register(&mut app, '"', "kept");
+        press(&mut app, "gUiw");
+        assert_eq!(app.buffer.rope.to_string(), "ABC\n");
+        let unnamed = app.registers.get(&'"').map(|r| r.text.as_str());
+        assert_eq!(unnamed, Some("kept"));
+    }
+
+    #[test]
+    fn visual_case_keys_change_the_selection() {
+        let mut app = app_with_keymaps("abc def\nghi jkl\n", "");
+        press(&mut app, "vlU");
+        assert_eq!(app.buffer.rope.to_string(), "ABc def\nghi jkl\n");
+        assert_eq!(app.mode, Mode::Normal);
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jlg?");
+        assert_eq!(app.buffer.rope.to_string(), "NOc def\ntui jkl\n");
+    }
+
+    #[test]
+    fn dot_repeats_a_case_operator() {
+        let mut app = app_with_keymaps("one two\n", "");
+        press(&mut app, "gUiww.");
+        assert_eq!(app.buffer.rope.to_string(), "ONE TWO\n");
+    }
+
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {
         let reg = crate::app::state::Register {
             text: text.into(),
