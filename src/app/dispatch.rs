@@ -353,6 +353,16 @@ impl super::App {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.surround_change(from, to);
             }
+            Action::SurroundAdd {
+                target,
+                ch,
+                own_lines,
+            } => {
+                if let Some((start, end)) = self.surround_target_range(target) {
+                    self.history.record(&self.buffer.rope, self.window.cursor);
+                    self.surround_wrap(start, end, ch, own_lines);
+                }
+            }
             Action::SurroundVisual { ch } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
                 self.surround_visual(ch);
@@ -426,6 +436,47 @@ impl super::App {
             None => return,
         };
         self.apply_op_to_range(op, range, target);
+    }
+
+    /// The `[start, end)` a `ys` target covers. `yss` starts at the first
+    /// non-blank, and trailing whitespace is left out so the pair closes
+    /// against the text, as vim-surround does.
+    fn surround_target_range(
+        &mut self,
+        target: crate::parser::SurroundTarget,
+    ) -> Option<(usize, usize)> {
+        use crate::parser::SurroundTarget;
+        let (start, mut end) = match target {
+            SurroundTarget::Motion { motion, count } => {
+                let m = self.run_motion(motion, count);
+                let m = self.paragraph_linewise(motion, m);
+                self.range_from_motion(m)
+            }
+            SurroundTarget::TextObject { obj, count } => {
+                let r = text_object::compute_counted(&self.buffer, self.window.cursor, obj, count)?;
+                (r.start, r.end)
+            }
+            SurroundTarget::Lines { count } => {
+                let first = self.window.cursor.line;
+                let last = (first + count.saturating_sub(1))
+                    .min(self.buffer.line_count().saturating_sub(1));
+                let line_start = Cursor {
+                    line: first,
+                    col: 0,
+                    want_col: 0,
+                };
+                let from = motion::first_non_blank(&self.buffer, line_start).target;
+                let start = self.buffer.pos_to_char(from.line, from.col);
+                (
+                    start,
+                    self.buffer.line_start_idx(last) + self.buffer.line_len(last),
+                )
+            }
+        };
+        while end > start && self.buffer.rope.char(end - 1).is_whitespace() {
+            end -= 1;
+        }
+        (end > start).then_some((start, end))
     }
 
     fn apply_op_to_range(&mut self, op: Operator, range: TextRange, target: Option<char>) {

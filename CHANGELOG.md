@@ -120,6 +120,11 @@ follows [Semantic Versioning](https://semver.org/).
   line. In Visual, `u`, `U`, `~` and `g?` do the same to the selection,
   block selections included. They don't write any register, and `.`
   repeats them.
+- **`ys`, `yss` and `yS` add a surrounding pair.** `ys{motion}{char}` wraps
+  what a motion or text object covers — `ysiw)` gives `(word)`, and counts
+  work (`ys2w]`) — and `yss{char}` wraps the line from its first non-blank.
+  `yS` and `ySS` put the pair on lines of their own, with the text between
+  them indented a level. `.` repeats them.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

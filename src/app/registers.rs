@@ -263,7 +263,8 @@ impl super::App {
             | Action::ReplaceChar { .. }
             | Action::JoinLines { .. }
             | Action::AdjustNumber { .. }
-            | Action::ToggleCase { .. } => true,
+            | Action::ToggleCase { .. }
+            | Action::SurroundAdd { .. } => true,
             _ => false,
         };
         if plain_recordable {

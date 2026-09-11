@@ -537,13 +537,40 @@ impl super::App {
             self.exit_visual();
             return;
         }
+        self.surround_wrap(start, end, ch, false);
+        self.exit_visual();
+    }
+
+    /// Wraps `[start, end)` in the pair for `ch` — Visual `S` and `ys`. With
+    /// `own_lines` (`yS`) the pair goes on lines of its own and the text
+    /// between them is indented a level.
+    pub(super) fn surround_wrap(&mut self, start: usize, end: usize, ch: char, own_lines: bool) {
         let (open, close) = surround_open_close(ch);
-        // Insert close at end first so start doesn't shift.
-        self.buffer.insert_at_idx(end, close);
-        self.buffer.insert_at_idx(start, open);
+        // Close first in both branches, so `start` doesn't shift.
+        if own_lines {
+            let first = self.buffer.rope.char_to_line(start);
+            let last = self
+                .buffer
+                .rope
+                .char_to_line(end.saturating_sub(1).max(start));
+            let indent: String = self
+                .buffer
+                .rope
+                .line(first)
+                .chars()
+                .take_while(|c| matches!(c, ' ' | '\t'))
+                .collect();
+            self.buffer
+                .insert_at_idx(end, &format!("\n{indent}{close}"));
+            self.buffer
+                .insert_at_idx(start, &format!("{open}\n{indent}"));
+            self.indent_lines(first + 1, last + 1);
+        } else {
+            self.buffer.insert_at_idx(end, close);
+            self.buffer.insert_at_idx(start, open);
+        }
         self.cursor_to_idx(start);
         self.clamp_cursor_normal();
-        self.exit_visual();
     }
 
     /// Walk back / forward to find the pair surrounding the cursor for the
