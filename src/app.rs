@@ -236,6 +236,8 @@ pub struct App {
     pub pending: PendingCmd,
     pub history: History,
     pub registers: HashMap<char, Register>,
+    /// What the last Insert session typed — the read-only `".` register.
+    pub last_inserted: Option<String>,
     pub cmdline: String,
     /// Insert position inside `cmdline`, as a byte offset (`<=
     /// cmdline.len()`). Drives Left/Right/Home/End navigation in
@@ -935,6 +937,7 @@ impl App {
             pending: PendingCmd::default(),
             history: History::new(),
             registers: HashMap::new(),
+            last_inserted: None,
             cmdline: String::new(),
             cmdline_cursor: 0,
             cmdline_completion: None,

@@ -289,6 +289,12 @@ follows [Semantic Versioning](https://semver.org/).
   and `expandtab` / `shiftwidth` / `tabstop` over `.editorconfig`'s — as
   `:set opt`, `noopt`, `opt!`, `opt=n` and `opt?`; `:set` alone lists them.
   Search starts as it always has, `ignorecase` and `smartcase` both on.
+- **The numbered, small-delete, append and read-only registers work.** A
+  delete of a line or more shifts `"1`–`"9`; a smaller one goes to `"-`;
+  `"A`–`"Z` add to `"a`–`"z`; and `".` (the last insert), `"%` / `"#` (the
+  current and alternate file), `":` (the last command line) and `"/` (the
+  last search) read as in Vim. `:reg` lists them all. A yank into a named
+  register no longer overwrites `"0`.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
