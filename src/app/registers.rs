@@ -204,20 +204,21 @@ impl super::App {
     /// registers and macro registers both render. Scroll resets so the
     /// user lands on the first row (the header).
     pub(super) fn cmd_registers(&mut self) {
-        self.show_registers_page = true;
-        self.registers_scroll = 0;
+        self.show_list_page = true;
+        self.listing = None;
+        self.list_scroll = 0;
     }
 
-    pub(super) fn registers_max_scroll(&self) -> usize {
-        let total = self.registers_content_height.get();
+    pub(super) fn list_max_scroll(&self) -> usize {
+        let total = self.list_content_height.get();
         let body_rows = self.height.saturating_sub(2) as usize;
         total.saturating_sub(body_rows)
     }
 
-    pub(super) fn registers_scroll_by(&mut self, delta: isize) {
-        let max = self.registers_max_scroll();
-        let new_scroll = (self.registers_scroll as isize + delta).max(0) as usize;
-        self.registers_scroll = new_scroll.min(max);
+    pub(super) fn list_scroll_by(&mut self, delta: isize) {
+        let max = self.list_max_scroll();
+        let new_scroll = (self.list_scroll as isize + delta).max(0) as usize;
+        self.list_scroll = new_scroll.min(max);
     }
 
     /// Decide whether an about-to-fire action should set up a recording for `.` repeat.

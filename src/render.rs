@@ -90,8 +90,8 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
         draw_health_page(out, app)?;
     } else if app.show_messages_page {
         draw_messages_page(out, app)?;
-    } else if app.show_registers_page {
-        draw_registers_page(out, app)?;
+    } else if app.show_list_page {
+        draw_list_page(out, app)?;
     } else if app.show_test_results_page {
         draw_test_results_page(out, app)?;
     } else if app.show_start_page {
@@ -3607,7 +3607,7 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
-fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
+fn draw_list_page(out: &mut impl Write, app: &App) -> Result<()> {
     // Anchor to the editor rect so the overlay scales around any open
     // panes (file tree, AI terminal, debug / terminal) rather than
     // painting full-width underneath them.
@@ -3636,67 +3636,70 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
 
     let mut lines: Vec<MessageRow> = Vec::new();
 
-    // Yank registers — Vim's `:reg` order is `"`, `0`, `1`-`9`,
-    // then named (`a`-`z`), then specials (`+`, `*`, `-`, `_`, `:`,
-    // `.`, `/`, `=`, `#`). We surface whatever's actually populated.
-    let mut yank_keys: Vec<char> = app.registers.keys().copied().collect();
-    yank_keys.sort_by_key(|c| register_sort_key(*c));
-    lines.push(MessageRow::Entry {
-        prefix: format!(" Registers ({} populated)", yank_keys.len()),
-        prefix_colour: p.lavender,
-        body: String::new(),
-    });
-    lines.push(MessageRow::Blank);
-    if yank_keys.is_empty() {
-        lines.push(MessageRow::Continuation {
-            indent: "  ".into(),
-            body: "(no yank registers populated)".into(),
-        });
+    if let Some(listing) = &app.listing {
+        listing_rows(&mut lines, listing, &p);
     } else {
-        for name in yank_keys {
-            let r = app.registers.get(&name).unwrap();
-            let preview = preview_register_text(&r.text, body_w.saturating_sub(8));
-            let kind = if r.linewise { "L " } else { "  " };
-            lines.push(MessageRow::Entry {
-                prefix: format!("  \"{}  {}", name, kind),
-                prefix_colour: p.blue,
-                body: preview,
+        // Yank registers — Vim's `:reg` order is `"`, `0`, `1`-`9`,
+        // then named (`a`-`z`), then specials (`+`, `*`, `-`, `_`, `:`,
+        // `.`, `/`, `=`, `#`). We surface whatever's actually populated.
+        let mut yank_keys: Vec<char> = app.registers.keys().copied().collect();
+        yank_keys.sort_by_key(|c| register_sort_key(*c));
+        lines.push(MessageRow::Entry {
+            prefix: format!(" Registers ({} populated)", yank_keys.len()),
+            prefix_colour: p.lavender,
+            body: String::new(),
+        });
+        lines.push(MessageRow::Blank);
+        if yank_keys.is_empty() {
+            lines.push(MessageRow::Continuation {
+                indent: "  ".into(),
+                body: "(no yank registers populated)".into(),
             });
+        } else {
+            for name in yank_keys {
+                let r = app.registers.get(&name).unwrap();
+                let preview = preview_register_text(&r.text, body_w.saturating_sub(8));
+                let kind = if r.linewise { "L " } else { "  " };
+                lines.push(MessageRow::Entry {
+                    prefix: format!("  \"{}  {}", name, kind),
+                    prefix_colour: p.blue,
+                    body: preview,
+                });
+            }
+        }
+
+        lines.push(MessageRow::Blank);
+
+        // Macro registers — separate section so users can tell at a glance
+        // that "g" holding 12 keys is a macro, not a yanked literal "g".
+        let mut macro_keys: Vec<char> = app.macros.keys().copied().collect();
+        macro_keys.sort();
+        lines.push(MessageRow::Entry {
+            prefix: format!(" Macros ({} recorded)", macro_keys.len()),
+            prefix_colour: p.lavender,
+            body: String::new(),
+        });
+        lines.push(MessageRow::Blank);
+        if macro_keys.is_empty() {
+            lines.push(MessageRow::Continuation {
+                indent: "  ".into(),
+                body: "(no macros — record with q<reg>…q)".into(),
+            });
+        } else {
+            for name in macro_keys {
+                let keys = app.macros.get(&name).unwrap();
+                let preview = preview_macro_keys(keys, body_w.saturating_sub(10));
+                lines.push(MessageRow::Entry {
+                    prefix: format!("  @{}  ({:>3}) ", name, keys.len()),
+                    prefix_colour: p.green,
+                    body: preview,
+                });
+            }
         }
     }
-
-    lines.push(MessageRow::Blank);
-
-    // Macro registers — separate section so users can tell at a glance
-    // that "g" holding 12 keys is a macro, not a yanked literal "g".
-    let mut macro_keys: Vec<char> = app.macros.keys().copied().collect();
-    macro_keys.sort();
-    lines.push(MessageRow::Entry {
-        prefix: format!(" Macros ({} recorded)", macro_keys.len()),
-        prefix_colour: p.lavender,
-        body: String::new(),
-    });
-    lines.push(MessageRow::Blank);
-    if macro_keys.is_empty() {
-        lines.push(MessageRow::Continuation {
-            indent: "  ".into(),
-            body: "(no macros — record with q<reg>…q)".into(),
-        });
-    } else {
-        for name in macro_keys {
-            let keys = app.macros.get(&name).unwrap();
-            let preview = preview_macro_keys(keys, body_w.saturating_sub(10));
-            lines.push(MessageRow::Entry {
-                prefix: format!("  @{}  ({:>3}) ", name, keys.len()),
-                prefix_colour: p.green,
-                body: preview,
-            });
-        }
-    }
-
-    app.registers_content_height.set(lines.len());
+    app.list_content_height.set(lines.len());
     let scroll = app
-        .registers_scroll
+        .list_scroll
         .min(lines.len().saturating_sub(viewport_rows));
 
     for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
@@ -3758,6 +3761,34 @@ fn draw_registers_page(out: &mut impl Write, app: &App) -> Result<()> {
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())
+}
+
+/// Rows for a `Listing` in the list overlay: its title, then one row per
+/// entry, or its `empty` note.
+fn listing_rows(
+    lines: &mut Vec<MessageRow>,
+    listing: &crate::app::state::Listing,
+    p: &DashboardPalette,
+) {
+    lines.push(MessageRow::Entry {
+        prefix: format!(" {}", listing.title),
+        prefix_colour: p.lavender,
+        body: String::new(),
+    });
+    lines.push(MessageRow::Blank);
+    if listing.rows.is_empty() {
+        lines.push(MessageRow::Continuation {
+            indent: "  ".into(),
+            body: listing.empty.clone(),
+        });
+    }
+    for (label, text) in &listing.rows {
+        lines.push(MessageRow::Entry {
+            prefix: format!("  {label}  "),
+            prefix_colour: p.blue,
+            body: text.clone(),
+        });
+    }
 }
 
 /// Sort key matching Vim's `:reg` ordering — unnamed first, then yank
@@ -8091,7 +8122,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     if (app.show_start_page
         || app.show_health_page
         || app.show_messages_page
-        || app.show_registers_page
+        || app.show_list_page
         || app.show_test_results_page)
         && !matches!(app.mode, Mode::Command | Mode::Search { .. } | Mode::Picker)
     {

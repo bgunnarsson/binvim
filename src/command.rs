@@ -59,6 +59,8 @@ pub enum ExCommand {
     /// `:reg` / `:registers` — open a scrollable overlay listing every
     /// yank register and recorded macro register with a short preview.
     Registers,
+    /// `:changes` — the change list in the list overlay.
+    Changes,
     /// `:codelens` — dump the active buffer's code-lens cache to the
     /// status line. Diagnostic aid for when the lens row isn't
     /// showing up: surfaces whether lenses were received, what lines
@@ -356,6 +358,7 @@ pub fn parse(line: &str) -> ExCommand {
         "health" | "checkhealth" => ExCommand::Health,
         "messages" | "message" | "mes" => ExCommand::Messages,
         "reg" | "registers" | "display" => ExCommand::Registers,
+        "changes" => ExCommand::Changes,
         "codelens" | "codelenses" => ExCommand::CodeLensStatus,
         "workspaces" | "ws" => ExCommand::Workspaces,
         "terminal" | "term" => {

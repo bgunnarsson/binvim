@@ -724,12 +724,14 @@ pub struct App {
     /// render — used to clamp `messages_scroll`. `Cell` because
     /// `render::draw` borrows `App` immutably.
     pub messages_content_height: std::cell::Cell<usize>,
-    /// `:reg` / `:registers` overlay toggle. Lists yank registers
-    /// alongside recorded macro registers with a short preview.
+    /// The list overlay: `:registers` — yank and macro registers with a
+    /// short preview — or `listing`, when a command like `:changes` set one.
     /// Dismissed the same way as `:messages`.
-    pub show_registers_page: bool,
-    pub registers_scroll: usize,
-    pub registers_content_height: std::cell::Cell<usize>,
+    pub show_list_page: bool,
+    /// What the list overlay shows in place of the registers.
+    pub listing: Option<crate::app::state::Listing>,
+    pub list_scroll: usize,
+    pub list_content_height: std::cell::Cell<usize>,
     /// Integrated test runner — owns the active run + the streaming
     /// output buffer. Drained per main-loop tick alongside `lsp` /
     /// `dap`; the resulting events go through `handle_test_events`.
@@ -1048,9 +1050,10 @@ impl App {
             show_messages_page: false,
             messages_scroll: 0,
             messages_content_height: std::cell::Cell::new(0),
-            show_registers_page: false,
-            registers_scroll: 0,
-            registers_content_height: std::cell::Cell::new(0),
+            show_list_page: false,
+            listing: None,
+            list_scroll: 0,
+            list_content_height: std::cell::Cell::new(0),
             test: crate::test::TestManager::new(),
             package: state::PackageState::new(),
             android: state::AndroidState::new(),

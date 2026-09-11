@@ -394,21 +394,21 @@ impl super::App {
                 let overlay_active = self.show_health_page
                     || self.show_messages_page
                     || self.show_test_results_page
-                    || self.show_registers_page;
+                    || self.show_list_page;
                 if overlay_active {
                     let normal = matches!(self.mode, Mode::Normal);
                     let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
                     let messages = self.show_messages_page;
                     let test_results = self.show_test_results_page;
-                    let registers = self.show_registers_page;
+                    let registers = self.show_list_page;
                     let scroll = |this: &mut Self, delta: isize| {
                         if test_results {
                             this.test_results_scroll_by(delta);
                         } else if messages {
                             this.messages_scroll_by(delta);
                         } else if registers {
-                            this.registers_scroll_by(delta);
+                            this.list_scroll_by(delta);
                         } else {
                             this.health_scroll_by(delta);
                         }
@@ -419,7 +419,7 @@ impl super::App {
                         } else if messages {
                             this.show_messages_page = false;
                         } else if registers {
-                            this.show_registers_page = false;
+                            this.show_list_page = false;
                         } else {
                             this.show_health_page = false;
                         }
@@ -483,7 +483,7 @@ impl super::App {
                             } else if messages {
                                 self.messages_scroll = 0;
                             } else if registers {
-                                self.registers_scroll = 0;
+                                self.list_scroll = 0;
                             } else {
                                 self.health_scroll = 0;
                             }
@@ -498,7 +498,7 @@ impl super::App {
                             } else if messages {
                                 self.messages_scroll = self.messages_max_scroll();
                             } else if registers {
-                                self.registers_scroll = self.registers_max_scroll();
+                                self.list_scroll = self.list_max_scroll();
                             } else {
                                 self.health_scroll = self.health_max_scroll();
                             }
@@ -1130,8 +1130,8 @@ impl super::App {
                     self.installer_scroll_by(-3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(-3);
-                } else if self.show_registers_page {
-                    self.registers_scroll_by(-3);
+                } else if self.show_list_page {
+                    self.list_scroll_by(-3);
                 } else if self.show_test_results_page {
                     self.test_results_scroll_by(-3);
                 } else {
@@ -1152,8 +1152,8 @@ impl super::App {
                     self.installer_scroll_by(3);
                 } else if self.show_messages_page {
                     self.messages_scroll_by(3);
-                } else if self.show_registers_page {
-                    self.registers_scroll_by(3);
+                } else if self.show_list_page {
+                    self.list_scroll_by(3);
                 } else if self.show_test_results_page {
                     self.test_results_scroll_by(3);
                 } else {
@@ -2441,8 +2441,8 @@ impl super::App {
                     self.show_health_page = false;
                 } else if self.show_messages_page {
                     self.show_messages_page = false;
-                } else if self.show_registers_page {
-                    self.show_registers_page = false;
+                } else if self.show_list_page {
+                    self.show_list_page = false;
                 } else if self.show_test_results_page {
                     self.show_test_results_page = false;
                 } else if self.buffer.dirty {
@@ -2559,6 +2559,7 @@ impl super::App {
             ExCommand::Health => self.cmd_health(),
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Registers => self.cmd_registers(),
+            ExCommand::Changes => self.cmd_changes(),
             ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
             ExCommand::Workspaces => self.cmd_workspaces(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),
@@ -3318,6 +3319,43 @@ mod tests {
         let mut app = app_with_keymaps("abc\n", "");
         press(&mut app, "lgix");
         assert_eq!(app.buffer.rope.to_string(), "axbc\n");
+    }
+
+    #[test]
+    fn g_semicolon_and_comma_walk_the_change_list() {
+        let mut app = app_with_keymaps("one\ntwo\nthree\nfour\n", "");
+        press(&mut app, "xjjxjx");
+        press(&mut app, "ggg;");
+        assert_eq!(app.window.cursor.line, 3);
+        press(&mut app, "2g;");
+        assert_eq!(app.window.cursor.line, 0);
+        press(&mut app, "g;");
+        assert_eq!(app.status_msg, "E662: At start of changelist");
+        press(&mut app, "g,");
+        assert_eq!(app.window.cursor.line, 2);
+    }
+
+    #[test]
+    fn changes_on_one_line_are_one_change_list_entry() {
+        let mut app = app_with_keymaps("abcdef\nxyz\n", "");
+        press(&mut app, "xxxjx");
+        assert_eq!(app.buffer.changes.len(), 2);
+    }
+
+    #[test]
+    fn changes_command_lists_the_change_list() {
+        let mut app = app_with_keymaps("one\ntwo\n", "");
+        press(&mut app, "xjx");
+        app.exec_command("changes");
+        assert!(app.show_list_page);
+        let listing = app.listing.as_ref().expect("listing");
+        assert_eq!(listing.rows.len(), 2);
+        assert_eq!(listing.rows[1].1, "wo");
+        app.exec_command("registers");
+        assert!(
+            app.listing.is_none(),
+            ":registers shows the registers again"
+        );
     }
 
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {
