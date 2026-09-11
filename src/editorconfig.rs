@@ -48,6 +48,32 @@ impl Default for EditorConfig {
 }
 
 impl EditorConfig {
+    /// `:set expandtab` / `shiftwidth` / `tabstop` for the session, laid over
+    /// what `.editorconfig` said. `shiftwidth=0` follows the tab width, as in
+    /// Vim.
+    pub fn overlay(
+        &mut self,
+        expandtab: Option<bool>,
+        shiftwidth: Option<usize>,
+        tabstop: Option<usize>,
+    ) {
+        if let Some(expandtab) = expandtab {
+            self.indent_style = if expandtab {
+                IndentStyle::Spaces
+            } else {
+                IndentStyle::Tabs
+            };
+        }
+        if let Some(tabstop) = tabstop {
+            self.tab_width = tabstop;
+        }
+        match shiftwidth {
+            Some(0) => self.indent_size = self.tab_width,
+            Some(width) => self.indent_size = width,
+            None => {}
+        }
+    }
+
     /// Walk up from `target_file`'s directory collecting `.editorconfig` files.
     /// Apply matching sections in the right order (most general first → most
     /// specific last) so closer files override.
@@ -338,6 +364,17 @@ fn glob_match_chars(p: &[char], s: &[char], pi: usize, si: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overlay_lays_set_options_over_the_file() {
+        let mut config = EditorConfig::default();
+        config.overlay(Some(false), Some(0), Some(8));
+        assert_eq!(config.indent_style, IndentStyle::Tabs);
+        assert_eq!((config.tab_width, config.indent_size), (8, 8));
+        config.overlay(None, Some(3), None);
+        assert_eq!((config.tab_width, config.indent_size), (8, 3));
+        assert_eq!(config.indent_style, IndentStyle::Tabs);
+    }
 
     fn glob_match_with_braces(pattern: &str, path: &str) -> bool {
         expand_braces(pattern).iter().any(|p| glob_match(p, path))

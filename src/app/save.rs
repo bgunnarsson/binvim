@@ -126,10 +126,13 @@ impl super::App {
     }
 
     pub(super) fn refresh_editorconfig(&mut self) {
-        self.editorconfig = match self.buffer.path.as_ref() {
+        let mut config = match self.buffer.path.as_ref() {
             Some(p) => EditorConfig::detect(p),
             None => EditorConfig::default(),
         };
+        let options = &self.options;
+        config.overlay(options.expandtab, options.shiftwidth, options.tabstop);
+        self.editorconfig = config;
     }
 
     pub(super) fn refresh_git_branch(&mut self) {

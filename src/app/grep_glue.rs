@@ -178,7 +178,7 @@ impl super::App {
     pub(super) fn vimgrep_command(&mut self, pattern: &str, files: &str, all: bool, jump: bool) {
         let source = match self
             .pattern_or_last(pattern)
-            .and_then(|pattern| super::search::search_source(&pattern))
+            .and_then(|pattern| super::search::search_source(&self.cased(&pattern)))
         {
             Ok(source) => source,
             Err(e) => {
