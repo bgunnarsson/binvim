@@ -169,6 +169,7 @@ impl super::App {
     /// that started the replay already passed them. Returns `false` in a
     /// mode that can't take synthetic keys, so the caller stops feeding.
     pub(super) fn replay_key(&mut self, k: KeyEvent) -> bool {
+        let was = self.mode;
         match self.mode {
             Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
             Mode::Insert => self.handle_insert_key(k),
@@ -195,6 +196,7 @@ impl super::App {
             // Same logic for the installer overlay.
             Mode::Installer => return false,
         }
+        self.insert_oneshot_after(was);
         true
     }
 
@@ -244,6 +246,7 @@ impl super::App {
             self.recording = Some(RecordingState {
                 prelude: action.clone(),
                 keys: Vec::new(),
+                resumed: false,
             });
             return;
         }

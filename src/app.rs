@@ -533,6 +533,9 @@ pub struct App {
     /// Insert-mode `Ctrl-V` sequence in flight — waiting for the literal key,
     /// or collecting a character code's digits. `None` when not in one.
     pub insert_literal_pending: Option<crate::app::state::LiteralPending>,
+    /// Insert-mode `Ctrl-O` is running one Normal-mode command; Insert
+    /// resumes once it finishes. `None` otherwise.
+    pub insert_oneshot: Option<crate::app::state::InsertOneshot>,
     /// The file that was active before this one — `Ctrl-^`, `:e#` and `:b#`
     /// go back to it. A path rather than a buffer index: closing buffers
     /// renumbers them, and a closed alternate can still be reopened.
@@ -1001,6 +1004,7 @@ impl App {
             snippet_session: None,
             insert_register_pending: false,
             insert_literal_pending: None,
+            insert_oneshot: None,
             alternate_path: None,
             quickfix: None,
             additional_selections: Vec::new(),
@@ -1316,7 +1320,9 @@ impl App {
                 needs_render = true;
             }
             // A held `[keymaps]` sequence ran out of time — run what was typed.
+            let was = self.mode;
             if self.keymap_flush_if_due(Instant::now()) {
+                self.insert_oneshot_after(was);
                 needs_render = true;
             }
             // Prefix timeout fired? Open the matching which-key popup.

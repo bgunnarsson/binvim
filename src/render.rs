@@ -7938,7 +7938,13 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
         .recording_macro
         .map(|c| format!(" @{c}"))
         .unwrap_or_default();
-    let mode_text = format!(" {}{} ", app.mode.label(), recording);
+    // Vim's `-- (insert) --`: Normal for one `Ctrl-O` command, then Insert.
+    let mode_label = if app.insert_oneshot.is_some() && app.mode == Mode::Normal {
+        "(INSERT)"
+    } else {
+        app.mode.label()
+    };
+    let mode_text = format!(" {}{} ", mode_label, recording);
     let branch_text = app
         .git_branch
         .as_deref()

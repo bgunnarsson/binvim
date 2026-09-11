@@ -513,6 +513,7 @@ impl super::App {
                         _ => return Ok(()),
                     }
                 }
+                let was = self.mode;
                 match self.mode {
                     Mode::Normal => self.handle_keyboard(k, ParseCtx::Normal),
                     Mode::Insert => self.handle_insert_key(k),
@@ -529,6 +530,7 @@ impl super::App {
                     Mode::RenamePreview => self.handle_rename_preview_key(k),
                     Mode::Installer => self.handle_installer_key(k),
                 }
+                self.insert_oneshot_after(was);
             }
             crossterm::event::Event::Paste(text) => {
                 self.handle_paste(text);
@@ -551,6 +553,63 @@ impl super::App {
             _ => {}
         }
         Ok(())
+    }
+
+    /// After a key routed from any mode but Insert: once an Insert `Ctrl-O`
+    /// command has finished, go back to Insert. A command still in flight —
+    /// an operator waiting for its motion, a `:` line, a Visual selection —
+    /// keeps it waiting; one that enters Insert itself or opens anything else
+    /// ends the one-shot there. `.` replays whole commands, so it's skipped.
+    pub(super) fn insert_oneshot_after(&mut self, was: Mode) {
+        if was == Mode::Insert || self.replaying {
+            return;
+        }
+        let Some(shot) = self.insert_oneshot else {
+            return;
+        };
+        match self.mode {
+            Mode::Normal if self.pending.is_clean() && self.keymap_held.is_empty() => {}
+            Mode::Normal | Mode::Command | Mode::Search { .. } | Mode::Visual(_) => return,
+            _ => {
+                self.insert_oneshot = None;
+                return;
+            }
+        }
+        self.insert_oneshot = None;
+        let cursor = &mut self.window.cursor;
+        let line_len = self.buffer.line_len(cursor.line);
+        // Past the end again if the command left the cursor where `Ctrl-O`
+        // stepped it back to, or went there with `$`.
+        let on_last = line_len > 0 && cursor.col + 1 == line_len;
+        let left_there = shot.stepped_back == Some((cursor.line, cursor.col));
+        if on_last && (left_there || cursor.want_col == usize::MAX) {
+            cursor.col = line_len;
+        }
+        self.mode = Mode::Insert;
+        self.recording = Some(state::RecordingState {
+            prelude: parser::Action::EnterInsert(parser::InsertWhere::Cursor),
+            keys: Vec::new(),
+            resumed: true,
+        });
+    }
+
+    /// Closes the Insert session's recording into `last_edit` for `.` — but
+    /// not one `Ctrl-O` resumed that got nothing typed, which would take `.`
+    /// away from the command.
+    fn end_insert_recording(&mut self) {
+        if self.replaying {
+            return;
+        }
+        let Some(rec) = self.recording.take() else {
+            return;
+        };
+        if rec.resumed && rec.keys.is_empty() {
+            return;
+        }
+        self.last_edit = Some(LastEdit::InsertSession {
+            prelude: rec.prelude,
+            keys: rec.keys,
+        });
     }
 
     /// A host paste (Cmd-V / middle-click) arrived as one atomic blob
@@ -1723,14 +1782,35 @@ impl super::App {
                 self.additional_cursors.clear();
                 // A snippet session is Insert-mode-only — Esc ends it.
                 self.snippet_session = None;
+                self.end_insert_recording();
+            }
+            // One Normal-mode command, then back to Insert. The session so far
+            // ends here as Esc would end it, minus the step back and the
+            // whitespace-line strip.
+            KeyCode::Char('o' | 'O') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Recorded above with the typed text, but it isn't text.
                 if !self.replaying {
-                    if let Some(rec) = self.recording.take() {
-                        self.last_edit = Some(LastEdit::InsertSession {
-                            prelude: rec.prelude,
-                            keys: rec.keys,
-                        });
+                    if let Some(rec) = self.recording.as_mut() {
+                        rec.keys.pop();
                     }
                 }
+                self.end_insert_recording();
+                let line = self.window.cursor.line;
+                let col = self.window.cursor.col;
+                let stepped_back = if col > 0 && col == self.buffer.line_len(line) {
+                    Some((line, col - 1))
+                } else {
+                    None
+                };
+                if let Some((_, c)) = stepped_back {
+                    self.window.cursor.col = c;
+                    self.window.cursor.want_col = c;
+                }
+                self.mode = Mode::Normal;
+                self.signature_help = None;
+                self.additional_cursors.clear();
+                self.snippet_session = None;
+                self.insert_oneshot = Some(state::InsertOneshot { stepped_back });
             }
             KeyCode::Char(c)
                 if key.modifiers.contains(KeyModifiers::CONTROL) && (c == 'n' || c == 'p') =>
@@ -2980,6 +3060,88 @@ mod tests {
         app.replay_key(ctrl('u'));
         assert_eq!(app.buffer.rope.to_string(), "foobar\n");
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 3));
+    }
+
+    #[test]
+    fn ctrl_o_runs_one_normal_command_then_returns_to_insert() {
+        let mut app = insert_at("one\ntwo\nthree\n", 1, 1);
+        app.replay_key(ctrl('o'));
+        assert_eq!(app.mode, Mode::Normal);
+        press(&mut app, "d");
+        assert_eq!(app.mode, Mode::Normal, "d still waits for its motion");
+        press(&mut app, "d");
+        assert_eq!(app.buffer.rope.to_string(), "one\nthree\n");
+        assert_eq!(app.mode, Mode::Insert);
+        assert!(app.insert_oneshot.is_none());
+    }
+
+    #[test]
+    fn ctrl_o_at_end_of_line_resumes_past_the_last_char() {
+        let mut app = insert_at("foo\n", 0, 3);
+        app.replay_key(ctrl('o'));
+        assert_eq!(app.window.cursor.col, 2);
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!((app.mode, app.window.cursor.col), (Mode::Insert, 3));
+        press(&mut app, "x");
+        assert_eq!(app.buffer.rope.to_string(), "foox\n");
+    }
+
+    #[test]
+    fn ctrl_o_keeps_the_column_a_motion_leaves() {
+        let mut app = insert_at("foo bar\n", 0, 7);
+        app.replay_key(ctrl('o'));
+        press(&mut app, "0");
+        assert_eq!((app.mode, app.window.cursor.col), (Mode::Insert, 0));
+    }
+
+    #[test]
+    fn ctrl_o_dollar_resumes_past_the_end() {
+        let mut app = insert_at("foo bar\n", 0, 0);
+        app.replay_key(ctrl('o'));
+        press(&mut app, "$");
+        assert_eq!((app.mode, app.window.cursor.col), (Mode::Insert, 7));
+    }
+
+    #[test]
+    fn ctrl_o_runs_an_ex_command() {
+        let mut app = insert_at("a\nb\nc\n", 0, 0);
+        app.replay_key(ctrl('o'));
+        press(&mut app, ":3");
+        assert_eq!(app.mode, Mode::Command);
+        app.replay_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!((app.mode, app.window.cursor.line), (Mode::Insert, 2));
+    }
+
+    #[test]
+    fn ctrl_o_command_that_enters_insert_ends_the_oneshot() {
+        let mut app = insert_at("a\n", 0, 1);
+        app.replay_key(ctrl('o'));
+        press(&mut app, "o");
+        assert_eq!((app.mode, app.window.cursor.line), (Mode::Insert, 1));
+        assert!(app.insert_oneshot.is_none());
+    }
+
+    #[test]
+    fn text_typed_after_ctrl_o_is_its_own_insert_for_dot() {
+        let mut app = app_with_keymaps("xy\n", "");
+        press(&mut app, "iab");
+        app.replay_key(ctrl('o'));
+        press(&mut app, "lc");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.buffer.rope.to_string(), "abxcy\n");
+        press(&mut app, ".");
+        assert_eq!(app.buffer.rope.to_string(), "abxccy\n");
+    }
+
+    #[test]
+    fn empty_insert_after_ctrl_o_leaves_dot_on_the_command() {
+        let mut app = app_with_keymaps("a\nb\nc\nd\n", "");
+        press(&mut app, "i");
+        app.replay_key(ctrl('o'));
+        press(&mut app, "dd");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, ".");
+        assert_eq!(app.buffer.rope.to_string(), "c\nd\n");
     }
 
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {
