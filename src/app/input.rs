@@ -3200,6 +3200,58 @@ mod tests {
     }
 
     #[test]
+    fn gp_leaves_the_cursor_just_after_the_put_text() {
+        let mut app = app_with_keymaps("ab cd\n", "");
+        press(&mut app, "yiwgp");
+        assert_eq!(app.buffer.rope.to_string(), "aabb cd\n");
+        assert_eq!(app.window.cursor.col, 3);
+
+        let mut app = app_with_keymaps("one\ntwo\n", "");
+        press(&mut app, "yygp");
+        assert_eq!(app.buffer.rope.to_string(), "one\none\ntwo\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (2, 0));
+
+        let mut app = app_with_keymaps("one\ntwo\n", "");
+        press(&mut app, "yygP");
+        assert_eq!(app.buffer.rope.to_string(), "one\none\ntwo\n");
+        assert_eq!(app.window.cursor.line, 1);
+    }
+
+    #[test]
+    fn gp_on_the_last_line_stays_on_the_last_line() {
+        let mut app = app_with_keymaps("one\ntwo\n", "");
+        app.window.cursor.line = 1;
+        press(&mut app, "yygp");
+        assert_eq!(app.buffer.rope.to_string(), "one\ntwo\ntwo\n");
+        assert_eq!(app.window.cursor.line, 2);
+    }
+
+    #[test]
+    fn bracket_p_puts_lines_at_the_cursor_line_indent() {
+        let mut app = app_with_keymaps("x {\n    b\n}\nc\n  d\n", "");
+        app.window.cursor.line = 3;
+        press(&mut app, "yj");
+        app.window.cursor.line = 1;
+        press(&mut app, "]p");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            "x {\n    b\n    c\n      d\n}\nc\n  d\n"
+        );
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (2, 4));
+
+        let mut app = app_with_keymaps("x {\n    b\n}\nc\n  d\n", "");
+        app.window.cursor.line = 3;
+        press(&mut app, "yj");
+        app.window.cursor.line = 1;
+        press(&mut app, "[p");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            "x {\n    c\n      d\n    b\n}\nc\n  d\n"
+        );
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 4));
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

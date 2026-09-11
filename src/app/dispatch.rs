@@ -162,9 +162,10 @@ impl super::App {
                 before,
                 count,
                 register,
+                style,
             } => {
                 self.history.record(&self.buffer.rope, self.window.cursor);
-                self.put(before, count, register);
+                self.put(before, count, register, style);
             }
             Action::EnterCommand => {
                 self.cmdline.clear();

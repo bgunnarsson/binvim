@@ -135,6 +135,10 @@ follows [Semantic Versioning](https://semver.org/).
   reads `REPLACE`, with an underline cursor.
 - **Visual `r{char}`.** Every selected character becomes `{char}`, in block
   selections too; the line breaks between them stay.
+- **`gp` / `gP` and `]p` / `[p`.** `gp` and `gP` put like `p` and `P` but
+  leave the cursor just after the text. `]p` puts lines below at the
+  cursor line's indent, keeping their indent relative to each other, and
+  `[p`, `[P` and `]P` do the same above.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

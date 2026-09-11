@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crate::editorconfig::IndentStyle;
 use crate::mode::{Mode, VisualKind};
-use crate::parser::InsertWhere;
+use crate::parser::{InsertWhere, PutStyle};
 
 use super::pair::{is_paired_bracket, surround_open_close};
 use super::state::{ReplaceSession, ReplaceUndo, YANK_FLASH_DURATION, YankHighlight};
@@ -848,7 +848,13 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
-    pub(super) fn put(&mut self, before: bool, count: usize, target: Option<char>) {
+    pub(super) fn put(
+        &mut self,
+        before: bool,
+        count: usize,
+        target: Option<char>,
+        style: PutStyle,
+    ) {
         let Some(reg) = self.read_register(target) else {
             return;
         };
@@ -868,6 +874,14 @@ impl super::App {
             if !text.ends_with('\n') {
                 text.push('\n');
             }
+            if style == PutStyle::Reindent {
+                let line = self.window.cursor.line;
+                let start = self.buffer.line_start_idx(line);
+                let indent = self.first_non_blank_col(line);
+                let lead = self.buffer.rope.slice(start..start + indent).to_string();
+                text = reindent_lines(&text, &lead);
+            }
+            let lines = text.matches('\n').count();
             let total = self.buffer.total_chars();
             let idx = self.buffer.line_start_idx(target_line);
             // If pasting "below" past the end of a file with no trailing newline,
@@ -885,9 +899,17 @@ impl super::App {
             } else {
                 self.buffer.insert_at_idx(idx, &text);
             }
-            self.window.cursor.line = target_line;
-            self.window.cursor.col = 0;
-            self.window.cursor.want_col = 0;
+            let last = crate::motion::vim_line_count(&self.buffer).saturating_sub(1);
+            let (line, col) = match style {
+                // Put at the end of the file there's no line after, so it
+                // stays on the last, as Vim's does.
+                PutStyle::CursorAfter => ((target_line + lines).min(last), 0),
+                PutStyle::Reindent => (target_line, self.first_non_blank_col(target_line)),
+                PutStyle::Plain => (target_line, 0),
+            };
+            self.window.cursor.line = line;
+            self.window.cursor.col = col;
+            self.window.cursor.want_col = col;
         } else {
             let target_idx = if before {
                 self.buffer
@@ -907,7 +929,9 @@ impl super::App {
             }
             let inserted_chars = text.chars().count();
             self.buffer.insert_at_idx(target_idx, &text);
-            if inserted_chars > 0 {
+            if style == PutStyle::CursorAfter {
+                self.cursor_to_idx(target_idx + inserted_chars);
+            } else if inserted_chars > 0 {
                 let new_idx = target_idx + inserted_chars - 1;
                 self.cursor_to_idx(new_idx);
             }
@@ -942,6 +966,40 @@ impl super::App {
             self.status_msg = "Already at newest change".into();
         }
     }
+}
+
+/// `]p`'s indent: the first line's indent becomes `lead`, and every other
+/// line keeps its indent relative to the first — one less indented than the
+/// first gives up that much of `lead`. Blank lines come out empty. Indents
+/// compare as text, so a paste mixing tabs and spaces shifts by the first
+/// line's character count.
+fn reindent_lines(text: &str, lead: &str) -> String {
+    let first = text
+        .lines()
+        .find(|l| !l.trim().is_empty())
+        .map_or("", leading_ws);
+    text.split_inclusive('\n')
+        .map(|line| {
+            let own = leading_ws(line);
+            let body = &line[own.len()..];
+            if body.trim().is_empty() {
+                return body.to_string();
+            }
+            match own.strip_prefix(first) {
+                Some(extra) => format!("{lead}{extra}{body}"),
+                None => {
+                    let short = first.chars().count().saturating_sub(own.chars().count());
+                    let keep = lead.chars().count().saturating_sub(short);
+                    let lead: String = lead.chars().take(keep).collect();
+                    format!("{lead}{body}")
+                }
+            }
+        })
+        .collect()
+}
+
+fn leading_ws(s: &str) -> &str {
+    &s[..s.len() - s.trim_start_matches([' ', '\t']).len()]
 }
 
 /// A number parsed out of a buffer line. `start_col` and `end_col` are
@@ -1241,5 +1299,14 @@ mod tests {
         let mut b = buf("a\nb\nc\n");
         shift_block_up_by_one(&mut b, 0, 0); // a is line 0; there's no line -1
         assert_eq!(b.rope.to_string(), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn reindent_lines_moves_the_block_to_the_new_indent() {
+        let text = "  a\n    b\n  \n c\n";
+        assert_eq!(
+            super::reindent_lines(text, "    "),
+            "    a\n      b\n\n   c\n"
+        );
     }
 }
