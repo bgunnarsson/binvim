@@ -1637,6 +1637,32 @@ impl super::App {
             KeyCode::Char('r' | 'R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_register_pending = true;
             }
+            // Multi-cursor leaves these alone: shifting one line would leave
+            // the other cursors' char indices pointing at the wrong text.
+            KeyCode::Char('t' | 'T')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.additional_cursors.is_empty() =>
+            {
+                // Not `indent_lines`: it skips blank lines, and a fresh `o`
+                // line is where Ctrl-T gets used most.
+                let unit = self.editorconfig.indent_string();
+                let line_start = self.buffer.line_start_idx(self.window.cursor.line);
+                self.buffer.insert_at_idx(line_start, &unit);
+                self.window.cursor.col += unit.chars().count();
+                self.window.cursor.want_col = self.window.cursor.col;
+            }
+            KeyCode::Char('d' | 'D')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.additional_cursors.is_empty() =>
+            {
+                let line = self.window.cursor.line;
+                let col = self.window.cursor.col;
+                let before = self.buffer.line_len(line);
+                self.outdent_lines(line, line);
+                let col = (col + self.buffer.line_len(line)).saturating_sub(before);
+                self.window.cursor.col = col;
+                self.window.cursor.want_col = col;
+            }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Multi-cursor: skip the autopair / closer-skip dance and
                 // just mirror the keystroke at every position. Autopair
@@ -2800,6 +2826,35 @@ mod tests {
         assert!(matches!(app.mode, Mode::Insert));
         press(&mut app, "a");
         assert_eq!(app.buffer.rope.to_string(), "aab\n");
+    }
+
+    #[test]
+    fn ctrl_t_indents_and_keeps_the_cursor_on_its_text() {
+        let mut app = insert_at("foo\n", 0, 2);
+        let unit = app.editorconfig.indent_string();
+        app.replay_key(ctrl('t'));
+        assert_eq!(app.buffer.rope.to_string(), format!("{unit}foo\n"));
+        assert_eq!(app.window.cursor.col, unit.chars().count() + 2);
+    }
+
+    #[test]
+    fn ctrl_t_indents_a_blank_line() {
+        let mut app = insert_at("\n", 0, 0);
+        let unit = app.editorconfig.indent_string();
+        app.replay_key(ctrl('t'));
+        assert_eq!(app.buffer.rope.to_string(), format!("{unit}\n"));
+        assert_eq!(app.window.cursor.col, unit.chars().count());
+    }
+
+    #[test]
+    fn ctrl_d_outdents_and_keeps_the_cursor_on_its_text() {
+        let mut app = insert_at("foo\n", 0, 0);
+        let unit = app.editorconfig.indent_string();
+        app.buffer = buf(&format!("{unit}foo\n"));
+        app.window.cursor.col = unit.chars().count() + 2;
+        app.replay_key(ctrl('d'));
+        assert_eq!(app.buffer.rope.to_string(), "foo\n");
+        assert_eq!(app.window.cursor.col, 2);
     }
 
     #[test]

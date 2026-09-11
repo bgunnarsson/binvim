@@ -21,6 +21,10 @@ follows [Semantic Versioning](https://semver.org/).
   re-indented or auto-paired, and a register holding several lines makes real
   lines. A `"` marks the cursor while binvim waits for the register name;
   `Esc` cancels and stays in Insert.
+- **Insert-mode `Ctrl-T` / `Ctrl-D` indent and outdent the current line.** One
+  indent unit each way, taken from `.editorconfig`, and the cursor stays on the
+  same character of text. `Ctrl-T` indents a blank line too — which is where
+  it's most often wanted, right after `o`.
 
 ## [0.5.21] - 2026-09-10
 
