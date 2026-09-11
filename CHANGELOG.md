@@ -321,6 +321,11 @@ follows [Semantic Versioning](https://semver.org/).
   do `$` blocks for every operator. Block `O` moves to the other corner on the
   same row, and `Ctrl-C` leaves Visual like `Esc`. Char and line `I` / `A`
   insert at the first line's start, or after the cursor on the last line.
+- **Undo keeps its branches, and `g-` / `g+` walk them.** An edit after `u`
+  no longer throws away what you undid: `g-` / `g+` step back and on through
+  every state in the order it was made, branch or not, with a count. Only the
+  current branch is saved with the file, as before, so undo files load
+  unchanged.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

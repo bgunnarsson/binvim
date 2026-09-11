@@ -166,6 +166,7 @@ impl super::App {
             }
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
+            Action::UndoTime { earlier, count } => self.undo_time(earlier, count),
             Action::Put {
                 before,
                 count,

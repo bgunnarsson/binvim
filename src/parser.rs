@@ -400,6 +400,12 @@ pub enum Action {
     },
     /// Visual `O` — the other corner in block mode, the other end otherwise.
     VisualSwapCorner,
+    /// `g-` / `g+` — undo states in the order they were made, across branches
+    /// (D5).
+    UndoTime {
+        earlier: bool,
+        count: usize,
+    },
     /// Block `I` / `A` / `$A` from the cursor, `rows` by `width` — the form
     /// `.` repeats, on a block of the same size.
     BlockInsert {
@@ -1789,6 +1795,15 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 
     if state.awaiting_g {
         state.awaiting_g = false;
+        // g- / g+ — back and on through undo states in time order.
+        if matches!(ch, '-' | '+') && ctx == ParseCtx::Normal && state.operator.is_none() {
+            let count = state.total_count();
+            state.reset();
+            return ParseResult::Action(Action::UndoTime {
+                earlier: ch == '-',
+                count,
+            });
+        }
         // gd / gD jump to definition via LSP — only meaningful in normal mode.
         if ch == 'd' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
@@ -2826,6 +2841,26 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn g_minus_and_plus_walk_undo_states() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            drive(&mut state, &keys("g-")),
+            ParseResult::Action(Action::UndoTime {
+                earlier: true,
+                count: 1
+            })
+        ));
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            drive(&mut state, &keys("3g+")),
+            ParseResult::Action(Action::UndoTime {
+                earlier: false,
+                count: 3
+            })
+        ));
     }
 
     #[test]
