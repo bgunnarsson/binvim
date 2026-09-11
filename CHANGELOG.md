@@ -221,6 +221,11 @@ follows [Semantic Versioning](https://semver.org/).
   over, `a` replaces it and every one after, `l` replaces it and stops, `q`
   or `Esc` stop, and `Ctrl-E` / `Ctrl-Y` scroll to see around it. Every
   replacement it made undoes as one step.
+- **`&`, `g&`, `:&`, `:&&` and `:~` run the last `:s` again.** `&` runs it
+  on the current line (a count takes that many lines) and `:&` on a range,
+  both without its flags, which `:&&` keeps; `:~` uses the last search's
+  pattern instead of its own, and `g&` runs it on every line with the last
+  search and its flags, as `:%s//~/&`.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

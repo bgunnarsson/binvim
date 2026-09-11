@@ -269,6 +269,13 @@ pub enum Action {
         older: bool,
         count: usize,
     },
+    /// `&` / `g&` — the last `:s` again: on `count` lines from the cursor,
+    /// or with `whole` on every line with the last search's pattern and the
+    /// substitute's own flags, as `:%s//~/&`.
+    RepeatSubstitute {
+        whole: bool,
+        count: usize,
+    },
     Repeat,
     PageScroll(PageScrollKind),
     AdjustViewport(ViewportAdjust),
@@ -1829,6 +1836,14 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 whole_word: false,
             });
         }
+        // g& — the last `:s` on every line, as `:%s//~/&`.
+        if ch == '&' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::RepeatSubstitute {
+                whole: true,
+                count: 1,
+            });
+        }
         // gi — Insert where it was last left.
         if ch == 'i' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
@@ -2330,6 +2345,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             '~' => Some(Action::ToggleCase {
                 count: state.total_count(),
             }),
+            '&' => Some(Action::RepeatSubstitute {
+                whole: false,
+                count: state.total_count(),
+            }),
             '*' => Some(Action::SearchWord {
                 backward: false,
                 whole_word: true,
@@ -2749,6 +2768,23 @@ mod tests {
                 obj: TextObjectVerb::SearchMatch { forward: false },
             }) => {}
             _ => panic!("gN did not select the previous match"),
+        }
+    }
+
+    #[test]
+    fn ampersand_repeats_the_last_substitute_and_g_ampersand_everywhere() {
+        let mut state = PendingCmd::default();
+        match drive(&mut state, &keys("3&")) {
+            ParseResult::Action(Action::RepeatSubstitute {
+                whole: false,
+                count: 3,
+            }) => {}
+            _ => panic!("3& did not repeat the substitute on three lines"),
+        }
+        let mut state = PendingCmd::default();
+        match drive(&mut state, &keys("g&")) {
+            ParseResult::Action(Action::RepeatSubstitute { whole: true, .. }) => {}
+            _ => panic!("g& did not repeat the substitute on every line"),
         }
     }
 

@@ -611,6 +611,15 @@ impl<'a> BufferState<'a> {
     }
 }
 
+/// The last `:s`, for `&`, `g&`, `:&`, `:&&` and `:~` to run again — its
+/// pattern as it resolved, so a search since doesn't change it.
+#[derive(Clone)]
+pub struct LastSubstitute {
+    pub pattern: String,
+    pub replacement: String,
+    pub flags: crate::command::SubFlags,
+}
+
 /// A `:s///c` walking its range one match at a time, top-down.
 pub struct SubConfirm {
     pub re: regex::Regex,
