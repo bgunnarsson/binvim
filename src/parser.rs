@@ -1839,6 +1839,25 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(Action::ReselectVisual);
         }
+        // gn / gN — the search match under the cursor or the next one: a
+        // text object after an operator, a Visual selection otherwise.
+        if matches!(ch, 'n' | 'N') {
+            let obj = TextObjectVerb::SearchMatch { forward: ch == 'n' };
+            let count = state.total_count();
+            let register = state.register;
+            let op = state.operator;
+            state.reset();
+            let action = match op {
+                Some(op) => Action::OperateTextObject {
+                    op,
+                    obj,
+                    count,
+                    register,
+                },
+                None => Action::VisualSelectTextObject { obj },
+            };
+            return ParseResult::Action(action);
+        }
         let mv = match ch {
             'g' => Some(MotionVerb::FirstLine),
             'e' => Some(MotionVerb::EndWordBackward),
@@ -2711,6 +2730,26 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn gn_is_a_text_object_after_an_operator_and_a_selection_alone() {
+        let mut state = PendingCmd::default();
+        match drive(&mut state, &keys("cgn")) {
+            ParseResult::Action(Action::OperateTextObject {
+                op: Operator::Change,
+                obj: TextObjectVerb::SearchMatch { forward: true },
+                ..
+            }) => {}
+            _ => panic!("cgn did not change the next match"),
+        }
+        let mut state = PendingCmd::default();
+        match drive(&mut state, &keys("gN")) {
+            ParseResult::Action(Action::VisualSelectTextObject {
+                obj: TextObjectVerb::SearchMatch { forward: false },
+            }) => {}
+            _ => panic!("gN did not select the previous match"),
+        }
     }
 
     #[test]

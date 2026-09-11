@@ -43,6 +43,11 @@ pub enum TextObjectVerb {
     Class {
         inner: bool,
     },
+    /// `gn` / `gN` — the search match under the cursor, or the next one.
+    /// The search lives on the app, which resolves this; `compute` can't.
+    SearchMatch {
+        forward: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -66,6 +71,7 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::Argument { inner } => argument(buf, cur, inner, 1),
         TextObjectVerb::Function { inner } => syntax_object(buf, cur, false, inner, 1),
         TextObjectVerb::Class { inner } => syntax_object(buf, cur, true, inner, 1),
+        TextObjectVerb::SearchMatch { .. } => None,
     }
 }
 
@@ -111,6 +117,7 @@ pub fn compute_counted(
         TextObjectVerb::Argument { inner } => argument(buf, cur, inner, count),
         TextObjectVerb::Function { inner } => syntax_object(buf, cur, false, inner, count),
         TextObjectVerb::Class { inner } => syntax_object(buf, cur, true, inner, count),
+        TextObjectVerb::SearchMatch { .. } => Some(first),
     }
 }
 

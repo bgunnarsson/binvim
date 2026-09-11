@@ -3693,6 +3693,56 @@ mod tests {
     }
 
     #[test]
+    fn cgn_then_dot_changes_one_match_after_another() {
+        let mut app = app_with_keymaps("foo bar foo baz foo\n", "");
+        press(&mut app, "/foo");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "0cgnX");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "X bar foo baz foo\n");
+        press(&mut app, ".");
+        assert_eq!(app.buffer.rope.to_string(), "X bar X baz foo\n");
+        press(&mut app, ".");
+        assert_eq!(app.buffer.rope.to_string(), "X bar X baz X\n");
+
+        let mut app = app_with_keymaps("a1 b a2 a3\n", "");
+        press(&mut app, "/a\\d");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "dgn.");
+        assert_eq!(app.buffer.rope.to_string(), "a1 b  \n");
+    }
+
+    #[test]
+    fn gn_selects_the_match_and_stretches_a_selection_to_the_next() {
+        // f0 o1 o2 _3 b4 a5 r6 _7 f8 o9 o10
+        let mut app = app_with_keymaps("foo bar foo\n", "");
+        press(&mut app, "/foo");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "0gn");
+        assert_eq!(app.mode, Mode::Visual(crate::mode::VisualKind::Char));
+        assert_eq!(app.window.visual_anchor.map(|a| a.col), Some(0));
+        assert_eq!(app.window.cursor.col, 2);
+        press(&mut app, "gn");
+        assert_eq!(app.window.visual_anchor.map(|a| a.col), Some(0));
+        assert_eq!(app.window.cursor.col, 10);
+        tap(&mut app, KeyCode::Esc);
+
+        app.window.cursor.col = 5;
+        app.window.cursor.want_col = 5;
+        press(&mut app, "gN");
+        assert_eq!(app.window.visual_anchor.map(|a| a.col), Some(2));
+        assert_eq!(app.window.cursor.col, 0);
+    }
+
+    #[test]
+    fn gn_without_a_search_says_so() {
+        let mut app = app_with_keymaps("foo\n", "");
+        press(&mut app, "dgn");
+        assert_eq!(app.buffer.rope.to_string(), "foo\n");
+        assert!(app.status_msg.contains("E35"), "{}", app.status_msg);
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

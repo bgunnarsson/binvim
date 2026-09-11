@@ -453,17 +453,36 @@ impl super::App {
         count: usize,
         target: Option<char>,
     ) {
-        let range = match text_object::compute_counted(&self.buffer, self.window.cursor, obj, count)
-        {
-            Some(r) => r,
-            None => {
-                if let Some(hint) = text_object::syntax_object_hint(&self.buffer, obj) {
-                    self.status_msg = hint;
-                }
-                return;
+        let Some(range) = self.text_object_range(obj, count) else {
+            if let Some(hint) = text_object::syntax_object_hint(&self.buffer, obj) {
+                self.status_msg = hint;
+            } else if matches!(obj, TextObjectVerb::SearchMatch { .. }) {
+                self.status_msg = self.search_missing();
             }
+            return;
         };
         self.apply_op_to_range(op, range, target);
+    }
+
+    /// A text object's range. `gn` / `gN` go by the search, which the
+    /// `text_object` module has no access to.
+    fn text_object_range(
+        &self,
+        obj: TextObjectVerb,
+        count: usize,
+    ) -> Option<text_object::TextRange> {
+        if let TextObjectVerb::SearchMatch { forward } = obj {
+            let at = self
+                .buffer
+                .pos_to_char(self.window.cursor.line, self.window.cursor.col);
+            let (start, end) = self.search_match_at(at, forward)?;
+            return Some(text_object::TextRange {
+                start,
+                end,
+                linewise: false,
+            });
+        }
+        text_object::compute_counted(&self.buffer, self.window.cursor, obj, count)
     }
 
     /// The `[start, end)` a `ys` target covers. `yss` starts at the first
@@ -481,7 +500,7 @@ impl super::App {
                 self.range_from_motion(m)
             }
             SurroundTarget::TextObject { obj, count } => {
-                let r = text_object::compute_counted(&self.buffer, self.window.cursor, obj, count)?;
+                let r = self.text_object_range(obj, count)?;
                 (r.start, r.end)
             }
             SurroundTarget::Lines { count } => {

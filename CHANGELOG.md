@@ -203,6 +203,10 @@ follows [Semantic Versioning](https://semver.org/).
   again with a new one (or none), and a bare `/` keeps it. After an
   operator `e` takes the last char in and a line offset works on whole
   lines, so `dn` deletes through the match.
+- **`gn` / `gN` select the next search match.** After an operator they are
+  the match itself, so `cgn` changes the next match and `.` then changes
+  the one after, and `dgn` deletes it. Alone they start Visual over the
+  match, and from Visual they stretch the selection on to the next one.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
