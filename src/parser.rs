@@ -100,6 +100,21 @@ pub enum FoldOp {
     Close,
     OpenAll,
     CloseAll,
+    /// `zv` — open whatever hides the cursor.
+    View,
+    /// `zO` / `zC` / `zA` — open, close, toggle every fold at the cursor.
+    OpenRecursive,
+    CloseRecursive,
+    ToggleRecursive,
+    /// `zm` / `zr` — the fold level down / up by a count.
+    More(usize),
+    Reduce(usize),
+    /// `zx` — the fold level applied afresh, then `zv`.
+    Update,
+    /// `zj` / `zk` — to the next fold's start / the previous fold's end.
+    Jump {
+        down: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1319,13 +1334,23 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(Action::SpellSuggest);
         }
-        // Fold commands — z + a/o/c/M/R.
+        // Fold commands — z + a o c M R, v O C A, m r x, j k.
+        let count = state.total_count();
         let fold = match ch {
             'a' => Some(FoldOp::Toggle),
             'o' => Some(FoldOp::Open),
             'c' => Some(FoldOp::Close),
             'M' => Some(FoldOp::CloseAll),
             'R' => Some(FoldOp::OpenAll),
+            'v' => Some(FoldOp::View),
+            'O' => Some(FoldOp::OpenRecursive),
+            'C' => Some(FoldOp::CloseRecursive),
+            'A' => Some(FoldOp::ToggleRecursive),
+            'm' => Some(FoldOp::More(count)),
+            'r' => Some(FoldOp::Reduce(count)),
+            'x' => Some(FoldOp::Update),
+            'j' => Some(FoldOp::Jump { down: true }),
+            'k' => Some(FoldOp::Jump { down: false }),
             _ => None,
         };
         state.reset();
@@ -2841,6 +2866,20 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn fold_keys_parse_with_counts() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            drive(&mut state, &keys("3zr")),
+            ParseResult::Action(Action::Fold(FoldOp::Reduce(3)))
+        ));
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            drive(&mut state, &keys("zj")),
+            ParseResult::Action(Action::Fold(FoldOp::Jump { down: true }))
+        ));
     }
 
     #[test]

@@ -330,6 +330,10 @@ follows [Semantic Versioning](https://semver.org/).
   `:undolist` shows the branches.** `:earlier 3`, `:earlier 10m`, `:later 1h`,
   and `:earlier 1f` for the text as last written; `:undolist` lists each
   branch's last state with its number, changes and age in the overlay.
+- **More fold commands.** `zj` / `zk` move to the next fold's start or the
+  previous fold's end; `zv` opens whatever hides the cursor; `zO` / `zC` /
+  `zA` open, close and toggle every fold at the cursor; `zm` / `zr` lower and
+  raise the fold level by a count, and `zx` applies it again.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

@@ -5303,6 +5303,46 @@ mod tests {
     }
 
     #[test]
+    fn fold_commands_walk_and_set_the_fold_level() {
+        let mut app = app_with_keymaps("a\n  b\n    c\n  d\ne\n  f\n", "");
+        let closed = |app: &crate::app::App| {
+            let mut starts: Vec<usize> = app.closed_folds.iter().copied().collect();
+            starts.sort_unstable();
+            starts
+        };
+        press(&mut app, "zM");
+        assert_eq!(closed(&app), vec![0, 1, 4]);
+        press(&mut app, "zr");
+        assert_eq!(closed(&app), vec![1]);
+        press(&mut app, "zm");
+        assert_eq!(closed(&app), vec![0, 1, 4]);
+        press(&mut app, "zR");
+        assert!(closed(&app).is_empty());
+        // zj / zk move to the next fold's start and the previous fold's end.
+        press(&mut app, "zj");
+        assert_eq!(app.window.cursor.line, 1);
+        press(&mut app, "zj");
+        assert_eq!(app.window.cursor.line, 4);
+        press(&mut app, "zk");
+        assert_eq!(app.window.cursor.line, 3);
+        // zC closes every fold at the cursor and lands on the outermost.
+        press(&mut app, "k");
+        press(&mut app, "zC");
+        assert_eq!(closed(&app), vec![0, 1]);
+        assert_eq!(app.window.cursor.line, 0);
+        press(&mut app, "zO");
+        assert!(closed(&app).is_empty());
+        // zv opens whatever hides the cursor.
+        press(&mut app, "zM");
+        app.window.cursor.line = 2;
+        press(&mut app, "zv");
+        assert_eq!(closed(&app), vec![4]);
+        // zA closes them all again, recursively.
+        press(&mut app, "zA");
+        assert_eq!(closed(&app), vec![0, 1, 4]);
+    }
+
+    #[test]
     fn earlier_and_later_by_writes_bring_back_the_written_text() {
         let mut app = app_with_keymaps("a\n", "");
         press(&mut app, "Ab");
