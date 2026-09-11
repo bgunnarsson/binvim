@@ -398,6 +398,15 @@ impl super::App {
             }
             Action::ReselectVisual => self.reselect_visual(),
             Action::ChangeListJump { older, count } => self.goto_change(older, count),
+            Action::RepeatSubstitute { whole, count } => {
+                let line = self.window.cursor.line + 1;
+                let range = if whole {
+                    crate::command::ExRange::Whole
+                } else {
+                    crate::command::ExRange::Lines(line, line.saturating_add(count.max(1) - 1))
+                };
+                self.repeat_substitute(range, whole, whole, crate::command::SubFlags::default());
+            }
             Action::VisualOperate { op, register } => {
                 self.record_before_op(op);
                 self.apply_visual_operate(op, register);

@@ -2581,34 +2581,13 @@ impl super::App {
                 pattern,
                 replacement,
                 flags,
-            } if flags.confirm && !flags.count_only => {
-                if let Err(e) = self.substitute_confirm(range, &pattern, &replacement, flags) {
-                    self.status_msg = format!("s: {e}");
-                }
-            }
-            ExCommand::Substitute {
+            } => self.exec_substitute(range, &pattern, &replacement, flags),
+            ExCommand::RepeatSubstitute {
                 range,
-                pattern,
-                replacement,
+                last_search,
+                keep_flags,
                 flags,
-            } => {
-                if !flags.count_only {
-                    self.history.record(&self.buffer.rope, self.window.cursor);
-                }
-                match self.substitute(range, &pattern, &replacement, flags) {
-                    Ok((0, _)) => self.status_msg = format!("Pattern not found: {pattern}"),
-                    Ok((n, lines)) if flags.count_only => {
-                        let es = if n == 1 { "" } else { "es" };
-                        let s = if lines == 1 { "" } else { "s" };
-                        self.status_msg = format!("{n} match{es} on {lines} line{s}");
-                    }
-                    Ok((n, _)) => {
-                        self.status_msg =
-                            format!("{n} substitution{}", if n == 1 { "" } else { "s" });
-                    }
-                    Err(e) => self.status_msg = format!("s: {e}"),
-                }
-            }
+            } => self.repeat_substitute(range, last_search, keep_flags, flags),
             ExCommand::ProjectSubstitute {
                 pattern,
                 replacement,
@@ -2879,6 +2858,72 @@ impl super::App {
         }
     }
 
+    /// Runs a `:s` — asking about each match with `c` — and says how it went.
+    fn exec_substitute(
+        &mut self,
+        range: ExRange,
+        pattern: &str,
+        replacement: &str,
+        flags: command::SubFlags,
+    ) {
+        if flags.confirm && !flags.count_only {
+            if let Err(e) = self.substitute_confirm(range, pattern, replacement, flags) {
+                self.status_msg = format!("s: {e}");
+            }
+            return;
+        }
+        if !flags.count_only {
+            self.history.record(&self.buffer.rope, self.window.cursor);
+        }
+        match self.substitute(range, pattern, replacement, flags) {
+            Ok((0, _)) => self.status_msg = format!("Pattern not found: {pattern}"),
+            Ok((n, lines)) if flags.count_only => {
+                let es = if n == 1 { "" } else { "es" };
+                let s = if lines == 1 { "" } else { "s" };
+                self.status_msg = format!("{n} match{es} on {lines} line{s}");
+            }
+            Ok((n, _)) => {
+                let s = if n == 1 { "" } else { "s" };
+                self.status_msg = format!("{n} substitution{s}");
+            }
+            Err(e) => self.status_msg = format!("s: {e}"),
+        }
+    }
+
+    /// `:&` / `:&&` / `:~`, and `&` / `g&`: the last `:s` again on `range` —
+    /// with the last search's pattern when `last_search`, its own flags only
+    /// when `keep_flags`, and `extra` on top.
+    pub(super) fn repeat_substitute(
+        &mut self,
+        range: ExRange,
+        last_search: bool,
+        keep_flags: bool,
+        extra: command::SubFlags,
+    ) {
+        let Some(last) = self.last_substitute.clone() else {
+            self.status_msg = "E35: No previous regular expression".into();
+            return;
+        };
+        // An empty pattern is the last search, as in `:s//`.
+        let pattern = if last_search {
+            String::new()
+        } else {
+            last.pattern
+        };
+        let base = if keep_flags {
+            last.flags
+        } else {
+            command::SubFlags::default()
+        };
+        let flags = command::SubFlags {
+            global: base.global || extra.global,
+            ignore_case: extra.ignore_case.or(base.ignore_case),
+            count_only: base.count_only || extra.count_only,
+            confirm: base.confirm || extra.confirm,
+        };
+        self.exec_substitute(range, &pattern, &last.replacement, flags);
+    }
+
     /// `:s` — Vim's pattern and replacement syntax, `flags` applied. How many
     /// matches there were, and on how many lines.
     pub(super) fn substitute(
@@ -2888,7 +2933,7 @@ impl super::App {
         repl: &str,
         flags: command::SubFlags,
     ) -> Result<(usize, usize), String> {
-        let re = self.substitute_regex(pat, flags)?;
+        let re = self.substitute_regex(pat, repl, flags)?;
         let groups = super::search::vim_groups(&re);
         Ok(self.replace_matches(
             range,
@@ -2900,10 +2945,12 @@ impl super::App {
     }
 
     /// The regex `:s` runs: its pattern, or the last search when that's
-    /// empty, with the case flags — made the one `n` repeats, as in Vim.
+    /// empty, with the case flags. As in Vim, it becomes the pattern `n`
+    /// repeats, and the whole substitute is what `&` repeats.
     fn substitute_regex(
         &mut self,
         pat: &str,
+        repl: &str,
         flags: command::SubFlags,
     ) -> Result<regex::Regex, String> {
         let pattern = if pat.is_empty() {
@@ -2918,6 +2965,11 @@ impl super::App {
         let re = super::search::compile_search(&cased)?;
         let backward = self.last_search.as_ref().is_some_and(|(_, back)| *back);
         self.set_search(&pattern, backward);
+        self.last_substitute = Some(super::state::LastSubstitute {
+            pattern,
+            replacement: repl.to_string(),
+            flags,
+        });
         Ok(re)
     }
 
@@ -2974,7 +3026,7 @@ impl super::App {
         repl: &str,
         flags: command::SubFlags,
     ) -> Result<(), String> {
-        let re = self.substitute_regex(pat, flags)?;
+        let re = self.substitute_regex(pat, repl, flags)?;
         let (l1, l2) = self.resolve_range(range, true);
         self.sub_confirm = Some(super::state::SubConfirm {
             groups: super::search::vim_groups(&re),
@@ -4065,6 +4117,40 @@ mod tests {
         app.exec_command("s/,/\\r/gc");
         press(&mut app, "yy");
         assert_eq!(app.buffer.rope.to_string(), "a\nb\nc\n");
+    }
+
+    #[test]
+    fn ampersand_runs_the_last_substitute_again() {
+        let mut app = app_with_keymaps("a a\na a\na a\n", "");
+        app.exec_command("s/a/b/g");
+        assert_eq!(app.buffer.rope.to_string(), "b b\na a\na a\n");
+        // `:&&` keeps the flags...
+        app.exec_command("2&&");
+        assert_eq!(app.buffer.rope.to_string(), "b b\nb b\na a\n");
+        // ...and `&` drops them, so only the first `a` on the line changes.
+        press(&mut app, "j&");
+        assert_eq!(app.buffer.rope.to_string(), "b b\nb b\nb a\n");
+
+        // `g&` is `:%s//~/&`: the last search, the last replacement and flags.
+        let mut app = app_with_keymaps("x y\ny x\n", "");
+        app.exec_command("s/x/z/g");
+        press(&mut app, "/y");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "g&");
+        assert_eq!(app.buffer.rope.to_string(), "z z\nz x\n");
+
+        // `:~` takes the last search's pattern with the last replacement.
+        let mut app = app_with_keymaps("ab ab\n", "");
+        app.exec_command("s/a/1/");
+        press(&mut app, "/b");
+        tap(&mut app, KeyCode::Enter);
+        press(&mut app, "0");
+        app.exec_command("~");
+        assert_eq!(app.buffer.rope.to_string(), "11 ab\n");
+
+        let mut app = app_with_keymaps("a\n", "");
+        press(&mut app, "&");
+        assert!(app.status_msg.contains("E35"), "{}", app.status_msg);
     }
 
     #[test]

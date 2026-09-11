@@ -145,6 +145,15 @@ pub enum ExCommand {
     /// A command that parsed but can't run as typed; the status line says
     /// why.
     Invalid(String),
+    /// `:&` / `:&&` / `:~` — the last `:s` again on `range`: with its own
+    /// pattern, or the last search's for `:~`; with its flags only after a
+    /// second `&`; and `flags` on top.
+    RepeatSubstitute {
+        range: ExRange,
+        last_search: bool,
+        keep_flags: bool,
+        flags: SubFlags,
+    },
 }
 
 /// AI-assistant launcher tags — one per shell command we know how
@@ -298,6 +307,28 @@ pub fn parse(line: &str) -> ExCommand {
 
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
     let rest = rest.trim();
+    // `:&` / `:~`, and `:&&` / `:~&`, which keep the last `:s`'s flags.
+    let repeat = match rest.chars().next() {
+        Some('&') => Some(false),
+        Some('~') => Some(true),
+        _ => None,
+    };
+    if let Some(last_search) = repeat {
+        let args = &rest[1..];
+        let (keep_flags, flags) = match args.strip_prefix('&') {
+            Some(flags) => (true, flags),
+            None => (false, args),
+        };
+        return match parse_sub_flags(flags.trim()) {
+            Ok(flags) => ExCommand::RepeatSubstitute {
+                range,
+                last_search,
+                keep_flags,
+                flags,
+            },
+            Err(e) => ExCommand::Invalid(e),
+        };
+    }
     if let Some(args) = rest.strip_prefix('s') {
         match parse_substitute_args(args) {
             Some(Ok((pattern, replacement, flags))) => {
@@ -649,6 +680,36 @@ mod tests {
         ));
         assert!(matches!(parse("s/x/y/q"), ExCommand::Invalid(e) if e.contains("E488")));
         assert!(!matches!(parse("set"), ExCommand::Substitute { .. }));
+    }
+
+    #[test]
+    fn ampersand_and_tilde_repeat_the_last_substitute() {
+        assert!(matches!(
+            parse("&"),
+            ExCommand::RepeatSubstitute {
+                range: ExRange::Implicit,
+                last_search: false,
+                keep_flags: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("%&&"),
+            ExCommand::RepeatSubstitute {
+                range: ExRange::Whole,
+                keep_flags: true,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("~g"),
+            ExCommand::RepeatSubstitute {
+                last_search: true,
+                flags: SubFlags { global: true, .. },
+                ..
+            }
+        ));
+        assert!(matches!(parse("&x"), ExCommand::Invalid(_)));
     }
 
     #[test]
