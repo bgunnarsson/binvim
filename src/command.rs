@@ -119,6 +119,27 @@ pub enum ExCommand {
         range: ExRange,
         opts: SortOpts,
     },
+    /// `:!cmd` — `cmd` run by the shell, its output shown.
+    Shell {
+        cmd: String,
+    },
+    /// `:r [file]` — the file's lines below the line; the current file
+    /// without one.
+    ReadFile {
+        range: ExRange,
+        path: String,
+    },
+    /// `:r !cmd` — what `cmd` prints, below the line.
+    ReadCommand {
+        range: ExRange,
+        cmd: String,
+    },
+    /// `:w !cmd` — the lines, the whole file without a range, on `cmd`'s
+    /// stdin; its output shown and the file left as it is.
+    WriteCommand {
+        range: ExRange,
+        cmd: String,
+    },
     NoHighlight,
     Format,
     Health,
@@ -539,16 +560,16 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
             None => {}
         }
     }
-    // Only after a range: a bare `:!cmd` runs a command in Vim, which binvim
-    // doesn't do.
-    if let Some(cmd) = rest
-        .strip_prefix('!')
-        .filter(|_| !matches!(range, ExRange::Implicit))
-    {
-        return ExCommand::Filter {
-            range,
-            cmd: cmd.trim().to_string(),
-        };
+    // `:!cmd` runs a command; after a range it filters the lines instead.
+    if let Some(cmd) = rest.strip_prefix('!') {
+        let cmd = cmd.trim().to_string();
+        if !matches!(range, ExRange::Implicit) {
+            return ExCommand::Filter { range, cmd };
+        }
+        if cmd.is_empty() {
+            return ExCommand::Invalid("E471: Argument required".into());
+        }
+        return ExCommand::Shell { cmd };
     }
     if let Some(command) = parse_line_command(range, rest) {
         return command;
@@ -867,6 +888,28 @@ fn parse_line_command(range: ExRange, rest: &str) -> Option<ExCommand> {
         })
     } else if is("sort", 3) {
         parse_sort_args(args, bang).map(|opts| ExCommand::Sort { range, opts })
+    } else if is("read", 1) {
+        // `:r!cmd` reads a command too, with the `!` against the name.
+        let command = match (bang, args.strip_prefix('!')) {
+            (true, _) => ExCommand::ReadCommand {
+                range,
+                cmd: args.to_string(),
+            },
+            (false, Some(cmd)) => ExCommand::ReadCommand {
+                range,
+                cmd: cmd.trim().to_string(),
+            },
+            (false, None) => ExCommand::ReadFile {
+                range,
+                path: args.to_string(),
+            },
+        };
+        Ok(command)
+    } else if is("write", 1) && !bang && args.starts_with('!') {
+        Ok(ExCommand::WriteCommand {
+            range,
+            cmd: args[1..].trim().to_string(),
+        })
     } else {
         return None;
     };
@@ -1475,6 +1518,41 @@ mod tests {
         assert_eq!(opts("sort x //"), want);
         assert!(matches!(parse("sort q"), ExCommand::Invalid(e) if e.contains("E474")));
         assert!(matches!(parse("so"), ExCommand::Unknown(_)));
+    }
+
+    #[test]
+    fn shell_commands_parse() {
+        assert!(matches!(parse("!ls -l"), ExCommand::Shell { cmd } if cmd == "ls -l"));
+        assert!(matches!(
+            parse("3!sort"),
+            ExCommand::Filter { range: ExRange::Single(3), cmd } if cmd == "sort"
+        ));
+        assert!(matches!(parse("!"), ExCommand::Invalid(e) if e.contains("E471")));
+        assert!(matches!(
+            parse("r notes.txt"),
+            ExCommand::ReadFile { range: ExRange::Implicit, path } if path == "notes.txt"
+        ));
+        assert!(matches!(parse("r"), ExCommand::ReadFile { path, .. } if path.is_empty()));
+        assert!(matches!(
+            parse("0r !date"),
+            ExCommand::ReadCommand { range: ExRange::Single(0), cmd } if cmd == "date"
+        ));
+        assert!(matches!(parse("r!date"), ExCommand::ReadCommand { cmd, .. } if cmd == "date"));
+        assert!(matches!(
+            parse("w !wc -l"),
+            ExCommand::WriteCommand { range: ExRange::Implicit, cmd } if cmd == "wc -l"
+        ));
+        assert!(matches!(
+            parse("1,3w !cat"),
+            ExCommand::WriteCommand {
+                range: ExRange::Lines(1, 3),
+                ..
+            }
+        ));
+        // Plain writes, and commands sharing a first letter, are as they were.
+        assert!(matches!(parse("w"), ExCommand::Write));
+        assert!(matches!(parse("w out.txt"), ExCommand::WriteAs(p) if p == "out.txt"));
+        assert!(matches!(parse("reg"), ExCommand::Registers));
     }
 
     #[test]

@@ -108,11 +108,52 @@ fn run_stdin_pipe(bin: &Path, args: &[&str], source: &str, label: &str) -> Resul
 /// `input` on stdin.
 pub(crate) fn filter_through_shell(cmd: &str, input: &str) -> Result<String, String> {
     let label = format!("!{cmd}");
+    let (shell, args) = shell_for(cmd);
+    run_stdin_pipe(Path::new(&shell), &args, input, &label)
+}
+
+/// The user's shell and the flag that hands it a command line — `$SHELL
+/// -c`, or `cmd /C` on Windows — in one place, so every `!` agrees.
+fn shell_for(cmd: &str) -> (String, [&str; 2]) {
     if cfg!(windows) {
-        return run_stdin_pipe(Path::new("cmd"), &["/C", cmd], input, &label);
+        return ("cmd".to_string(), ["/C", cmd]);
     }
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".into());
-    run_stdin_pipe(Path::new(&shell), &["-c", cmd], input, &label)
+    (shell, ["-c", cmd])
+}
+
+/// What a shell command printed — its output, then its errors — and its
+/// exit code when it failed.
+pub(crate) struct ShellOutput {
+    pub text: String,
+    pub failed: Option<i32>,
+}
+
+/// `:!`, `:r !` and `:w !`: `cmd` run the way `!` filters run it, `input` on
+/// its stdin. The input is written from a thread of its own, so a command
+/// that prints before it has read everything can't leave both sides waiting.
+pub(crate) fn run_shell(cmd: &str, input: &str) -> Result<ShellOutput, String> {
+    let (shell, args) = shell_for(cmd);
+    let mut child = Command::new(&shell)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn {shell}: {e}"))?;
+    let mut stdin = child.stdin.take().ok_or("shell stdin missing")?;
+    let input = input.to_string();
+    // A command that stops reading early closes the pipe; nothing is lost by
+    // not minding that.
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("!{cmd}: {e}"))?;
+    let _ = writer.join();
+    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+    text.push_str(&String::from_utf8_lossy(&output.stderr));
+    let failed = (!output.status.success()).then(|| output.status.code().unwrap_or(-1));
+    Ok(ShellOutput { text, failed })
 }
 
 /// Format Python via `ruff format` (preferred — single Rust binary,

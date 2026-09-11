@@ -2622,7 +2622,52 @@ impl super::App {
             }
             ExCommand::Filter { range, cmd } => {
                 let (l1, l2) = self.resolve_range(range, true);
-                self.filter_lines(l1, l2, &cmd);
+                match self.expand_file_names(&cmd) {
+                    Ok(cmd) => self.filter_lines(l1, l2, &cmd),
+                    Err(e) => self.status_msg = e,
+                }
+            }
+            ExCommand::Shell { cmd } => self.shell_command(&cmd, ""),
+            ExCommand::WriteCommand { range, cmd } => {
+                // `:w !cmd` takes the whole file unless given a range.
+                let (l1, l2) = self.resolve_range(range, false);
+                let l2 = l2.min(self.last_text_line());
+                let mut input = String::new();
+                for line in l1..=l2 {
+                    let start = self.buffer.line_start_idx(line);
+                    let len = self.buffer.line_len(line);
+                    input.push_str(&self.buffer.rope.slice(start..start + len).to_string());
+                    input.push('\n');
+                }
+                self.shell_command(&cmd, &input);
+            }
+            ExCommand::ReadFile { range, path } => {
+                let at = self.read_target(range);
+                // A bare `:r` reads the current file.
+                let path = if path.is_empty() { "%" } else { path.as_str() };
+                let text = self.expand_file_names(path).and_then(|path| {
+                    std::fs::read_to_string(&path)
+                        .map_err(|_| format!("E484: Can't open file {path}"))
+                });
+                match text {
+                    Ok(text) => self.read_lines_in(at, &text),
+                    Err(e) => self.status_msg = e,
+                }
+            }
+            ExCommand::ReadCommand { range, cmd } => {
+                let at = self.read_target(range);
+                let output = self
+                    .expand_file_names(&cmd)
+                    .and_then(|cmd| crate::format::run_shell(&cmd, ""));
+                match output {
+                    Ok(output) => {
+                        self.read_lines_in(at, &output.text);
+                        if let Some(code) = output.failed {
+                            self.status_msg = format!("shell returned {code}");
+                        }
+                    }
+                    Err(e) => self.status_msg = e,
+                }
             }
             ExCommand::YankRange {
                 range,
@@ -3074,6 +3119,103 @@ impl super::App {
             want_col: 0,
         };
         self.window.cursor = motion::first_non_blank(&self.buffer, from).target;
+    }
+
+    /// Where `:r` puts lines: below the range's last line, or at the top for
+    /// `:0r`.
+    fn read_target(&self, range: ExRange) -> usize {
+        if matches!(range, ExRange::Single(0)) {
+            return 0;
+        }
+        self.counted_range(range, None).1 + 1
+    }
+
+    /// `:r`'s text on lines of its own from line `at`, the cursor on the
+    /// first of them, as in Vim.
+    fn read_lines_in(&mut self, at: usize, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let body = text.strip_suffix('\n').unwrap_or(text);
+        let lines: Vec<String> = body
+            .split('\n')
+            .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+            .collect();
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        self.replace_lines(at, at, &lines);
+        self.cursor_to_first_non_blank(at);
+    }
+
+    /// `:!cmd` / `:w !cmd` — `cmd` run by the shell with `input` on its
+    /// stdin, and what it printed shown in the list overlay, with the exit
+    /// code when it failed.
+    fn shell_command(&mut self, cmd: &str, input: &str) {
+        let cmd = match self.expand_file_names(cmd) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let output = match crate::format::run_shell(&cmd, input) {
+            Ok(output) => output,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        let mut rows: Vec<(String, String)> = output
+            .text
+            .lines()
+            .map(|line| (String::new(), line.to_string()))
+            .collect();
+        if let Some(code) = output.failed {
+            rows.push((String::new(), format!("shell returned {code}")));
+        }
+        self.show_listing(super::state::Listing {
+            title: format!("!{cmd}"),
+            rows,
+            empty: "(no output)".into(),
+        });
+    }
+
+    /// `%` and `#` in a command's argument, as Vim reads them: the current
+    /// file's name and the alternate file's — relative to the working
+    /// directory when they're under it. `\%` and `\#` are the characters.
+    fn expand_file_names(&self, text: &str) -> Result<String, String> {
+        let cwd = std::env::current_dir().ok();
+        let mut out = String::new();
+        let mut chars = text.chars();
+        while let Some(c) = chars.next() {
+            let path = match c {
+                '%' => self.buffer.path.as_deref(),
+                '#' => self.alternate_path.as_deref(),
+                '\\' => {
+                    match chars.next() {
+                        Some(name @ ('%' | '#')) => out.push(name),
+                        Some(other) => {
+                            out.push('\\');
+                            out.push(other);
+                        }
+                        None => out.push('\\'),
+                    }
+                    continue;
+                }
+                _ => {
+                    out.push(c);
+                    continue;
+                }
+            };
+            let Some(path) = path else {
+                return Err("E499: Empty file name for '%' or '#'".into());
+            };
+            let shown = cwd
+                .as_deref()
+                .and_then(|cwd| path.strip_prefix(cwd).ok())
+                .unwrap_or(path);
+            out.push_str(&shown.to_string_lossy());
+        }
+        Ok(out)
     }
 
     /// `:g/pat/cmd`, `:g!` / `:v` — `cmd` run on each line of `range` that
@@ -4701,6 +4843,59 @@ mod tests {
         let mut app = app_with_keymaps("a\n", "");
         app.exec_command("sort q");
         assert!(app.status_msg.contains("E474"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn percent_and_hash_stand_for_the_file_names() {
+        let mut app = app_with_keymaps("a\n", "");
+        let cwd = std::env::current_dir().expect("cwd");
+        app.buffer.path = Some(cwd.join("src").join("main.rs"));
+        app.alternate_path = Some(PathBuf::from("/elsewhere/other.txt"));
+        let main = std::path::Path::new("src").join("main.rs");
+        let want = format!("cat {} /elsewhere/other.txt %", main.display());
+        assert_eq!(app.expand_file_names("cat % # \\%"), Ok(want));
+        app.buffer.path = None;
+        let err = app.expand_file_names("wc %").unwrap_err();
+        assert!(err.contains("E499"), "{err}");
+    }
+
+    #[test]
+    fn read_puts_a_file_in_below_the_line() {
+        let path = std::env::temp_dir().join(format!("binvim-read-{}.txt", std::process::id()));
+        std::fs::write(&path, "one\ntwo\n").expect("temp file");
+        let mut app = app_with_keymaps("a\nb\n", "");
+        app.exec_command(&format!("r {}", path.display()));
+        std::fs::remove_file(&path).ok();
+        assert_eq!(app.buffer.rope.to_string(), "a\none\ntwo\nb\n");
+        assert_eq!(app.window.cursor.line, 1);
+        app.exec_command("r /no/such/file");
+        assert!(app.status_msg.contains("E484"), "{}", app.status_msg);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shell_commands_show_read_and_take_lines() {
+        let shown = |app: &crate::app::App| {
+            let listing = app.listing.as_ref().expect("output shown");
+            listing
+                .rows
+                .iter()
+                .map(|(_, text)| text.clone())
+                .collect::<Vec<_>>()
+        };
+        let mut app = app_with_keymaps("a\nb\n", "");
+        app.exec_command("!printf 'x\\ny\\n'");
+        assert_eq!(shown(&app), ["x", "y"]);
+        app.exec_command("!exit 3");
+        assert_eq!(shown(&app), ["shell returned 3"]);
+        app.exec_command("r !echo hi");
+        assert_eq!(app.buffer.rope.to_string(), "a\nhi\nb\n");
+        app.exec_command("0r !echo top");
+        assert_eq!(app.buffer.rope.to_string(), "top\na\nhi\nb\n");
+        // `:w !` hands the lines over and leaves the buffer as it was.
+        app.exec_command("2,3w !tr a-z A-Z");
+        assert_eq!(shown(&app), ["A", "HI"]);
+        assert_eq!(app.buffer.rope.to_string(), "top\na\nhi\nb\n");
     }
 
     #[test]

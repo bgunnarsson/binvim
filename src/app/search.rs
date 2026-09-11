@@ -187,7 +187,7 @@ impl super::App {
         self.buffer.rope.line(line).to_string().trim().to_string()
     }
 
-    fn show_listing(&mut self, listing: super::state::Listing) {
+    pub(super) fn show_listing(&mut self, listing: super::state::Listing) {
         self.listing = Some(listing);
         self.show_list_page = true;
         self.list_scroll = 0;
