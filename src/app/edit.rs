@@ -304,6 +304,16 @@ impl super::App {
                 self.window.cursor.col = len;
                 self.window.cursor.want_col = len;
             }
+            // Before any insert there's no `^`, and `gi` starts where it is.
+            InsertWhere::LastInsert => {
+                if let Some((line, col)) = self.buffer.mark('^') {
+                    let line = line.min(self.buffer.line_count().saturating_sub(1));
+                    let col = col.min(self.buffer.line_len(line));
+                    self.window.cursor.line = line;
+                    self.window.cursor.col = col;
+                    self.window.cursor.want_col = col;
+                }
+            }
         }
         self.mode = Mode::Insert;
     }

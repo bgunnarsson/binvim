@@ -3294,6 +3294,32 @@ mod tests {
         assert_eq!(visual_ends(&app), Some(((2, 0), (3, 0))));
     }
 
+    #[test]
+    fn gi_inserts_where_insert_was_last_left() {
+        let mut app = app_with_keymaps("one\ntwo\n", "");
+        press(&mut app, "Ax");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "jgiy");
+        assert_eq!(app.mode, Mode::Insert);
+        assert_eq!(app.buffer.rope.to_string(), "onexy\ntwo\n");
+    }
+
+    #[test]
+    fn gi_follows_edits_above_where_insert_was_left() {
+        let mut app = app_with_keymaps("a\nb\n", "");
+        press(&mut app, "jAx");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        press(&mut app, "ggyyPgiy");
+        assert_eq!(app.buffer.rope.to_string(), "a\na\nbxy\n");
+    }
+
+    #[test]
+    fn gi_before_any_insert_starts_at_the_cursor() {
+        let mut app = app_with_keymaps("abc\n", "");
+        press(&mut app, "lgix");
+        assert_eq!(app.buffer.rope.to_string(), "axbc\n");
+    }
+
     fn with_register(app: &mut crate::app::App, name: char, text: &str) {
         let reg = crate::app::state::Register {
             text: text.into(),
