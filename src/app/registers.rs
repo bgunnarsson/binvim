@@ -213,6 +213,21 @@ impl super::App {
         self.status_msg = format!("recording @{}", name);
     }
 
+    /// `@:` — the last command line typed at the prompt, run again `count`
+    /// times, as far as the first error; `@@` then runs it once more.
+    fn repeat_command_line(&mut self, count: usize) {
+        let Some(line) = self.cmd_history.last().cloned() else {
+            self.status_msg = "E30: No previous command line".into();
+            return;
+        };
+        self.last_replayed_macro = Some(':');
+        for _ in 0..count.max(1) {
+            if !self.run_each(&line) {
+                break;
+            }
+        }
+    }
+
     pub(super) fn replay_macro(&mut self, name: char, count: usize) {
         let target = if name == '@' {
             self.last_replayed_macro
@@ -223,6 +238,10 @@ impl super::App {
             self.status_msg = "No previous macro".into();
             return;
         };
+        if name == ':' {
+            self.repeat_command_line(count);
+            return;
+        }
         let Some(keys) = self.macros.get(&name).cloned() else {
             self.status_msg = format!("Empty register: {}", name);
             return;

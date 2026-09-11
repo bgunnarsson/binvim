@@ -295,6 +295,8 @@ follows [Semantic Versioning](https://semver.org/).
   current and alternate file), `":` (the last command line) and `"/` (the
   last search) read as in Vim. `:reg` lists them all. A yank into a named
   register no longer overwrites `"0`.
+- **`@:` repeats the last command line.** `3@:` runs it three times, stopping
+  at an error, and `@@` afterwards runs it again.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search
