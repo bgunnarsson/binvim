@@ -553,6 +553,9 @@ pub struct App {
     pub insert_register_pending: bool,
     /// Insert `Ctrl-X`: the next key picks a local completion list.
     pub insert_ctrl_x_pending: bool,
+    /// Insert `Ctrl-K`: the characters typed after it so far, until two make
+    /// a digraph.
+    pub insert_digraph: Option<String>,
     /// `Ctrl-R` on the `:` / `/` prompt: the next key names what to insert.
     pub cmdline_register_pending: bool,
     /// The `q:` / `q/` window, while one is open.
@@ -1050,6 +1053,7 @@ impl App {
             snippet_session: None,
             insert_register_pending: false,
             insert_ctrl_x_pending: false,
+            insert_digraph: None,
             cmdline_register_pending: false,
             history_window: None,
             insert_literal_pending: None,
