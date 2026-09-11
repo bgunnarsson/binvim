@@ -118,6 +118,11 @@ pub enum Operator {
     Outdent,
     /// `=` — re-indent lines the way Enter indents a new one.
     Reindent,
+    /// `gq` / `gw` — re-flow lines to the text width; `gw` then puts the
+    /// cursor back.
+    Format {
+        keep_cursor: bool,
+    },
     /// `gu` / `gU` / `g~` / `g?` — rewrite the range's case in place.
     Case(CaseOp),
 }

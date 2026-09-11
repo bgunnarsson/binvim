@@ -874,6 +874,15 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     ParseResult::Pending
 }
 
+/// The operator a key names after `g`: the case operators, and `gq` / `gw`.
+fn g_operator(ch: char) -> Option<Operator> {
+    match ch {
+        'q' => Some(Operator::Format { keep_cursor: false }),
+        'w' => Some(Operator::Format { keep_cursor: true }),
+        _ => CaseOp::for_key(ch).map(Operator::Case),
+    }
+}
+
 fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResult {
     if matches!(key.code, KeyCode::Esc) {
         state.reset();
@@ -1664,10 +1673,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(Action::BufferPrev);
         }
-        // gu / gU / g~ / g? — the case operators. Typed again in full (`gugu`)
-        // they take the line, as their last key again does (`guu`, below).
-        if let Some(how) = CaseOp::for_key(ch) {
-            let op = Operator::Case(how);
+        // gu / gU / g~ / g? — the case operators — and gq / gw, which re-flow.
+        // Typed again in full (`gugu`) they take the line, as their last key
+        // again does (`guu`, below).
+        if let Some(op) = g_operator(ch) {
             if ctx == ParseCtx::Visual {
                 state.reset();
                 return ParseResult::Action(Action::VisualOperate { op, register: None });
@@ -1949,11 +1958,12 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Action(Action::SurroundVisual { ch: target });
     }
 
-    // `guu`, `gUU`, `g~~`, `g??`: a case operator's own last key again takes
-    // the line, as `dd` does for `d`.
-    if let Some(op) = state.operator.filter(|&op| {
-        ctx == ParseCtx::Normal && Some(op) == CaseOp::for_key(ch).map(Operator::Case)
-    }) {
+    // `guu`, `gUU`, `g~~`, `g??`, `gqq`, `gww`: a g-operator's own last key
+    // again takes the line, as `dd` does for `d`.
+    if let Some(op) = state
+        .operator
+        .filter(|&op| ctx == ParseCtx::Normal && Some(op) == g_operator(ch))
+    {
         let count = state.count1.unwrap_or(1);
         state.reset();
         return ParseResult::Action(Action::OperateLine {

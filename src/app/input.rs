@@ -3338,6 +3338,50 @@ mod tests {
     }
 
     #[test]
+    fn gqq_and_gqip_fill_to_the_text_width() {
+        let mut app = app_with_keymaps("aa bb cc dd\n", "");
+        app.editorconfig.max_line_length = Some(8);
+        press(&mut app, "gqq");
+        assert_eq!(app.buffer.rope.to_string(), "aa bb cc\ndd\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
+
+        let mut app = app_with_keymaps("a\nb\nc\n\nd\n", "");
+        press(&mut app, "gqip");
+        assert_eq!(app.buffer.rope.to_string(), "a b c\n\nd\n");
+    }
+
+    #[test]
+    fn gw_re_flows_and_leaves_the_cursor_where_it_was() {
+        let mut app = app_with_keymaps("aa bb cc dd ee\n", "");
+        app.editorconfig.max_line_length = Some(8);
+        app.window.cursor.col = 3;
+        app.window.cursor.want_col = 3;
+        press(&mut app, "gww");
+        assert_eq!(app.buffer.rope.to_string(), "aa bb cc\ndd ee\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 3));
+    }
+
+    #[test]
+    fn visual_gq_and_dot_repeat_re_flow() {
+        let mut app = app_with_keymaps("a\nb\n", "");
+        press(&mut app, "Vjgq");
+        assert_eq!(app.buffer.rope.to_string(), "a b\n");
+        assert_eq!(app.mode, Mode::Normal);
+
+        let mut app = app_with_keymaps("a\nb\n\nc\nd\n", "");
+        press(&mut app, "gqjjj.");
+        assert_eq!(app.buffer.rope.to_string(), "a b\n\nc d\n");
+    }
+
+    #[test]
+    fn gq_keeps_a_comment_marker_on_every_line() {
+        let mut app = app_with_keymaps("// aa bb\n// cc\n", "");
+        app.buffer.path = Some(std::path::PathBuf::from("x.rs"));
+        press(&mut app, "gqj");
+        assert_eq!(app.buffer.rope.to_string(), "// aa bb cc\n");
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

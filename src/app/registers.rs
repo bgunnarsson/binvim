@@ -258,7 +258,10 @@ impl super::App {
             | Action::OperateTextObject { op, .. } => {
                 matches!(
                     op,
-                    Operator::Delete | Operator::Reindent | Operator::Case(_)
+                    Operator::Delete
+                        | Operator::Reindent
+                        | Operator::Format { .. }
+                        | Operator::Case(_)
                 )
             }
             Action::DeleteCharForward { .. }

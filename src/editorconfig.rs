@@ -7,6 +7,7 @@
 //! * `trim_trailing_whitespace` — bool
 //! * `insert_final_newline`     — bool
 //! * `end_of_line`              — lf | crlf
+//! * `max_line_length`          — integer (or `off`); the width `gq` fills to
 
 use crate::buffer::LineEnding;
 use std::path::{Path, PathBuf};
@@ -28,6 +29,8 @@ pub struct EditorConfig {
     /// case `save` preserves whatever the file was on disk. `Some(_)`
     /// forces the buffer to that convention on save.
     pub end_of_line: Option<LineEnding>,
+    /// The width `gq` / `gw` fill to. `None` when unset or `off`.
+    pub max_line_length: Option<usize>,
 }
 
 impl Default for EditorConfig {
@@ -39,6 +42,7 @@ impl Default for EditorConfig {
             trim_trailing_whitespace: false,
             insert_final_newline: true,
             end_of_line: None,
+            max_line_length: None,
         }
     }
 }
@@ -219,6 +223,9 @@ fn apply_property(cfg: &mut EditorConfig, key: &str, value: &str) {
             "crlf" => cfg.end_of_line = Some(LineEnding::Crlf),
             _ => {}
         },
+        "max_line_length" => {
+            cfg.max_line_length = value.parse::<usize>().ok().filter(|n| *n > 0);
+        }
         _ => {}
     }
 }
@@ -371,5 +378,14 @@ mod tests {
     fn unset_end_of_line_stays_none() {
         let cfg = EditorConfig::default();
         assert_eq!(cfg.end_of_line, None);
+    }
+
+    #[test]
+    fn parses_max_line_length() {
+        let mut cfg = super::EditorConfig::default();
+        super::apply_property(&mut cfg, "max_line_length", "100");
+        assert_eq!(cfg.max_line_length, Some(100));
+        super::apply_property(&mut cfg, "max_line_length", "off");
+        assert_eq!(cfg.max_line_length, None);
     }
 }
