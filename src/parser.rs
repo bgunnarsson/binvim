@@ -206,8 +206,15 @@ pub enum Action {
         ch: char,
         count: usize,
     },
+    /// `J` / `gJ` — join `count` lines; `spaces` (`J`) trims the next line's
+    /// indent and leaves one space, `gJ` only takes out the line break.
     JoinLines {
         count: usize,
+        spaces: bool,
+    },
+    /// Visual `J` / `gJ` — join every line the selection covers.
+    VisualJoin {
+        spaces: bool,
     },
     ToggleCase {
         count: usize,
@@ -1638,6 +1645,20 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 count,
             });
         }
+        // gJ — join without touching the whitespace, from Normal or Visual.
+        if ch == 'J' && state.operator.is_none() {
+            let count = state.total_count();
+            state.reset();
+            let action = if ctx == ParseCtx::Visual {
+                Action::VisualJoin { spaces: false }
+            } else {
+                Action::JoinLines {
+                    count,
+                    spaces: false,
+                }
+            };
+            return ParseResult::Action(action);
+        }
         // gi — Insert where it was last left.
         if ch == 'i' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
@@ -1762,6 +1783,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                     op: Operator::Outdent,
                     register: None,
                 });
+            }
+            'J' => {
+                state.reset();
+                return ParseResult::Action(Action::VisualJoin { spaces: true });
             }
             'i' | 'a' => {
                 state.awaiting_textobj = Some(ch == 'i');
@@ -2083,6 +2108,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }),
             'J' => Some(Action::JoinLines {
                 count: state.total_count(),
+                spaces: true,
             }),
             '~' => Some(Action::ToggleCase {
                 count: state.total_count(),

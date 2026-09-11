@@ -13,6 +13,18 @@ impl super::App {
         self.word_drag_origin = None;
     }
 
+    /// Visual `J` / `gJ`: joins every line the selection covers — at least
+    /// two, as in Vim.
+    pub(super) fn visual_join(&mut self, spaces: bool) {
+        let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
+        let l1 = anchor.line.min(self.window.cursor.line);
+        let l2 = anchor.line.max(self.window.cursor.line);
+        self.exit_visual();
+        self.window.cursor.line = l1;
+        self.window.cursor.col = 0;
+        self.join_lines((l2 - l1).max(1), spaces);
+    }
+
     /// Keeps a selection for `'<` / `'>` and `gv`.
     pub(super) fn remember_visual(&mut self, kind: VisualKind, anchor: Cursor, cursor: Cursor) {
         let cursor_at_start = (cursor.line, cursor.col) < (anchor.line, anchor.col);
