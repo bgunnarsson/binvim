@@ -423,6 +423,25 @@ pub struct CompletionState {
     /// Position where the existing word-prefix begins; replaced with the chosen item on accept.
     pub anchor_line: usize,
     pub anchor_col: usize,
+    /// Where the items came from: the server, or a `Ctrl-X` list that keeps
+    /// to its own source as you type.
+    pub source: CompletionSource,
+}
+
+/// A completion popup's source: the language server, or one of Insert
+/// `Ctrl-X`'s local lists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompletionSource {
+    Lsp,
+    /// `Ctrl-X Ctrl-N` / `Ctrl-P` — the buffer's words, nearest first going
+    /// forward, or `backward`.
+    Words {
+        backward: bool,
+    },
+    /// `Ctrl-X Ctrl-L` — whole lines.
+    Lines,
+    /// `Ctrl-X Ctrl-F` — file paths.
+    Files,
 }
 
 pub struct HoverState {

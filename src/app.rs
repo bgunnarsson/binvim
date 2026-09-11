@@ -551,6 +551,8 @@ pub struct App {
     pub snippet_session: Option<crate::app::state::SnippetSession>,
     /// Insert-mode `Ctrl-R` is waiting for the name of the register to paste.
     pub insert_register_pending: bool,
+    /// Insert `Ctrl-X`: the next key picks a local completion list.
+    pub insert_ctrl_x_pending: bool,
     /// `Ctrl-R` on the `:` / `/` prompt: the next key names what to insert.
     pub cmdline_register_pending: bool,
     /// The `q:` / `q/` window, while one is open.
@@ -1047,6 +1049,7 @@ impl App {
             additional_cursors: Vec::new(),
             snippet_session: None,
             insert_register_pending: false,
+            insert_ctrl_x_pending: false,
             cmdline_register_pending: false,
             history_window: None,
             insert_literal_pending: None,
