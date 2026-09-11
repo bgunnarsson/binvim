@@ -188,8 +188,18 @@ follows [Semantic Versioning](https://semver.org/).
   in Rust, TypeScript, JavaScript, Python, Go, C#, Lua (functions only), C
   and C++, and say so in the status line anywhere else. A count reaches
   the ones further out.
+- **Search takes Vim's regex syntax.** `/` and `?` understand `\(…\)`,
+  `\|`, `\+`, `\=`, `\{n,m}`, `\<` / `\>`, `\s` / `\d` / `\w` and the
+  other classes, `[…]`, `\zs` / `\ze` and `\v` / `\M` / `\V`, and the
+  highlight covers the whole of each match. Case is smart: an upper-case
+  letter makes the search case-sensitive, and `\c` / `\C` decide outright.
+  `*` / `#` now search the whole word and `g*` / `g#` the bare text, and
+  `n` / `N` take a count. Backreferences and lookaround aren't supported,
+  and say so.
 
 ### Fixed
+- **`/pat` moves on from a match the cursor is already on.** The search
+  started at the cursor, so it found the match under it and stayed put.
 - **`3J` joins three lines, as in Vim.** The count was taken as the number
   of joins, so `3J` merged four lines; a count below two still joins two.
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

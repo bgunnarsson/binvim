@@ -283,6 +283,8 @@ pub struct App {
     pub last_find: Option<FindRecord>,
     /// `(query, backward)` — direction is the original search direction so `n`/`N` honour it.
     pub last_search: Option<(String, bool)>,
+    /// `last_search` compiled, for `n` / `N` and the match highlight.
+    search_pattern: Option<regex::Regex>,
     /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
     pub search_hl_off: bool,
     pub last_edit: Option<LastEdit>,
@@ -931,6 +933,7 @@ impl App {
             should_quit: false,
             last_find: None,
             last_search: None,
+            search_pattern: None,
             search_hl_off: false,
             last_edit: None,
             jumplist: Vec::new(),

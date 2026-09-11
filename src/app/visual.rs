@@ -142,7 +142,7 @@ impl super::App {
         let total = self.buffer.total_chars();
         let from = end.min(total);
         let needle_chars = needle.chars().count();
-        let hit = self.search(&needle, from, true, true);
+        let hit = self.find_literal(&needle, from, true, true);
         let Some(hit_start) = hit else {
             self.status_msg = format!("No more occurrences of \"{needle}\"");
             return;
