@@ -381,6 +381,12 @@ pub enum Action {
     },
     /// `"=` — the prompt for the expression register's value (D10).
     ExpressionPrompt,
+    /// `q:` / `q/` / `q?` — the command-line window over the ex or search
+    /// history.
+    HistoryWindow {
+        search: bool,
+        backward: bool,
+    },
     ReplayMacro {
         name: char,
         count: usize,
@@ -1093,6 +1099,13 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // Resolve macro-record register: after `q`, next char is the macro name.
     if state.awaiting_macro_record {
         state.awaiting_macro_record = false;
+        if matches!(ch, ':' | '/' | '?') {
+            state.reset();
+            return ParseResult::Action(Action::HistoryWindow {
+                search: ch != ':',
+                backward: ch == '?',
+            });
+        }
         if !ch.is_ascii_alphabetic() && !ch.is_ascii_digit() {
             state.reset();
             return ParseResult::Cancelled;
@@ -2764,6 +2777,24 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn q_colon_slash_and_query_open_the_history_window() {
+        for (typed, search, backward) in [
+            ("q:", false, false),
+            ("q/", true, false),
+            ("q?", true, true),
+        ] {
+            let mut state = PendingCmd::default();
+            match drive(&mut state, &keys(typed)) {
+                ParseResult::Action(Action::HistoryWindow {
+                    search: s,
+                    backward: b,
+                }) => assert_eq!((s, b), (search, backward), "{typed}"),
+                _ => panic!("{typed} did not open the history window"),
+            }
+        }
     }
 
     #[test]

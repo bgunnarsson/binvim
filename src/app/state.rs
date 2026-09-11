@@ -214,6 +214,15 @@ pub struct QuickfixState {
     pub current: usize,
 }
 
+/// The `q:` / `q/` window: its pane, and whether its lines are searches
+/// (and which way) rather than command lines.
+#[derive(Debug, Clone, Copy)]
+pub struct HistoryWindow {
+    pub window: crate::layout::WindowId,
+    pub search: bool,
+    pub backward: bool,
+}
+
 /// `:set`'s own options (D4), for the session only. The rest of D4 lives
 /// where it's read: `relativenumber` / `list` in the config, and the indent
 /// options on the editorconfig, which `expandtab` / `shiftwidth` / `tabstop`

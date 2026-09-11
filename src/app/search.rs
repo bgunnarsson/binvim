@@ -765,7 +765,7 @@ impl super::App {
         }
     }
 
-    fn execute_search(&mut self, query: &str, backward: bool) {
+    pub(super) fn execute_search(&mut self, query: &str, backward: bool) {
         let delim = if backward { '?' } else { '/' };
         let (typed, offset) = split_pattern(query, delim);
         let pattern = if typed.is_empty() {
