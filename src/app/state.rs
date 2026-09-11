@@ -1318,6 +1318,8 @@ pub fn is_jump_motion(m: MotionVerb) -> bool {
             | MotionVerb::PercentLine(_)
             | MotionVerb::ParagraphForward
             | MotionVerb::ParagraphBackward
+            | MotionVerb::SentenceForward
+            | MotionVerb::SentenceBackward
     )
 }
 

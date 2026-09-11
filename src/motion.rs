@@ -211,6 +211,93 @@ pub fn paragraph_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResu
     }
 }
 
+/// `)` — to the start of the next sentence. A sentence ends at `.`, `!` or
+/// `?`, plus any closing `)`, `]`, `"` or `'`, followed by whitespace, and an
+/// empty line starts one too (`:h sentence`). Past the last one it stops on
+/// the buffer's last char, as `}` does.
+pub fn sentence_forward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let total = buf.total_chars();
+    let mut idx = buf.pos_to_char(cur.line, cur.col);
+    for _ in 0..count.max(1) {
+        match (idx + 1..total).find(|&i| is_sentence_start(buf, i)) {
+            Some(next) => idx = next,
+            None => {
+                let last = vim_line_count(buf).saturating_sub(1);
+                let col = buf.line_len(last).saturating_sub(1);
+                return MotionResult {
+                    target: Cursor {
+                        line: last,
+                        col,
+                        want_col: col,
+                    },
+                    kind: MotionKind::CharInclusive,
+                };
+            }
+        }
+    }
+    sentence_target(buf, idx)
+}
+
+/// `(` — to the start of the sentence the cursor is in, or of the one
+/// before when it's already on a start.
+pub fn sentence_backward(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let mut idx = buf.pos_to_char(cur.line, cur.col);
+    for _ in 0..count.max(1) {
+        idx = (0..idx)
+            .rev()
+            .find(|&i| is_sentence_start(buf, i))
+            .unwrap_or(0);
+    }
+    sentence_target(buf, idx)
+}
+
+fn sentence_target(buf: &Buffer, idx: usize) -> MotionResult {
+    let line = buf.rope.char_to_line(idx);
+    let col = idx - buf.rope.line_to_char(line);
+    MotionResult {
+        target: Cursor {
+            line,
+            col,
+            want_col: col,
+        },
+        kind: MotionKind::CharExclusive,
+    }
+}
+
+/// Whether a sentence starts at char `i`: an empty line, or the first
+/// non-blank after a sentence's end, after a blank line, or in the buffer.
+fn is_sentence_start(buf: &Buffer, i: usize) -> bool {
+    let rope = &buf.rope;
+    let c = rope.char(i);
+    if c == '\n' {
+        return i.checked_sub(1).is_none_or(|p| rope.char(p) == '\n');
+    }
+    if c == ' ' || c == '\t' {
+        return false;
+    }
+    let mut j = i;
+    let mut breaks = 0;
+    while j > 0 && matches!(rope.char(j - 1), ' ' | '\t' | '\n') {
+        if rope.char(j - 1) == '\n' {
+            breaks += 1;
+        }
+        j -= 1;
+    }
+    if j == 0 {
+        return true;
+    }
+    if j == i {
+        return false;
+    }
+    if breaks >= 2 {
+        return true;
+    }
+    while j > 0 && matches!(rope.char(j - 1), ')' | ']' | '"' | '\'') {
+        j -= 1;
+    }
+    j > 0 && matches!(rope.char(j - 1), '.' | '!' | '?')
+}
+
 /// The line motions that land on the first non-blank — `+`, `<CR>`, `-`,
 /// `_`. Linewise, so `d+` takes this line and the next.
 fn line_first_non_blank(buf: &Buffer, line: usize) -> MotionResult {
@@ -1302,5 +1389,45 @@ mod tests {
                 prop_assert!(in_bounds(&b, r.target));
             }
         }
+    }
+
+    fn sentence_hop(
+        text: &str,
+        from: (usize, usize),
+        count: usize,
+        forward: bool,
+    ) -> (usize, usize) {
+        let b = buf(text);
+        let m = if forward {
+            super::sentence_forward(&b, cur(from.0, from.1), count)
+        } else {
+            super::sentence_backward(&b, cur(from.0, from.1), count)
+        };
+        (m.target.line, m.target.col)
+    }
+
+    #[test]
+    fn sentence_motions_step_between_sentence_starts() {
+        let text = "Hello there. How are you? Fine.\n";
+        assert_eq!(sentence_hop(text, (0, 0), 1, true), (0, 13));
+        assert_eq!(sentence_hop(text, (0, 13), 1, true), (0, 26));
+        assert_eq!(sentence_hop(text, (0, 0), 2, true), (0, 26));
+        assert_eq!(sentence_hop(text, (0, 26), 1, true), (0, 30));
+        assert_eq!(sentence_hop(text, (0, 26), 1, false), (0, 13));
+        assert_eq!(sentence_hop(text, (0, 17), 1, false), (0, 13));
+        assert_eq!(sentence_hop(text, (0, 13), 1, false), (0, 0));
+    }
+
+    #[test]
+    fn sentence_motions_stop_on_empty_lines_and_after_closing_quotes() {
+        let text = "One. Two\n\nThree.\n";
+        assert_eq!(sentence_hop(text, (0, 0), 1, true), (0, 5));
+        assert_eq!(sentence_hop(text, (0, 5), 1, true), (1, 0));
+        assert_eq!(sentence_hop(text, (1, 0), 1, true), (2, 0));
+        assert_eq!(
+            sentence_hop("He said \"hi.\" Then left.\n", (0, 0), 1, true),
+            (0, 14)
+        );
+        assert_eq!(sentence_hop("a\nb. c\n", (0, 0), 1, true), (1, 3));
     }
 }
