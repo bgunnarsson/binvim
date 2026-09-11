@@ -139,6 +139,10 @@ follows [Semantic Versioning](https://semver.org/).
   leave the cursor just after the text. `]p` puts lines below at the
   cursor line's indent, keeping their indent relative to each other, and
   `[p`, `[P` and `]P` do the same above.
+- **Visual `Ctrl-A` / `Ctrl-X`, and `g Ctrl-A` / `g Ctrl-X`.** In Visual,
+  `Ctrl-A` and `Ctrl-X` change the first number in the selected part of
+  each line, block selections included. The `g` forms count up line by
+  line, so a column of zeros becomes 1, 2, 3.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number

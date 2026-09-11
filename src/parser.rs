@@ -275,6 +275,13 @@ pub enum Action {
         delta: i64,
         count: usize,
     },
+    /// Visual `Ctrl-A` / `Ctrl-X` — the first number on each selected line;
+    /// `progressive` (`g Ctrl-A`) takes each line a step further than the last.
+    VisualAdjustNumber {
+        delta: i64,
+        count: usize,
+        progressive: bool,
+    },
     /// `Ctrl-J` (down = true) / `Ctrl-K` (down = false) — move the current
     /// line (Normal mode) or the selected line range (Visual mode) up or
     /// down by `count` positions. Cursor and visual anchor follow the
@@ -954,15 +961,23 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 ParseResult::Action(Action::JumpForward)
             }
-            'a' | 'A' => {
+            // `g Ctrl-A` makes a Visual selection's numbers a sequence; from
+            // Normal it's plain `Ctrl-A`, as in Vim.
+            'a' | 'A' | 'x' | 'X' => {
                 let count = state.total_count();
+                let progressive = state.awaiting_g;
+                let delta = if ch.eq_ignore_ascii_case(&'a') { 1 } else { -1 };
                 state.reset();
-                ParseResult::Action(Action::AdjustNumber { delta: 1, count })
-            }
-            'x' | 'X' => {
-                let count = state.total_count();
-                state.reset();
-                ParseResult::Action(Action::AdjustNumber { delta: -1, count })
+                let action = if ctx == ParseCtx::Visual {
+                    Action::VisualAdjustNumber {
+                        delta,
+                        count,
+                        progressive,
+                    }
+                } else {
+                    Action::AdjustNumber { delta, count }
+                };
+                ParseResult::Action(action)
             }
             'v' | 'V' => {
                 state.reset();
