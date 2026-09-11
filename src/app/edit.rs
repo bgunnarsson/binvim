@@ -460,6 +460,30 @@ impl super::App {
         self.editorconfig.tab_width = new;
     }
 
+    /// `:sort` — lines `l1..=l2` sorted as `opts` says, `re` picking the part
+    /// of each line that counts.
+    pub(super) fn sort_range(
+        &mut self,
+        l1: usize,
+        l2: usize,
+        opts: &crate::command::SortOpts,
+        re: Option<&regex::Regex>,
+    ) {
+        let lines: Vec<String> = (l1..=l2)
+            .map(|line| {
+                let start = self.buffer.line_start_idx(line);
+                let len = self.buffer.line_len(line);
+                self.buffer.rope.slice(start..start + len).to_string()
+            })
+            .collect();
+        let sorted = sort_lines(lines.clone(), opts, re);
+        if sorted == lines {
+            return;
+        }
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        self.replace_lines(l1, l2 + 1, &sorted);
+    }
+
     /// Leading blanks `columns` wide — tabs and then spaces when the file
     /// indents with tabs.
     fn indent_text(&self, columns: usize) -> String {
@@ -1437,6 +1461,98 @@ fn fill_paragraph(
     out.push(line);
 }
 
+/// `:sort` over `lines`, stably. With `re`, each line sorts on what follows
+/// its match, or on the match itself with `on_match`, and the lines it
+/// doesn't match keep their order ahead of the rest — after them, reversed,
+/// with `reverse` — as in Vim.
+fn sort_lines(
+    lines: Vec<String>,
+    opts: &crate::command::SortOpts,
+    re: Option<&regex::Regex>,
+) -> Vec<String> {
+    let mut missed = Vec::new();
+    let mut keyed = Vec::new();
+    for line in lines {
+        let key = match re {
+            None => Some(sort_key(&line, opts)),
+            Some(re) => super::search::hits(re, &line).first().map(|&(start, end)| {
+                let part = if opts.on_match {
+                    &line[start..end]
+                } else {
+                    &line[end..]
+                };
+                sort_key(part, opts)
+            }),
+        };
+        match key {
+            Some(key) => keyed.push((key, line)),
+            None => missed.push(line),
+        }
+    }
+    keyed.sort_by(|a, b| {
+        if opts.reverse {
+            b.0.cmp(&a.0)
+        } else {
+            a.0.cmp(&b.0)
+        }
+    });
+    if opts.unique {
+        keyed.dedup_by(|a, b| a.0 == b.0);
+    }
+    let sorted = keyed.into_iter().map(|(_, line)| line);
+    if opts.reverse {
+        sorted.chain(missed.into_iter().rev()).collect()
+    } else {
+        missed.into_iter().chain(sorted).collect()
+    }
+}
+
+/// What a line sorts on. A line with no number sorts before every one with.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum SortKey {
+    Number(Option<i128>),
+    Text(String),
+}
+
+fn sort_key(text: &str, opts: &crate::command::SortOpts) -> SortKey {
+    if opts.numeric {
+        SortKey::Number(first_number(text, 10))
+    } else if opts.hex {
+        SortKey::Number(first_number(text, 16))
+    } else if opts.ignore_case {
+        SortKey::Text(text.to_lowercase())
+    } else {
+        SortKey::Text(text.to_string())
+    }
+}
+
+/// The first number in `text` in base `radix`: a `-` just before it counts,
+/// and a hex one may start `0x`.
+fn first_number(text: &str, radix: u32) -> Option<i128> {
+    let start = text.find(|c: char| c.is_digit(radix))?;
+    let mut digits = &text[start..];
+    if radix == 16 {
+        let prefixed = digits
+            .strip_prefix("0x")
+            .or_else(|| digits.strip_prefix("0X"));
+        if let Some(rest) =
+            prefixed.filter(|rest| rest.starts_with(|c: char| c.is_ascii_hexdigit()))
+        {
+            digits = rest;
+        }
+    }
+    let end = digits
+        .find(|c: char| !c.is_digit(radix))
+        .unwrap_or(digits.len());
+    let value = i128::from_str_radix(&digits[..end], radix).unwrap_or(i128::MAX);
+    let signed = if text[..start].ends_with('-') {
+        -value
+    } else {
+        value
+    };
+    Some(signed)
+}
+
 /// `line` with its runs of blanks laid out again for tabstop `new`, keeping
 /// the columns tabstop `old` gave them — only the runs that hold a tab
 /// unless `every` — in tabs where they fit when `tabs`, else in spaces.
@@ -1753,7 +1869,7 @@ pub(super) fn shift_block_up_by_one(
 
 #[cfg(test)]
 mod tests {
-    use super::{retab, shift_block_down_by_one, shift_block_up_by_one};
+    use super::{retab, shift_block_down_by_one, shift_block_up_by_one, sort_lines};
     use crate::buffer::Buffer;
     use ropey::Rope;
 
@@ -1842,6 +1958,71 @@ mod tests {
         assert_eq!(retab("    x", 4, 2, true, true), "\t\tx");
         assert_eq!(retab("a  b", 4, 2, true, true), "a\t b");
         assert_eq!(retab("\t\tx", 8, 4, true, false), "\t\t\t\tx");
+    }
+
+    #[test]
+    fn sort_orders_lines_the_ways_vim_does() {
+        use crate::command::SortOpts;
+        let sort = |lines: &[&str], opts: SortOpts, pattern: Option<&str>| {
+            let re = pattern.map(|p| crate::app::search::compile_search(p).expect("pattern"));
+            let lines = lines.iter().map(|s| s.to_string()).collect();
+            sort_lines(lines, &opts, re.as_ref())
+        };
+        let plain = SortOpts::default();
+        let with = |f: fn(&mut SortOpts)| {
+            let mut opts = SortOpts::default();
+            f(&mut opts);
+            opts
+        };
+        assert_eq!(
+            sort(&["b", "A", "a", "B"], plain.clone(), None),
+            ["A", "B", "a", "b"]
+        );
+        // Stable: lines that sort the same keep their order.
+        assert_eq!(
+            sort(&["b", "A", "a", "B"], with(|o| o.ignore_case = true), None),
+            ["A", "a", "b", "B"]
+        );
+        // A line with no number goes first; one `-` counts.
+        assert_eq!(
+            sort(&["x10", "x9", "y", "x-2"], with(|o| o.numeric = true), None),
+            ["y", "x-2", "x9", "x10"]
+        );
+        assert_eq!(
+            sort(&["0x1F", "0xa", "ff"], with(|o| o.hex = true), None),
+            ["0xa", "0x1F", "ff"]
+        );
+        assert_eq!(
+            sort(&["b", "a", "b", "a"], with(|o| o.unique = true), None),
+            ["a", "b"]
+        );
+        assert_eq!(
+            sort(&["a", "c", "b"], with(|o| o.reverse = true), None),
+            ["c", "b", "a"]
+        );
+        // `/pat/` sorts on what follows the match; lines it misses go first.
+        assert_eq!(
+            sort(&["k=2", "none", "k=1"], plain.clone(), Some("k=")),
+            ["none", "k=1", "k=2"]
+        );
+        // `r` sorts on the match itself.
+        assert_eq!(
+            sort(
+                &["b 2", "a 1", "c 3"],
+                with(|o| o.on_match = true),
+                Some("\\d")
+            ),
+            ["a 1", "b 2", "c 3"]
+        );
+        // Reversed, the lines the pattern misses come last, reversed too.
+        assert_eq!(
+            sort(
+                &["n1", "k=1", "n2", "k=2"],
+                with(|o| o.reverse = true),
+                Some("k=")
+            ),
+            ["k=2", "k=1", "n2", "n1"]
+        );
     }
 
     #[test]

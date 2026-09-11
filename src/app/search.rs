@@ -505,6 +505,18 @@ impl super::App {
         }
     }
 
+    /// `pattern`, or the last search when it's empty — as `:s//`, `:g//`,
+    /// `:sort //` and a `//` address all read it.
+    pub(super) fn pattern_or_last(&self, pattern: &str) -> Result<String, String> {
+        if !pattern.is_empty() {
+            return Ok(pattern.to_string());
+        }
+        match self.last_search.as_ref() {
+            Some((last, _)) => Ok(last.clone()),
+            None => Err("E35: No previous regular expression".into()),
+        }
+    }
+
     /// The line an ex address `/pat/` names — `?pat?` with `backward` — the
     /// next line after `from` with a match (before it, going back), round
     /// the buffer's end. An empty pattern is the last search.
@@ -514,11 +526,7 @@ impl super::App {
         backward: bool,
         from: usize,
     ) -> Result<usize, String> {
-        let pattern = match (pattern.is_empty(), self.last_search.as_ref()) {
-            (false, _) => pattern.to_string(),
-            (true, Some((last, _))) => last.clone(),
-            (true, None) => return Err("E35: No previous regular expression".into()),
-        };
+        let pattern = self.pattern_or_last(pattern)?;
         let re = compile_search(&pattern)?;
         let rope = &self.buffer.rope;
         let line = if backward { from } else { from + 1 };
