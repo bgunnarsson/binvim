@@ -338,6 +338,12 @@ follows [Semantic Versioning](https://semver.org/).
   cursor on its first non-blank, as `z.` and `z-` now also do for the middle
   and bottom; `zs` / `ze` scroll sideways to put the cursor at the left or
   right edge. `z<CR>` used to leave the `z` waiting for another key.
+- **Info and open-under-cursor keys.** `Ctrl-G` shows the file, its length and
+  where you are in it; `g Ctrl-G` counts columns, lines, words and bytes, or
+  the selection's in Visual; `ga` shows the character's code; `gx` opens the
+  URL under the cursor; `gf` opens the file under it — beside the buffer's
+  file, then from the working directory, a `path:line` going to the line —
+  and `<C-w>f` does so in a split; `gI` inserts at column 0; `Ctrl-L` redraws.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

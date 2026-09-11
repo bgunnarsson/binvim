@@ -167,6 +167,12 @@ impl super::App {
             Action::Undo => self.undo(),
             Action::Redo => self.redo(),
             Action::UndoTime { earlier, count } => self.undo_time(earlier, count),
+            Action::FileInfo => self.file_info(),
+            Action::CountInfo => self.count_info(),
+            Action::CharInfo => self.char_info(),
+            Action::OpenUrlUnderCursor => self.open_url_under_cursor(),
+            Action::OpenFileUnderCursor { split } => self.open_file_under_cursor(split),
+            Action::Redraw => self.status_msg.clear(),
             Action::Put {
                 before,
                 count,

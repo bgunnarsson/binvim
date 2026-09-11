@@ -199,6 +199,8 @@ pub enum InsertWhere {
     LineEnd,
     /// `gi` — where Insert was last left (the `^` mark).
     LastInsert,
+    /// `gI` — column 0, before any indent.
+    LineStart,
 }
 
 /// Where `p` leaves the cursor, and whether it re-indents.
@@ -430,6 +432,21 @@ pub enum Action {
         earlier: bool,
         count: usize,
     },
+    /// `Ctrl-G` — the file, its length and where the cursor is in it.
+    FileInfo,
+    /// `g Ctrl-G` — column, line, word and byte counts, or the selection's.
+    CountInfo,
+    /// `ga` — the character under the cursor as a number.
+    CharInfo,
+    /// `gx` — the URL under the cursor, opened by the system.
+    OpenUrlUnderCursor,
+    /// `gf` / `<C-w>f` — the file named under the cursor, in a split for the
+    /// latter.
+    OpenFileUnderCursor {
+        split: bool,
+    },
+    /// `Ctrl-L` — a clean redraw.
+    Redraw,
     /// Block `I` / `A` / `$A` from the cursor, `rows` by `width` — the form
     /// `.` repeats, on a block of the same size.
     BlockInsert {
@@ -1138,6 +1155,21 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.awaiting_window_leader = true;
                 ParseResult::Pending
             }
+            // `Ctrl-G` shows file info, `g Ctrl-G` the counts. The Ctrl keys are
+            // read before the `g` table, so a pending `g` is checked here.
+            'g' | 'G' => {
+                let action = if state.awaiting_g {
+                    Action::CountInfo
+                } else {
+                    Action::FileInfo
+                };
+                state.reset();
+                ParseResult::Action(action)
+            }
+            'l' | 'L' => {
+                state.reset();
+                ParseResult::Action(Action::Redraw)
+            }
             _ => ParseResult::Pending,
         };
     }
@@ -1626,6 +1658,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }),
             'q' | 'c' => Some(Action::WindowClose),
             'o' => Some(Action::WindowOnly),
+            'f' => Some(Action::OpenFileUnderCursor { split: true }),
             '=' => Some(Action::WindowEqualize),
             'T' => Some(Action::WindowPromoteToTab),
             '>' => Some(Action::WindowResize {
@@ -1847,6 +1880,20 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 earlier: ch == '-',
                 count,
             });
+        }
+        // ga / gx / gf / gI.
+        if ctx == ParseCtx::Normal && state.operator.is_none() {
+            let action = match ch {
+                'a' => Some(Action::CharInfo),
+                'x' => Some(Action::OpenUrlUnderCursor),
+                'f' => Some(Action::OpenFileUnderCursor { split: false }),
+                'I' => Some(Action::EnterInsert(InsertWhere::LineStart)),
+                _ => None,
+            };
+            if let Some(action) = action {
+                state.reset();
+                return ParseResult::Action(action);
+            }
         }
         // gd / gD jump to definition via LSP — only meaningful in normal mode.
         if ch == 'd' && ctx == ParseCtx::Normal && state.operator.is_none() {
@@ -2885,6 +2932,50 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn info_and_under_cursor_keys_parse() {
+        let action = |typed: &str| {
+            let mut state = PendingCmd::default();
+            match drive(&mut state, &keys(typed)) {
+                ParseResult::Action(action) => Some(action),
+                _ => None,
+            }
+        };
+        assert!(matches!(action("ga"), Some(Action::CharInfo)));
+        assert!(matches!(action("gx"), Some(Action::OpenUrlUnderCursor)));
+        assert!(matches!(
+            action("gf"),
+            Some(Action::OpenFileUnderCursor { split: false })
+        ));
+        assert!(matches!(
+            action("gI"),
+            Some(Action::EnterInsert(InsertWhere::LineStart))
+        ));
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, ctrl('g'), ParseCtx::Normal),
+            ParseResult::Action(Action::FileInfo)
+        ));
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("g"));
+        assert!(matches!(
+            parse(&mut state, ctrl('g'), ParseCtx::Normal),
+            ParseResult::Action(Action::CountInfo)
+        ));
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, ctrl('l'), ParseCtx::Normal),
+            ParseResult::Action(Action::Redraw)
+        ));
+        let mut state = PendingCmd::default();
+        drive(&mut state, &[ctrl('w')]);
+        assert!(matches!(
+            parse(&mut state, key('f'), ParseCtx::Normal),
+            ParseResult::Action(Action::OpenFileUnderCursor { split: true })
+        ));
     }
 
     #[test]

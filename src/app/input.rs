@@ -5303,6 +5303,37 @@ mod tests {
     }
 
     #[test]
+    fn info_and_open_under_cursor_keys() {
+        let dir = std::env::temp_dir().join(format!("binvim-gf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let target = dir.join("target.txt");
+        std::fs::write(&target, "one\n  two\nthree\n").expect("write");
+        let mut app = app_with_keymaps(&format!("see {}:2 here\n", target.display()), "");
+        app.window.cursor.col = 6;
+        press(&mut app, "ga");
+        assert!(app.status_msg.starts_with('<'), "{}", app.status_msg);
+        app.replay_key(ctrl('g'));
+        assert!(
+            app.status_msg.ends_with("1 line --100%--"),
+            "{}",
+            app.status_msg
+        );
+        press(&mut app, "g");
+        app.replay_key(ctrl('g'));
+        assert!(app.status_msg.starts_with("Col 7 of"), "{}", app.status_msg);
+        press(&mut app, "gf");
+        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(app.buffer.path.as_deref(), Some(target.as_path()));
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 2));
+        press(&mut app, "gI");
+        assert!(matches!(app.mode, Mode::Insert));
+        assert_eq!(app.window.cursor.col, 0);
+        tap(&mut app, KeyCode::Esc);
+        app.replay_key(ctrl('l'));
+        assert!(app.status_msg.is_empty());
+    }
+
+    #[test]
     fn z_scroll_commands_place_the_view_and_the_cursor() {
         let mut app = app_with_keymaps("a\nb\n    c\nd\n", "");
         app.window.cursor.line = 2;
