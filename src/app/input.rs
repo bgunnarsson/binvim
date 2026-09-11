@@ -2632,6 +2632,12 @@ impl super::App {
                 let (l1, l2) = self.counted_range(range, count);
                 self.yank_lines(l1, l2, register);
             }
+            ExCommand::Global {
+                range,
+                pattern,
+                invert,
+                cmd,
+            } => self.exec_global(range, &pattern, invert, &cmd),
             ExCommand::Normal { range, keys, remap } => {
                 let lines = match range {
                     ExRange::Implicit => None,
@@ -3048,6 +3054,82 @@ impl super::App {
             want_col: 0,
         };
         self.window.cursor = motion::first_non_blank(&self.buffer, from).target;
+    }
+
+    /// `:g/pat/cmd`, `:g!` / `:v` — `cmd` run on each line of `range` that
+    /// matches `pattern`, or, `invert`ed, doesn't. As in Vim every such line
+    /// is marked first, so a command that deletes lines doesn't make the run
+    /// skip one, and a marked line an earlier command deleted is passed
+    /// over. The whole run undoes as one step.
+    fn exec_global(&mut self, range: ExRange, pattern: &str, invert: bool, cmd: &str) {
+        if self.in_global {
+            self.status_msg = "E147: Cannot do :global recursive".into();
+            return;
+        }
+        let pattern = match (pattern.is_empty(), self.last_search.as_ref()) {
+            (false, _) => pattern.to_string(),
+            (true, Some((last, _))) => last.clone(),
+            (true, None) => {
+                self.status_msg = "E35: No previous regular expression".into();
+                return;
+            }
+        };
+        let re = match super::search::compile_search(&pattern) {
+            Ok(re) => re,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        // `:g` takes the whole file unless given a range.
+        let (l1, l2) = self.resolve_range(range, false);
+        let l2 = l2.min(self.last_text_line());
+        let mut pending: std::collections::VecDeque<usize> = (l1..=l2)
+            .filter(|&line| {
+                let start = self.buffer.line_start_idx(line);
+                let len = self.buffer.line_len(line);
+                let text = self.buffer.rope.slice(start..start + len).to_string();
+                re.is_match(&text) != invert
+            })
+            .collect();
+        let backward = self.last_search.as_ref().is_some_and(|(_, back)| *back);
+        self.set_search(&pattern, backward);
+        let Some(&last) = pending.back() else {
+            self.status_msg = if invert {
+                format!("Pattern found in every line: {pattern}")
+            } else {
+                format!("Pattern not found: {pattern}")
+            };
+            return;
+        };
+        if cmd.trim().is_empty() {
+            let n = pending.len();
+            let s = if n == 1 { "" } else { "s" };
+            self.cursor_to_first_non_blank(last);
+            self.status_msg = format!("{n} matching line{s}");
+            return;
+        }
+        let depth = self.history.depth();
+        let lines_before = crate::motion::vim_line_count(&self.buffer);
+        self.in_global = true;
+        while let Some(line) = pending.pop_front() {
+            let before = self.buffer.rope.clone();
+            self.window.cursor = crate::cursor::Cursor {
+                line,
+                col: 0,
+                want_col: 0,
+            };
+            self.exec_command(cmd);
+            remap_lines(&before, &self.buffer.rope, line, &mut pending);
+        }
+        self.in_global = false;
+        self.history.squash_since(depth);
+        let lines_after = crate::motion::vim_line_count(&self.buffer);
+        if lines_after < lines_before {
+            self.status_msg = format!("{} fewer lines", lines_before - lines_after);
+        } else if lines_after > lines_before {
+            self.status_msg = format!("{} more lines", lines_after - lines_before);
+        }
     }
 
     /// Runs a `:s` — asking about each match with `c` — and says how it went.
@@ -3534,6 +3616,40 @@ impl super::App {
         self.flash_yank(start, end);
         self.status_msg = format!("{} lines yanked", l2 - l1 + 1);
     }
+}
+
+/// Where the lines `pending` names are once a command run on line `at` has
+/// turned `old` into `new`. Lines before the stretch it changed keep their
+/// place and lines after it move by the lines it added or took away; lines
+/// inside it keep their place when it kept its length — changed where they
+/// stood — and are dropped when it didn't: deleted, joined or moved.
+fn remap_lines(
+    old: &ropey::Rope,
+    new: &ropey::Rope,
+    at: usize,
+    pending: &mut std::collections::VecDeque<usize>,
+) {
+    let (old_n, new_n) = (old.len_lines(), new.len_lines());
+    let shorter = old_n.min(new_n);
+    // No further than `at`: among identical lines, the one the command ran
+    // on is the one it changed.
+    let prefix = (0..shorter.min(at))
+        .take_while(|&i| old.line(i) == new.line(i))
+        .count();
+    let suffix = (0..shorter - prefix)
+        .take_while(|&j| old.line(old_n - 1 - j) == new.line(new_n - 1 - j))
+        .count();
+    let old_end = old_n - suffix;
+    let same_length = old_end == new_n - suffix;
+    let delta = new_n as isize - old_n as isize;
+    pending.retain_mut(|line| {
+        if *line >= old_end {
+            *line = line.saturating_add_signed(delta);
+            true
+        } else {
+            *line < prefix || same_length
+        }
+    });
 }
 
 #[cfg(test)]
@@ -4507,6 +4623,51 @@ mod tests {
         let mut app = app_with_keymaps("ab\ncd\n", keymaps);
         app.exec_command("norm! x");
         assert_eq!(app.buffer.rope.to_string(), "b\ncd\n");
+    }
+
+    #[test]
+    fn marked_lines_follow_the_command_that_ran() {
+        let run = |old: &str, new: &str, at: usize, pending: &[usize]| {
+            let mut pending: std::collections::VecDeque<usize> = pending.iter().copied().collect();
+            remap_lines(&Rope::from_str(old), &Rope::from_str(new), at, &mut pending);
+            pending.into_iter().collect::<Vec<_>>()
+        };
+        // `d` on the first of three identical lines: the other two move up.
+        assert_eq!(run("x\nx\nx\n", "x\nx\n", 0, &[1, 2]), vec![0, 1]);
+        // `m0` on line 2: the lines after it stay where they were.
+        assert_eq!(run("a\nb\nc\nd\n", "c\na\nb\nd\n", 2, &[3]), vec![3]);
+        // `+1d` takes a marked line with it.
+        assert_eq!(run("a\nb\nc\n", "a\nc\n", 0, &[1, 2]), vec![1]);
+        // Lines changed where they stand keep the marked lines in place.
+        assert_eq!(run("a\nb\nc\n", "A\nB\nc\n", 0, &[1, 2]), vec![1, 2]);
+    }
+
+    #[test]
+    fn global_runs_a_command_on_every_matching_line() {
+        let run = |text: &str, cmd: &str| {
+            let mut app = app_with_keymaps(text, "");
+            app.exec_command(cmd);
+            app
+        };
+        let text = |app: &crate::app::App| app.buffer.rope.to_string();
+        assert_eq!(text(&run("x1\na\nx2\nx3\nb\n", "g/x/d")), "a\nb\n");
+        // Deleting lines doesn't make the run skip the next one.
+        assert_eq!(text(&run("x\nx\nx\n", "g/x/d")), "");
+        // `m0` on every line turns the file round.
+        assert_eq!(text(&run("a\nb\nc\n", "g/^/m0")), "c\nb\na\n");
+        assert_eq!(text(&run("x1\na\nx2\n", "v/x/d")), "x1\nx2\n");
+        assert_eq!(text(&run("x1\na\nx2\n", "g!/x/s/a/b/")), "x1\nb\nx2\n");
+        assert_eq!(text(&run("a\nb\n", "g/./norm Ax")), "ax\nbx\n");
+
+        // The whole run is one undo step.
+        let mut app = run("x1\na\nx2\n", "g/x/d");
+        press(&mut app, "u");
+        assert_eq!(text(&app), "x1\na\nx2\n");
+
+        // A `:g` inside a `:g` is refused, as in Vim.
+        let app = run("x\n", "g/x/g/x/d");
+        assert_eq!(text(&app), "x\n");
+        assert!(app.status_msg.contains("E147"), "{}", app.status_msg);
     }
 
     #[test]

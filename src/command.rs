@@ -105,6 +105,14 @@ pub enum ExCommand {
         keys: String,
         remap: bool,
     },
+    /// `:g/pat/cmd` — `cmd` on every line of `range` that matches `pattern`,
+    /// or, `invert`ed (`:g!` / `:v`), doesn't.
+    Global {
+        range: ExRange,
+        pattern: String,
+        invert: bool,
+        cmd: String,
+    },
     NoHighlight,
     Format,
     Health,
@@ -452,6 +460,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
     if let Some(command) = parse_normal(range, rest) {
         return command;
     }
+    if let Some(command) = parse_global(range, rest) {
+        return command;
+    }
     // Range-only commands: shorthand for `:Nd`, `:%d`, etc.
     let rest = rest.trim();
     // `:&` / `:~`, and `:&&` / `:~&`, which keep the last `:s`'s flags.
@@ -692,6 +703,40 @@ fn parse_dapbreak_args(rest: &str) -> ExCommand {
             ":dapb expected `if <expr>` | `hit <expr>` | `plain`, got `{rest}`"
         )),
     }
+}
+
+/// `:g/pat/cmd`, `:g!/pat/cmd` and `:v/pat/cmd`, with any delimiter `:s`
+/// takes in place of `/`. The command after the pattern is kept as typed.
+fn parse_global(range: ExRange, rest: &str) -> Option<ExCommand> {
+    let rest = rest.trim_start();
+    let name_end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(name_end);
+    let global = !name.is_empty() && "global".starts_with(name);
+    let vglobal = !name.is_empty() && "vglobal".starts_with(name);
+    if !global && !vglobal {
+        return None;
+    }
+    let (bang, after) = match after.strip_prefix('!') {
+        Some(after) => (true, after),
+        None => (false, after),
+    };
+    let after = after.trim_start();
+    let Some(delim) = after
+        .chars()
+        .next()
+        .filter(|&c| !c.is_alphanumeric() && !matches!(c, '"' | '|' | '\\'))
+    else {
+        return Some(ExCommand::Invalid("E476: Invalid command".into()));
+    };
+    let (pattern, cmd) = split_pattern(&after[delim.len_utf8()..], delim);
+    Some(ExCommand::Global {
+        range,
+        pattern,
+        invert: vglobal || bang,
+        cmd: cmd.unwrap_or("").to_string(),
+    })
 }
 
 /// `:norm[al][!] {keys}` — the keys kept as typed, trailing blanks and all.
@@ -1322,6 +1367,28 @@ mod tests {
         assert!(matches!(parse("norm"), ExCommand::Invalid(e) if e.contains("E471")));
         assert!(matches!(parse("noh"), ExCommand::NoHighlight));
         assert!(matches!(parse("42 "), ExCommand::Goto(42)));
+    }
+
+    #[test]
+    fn global_takes_a_pattern_and_a_command() {
+        assert!(matches!(
+            parse("g/x/d"),
+            ExCommand::Global { range: ExRange::Implicit, pattern, invert: false, cmd }
+                if pattern == "x" && cmd == "d"
+        ));
+        assert!(matches!(
+            parse("g!#a\\#b#s/a/b/"),
+            ExCommand::Global { pattern, invert: true, cmd, .. }
+                if pattern == "a\\#b" && cmd == "s/a/b/"
+        ));
+        assert!(matches!(
+            parse("1,5v/x/norm A "),
+            ExCommand::Global { range: ExRange::Lines(1, 5), invert: true, cmd, .. }
+                if cmd == "norm A "
+        ));
+        assert!(matches!(parse("global/x"), ExCommand::Global { cmd, .. } if cmd.is_empty()));
+        assert!(matches!(parse("g"), ExCommand::Invalid(e) if e.contains("E476")));
+        assert!(matches!(parse("gblame"), ExCommand::GitBlame));
     }
 
     #[test]

@@ -293,6 +293,8 @@ pub struct App {
     last_substitute: Option<state::LastSubstitute>,
     /// The search being typed, previewed as it goes.
     incsearch: Option<state::IncSearch>,
+    /// A `:g` is running, which a `:g` inside it may not.
+    in_global: bool,
     /// True when `:noh` has temporarily silenced search highlight; auto-cleared on next search.
     pub search_hl_off: bool,
     pub last_edit: Option<LastEdit>,
@@ -946,6 +948,7 @@ impl App {
             sub_confirm: None,
             last_substitute: None,
             incsearch: None,
+            in_global: false,
             search_hl_off: false,
             last_edit: None,
             jumplist: Vec::new(),
