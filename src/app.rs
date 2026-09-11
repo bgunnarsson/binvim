@@ -511,6 +511,9 @@ pub struct App {
     pub folds: Vec<FoldRange>,
     pub folds_version: u64,
     pub closed_folds: std::collections::HashSet<usize>,
+    /// Vim's 'foldlevel' for `zm` / `zr` / `zx`: folds deeper than it close.
+    /// `usize::MAX` until one of them sets it — every fold open.
+    pub fold_level: usize,
     /// Most-recently-used files for the file picker. Persisted to
     /// `~/.cache/binvim/recents`.
     pub recents: Vec<PathBuf>,
@@ -1033,6 +1036,7 @@ impl App {
             folds: Vec::new(),
             folds_version: u64::MAX,
             closed_folds: std::collections::HashSet::new(),
+            fold_level: usize::MAX,
             recents: buffers::load_recents(),
             inlay_hints: HashMap::new(),
             last_inlay_request_version: HashMap::new(),

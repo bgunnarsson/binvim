@@ -628,51 +628,173 @@ impl super::App {
 
     pub(super) fn apply_fold_op(&mut self, op: FoldOp) {
         self.ensure_folds();
+        let line = self.window.cursor.line;
         match op {
             FoldOp::OpenAll => {
+                self.fold_level = usize::MAX;
                 self.closed_folds.clear();
             }
             FoldOp::CloseAll => {
-                // Close every fold whose range covers >1 line so the user
-                // sees a meaningful collapse rather than a million `…`s.
-                self.closed_folds = self
-                    .folds
-                    .iter()
-                    .filter(|f| f.end_line > f.start_line)
-                    .map(|f| f.start_line)
-                    .collect();
+                self.fold_level = 0;
+                self.apply_fold_level();
             }
             FoldOp::Open => {
-                if let Some(f) = self.innermost_closed_fold_at(self.window.cursor.line) {
+                if let Some(f) = self.innermost_closed_fold_at(line) {
                     self.closed_folds.remove(&f.start_line);
                 }
             }
             FoldOp::Close => {
-                if let Some(f) = self.innermost_open_fold_at(self.window.cursor.line) {
+                if let Some(f) = self.innermost_open_fold_at(line) {
                     self.closed_folds.insert(f.start_line);
-                    // Snap cursor to the fold's start so it's never on a
-                    // hidden row.
-                    if self.window.cursor.line > f.start_line
-                        && self.window.cursor.line <= f.end_line
-                    {
-                        self.window.cursor.line = f.start_line;
-                        self.clamp_cursor_normal();
-                    }
                 }
             }
             FoldOp::Toggle => {
-                if let Some(f) = self.innermost_closed_fold_at(self.window.cursor.line) {
+                if let Some(f) = self.innermost_closed_fold_at(line) {
                     self.closed_folds.remove(&f.start_line);
-                } else if let Some(f) = self.innermost_open_fold_at(self.window.cursor.line) {
+                } else if let Some(f) = self.innermost_open_fold_at(line) {
                     self.closed_folds.insert(f.start_line);
-                    if self.window.cursor.line > f.start_line
-                        && self.window.cursor.line <= f.end_line
-                    {
-                        self.window.cursor.line = f.start_line;
-                        self.clamp_cursor_normal();
+                }
+            }
+            FoldOp::View => self.open_folds_around(line),
+            FoldOp::OpenRecursive => {
+                let outer = self
+                    .folds_containing(line)
+                    .into_iter()
+                    .max_by_key(|f| f.end_line - f.start_line);
+                if let Some(outer) = outer {
+                    let inside: Vec<usize> = self
+                        .folds
+                        .iter()
+                        .filter(|f| {
+                            outer.start_line <= f.start_line && f.end_line <= outer.end_line
+                        })
+                        .map(|f| f.start_line)
+                        .collect();
+                    for start in inside {
+                        self.closed_folds.remove(&start);
                     }
                 }
             }
+            FoldOp::CloseRecursive => {
+                for f in self.folds_containing(line) {
+                    if f.end_line > f.start_line {
+                        self.closed_folds.insert(f.start_line);
+                    }
+                }
+            }
+            FoldOp::ToggleRecursive => {
+                let closed = self
+                    .innermost_fold_at(line)
+                    .is_some_and(|f| self.closed_folds.contains(&f.start_line));
+                let next = if closed {
+                    FoldOp::OpenRecursive
+                } else {
+                    FoldOp::CloseRecursive
+                };
+                self.apply_fold_op(next);
+                return;
+            }
+            FoldOp::More(count) => {
+                let level = self.fold_level.min(self.max_fold_depth());
+                self.fold_level = level.saturating_sub(count.max(1));
+                self.apply_fold_level();
+            }
+            FoldOp::Reduce(count) => {
+                let level = self.fold_level.min(self.max_fold_depth());
+                self.fold_level = level.saturating_add(count.max(1));
+                self.apply_fold_level();
+            }
+            FoldOp::Update => {
+                self.apply_fold_level();
+                self.open_folds_around(line);
+            }
+            FoldOp::Jump { down } => {
+                let target = if down {
+                    self.folds
+                        .iter()
+                        .map(|f| f.start_line)
+                        .filter(|&s| s > line)
+                        .min()
+                } else {
+                    self.folds
+                        .iter()
+                        .map(|f| f.end_line)
+                        .filter(|&e| e < line)
+                        .max()
+                };
+                if let Some(target) = target {
+                    self.window.cursor.line = target;
+                    self.clamp_cursor_normal();
+                }
+                return;
+            }
+        }
+        self.snap_out_of_closed_fold();
+    }
+
+    /// Every fold whose range holds `line`.
+    fn folds_containing(&self, line: usize) -> Vec<FoldRange> {
+        self.folds
+            .iter()
+            .filter(|f| f.start_line <= line && line <= f.end_line)
+            .cloned()
+            .collect()
+    }
+
+    fn open_folds_around(&mut self, line: usize) {
+        for f in self.folds_containing(line) {
+            self.closed_folds.remove(&f.start_line);
+        }
+    }
+
+    /// How deep `fold` sits: 1 at the top, one more for each fold around it —
+    /// which starts before it, since no two folds share a start.
+    fn fold_depth(&self, fold: &FoldRange) -> usize {
+        let around = self
+            .folds
+            .iter()
+            .filter(|f| f.start_line < fold.start_line && fold.end_line <= f.end_line)
+            .count();
+        1 + around
+    }
+
+    fn max_fold_depth(&self) -> usize {
+        self.folds
+            .iter()
+            .map(|f| self.fold_depth(f))
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// `fold_level` applied: every fold deeper than it closed and the rest
+    /// open, as Vim's 'foldlevel' has it.
+    fn apply_fold_level(&mut self) {
+        let level = self.fold_level;
+        self.closed_folds = self
+            .folds
+            .iter()
+            .filter(|f| f.end_line > f.start_line && self.fold_depth(f) > level)
+            .map(|f| f.start_line)
+            .collect();
+    }
+
+    /// Off any row a closed fold now hides, onto the start of the outermost
+    /// fold hiding it.
+    fn snap_out_of_closed_fold(&mut self) {
+        let line = self.window.cursor.line;
+        let hiding = self
+            .folds
+            .iter()
+            .filter(|f| {
+                self.closed_folds.contains(&f.start_line)
+                    && f.start_line < line
+                    && line <= f.end_line
+            })
+            .map(|f| f.start_line)
+            .min();
+        if let Some(start) = hiding {
+            self.window.cursor.line = start;
+            self.clamp_cursor_normal();
         }
     }
 
@@ -686,7 +808,6 @@ impl super::App {
     }
 
     /// Return the innermost fold (smallest range) containing `line`.
-    #[allow(dead_code)]
     fn innermost_fold_at(&self, line: usize) -> Option<&FoldRange> {
         self.folds
             .iter()
