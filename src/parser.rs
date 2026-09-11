@@ -43,6 +43,11 @@ pub enum MotionVerb {
         name: char,
         exact: bool,
     },
+    /// `%` — the bracket (or HTML tag) matching the first one at or after
+    /// the cursor on its line.
+    MatchPair,
+    /// `N%` — the line N percent of the way through the file.
+    PercentLine(usize),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1758,11 +1763,15 @@ pub fn parse(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         ',' => Some(MotionVerb::RepeatFind { reverse: true }),
         'n' => Some(MotionVerb::SearchNext { reverse: false }),
         'N' => Some(MotionVerb::SearchNext { reverse: true }),
+        '%' => Some(match state.count1.or(state.count2) {
+            Some(n) => MotionVerb::PercentLine(n),
+            None => MotionVerb::MatchPair,
+        }),
         _ => None,
     };
     if let Some(m) = motion {
         let count = match m {
-            MotionVerb::GotoLine(_) => 1,
+            MotionVerb::GotoLine(_) | MotionVerb::PercentLine(_) => 1,
             _ => state.total_count(),
         };
         if let Some(op) = state.operator.take() {
@@ -2311,6 +2320,45 @@ mod tests {
                 ..
             }) => {}
             _ => panic!("the mapped 0 was read as a count digit"),
+        }
+    }
+
+    #[test]
+    fn percent_without_a_count_matches_a_pair() {
+        let mut state = PendingCmd::default();
+        match parse(&mut state, key('%'), ParseCtx::Normal) {
+            ParseResult::Action(Action::Move {
+                motion: MotionVerb::MatchPair,
+                ..
+            }) => {}
+            _ => panic!("% should be the match-pair motion"),
+        }
+    }
+
+    #[test]
+    fn percent_with_a_count_goes_to_a_percentage_line() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("50"));
+        match parse(&mut state, key('%'), ParseCtx::Normal) {
+            ParseResult::Action(Action::Move {
+                motion: MotionVerb::PercentLine(50),
+                count: 1,
+            }) => {}
+            _ => panic!("50% should be the percentage-line motion"),
+        }
+    }
+
+    #[test]
+    fn d_percent_deletes_to_the_match() {
+        let mut state = PendingCmd::default();
+        drive(&mut state, &keys("d"));
+        match parse(&mut state, key('%'), ParseCtx::Normal) {
+            ParseResult::Action(Action::Operate {
+                op: Operator::Delete,
+                motion: MotionVerb::MatchPair,
+                ..
+            }) => {}
+            _ => panic!("d% should delete over the match-pair motion"),
         }
     }
 

@@ -494,6 +494,15 @@ impl super::App {
             MotionVerb::FirstLine => motion::first_line(&self.buffer, self.window.cursor),
             MotionVerb::LastLine => motion::last_line(&self.buffer, self.window.cursor),
             MotionVerb::GotoLine(n) => motion::goto_line(&self.buffer, n),
+            MotionVerb::PercentLine(n) => motion::percent_line(&self.buffer, n),
+            MotionVerb::MatchPair => {
+                super::pair::match_pair_motion(&self.buffer, self.window.cursor).unwrap_or(
+                    MotionResult {
+                        target: self.window.cursor,
+                        kind: MotionKind::CharExclusive,
+                    },
+                )
+            }
             MotionVerb::FirstNonBlank => motion::first_non_blank(&self.buffer, self.window.cursor),
             MotionVerb::LastNonBlank => motion::last_non_blank(&self.buffer, self.window.cursor),
             MotionVerb::ViewportTop => self.viewport_motion(0),
