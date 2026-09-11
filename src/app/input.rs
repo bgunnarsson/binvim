@@ -3433,6 +3433,19 @@ mod tests {
     }
 
     #[test]
+    fn d_close_paren_deletes_to_the_next_sentence() {
+        let mut app = app_with_keymaps("One. Two.\n", "");
+        press(&mut app, "d)");
+        assert_eq!(app.buffer.rope.to_string(), "Two.\n");
+
+        // From a line's start to a sentence at a later line's start, `d)`
+        // takes whole lines, as Vim's exclusive-linewise rule has it.
+        let mut app = app_with_keymaps("a b\n\nc\n", "");
+        press(&mut app, "d)");
+        assert_eq!(app.buffer.rope.to_string(), "\nc\n");
+    }
+
+    #[test]
     fn ctrl_w_deletes_the_previous_word() {
         let mut app = insert_at("foo bar\n", 0, 7);
         app.replay_key(ctrl('w'));

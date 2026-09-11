@@ -616,6 +616,12 @@ impl super::App {
             MotionVerb::ParagraphBackward => {
                 motion::paragraph_backward(&self.buffer, self.window.cursor, count)
             }
+            MotionVerb::SentenceForward => {
+                motion::sentence_forward(&self.buffer, self.window.cursor, count)
+            }
+            MotionVerb::SentenceBackward => {
+                motion::sentence_backward(&self.buffer, self.window.cursor, count)
+            }
             MotionVerb::NextLineStart => {
                 motion::next_line_start(&self.buffer, self.window.cursor, count)
             }
@@ -778,7 +784,10 @@ impl super::App {
     fn paragraph_linewise(&mut self, motion: MotionVerb, m: MotionResult) -> MotionResult {
         if !matches!(
             motion,
-            MotionVerb::ParagraphForward | MotionVerb::ParagraphBackward
+            MotionVerb::ParagraphForward
+                | MotionVerb::ParagraphBackward
+                | MotionVerb::SentenceForward
+                | MotionVerb::SentenceBackward
         ) || !matches!(m.kind, MotionKind::CharExclusive)
         {
             return m;

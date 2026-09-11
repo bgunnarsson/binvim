@@ -52,6 +52,10 @@ pub enum MotionVerb {
     ParagraphForward,
     /// `{` — to the empty line before the paragraph.
     ParagraphBackward,
+    /// `)` — to the start of the next sentence.
+    SentenceForward,
+    /// `(` — to the start of this sentence, or the one before.
+    SentenceBackward,
     /// `+` / `<CR>` — N lines down, on the first non-blank.
     NextLineStart,
     /// `-` — N lines up, on the first non-blank.
@@ -2125,6 +2129,8 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         }),
         '}' => Some(MotionVerb::ParagraphForward),
         '{' => Some(MotionVerb::ParagraphBackward),
+        ')' => Some(MotionVerb::SentenceForward),
+        '(' => Some(MotionVerb::SentenceBackward),
         '+' => Some(MotionVerb::NextLineStart),
         '-' => Some(MotionVerb::PrevLineStart),
         '_' => Some(MotionVerb::LineStartDown),

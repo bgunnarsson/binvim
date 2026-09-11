@@ -159,6 +159,10 @@ follows [Semantic Versioning](https://semver.org/).
   What it prints replaces them; if it fails, they stay as they were and
   the status line shows its error. Visual `!` and a typed `:{range}!cmd`
   work the same.
+- **`(` / `)` move by sentence.** A sentence ends at `.`, `!` or `?` (and
+  any closing brackets or quotes) followed by whitespace, and an empty line
+  starts one of its own. They take counts, work after an operator (`d)`),
+  and go in the jump list.
 
 ### Fixed
 - **`3J` joins three lines, as in Vim.** The count was taken as the number
