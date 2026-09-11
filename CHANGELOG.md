@@ -110,6 +110,10 @@ follows [Semantic Versioning](https://semver.org/).
   the ones Vim keeps itself — with the line, column and text of each, in
   Vim's order. `:jumps` lists the jump list the way `:changes` lists
   changes, with `>` where `Ctrl-O` / `Ctrl-I` are.
+- **Uppercase marks remember their file.** `mA` in one file, then `'A` (or
+  `` `A ``) from any other, switches back to that file at the mark —
+  reopening it if you had closed it. Setting `mA` again moves the mark to
+  the new file. File marks last for the session.
 
 ### Fixed
 - **`:q`, `:wq` and `:x` no longer quit over unsaved changes in another

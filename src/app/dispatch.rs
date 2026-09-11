@@ -76,6 +76,10 @@ impl super::App {
                     }
                 }
                 self.phantom_lens_idx = None;
+                // `'A` from another file goes to that file first.
+                if let MotionVerb::Mark { name, .. } = motion {
+                    self.enter_file_mark(name);
+                }
                 // Target first: `''` reads the `'` mark that `push_jump` moves.
                 let m = self.run_motion(motion, count);
                 if is_jump_motion(motion) {
@@ -168,6 +172,9 @@ impl super::App {
             Action::SetMark { name } => {
                 let Cursor { line, col, .. } = self.window.cursor;
                 self.buffer.set_mark(name, line, col);
+                if name.is_ascii_uppercase() {
+                    self.set_file_mark(name, line, col);
+                }
             }
             Action::SearchWord { backward } => self.search_word_under_cursor(backward),
             Action::StartMacro { name } => self.start_macro_recording(name),

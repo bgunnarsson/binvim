@@ -576,6 +576,7 @@ impl super::App {
         if self.mode != Mode::Insert {
             self.buffer.close_change();
         }
+        self.refresh_file_marks();
         let left_visual = start
             .selection
             .filter(|_| !matches!(self.mode, Mode::Visual(_)));
@@ -3620,6 +3621,36 @@ mod tests {
         std::fs::write(&a, "a\n").unwrap();
         std::fs::write(&b, "b\n").unwrap();
         (dir, a, b)
+    }
+
+    #[test]
+    fn uppercase_mark_goes_back_to_its_file() {
+        let (dir, a, b) = two_files("filemark");
+        std::fs::write(&a, "one\ntwo\nthree\n").unwrap();
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a.clone()).unwrap();
+        press(&mut app, "jjmA");
+        app.open_buffer(b.clone()).unwrap();
+        press(&mut app, "'A");
+        assert_eq!(app.buffer.path.as_deref(), Some(a.as_path()));
+        assert_eq!(app.window.cursor.line, 2);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn uppercase_mark_reopens_its_closed_file() {
+        let (dir, a, b) = two_files("filemark-closed");
+        std::fs::write(&a, "one\ntwo\nthree\n").unwrap();
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(b.clone()).unwrap();
+        app.open_buffer(a.clone()).unwrap();
+        press(&mut app, "jmA");
+        app.exec_command("bd");
+        assert_ne!(app.buffer.path.as_deref(), Some(a.as_path()));
+        press(&mut app, "'A");
+        assert_eq!(app.buffer.path.as_deref(), Some(a.as_path()));
+        assert_eq!(app.window.cursor.line, 1);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

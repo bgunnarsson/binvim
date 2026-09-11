@@ -539,6 +539,10 @@ pub struct App {
     /// go back to it. A path rather than a buffer index: closing buffers
     /// renumbers them, and a closed alternate can still be reopened.
     pub alternate_path: Option<std::path::PathBuf>,
+    /// Uppercase marks name a file as well as a place: the file, and the line
+    /// and column last seen there. The live position stays on that file's
+    /// buffer; this is what reopens it once the buffer is closed. Session only.
+    pub file_marks: HashMap<char, (std::path::PathBuf, usize, usize)>,
     /// Quickfix list — `:cnext` / `:cprev` / `]q` / `[q` navigate it.
     /// Loaded from grep, LSP references, or diagnostics; `None` when
     /// nothing has been populated yet.
@@ -1006,6 +1010,7 @@ impl App {
             insert_literal_pending: None,
             insert_oneshot: None,
             alternate_path: None,
+            file_marks: HashMap::new(),
             quickfix: None,
             additional_selections: Vec::new(),
             replaying_macro: false,

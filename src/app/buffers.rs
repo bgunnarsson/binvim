@@ -464,6 +464,63 @@ impl super::App {
     /// `Ctrl-^` / `:e#` / `:b#` — back to the file that was active before
     /// this one, in its own tab, reopened from disk if it has been closed
     /// since. `N Ctrl-^` goes to buffer N instead, as in Vim.
+    /// `mA`: records which file an uppercase mark is in, and takes it out of
+    /// every other buffer so none of them keeps a stale copy.
+    pub(super) fn set_file_mark(&mut self, name: char, line: usize, col: usize) {
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
+        for stash in &mut self.buffers {
+            stash.buffer.marks.remove(&name);
+        }
+        self.file_marks.insert(name, (path, line, col));
+    }
+
+    /// `'A` / `` `A `` from another file: switches to the file the mark is in
+    /// — reopening it if it was closed — so the mark motion can run there.
+    pub(super) fn enter_file_mark(&mut self, name: char) {
+        if !name.is_ascii_uppercase() {
+            return;
+        }
+        let Some((path, line, col)) = self.file_marks.get(&name).cloned() else {
+            return;
+        };
+        if self.buffer.path.as_deref() == Some(path.as_path()) {
+            return;
+        }
+        self.push_jump();
+        let open = self
+            .buffers
+            .iter()
+            .position(|stash| stash.buffer.path.as_deref() == Some(path.as_path()));
+        let switched = match open {
+            Some(idx) => self.switch_tab(idx),
+            None => self.open_buffer(path),
+        };
+        if let Err(e) = switched {
+            self.status_msg = format!("error: {e}");
+            return;
+        }
+        if self.buffer.mark(name).is_none() {
+            self.buffer.set_mark(name, line, col);
+        }
+    }
+
+    /// Brings each file mark's saved line and column up to date from the
+    /// buffer it's in while that buffer is active — the saved copy is all
+    /// that's left once the buffer is closed.
+    pub(super) fn refresh_file_marks(&mut self) {
+        for (&name, (path, line, col)) in &mut self.file_marks {
+            if self.buffer.path.as_deref() != Some(path.as_path()) {
+                continue;
+            }
+            if let Some((l, c)) = self.buffer.mark(name) {
+                *line = l;
+                *col = c;
+            }
+        }
+    }
+
     pub(super) fn switch_alternate(&mut self, count: Option<usize>) -> Result<()> {
         if let Some(n) = count {
             return self.switch_buffer_by_spec(&n.to_string());
