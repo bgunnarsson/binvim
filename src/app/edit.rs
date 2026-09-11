@@ -276,13 +276,65 @@ impl super::App {
         self.window.cursor.want_col = col;
     }
 
-    /// `>`, `<`, `=` and `gq` / `gw` over whole lines.
+    /// `!{motion}` / `!!` — opens the `:` line with the lines' range typed
+    /// in (`:5,7!`), for the command to filter them through. Vim types
+    /// `.,.+2`; binvim's ranges take line numbers only.
+    pub(super) fn open_filter_prompt(&mut self, l1: usize, l2: usize) {
+        self.cmdline = if l1 == l2 {
+            format!("{}!", l1 + 1)
+        } else {
+            format!("{},{}!", l1 + 1, l2 + 1)
+        };
+        self.cmdline_cursor = self.cmdline.len();
+        self.history_reset();
+        self.mode = Mode::Command;
+    }
+
+    /// `:{range}!cmd` — lines `l1..=l2` go to `cmd` on stdin and what it
+    /// prints takes their place. A command that fails leaves them as they
+    /// were and says why.
+    pub(super) fn filter_lines(&mut self, l1: usize, l2: usize, cmd: &str) {
+        // Enter on the bare `:5,7!` `!` opens would otherwise run nothing
+        // and take the lines with it.
+        if cmd.trim().is_empty() {
+            self.status_msg = "E34: No previous command".into();
+            return;
+        }
+        let start = self.buffer.line_start_idx(l1);
+        let end = self.buffer.line_start_idx(l2 + 1);
+        let input = self.buffer.rope.slice(start..end).to_string();
+        let mut output = match crate::format::filter_through_shell(cmd, &input) {
+            Ok(output) => output,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
+        };
+        // The line after the range stays its own, as the input's newline kept it.
+        if input.ends_with('\n') && !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        self.buffer.replace_range(start, end, &output);
+        let last = crate::motion::vim_line_count(&self.buffer).saturating_sub(1);
+        let line = l1.min(last);
+        let col = self.first_non_blank_col(line);
+        self.window.cursor.line = line;
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
+        let lines = l2 - l1 + 1;
+        let plural = if lines == 1 { "" } else { "s" };
+        self.status_msg = format!("{lines} line{plural} filtered");
+    }
+
+    /// `>`, `<`, `=`, `gq` / `gw` and `!` over whole lines.
     pub(super) fn shift_lines(&mut self, op: Operator, l1: usize, l2: usize) {
         match op {
             Operator::Indent => self.indent_lines(l1, l2),
             Operator::Outdent => self.outdent_lines(l1, l2),
             Operator::Reindent => self.reindent_range(l1, l2),
             Operator::Format { keep_cursor } => self.format_lines(l1, l2, keep_cursor),
+            Operator::Filter => self.open_filter_prompt(l1, l2),
             Operator::Delete | Operator::Change | Operator::Yank | Operator::Case(_) => {}
         }
     }

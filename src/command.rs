@@ -47,6 +47,12 @@ pub enum ExCommand {
     DeleteRange {
         range: ExRange,
     },
+    /// `:{range}!cmd` — the lines through a shell command, replaced by what
+    /// it prints.
+    Filter {
+        range: ExRange,
+        cmd: String,
+    },
     YankRange {
         range: ExRange,
     },
@@ -316,6 +322,17 @@ pub fn parse(line: &str) -> ExCommand {
     if rest == "d" || rest == "delete" {
         return ExCommand::DeleteRange { range };
     }
+    // Only after a range: a bare `:!cmd` runs a command in Vim, which binvim
+    // doesn't do.
+    if let Some(cmd) = rest
+        .strip_prefix('!')
+        .filter(|_| !matches!(range, ExRange::Implicit))
+    {
+        return ExCommand::Filter {
+            range,
+            cmd: cmd.trim().to_string(),
+        };
+    }
     if rest == "y" || rest == "yank" {
         return ExCommand::YankRange { range };
     }
@@ -577,5 +594,18 @@ mod tests {
         assert!(matches!(parse("xa"), ExCommand::WriteQuitAll));
         assert!(matches!(parse("e!"), ExCommand::Revert));
         assert!(matches!(parse("e! b.txt"), ExCommand::Edit(p) if p == "b.txt"));
+    }
+
+    #[test]
+    fn a_range_and_a_bang_parse_as_a_filter() {
+        assert!(matches!(
+            parse("5,7!sort -r"),
+            ExCommand::Filter { range: ExRange::Lines(5, 7), cmd } if cmd == "sort -r"
+        ));
+        assert!(matches!(
+            parse("3!tr a b"),
+            ExCommand::Filter { range: ExRange::Single(3), cmd } if cmd == "tr a b"
+        ));
+        assert!(!matches!(parse("!ls"), ExCommand::Filter { .. }));
     }
 }

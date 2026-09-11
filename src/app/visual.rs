@@ -215,7 +215,10 @@ impl super::App {
         };
         // `=`, `gq` and `gw` take whole lines and leave Visual, as Vim's do —
         // unlike `>` / `<`, which keep the selection for another press.
-        if matches!(op, Operator::Reindent | Operator::Format { .. }) {
+        if matches!(
+            op,
+            Operator::Reindent | Operator::Format { .. } | Operator::Filter
+        ) {
             let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
             let l1 = anchor.line.min(self.window.cursor.line);
             let l2 = anchor.line.max(self.window.cursor.line);
@@ -239,6 +242,7 @@ impl super::App {
                     | Operator::Outdent
                     | Operator::Reindent
                     | Operator::Format { .. }
+                    | Operator::Filter
                     | Operator::Case(_)
             )
         {
@@ -317,6 +321,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {
                 unreachable!()
             }
@@ -406,6 +411,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {
                 unreachable!()
             }
@@ -695,6 +701,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {
                 unreachable!()
             }

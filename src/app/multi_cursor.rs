@@ -221,6 +221,7 @@ impl super::App {
             | Operator::Outdent
             | Operator::Reindent
             | Operator::Format { .. }
+            | Operator::Filter
             | Operator::Case(_) => {}
         }
     }
