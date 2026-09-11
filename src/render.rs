@@ -3640,24 +3640,23 @@ fn draw_list_page(out: &mut impl Write, app: &App) -> Result<()> {
         listing_rows(&mut lines, listing, &p);
     } else {
         // Yank registers — Vim's `:reg` order is `"`, `0`, `1`-`9`,
-        // then named (`a`-`z`), then specials (`+`, `*`, `-`, `_`, `:`,
-        // `.`, `/`, `=`, `#`). We surface whatever's actually populated.
-        let mut yank_keys: Vec<char> = app.registers.keys().copied().collect();
-        yank_keys.sort_by_key(|c| register_sort_key(*c));
+        // then named (`a`-`z`), then `-`, `*`, `+`, then the read-only
+        // `.`, `%`, `#`, `:`, `/`. We surface whatever's actually populated.
+        let mut rows = app.register_rows();
+        rows.sort_by_key(|(name, _)| register_sort_key(*name));
         lines.push(MessageRow::Entry {
-            prefix: format!(" Registers ({} populated)", yank_keys.len()),
+            prefix: format!(" Registers ({} populated)", rows.len()),
             prefix_colour: p.lavender,
             body: String::new(),
         });
         lines.push(MessageRow::Blank);
-        if yank_keys.is_empty() {
+        if rows.is_empty() {
             lines.push(MessageRow::Continuation {
                 indent: "  ".into(),
                 body: "(no yank registers populated)".into(),
             });
         } else {
-            for name in yank_keys {
-                let r = app.registers.get(&name).unwrap();
+            for (name, r) in &rows {
                 let preview = preview_register_text(&r.text, body_w.saturating_sub(8));
                 let kind = if r.linewise { "L " } else { "  " };
                 lines.push(MessageRow::Entry {
@@ -3800,9 +3799,14 @@ fn register_sort_key(c: char) -> u32 {
         '0' => 1,
         '1'..='9' => 2 + (c as u32 - '1' as u32),
         'a'..='z' => 100 + (c as u32 - 'a' as u32),
-        '+' => 200,
+        '-' => 200,
         '*' => 201,
-        '-' => 202,
+        '+' => 202,
+        '.' => 203,
+        '%' => 204,
+        '#' => 205,
+        ':' => 206,
+        '/' => 207,
         _ => 300 + c as u32,
     }
 }

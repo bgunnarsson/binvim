@@ -546,7 +546,7 @@ impl super::App {
         }
         let chars = text.chars().count();
         super::registers::set_system_clipboard(&text, self.config.clipboard.osc52);
-        self.write_register(None, text, false);
+        self.write_yank_register(None, text, false);
         self.status_msg = format!("copied {chars} chars from console ({label})");
     }
 

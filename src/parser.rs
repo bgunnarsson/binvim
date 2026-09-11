@@ -2406,7 +2406,11 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
 }
 
 fn is_valid_register(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '"' | '_' | '+' | '*' | '0'..='9')
+    ch.is_ascii_alphanumeric()
+        || matches!(
+            ch,
+            '"' | '_' | '+' | '*' | '-' | '.' | '%' | ':' | '/' | '#'
+        )
 }
 
 #[cfg(test)]
@@ -2754,6 +2758,20 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn the_small_delete_and_read_only_registers_prefix_a_put() {
+        for name in ['-', '.', '%', ':', '/', '#'] {
+            let mut state = PendingCmd::default();
+            let typed: String = ['"', name, 'p'].iter().collect();
+            match drive(&mut state, &keys(&typed)) {
+                ParseResult::Action(Action::Put { register, .. }) => {
+                    assert_eq!(register, Some(name));
+                }
+                _ => panic!("\"{name}p did not put from the register"),
+            }
+        }
     }
 
     #[test]

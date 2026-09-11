@@ -652,6 +652,7 @@ impl super::App {
         if rec.resumed && rec.keys.is_empty() {
             return;
         }
+        self.last_inserted = Some(super::registers::inserted_text(&rec.keys));
         self.last_edit = Some(LastEdit::InsertSession {
             prelude: rec.prelude,
             keys: rec.keys,
@@ -1118,7 +1119,7 @@ impl super::App {
                         copied_clipboard = true;
                     }
                 }
-                self.write_register(None, text, false);
+                self.write_yank_register(None, text, false);
                 self.status_msg = if copied_clipboard {
                     "Copied notification to clipboard".into()
                 } else {
@@ -5168,6 +5169,51 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn registers_shift_append_and_read_only() {
+        let text =
+            |app: &crate::app::App, name: char| app.read_register(Some(name)).map(|r| r.text);
+        let mut app = app_with_keymaps("one\ntwo\nthree\nfour five\n", "");
+        press(&mut app, "dd");
+        press(&mut app, "dd");
+        assert_eq!(text(&app, '1').as_deref(), Some("two\n"));
+        assert_eq!(text(&app, '2').as_deref(), Some("one\n"));
+        // A named register still shifts the numbered ones.
+        press(&mut app, "\"add");
+        assert_eq!(text(&app, 'a').as_deref(), Some("three\n"));
+        assert_eq!(text(&app, '1').as_deref(), Some("three\n"));
+        assert_eq!(text(&app, '3').as_deref(), Some("one\n"));
+        // A delete within the line goes to `"-`, not `"1`.
+        press(&mut app, "dw");
+        assert_eq!(text(&app, '-').as_deref(), Some("four "));
+        assert_eq!(text(&app, '1').as_deref(), Some("three\n"));
+        // `"A` appends; a charwise yank onto a line-wise register is a line.
+        press(&mut app, "\"Ayw");
+        assert_eq!(text(&app, 'a').as_deref(), Some("three\nfive\n"));
+        assert_eq!(text(&app, 'A').as_deref(), Some("three\nfive\n"));
+        // A yank into a named register leaves `"0` alone.
+        assert_eq!(text(&app, '0'), None);
+        press(&mut app, "yw");
+        assert_eq!(text(&app, '0').as_deref(), Some("five"));
+
+        press(&mut app, "ihi");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(text(&app, '.').as_deref(), Some("hi"));
+        app.last_search = Some(("fi".into(), false));
+        assert_eq!(text(&app, '/').as_deref(), Some("fi"));
+        app.cmd_history.push("set ic".into());
+        assert_eq!(text(&app, ':').as_deref(), Some("set ic"));
+        assert_eq!(text(&app, '%'), None);
+        // A write to a read-only register goes to the unnamed one, with E354.
+        press(&mut app, "\".yw");
+        assert!(app.status_msg.contains("E354"), "{}", app.status_msg);
+        assert_eq!(text(&app, '.').as_deref(), Some("hi"));
+        let listed: Vec<char> = app.register_rows().iter().map(|(name, _)| *name).collect();
+        for name in ['.', '/', ':', '-', '1', 'a', '0'] {
+            assert!(listed.contains(&name), "{name} not in {listed:?}");
+        }
     }
 
     #[test]

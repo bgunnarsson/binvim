@@ -14,6 +14,7 @@ impl super::App {
         if matches!(target, Some('_')) {
             return;
         }
+        let target = self.writable_register(target);
         // Mirror writes to the unnamed register into the OS clipboard so
         // y/d/c land in other apps. Explicit named registers (`"ay`) stay
         // local — that's what users reach for when they want a side stash.
@@ -21,12 +22,22 @@ impl super::App {
             set_system_clipboard(&text, self.config.clipboard.osc52);
         }
         let r = Register { text, linewise };
-        self.registers.insert('"', r.clone());
-        if let Some(name) = target {
-            if name != '"' {
-                self.registers.insert(name, r);
+        // A delete of a line or more shifts `"1`–`"9`, named register or not,
+        // as Vim does; a smaller one goes to `"-` when no register was named.
+        if r.linewise || r.text.contains('\n') {
+            for n in (1..=8u8).rev() {
+                let to = char::from(b'0' + n + 1);
+                match self.registers.remove(&char::from(b'0' + n)) {
+                    Some(held) => self.registers.insert(to, held),
+                    None => self.registers.remove(&to),
+                };
             }
+            self.registers.insert('1', r.clone());
+        } else if target.is_none() {
+            self.registers.insert('-', r.clone());
         }
+        let unnamed = self.store_named(target, r);
+        self.registers.insert('"', unnamed);
     }
 
     pub(super) fn write_yank_register(
@@ -38,17 +49,91 @@ impl super::App {
         if matches!(target, Some('_')) {
             return;
         }
+        let target = self.writable_register(target);
         if mirrors_to_system_clipboard(target) {
             set_system_clipboard(&text, self.config.clipboard.osc52);
         }
         let r = Register { text, linewise };
-        self.registers.insert('"', r.clone());
-        self.registers.insert('0', r.clone());
-        if let Some(name) = target {
-            if name != '"' && name != '0' {
-                self.registers.insert(name, r);
+        // `"0` holds the last yank that named no register.
+        if target.is_none_or(|name| name == '"') {
+            self.registers.insert('0', r.clone());
+        }
+        let unnamed = self.store_named(target, r);
+        self.registers.insert('"', unnamed);
+    }
+
+    /// `target`, unless it's one of the read-only registers — E354, and the
+    /// text goes to the unnamed register instead, so a delete doesn't lose it.
+    fn writable_register(&mut self, target: Option<char>) -> Option<char> {
+        match target {
+            Some(name) if READ_ONLY_REGISTERS.contains(&name) => {
+                self.status_msg = format!("E354: Invalid register name: '{name}'");
+                None
+            }
+            other => other,
+        }
+    }
+
+    /// `r` into register `target` — `"A`–`"Z` append to `"a`–`"z` — and what
+    /// the unnamed register points at afterwards: that register's whole text.
+    fn store_named(&mut self, target: Option<char>, r: Register) -> Register {
+        let Some(name) = target.filter(|&name| name != '"') else {
+            return r;
+        };
+        if name.is_ascii_uppercase() {
+            let lower = name.to_ascii_lowercase();
+            let joined = append_register(self.registers.get(&lower), r);
+            self.registers.insert(lower, joined.clone());
+            return joined;
+        }
+        self.registers.insert(name, r.clone());
+        r
+    }
+
+    /// The read-only registers, made when they're read: `".` the last insert,
+    /// `"%` / `"#` the current and alternate file, `":` the last command
+    /// line, `"/` the last search.
+    pub(super) fn read_only_register(&self, name: char) -> Option<String> {
+        match name {
+            '.' => self.last_inserted.clone(),
+            '%' => self
+                .buffer
+                .path
+                .as_deref()
+                .map(super::buffers::display_path),
+            '#' => self
+                .alternate_path
+                .as_deref()
+                .map(super::buffers::display_path),
+            ':' => self.cmd_history.last().cloned(),
+            '/' => self
+                .last_search
+                .as_ref()
+                .map(|(pattern, _)| pattern.clone()),
+            _ => None,
+        }
+    }
+
+    /// Every register `:reg` shows — the stored ones and the read-only ones
+    /// that hold something.
+    pub fn register_rows(&self) -> Vec<(char, Register)> {
+        let mut rows: Vec<(char, Register)> = self
+            .registers
+            .iter()
+            .map(|(&name, r)| (name, r.clone()))
+            .collect();
+        for &name in READ_ONLY_REGISTERS {
+            if let Some(text) = self.read_only_register(name).filter(|t| !t.is_empty()) {
+                rows.push((
+                    name,
+                    Register {
+                        text,
+                        linewise: false,
+                    },
+                ));
             }
         }
+        rows
     }
 
     pub(super) fn read_register(&self, name: Option<char>) -> Option<Register> {
@@ -56,6 +141,14 @@ impl super::App {
         if key == '_' {
             return None;
         }
+        if let Some(text) = self.read_only_register(key) {
+            return Some(Register {
+                text,
+                linewise: false,
+            });
+        }
+        // `"Ap` puts `"a`.
+        let key = key.to_ascii_lowercase();
         // For the registers that mirror the OS clipboard, check the
         // clipboard first — anything the user just copied in another
         // app should win over our in-memory register, which would
@@ -355,6 +448,51 @@ impl super::App {
 /// True when a register write should also sync into the OS clipboard. Maps
 /// to: the unnamed register (no explicit target), the explicit unnamed
 /// (`""`), and the X11-flavour `+`/`*` clipboard registers.
+/// Registers Vim fills itself and won't let a yank or delete write.
+const READ_ONLY_REGISTERS: &[char] = &['.', '%', '#', ':', '/'];
+
+/// `"A`–`"Z`: `add` appended to what the register holds. A line-wise side
+/// makes the result line-wise, a charwise part becoming a line of its own,
+/// as Vim joins them.
+fn append_register(held: Option<&Register>, add: Register) -> Register {
+    let Some(held) = held else {
+        return add;
+    };
+    let mut text = held.text.clone();
+    if add.linewise && !held.linewise {
+        text.push('\n');
+    }
+    text.push_str(&add.text);
+    if held.linewise && !add.linewise {
+        text.push('\n');
+    }
+    Register {
+        text,
+        linewise: held.linewise || add.linewise,
+    }
+}
+
+/// What an Insert session typed, from its keys: characters, Enter and Tab,
+/// with Backspace taking back the last one — the text `".` holds.
+pub(super) fn inserted_text(keys: &[KeyEvent]) -> String {
+    let mut text = String::new();
+    for key in keys {
+        let plain = !key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+        match key.code {
+            KeyCode::Char(c) if plain => text.push(c),
+            KeyCode::Enter => text.push('\n'),
+            KeyCode::Tab => text.push('\t'),
+            KeyCode::Backspace => {
+                text.pop();
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
 pub fn mirrors_to_system_clipboard(target: Option<char>) -> bool {
     match target {
         None => true,
@@ -592,6 +730,35 @@ fn clipboard_fallback_read() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn append_register_joins_like_vim() {
+        let reg = |text: &str, linewise| Register {
+            text: text.into(),
+            linewise,
+        };
+        let joined = append_register(Some(&reg("a\n", true)), reg("b", false));
+        assert_eq!((joined.text.as_str(), joined.linewise), ("a\nb\n", true));
+        let joined = append_register(Some(&reg("a", false)), reg("b\n", true));
+        assert_eq!((joined.text.as_str(), joined.linewise), ("a\nb\n", true));
+        let joined = append_register(Some(&reg("a", false)), reg("b", false));
+        assert_eq!((joined.text.as_str(), joined.linewise), ("ab", false));
+        assert_eq!(append_register(None, reg("b", false)).text, "b");
+    }
+
+    #[test]
+    fn inserted_text_replays_typing_and_backspace() {
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let keys = [
+            key(KeyCode::Char('a')),
+            key(KeyCode::Char('x')),
+            key(KeyCode::Backspace),
+            key(KeyCode::Enter),
+            key(KeyCode::Char('b')),
+            KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
+        ];
+        assert_eq!(inserted_text(&keys), "a\nb");
+    }
 
     /// The inlined encoder must match the RFC 4648 standard base64 that
     /// terminals expect — including the `=` padding edge cases.
