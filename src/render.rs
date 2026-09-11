@@ -1152,6 +1152,9 @@ fn cmdline_chrome(mode: Mode) -> (&'static str, char) {
         Mode::Prompt(crate::mode::PromptKind::FileTreeRename) => ("Rename", ' '),
         Mode::Prompt(crate::mode::PromptKind::AndroidAvdName) => ("AVD name", ' '),
         Mode::Prompt(crate::mode::PromptKind::DebugConsoleSearch) => ("Console search", '/'),
+        Mode::Prompt(
+            crate::mode::PromptKind::Expression | crate::mode::PromptKind::InsertExpression,
+        ) => ("Expression", '='),
         _ => ("", ' '),
     }
 }

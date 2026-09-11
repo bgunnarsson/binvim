@@ -299,6 +299,9 @@ follows [Semantic Versioning](https://semver.org/).
   at an error, and `@@` afterwards runs it again.
 - **Insert `Ctrl-A` inserts the text the last Insert session typed** — the
   `".` register, put in literally.
+- **`"=` evaluates arithmetic.** `"=6*7<CR>p` puts `42`, and Insert
+  `Ctrl-R =` puts the value in at the cursor. Integers and floats, `+ - * /
+  %`, parentheses and unary minus; integer division truncates, as in Vim.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

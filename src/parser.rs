@@ -379,6 +379,8 @@ pub enum Action {
     StartMacro {
         name: char,
     },
+    /// `"=` — the prompt for the expression register's value (D10).
+    ExpressionPrompt,
     ReplayMacro {
         name: char,
         count: usize,
@@ -1076,6 +1078,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // Resolve register selection — `"x` selects register x for the next op.
     if state.awaiting_register {
         state.awaiting_register = false;
+        if ch == '=' {
+            state.reset();
+            return ParseResult::Action(Action::ExpressionPrompt);
+        }
         if !is_valid_register(ch) {
             state.reset();
             return ParseResult::Cancelled;
@@ -2758,6 +2764,15 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn quote_equals_asks_for_an_expression() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            drive(&mut state, &keys("\"=")),
+            ParseResult::Action(Action::ExpressionPrompt)
+        ));
     }
 
     #[test]
