@@ -11,11 +11,30 @@ pub struct Snapshot {
     pub cursor: Cursor,
 }
 
+/// One state in the undo tree. Its `snap` is filled in when the state is
+/// left — the current state is the buffer itself — so every other node has
+/// one.
+#[derive(Clone)]
+struct Node {
+    snap: Option<Snapshot>,
+    parent: Option<usize>,
+    /// The child `redo` goes to: the one most recently made or left.
+    redo_child: Option<usize>,
+}
+
+/// Undo history as a tree (D5): an edit after an undo starts a new branch and
+/// keeps the old one. Nodes are numbered in the order their states were made,
+/// which `g-` / `g+` walk. Only the current branch is persisted, in the linear
+/// `past` / `future` form the files have always had.
 #[derive(Default, Clone)]
 pub struct History {
-    past: Vec<Snapshot>,
-    future: Vec<Snapshot>,
+    nodes: Vec<Node>,
+    cur: usize,
 }
+
+/// Cap so a long-running session doesn't OOM. 1000 is plenty — anything
+/// older is academically interesting at best.
+const MAX_STATES: usize = 1000;
 
 impl History {
     pub fn new() -> Self {
@@ -24,59 +43,193 @@ impl History {
 
     /// Save the current state before a mutation.
     pub fn record(&mut self, rope: &Rope, cursor: Cursor) {
-        self.past.push(Snapshot {
+        if self.nodes.is_empty() {
+            self.nodes.push(Node {
+                snap: None,
+                parent: None,
+                redo_child: None,
+            });
+            self.cur = 0;
+        }
+        let child = self.nodes.len();
+        let node = &mut self.nodes[self.cur];
+        node.snap = Some(Snapshot {
             rope: rope.clone(),
             cursor,
         });
-        self.future.clear();
-        // Cap so a long-running session doesn't OOM. 1000 is plenty —
-        // anything older is academically interesting at best.
-        const MAX: usize = 1000;
-        if self.past.len() > MAX {
-            let drop = self.past.len() - MAX;
-            self.past.drain(0..drop);
+        node.redo_child = Some(child);
+        self.nodes.push(Node {
+            snap: None,
+            parent: Some(self.cur),
+            redo_child: None,
+        });
+        self.cur = child;
+        if self.nodes.len() > MAX_STATES {
+            self.drop_oldest();
         }
+    }
+
+    /// The oldest state gone and every number after it one lower; what hung
+    /// off it becomes a root.
+    fn drop_oldest(&mut self) {
+        self.nodes.remove(0);
+        let shift = |i: Option<usize>| i.and_then(|i| i.checked_sub(1));
+        for node in &mut self.nodes {
+            node.parent = shift(node.parent);
+            node.redo_child = shift(node.redo_child);
+        }
+        self.cur = self.cur.saturating_sub(1);
+    }
+
+    /// The current state's ancestors, nearest first.
+    fn ancestors(&self) -> Vec<usize> {
+        let mut out = Vec::new();
+        let mut at = self.nodes.get(self.cur).and_then(|node| node.parent);
+        while let Some(i) = at {
+            out.push(i);
+            at = self.nodes[i].parent;
+        }
+        out
     }
 
     /// How many steps `undo` can take back.
     pub fn depth(&self) -> usize {
-        self.past.len()
+        self.ancestors().len()
     }
 
     /// Everything recorded since the history was `depth` steps deep made one
-    /// step: the first of them, from before any of those changes.
+    /// step: from the state before any of those changes straight to now. The
+    /// states in between go too when they're the newest, so `g-` doesn't stop
+    /// at them either.
     pub fn squash_since(&mut self, depth: usize) {
-        self.past.truncate(depth + 1);
+        let path = self.ancestors();
+        let Some(split) = path.len().checked_sub(depth + 1) else {
+            return;
+        };
+        let keep = path[split];
+        let mut between: Vec<usize> = path[..split].to_vec();
+        if between.is_empty() {
+            return;
+        }
+        between.sort_unstable();
+        let first = self.cur - between.len();
+        let newest =
+            self.cur + 1 == self.nodes.len() && between.iter().copied().eq(first..self.cur);
+        if newest {
+            let mut node = self.nodes.pop().expect("the current state is the last");
+            self.nodes.truncate(first);
+            node.parent = Some(keep);
+            self.nodes.push(node);
+            self.cur = first;
+        } else {
+            self.nodes[self.cur].parent = Some(keep);
+        }
+        self.nodes[keep].redo_child = Some(self.cur);
     }
 
-    /// Undo: take the last recorded snapshot and push current onto redo stack.
-    pub fn undo(&mut self, current_rope: &Rope, current_cursor: Cursor) -> Option<Snapshot> {
-        let snap = self.past.pop()?;
-        self.future.push(Snapshot {
-            rope: current_rope.clone(),
-            cursor: current_cursor,
+    /// The current state, as it is now, kept on its node before moving off it.
+    fn leave(&mut self, rope: &Rope, cursor: Cursor) {
+        self.nodes[self.cur].snap = Some(Snapshot {
+            rope: rope.clone(),
+            cursor,
         });
-        Some(snap)
+    }
+
+    /// Undo: back to the state this one was made from.
+    pub fn undo(&mut self, current_rope: &Rope, current_cursor: Cursor) -> Option<Snapshot> {
+        let parent = self.nodes.get(self.cur)?.parent?;
+        let from = self.cur;
+        self.leave(current_rope, current_cursor);
+        self.nodes[parent].redo_child = Some(from);
+        self.cur = parent;
+        self.nodes[parent].snap.clone()
     }
 
     pub fn redo(&mut self, current_rope: &Rope, current_cursor: Cursor) -> Option<Snapshot> {
-        let snap = self.future.pop()?;
-        self.past.push(Snapshot {
-            rope: current_rope.clone(),
-            cursor: current_cursor,
-        });
-        Some(snap)
+        let child = self.nodes.get(self.cur)?.redo_child?;
+        self.leave(current_rope, current_cursor);
+        self.cur = child;
+        self.nodes[child].snap.clone()
     }
 
-    /// Persist the history to `path` along with `file_hash`. We store the
-    /// hash so a subsequent load can reject undo state that was recorded
-    /// against a different version of the underlying file (someone edited
-    /// it externally between sessions).
+    /// `g-`: the state made just before this one, on whichever branch.
+    pub fn earlier(&mut self, current_rope: &Rope, current_cursor: Cursor) -> Option<Snapshot> {
+        if self.nodes.is_empty() || self.cur == 0 {
+            return None;
+        }
+        self.leave(current_rope, current_cursor);
+        self.cur -= 1;
+        self.nodes[self.cur].snap.clone()
+    }
+
+    /// `g+`: the state made just after this one.
+    pub fn later(&mut self, current_rope: &Rope, current_cursor: Cursor) -> Option<Snapshot> {
+        if self.cur + 1 >= self.nodes.len() {
+            return None;
+        }
+        self.leave(current_rope, current_cursor);
+        self.cur += 1;
+        self.nodes[self.cur].snap.clone()
+    }
+
+    /// The current branch as the linear stacks the files hold: the states
+    /// before this one, oldest first, and the ones `redo` reaches, the next
+    /// one last.
+    fn branch(&self) -> (Vec<&Snapshot>, Vec<&Snapshot>) {
+        let past = self
+            .ancestors()
+            .iter()
+            .rev()
+            .filter_map(|&i| self.nodes[i].snap.as_ref())
+            .collect();
+        let mut future = Vec::new();
+        let mut at = self.nodes.get(self.cur).and_then(|node| node.redo_child);
+        while let Some(i) = at {
+            if let Some(snap) = self.nodes[i].snap.as_ref() {
+                future.push(snap);
+            }
+            at = self.nodes[i].redo_child;
+        }
+        future.reverse();
+        (past, future)
+    }
+
+    /// A tree holding one branch: `past` oldest first, then the live state,
+    /// then `future` — a stack, its last the next redo.
+    fn from_linear(past: Vec<Snapshot>, future: Vec<Snapshot>) -> Self {
+        if past.is_empty() && future.is_empty() {
+            return Self::default();
+        }
+        let cur = past.len();
+        let snaps = past
+            .into_iter()
+            .map(Some)
+            .chain(std::iter::once(None))
+            .chain(future.into_iter().rev().map(Some));
+        let mut nodes: Vec<Node> = Vec::new();
+        for (i, snap) in snaps.enumerate() {
+            if let Some(prev) = i.checked_sub(1) {
+                nodes[prev].redo_child = Some(i);
+            }
+            nodes.push(Node {
+                snap,
+                parent: i.checked_sub(1),
+                redo_child: None,
+            });
+        }
+        Self { nodes, cur }
+    }
+
+    /// Persist the current branch to `path` along with `file_hash`. We store
+    /// the hash so a subsequent load can reject undo state that was recorded
+    /// against a different version of the underlying file (someone edited it
+    /// externally between sessions).
     pub fn save_to_path(&self, path: &Path, file_hash: u64) -> std::io::Result<()> {
+        let (past, future) = self.branch();
         let stored = StoredHistory {
             file_hash,
-            past: self.past.iter().map(StoredSnapshot::from).collect(),
-            future: self.future.iter().map(StoredSnapshot::from).collect(),
+            past: past.into_iter().map(StoredSnapshot::from).collect(),
+            future: future.into_iter().map(StoredSnapshot::from).collect(),
         };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -103,10 +256,10 @@ impl History {
         if stored.file_hash != expected_hash {
             return None;
         }
-        Some(Self {
-            past: stored.past.iter().map(Snapshot::from).collect(),
-            future: stored.future.iter().map(Snapshot::from).collect(),
-        })
+        Some(Self::from_linear(
+            stored.past.iter().map(Snapshot::from).collect(),
+            stored.future.iter().map(Snapshot::from).collect(),
+        ))
     }
 }
 
@@ -175,6 +328,122 @@ pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at_start() -> Cursor {
+        Cursor {
+            line: 0,
+            col: 0,
+            want_col: 0,
+        }
+    }
+
+    fn text(snap: Option<Snapshot>) -> Option<String> {
+        snap.map(|snap| snap.rope.to_string())
+    }
+
+    #[test]
+    fn an_edit_after_undo_keeps_the_old_branch_for_g_minus_and_plus() {
+        let r = Rope::from_str;
+        let mut history = History::new();
+        history.record(&r(""), at_start());
+        history.record(&r("a"), at_start());
+        assert_eq!(
+            text(history.undo(&r("ab"), at_start())).as_deref(),
+            Some("a")
+        );
+        history.record(&r("a"), at_start());
+        // `u` from "ac" reaches "a", never "ab" — `g-` walks by time and does.
+        assert_eq!(
+            text(history.earlier(&r("ac"), at_start())).as_deref(),
+            Some("ab")
+        );
+        assert_eq!(
+            text(history.earlier(&r("ab"), at_start())).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            text(history.earlier(&r("a"), at_start())).as_deref(),
+            Some("")
+        );
+        assert!(history.earlier(&r(""), at_start()).is_none());
+        assert_eq!(
+            text(history.later(&r(""), at_start())).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            text(history.later(&r("a"), at_start())).as_deref(),
+            Some("ab")
+        );
+        assert_eq!(
+            text(history.later(&r("ab"), at_start())).as_deref(),
+            Some("ac")
+        );
+        assert!(history.later(&r("ac"), at_start()).is_none());
+        assert_eq!(
+            text(history.undo(&r("ac"), at_start())).as_deref(),
+            Some("a")
+        );
+        assert_eq!(
+            text(history.redo(&r("a"), at_start())).as_deref(),
+            Some("ac")
+        );
+    }
+
+    #[test]
+    fn squashed_steps_leave_no_states_for_g_minus() {
+        let mut history = History::new();
+        for text in ["a", "b", "c"] {
+            history.record(&Rope::from_str(text), at_start());
+        }
+        history.squash_since(0);
+        assert_eq!(
+            text(history.earlier(&Rope::from_str("d"), at_start())).as_deref(),
+            Some("a")
+        );
+        assert!(history.earlier(&Rope::from_str("a"), at_start()).is_none());
+    }
+
+    #[test]
+    fn files_in_the_linear_format_load_and_save_unchanged() {
+        let snap = |text: &str| StoredSnapshot {
+            text: text.into(),
+            line: 0,
+            col: 0,
+            want_col: 0,
+        };
+        let stored = StoredHistory {
+            file_hash: 7,
+            past: vec![snap("a"), snap("ab")],
+            future: vec![snap("abcd"), snap("abc")],
+        };
+        let bytes = serde_json::to_vec(&stored).expect("json");
+        let dir = std::env::temp_dir().join(format!("binvim-undo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let path = dir.join("history.json");
+        std::fs::write(&path, &bytes).expect("write");
+        let mut history = History::load_from_path(&path, 7).expect("loads");
+        assert_eq!(history.depth(), 2);
+        history.save_to_path(&path, 7).expect("saves");
+        assert_eq!(std::fs::read(&path).expect("read"), bytes);
+        let r = Rope::from_str;
+        assert_eq!(
+            text(history.undo(&r("abX"), at_start())).as_deref(),
+            Some("ab")
+        );
+        assert_eq!(
+            text(history.redo(&r("ab"), at_start())).as_deref(),
+            Some("abX")
+        );
+        assert_eq!(
+            text(history.redo(&r("abX"), at_start())).as_deref(),
+            Some("abc")
+        );
+        assert_eq!(
+            text(history.redo(&r("abc"), at_start())).as_deref(),
+            Some("abcd")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn squashed_steps_undo_as_one() {

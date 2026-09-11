@@ -1347,6 +1347,33 @@ impl super::App {
             self.status_msg = "Already at newest change".into();
         }
     }
+
+    /// `g-` / `g+`: `count` states back or on, in the order they were made —
+    /// across undo branches, which `u` / `Ctrl-R` stay on.
+    pub(super) fn undo_time(&mut self, earlier: bool, count: usize) {
+        let mut moved = false;
+        for _ in 0..count.max(1) {
+            let snap = if earlier {
+                self.history.earlier(&self.buffer.rope, self.window.cursor)
+            } else {
+                self.history.later(&self.buffer.rope, self.window.cursor)
+            };
+            let Some(snap) = snap else {
+                break;
+            };
+            self.buffer.rope = snap.rope;
+            self.window.cursor = snap.cursor;
+            moved = true;
+        }
+        if !moved {
+            let end = if earlier { "oldest" } else { "newest" };
+            self.status_msg = format!("Already at {end} change");
+            return;
+        }
+        self.buffer.dirty = true;
+        self.buffer.version = self.buffer.version.wrapping_add(1);
+        self.clamp_cursor_normal();
+    }
 }
 
 /// A line ending in `text` opens a block, so the line after it goes a level

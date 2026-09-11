@@ -5301,6 +5301,25 @@ mod tests {
     }
 
     #[test]
+    fn g_minus_reaches_a_branch_that_undo_left() {
+        let mut app = app_with_keymaps("\n", "");
+        press(&mut app, "ix");
+        tap(&mut app, KeyCode::Esc);
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), "\n");
+        press(&mut app, "iy");
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "y\n");
+        // `u` can't reach "x" any more; `g-` walks back to it by time.
+        press(&mut app, "g-");
+        assert_eq!(app.buffer.rope.to_string(), "x\n");
+        press(&mut app, "g-");
+        assert_eq!(app.buffer.rope.to_string(), "\n");
+        press(&mut app, "2g+");
+        assert_eq!(app.buffer.rope.to_string(), "y\n");
+    }
+
+    #[test]
     fn visual_star_extends_the_selection_to_the_next_match() {
         let mut app = app_with_keymaps("foo bar foo\n", "");
         press(&mut app, "v*");
