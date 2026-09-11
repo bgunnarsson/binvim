@@ -344,6 +344,11 @@ follows [Semantic Versioning](https://semver.org/).
   URL under the cursor; `gf` opens the file under it — beside the buffer's
   file, then from the working directory, a `path:line` going to the line —
   and `<C-w>f` does so in a split; `gI` inserts at column 0; `Ctrl-L` redraws.
+- **Insert `Ctrl-X` completes words, lines and paths.** `Ctrl-X Ctrl-N` /
+  `Ctrl-P` offer the buffer's words nearest the cursor, `Ctrl-X Ctrl-L` whole
+  lines starting with what's typed (this line keeping its indent), and
+  `Ctrl-X Ctrl-F` the files and directories of the path typed so far — all in
+  the completion popup, narrowing as you type without asking the server.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

@@ -1796,6 +1796,38 @@ impl super::App {
                 rec.keys.push(key);
             }
         }
+        if self.insert_ctrl_x_pending {
+            self.insert_ctrl_x_pending = false;
+            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+            let source = match key.code {
+                KeyCode::Char('n' | 'N') if ctrl => {
+                    Some(super::state::CompletionSource::Words { backward: false })
+                }
+                KeyCode::Char('p' | 'P') if ctrl => {
+                    Some(super::state::CompletionSource::Words { backward: true })
+                }
+                KeyCode::Char('l' | 'L') if ctrl => Some(super::state::CompletionSource::Lines),
+                KeyCode::Char('f' | 'F') if ctrl => Some(super::state::CompletionSource::Files),
+                _ => None,
+            };
+            // The Ctrl-X isn't text for `.` to replay, and nor is a key that
+            // picked a list; one that picked nothing is typed as it would be.
+            if !self.replaying
+                && let Some(rec) = self.recording.as_mut()
+            {
+                let this_key = usize::from(!is_esc);
+                if let Some(ctrl_x) = rec.keys.len().checked_sub(this_key + 1) {
+                    rec.keys.remove(ctrl_x);
+                }
+                if source.is_some() && this_key == 1 {
+                    rec.keys.pop();
+                }
+            }
+            if let Some(source) = source {
+                self.open_local_completion(source);
+                return;
+            }
+        }
         if self.insert_register_pending {
             self.insert_register_pending = false;
             match key.code {
@@ -1903,6 +1935,9 @@ impl super::App {
             }
             KeyCode::Char('r' | 'R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_register_pending = true;
+            }
+            KeyCode::Char('x' | 'X') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.insert_ctrl_x_pending = true;
             }
             KeyCode::Char('a' | 'A') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.insert_register_at_cursor('.');
@@ -2034,7 +2069,11 @@ impl super::App {
                 }
                 // Auto-trigger completion on identifier and member-access chars.
                 // Skipped during macro replay so playback doesn't spam LSP requests.
-                if !self.replaying && is_completion_trigger(c) {
+                // A Ctrl-X list narrows on any non-blank char — `/` in a path
+                // included — and never goes to the server.
+                if !self.replaying && self.local_completion_open() && !c.is_whitespace() {
+                    self.refresh_local_completion();
+                } else if !self.replaying && is_completion_trigger(c) {
                     // Punctuation triggers (`.`, `:`, etc.) get sent to the
                     // server as triggerCharacter so it returns member-access
                     // completions; identifier chars are an Invoked refresh.
@@ -2145,7 +2184,9 @@ impl super::App {
                     self.window.cursor.col = prev_len;
                     self.window.cursor.want_col = prev_len;
                 }
-                if popup_was_open && !self.replaying {
+                if popup_was_open && !self.replaying && self.local_completion_open() {
+                    self.refresh_local_completion();
+                } else if popup_was_open && !self.replaying {
                     self.lsp_request_completion(None);
                 }
             }
@@ -2401,7 +2442,9 @@ impl super::App {
             // Typing an identifier/trigger char: keep popup open; the main handler
             // inserts the char and the auto-trigger refreshes the completion list.
             KeyCode::Char(c)
-                if !key.modifiers.contains(KeyModifiers::CONTROL) && is_completion_trigger(c) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (is_completion_trigger(c)
+                        || (self.local_completion_open() && !c.is_whitespace())) =>
             {
                 false
             }
@@ -5300,6 +5343,32 @@ mod tests {
         std::fs::remove_file(&path).ok();
         assert_eq!(app.windows.len(), 1);
         assert_eq!(app.buffer.rope.to_string(), "split\n");
+    }
+
+    #[test]
+    fn insert_ctrl_x_completes_words_and_lines() {
+        let mut app = app_with_keymaps("alphabet beta\nal\n", "");
+        app.window.cursor.line = 1;
+        press(&mut app, "A");
+        app.replay_key(ctrl('x'));
+        app.replay_key(ctrl('n'));
+        let first = app.completion.as_ref().map(|c| c.items[0].label.clone());
+        assert_eq!(first.as_deref(), Some("alphabet"));
+        tap(&mut app, KeyCode::Enter);
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), "alphabet beta\nalphabet\n");
+        // Whole lines keep this line's indent.
+        let mut app = app_with_keymaps("  let total = 1;\n    le\n", "");
+        app.window.cursor.line = 1;
+        press(&mut app, "A");
+        app.replay_key(ctrl('x'));
+        app.replay_key(ctrl('l'));
+        tap(&mut app, KeyCode::Enter);
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            "  let total = 1;\n    let total = 1;\n"
+        );
     }
 
     #[test]

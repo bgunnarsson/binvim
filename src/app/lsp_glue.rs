@@ -362,6 +362,11 @@ impl super::App {
                     self.android_attach_debug(port);
                 }
                 LspEvent::Completion { items } => {
+                    // A list opened with Ctrl-X isn't the server's to replace or
+                    // merge into.
+                    if self.local_completion_open() {
+                        continue;
+                    }
                     // Servers (typescript-language-server especially) often dump
                     // their entire symbol table and expect the client to filter.
                     // Match the items against the user's typed prefix
@@ -402,6 +407,7 @@ impl super::App {
                             selected: 0,
                             anchor_line,
                             anchor_col,
+                            source: super::state::CompletionSource::Lsp,
                         });
                     }
                 }
@@ -413,7 +419,7 @@ impl super::App {
     /// in-progress word started — that's the chunk we'll replace on completion accept.
     /// `-` is included so CSS property names (`border-color`) and Tailwind class
     /// names (`bg-blue-500`) are treated as one continuous token.
-    fn word_prefix_start(&self) -> (usize, usize) {
+    pub(super) fn word_prefix_start(&self) -> (usize, usize) {
         let line = self.window.cursor.line;
         let mut col = self.window.cursor.col;
         while col > 0 {
@@ -425,6 +431,94 @@ impl super::App {
             }
         }
         (line, col)
+    }
+
+    /// Whether the popup holds one of Insert `Ctrl-X`'s local lists.
+    pub(super) fn local_completion_open(&self) -> bool {
+        self.completion
+            .as_ref()
+            .is_some_and(|c| c.source != super::state::CompletionSource::Lsp)
+    }
+
+    /// Insert `Ctrl-X Ctrl-N` / `Ctrl-P` / `Ctrl-L` / `Ctrl-F`: the popup filled
+    /// from the buffer's words, its lines, or the file system — filtered by
+    /// what's typed, as the server's lists are.
+    pub(super) fn open_local_completion(&mut self, source: super::state::CompletionSource) {
+        if !self.additional_cursors.is_empty() {
+            return;
+        }
+        let line = self.window.cursor.line;
+        let col = self.window.cursor.col;
+        let chars: Vec<char> = self.buffer.rope.line(line).chars().collect();
+        let col = col.min(chars.len());
+        let anchor_col = match source {
+            super::state::CompletionSource::Lines => chars
+                .iter()
+                .take_while(|c| **c == ' ' || **c == '\t')
+                .count()
+                .min(col),
+            super::state::CompletionSource::Files => {
+                let path_char = |c: char| c.is_alphanumeric() || "/._-~+,#$%@{}[]=".contains(c);
+                let mut start = col;
+                while start > 0 && path_char(chars[start - 1]) {
+                    start -= 1;
+                }
+                start
+            }
+            super::state::CompletionSource::Words { .. } | super::state::CompletionSource::Lsp => {
+                self.word_prefix_start().1.min(col)
+            }
+        };
+        let prefix: String = chars[anchor_col..col].iter().collect();
+        let labels = match source {
+            super::state::CompletionSource::Words { backward } => {
+                let at = self.buffer.pos_to_char(line, col);
+                nearby_words(&self.buffer.rope.to_string(), at, backward, &prefix)
+            }
+            super::state::CompletionSource::Lines => {
+                matching_lines(&self.buffer.rope.to_string(), line, &prefix)
+            }
+            super::state::CompletionSource::Files => {
+                let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                path_entries(&prefix, &cwd)
+            }
+            super::state::CompletionSource::Lsp => return,
+        };
+        let items: Vec<CompletionItem> = labels
+            .into_iter()
+            .enumerate()
+            .map(|(i, label)| CompletionItem {
+                insert_text: label.clone(),
+                filter_text: label.clone(),
+                // Keeps the nearest-first order through the filter's sort.
+                sort_text: format!("{i:06}"),
+                kind: None,
+                detail: None,
+                is_snippet: false,
+                text_edit_range: None,
+                label,
+            })
+            .collect();
+        let filtered = filter_completion_items(items, &prefix);
+        if filtered.is_empty() {
+            self.completion = None;
+            self.status_msg = "Pattern not found".into();
+            return;
+        }
+        self.completion = Some(CompletionState {
+            items: filtered,
+            selected: 0,
+            anchor_line: line,
+            anchor_col,
+            source,
+        });
+    }
+
+    /// A `Ctrl-X` list filtered again for what's typed now, from its own source.
+    pub(super) fn refresh_local_completion(&mut self) {
+        if let Some(source) = self.completion.as_ref().map(|c| c.source) {
+            self.open_local_completion(source);
+        }
     }
 
     pub(super) fn lsp_request_completion(&mut self, trigger_char: Option<char>) {
@@ -2390,6 +2484,38 @@ pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent:
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn local_completion_sources() {
+        use super::{matching_lines, nearby_words, path_entries};
+        let text = "alpha beta\ngamma alpha\nbe";
+        assert_eq!(
+            nearby_words(text, 25, false, "be"),
+            vec!["alpha", "beta", "gamma"]
+        );
+        assert_eq!(
+            nearby_words(text, 25, true, "be"),
+            vec!["alpha", "gamma", "beta"]
+        );
+        assert_eq!(
+            matching_lines("  fn one()\nlet x\n    fn two()\nfn", 3, "fn"),
+            vec!["fn two()", "fn one()"]
+        );
+        let dir = std::env::temp_dir().join(format!("binvim-ctrlxf-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).expect("temp dir");
+        std::fs::write(dir.join("main.rs"), "").expect("main.rs");
+        std::fs::write(dir.join("mod.rs"), "").expect("mod.rs");
+        std::fs::write(dir.join(".hidden"), "").expect(".hidden");
+        assert_eq!(path_entries("m", &dir), vec!["main.rs", "mod.rs"]);
+        assert_eq!(path_entries("", &dir), vec!["main.rs", "mod.rs", "sub/"]);
+        let absolute = format!("{}/s", dir.display());
+        assert_eq!(
+            path_entries(&absolute, std::path::Path::new("/")),
+            vec![format!("{}/sub/", dir.display())]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     use super::{expand_snippet, razor_ref_augment};
 
     /// Build a fake path under the platform temp dir for tests that only
@@ -2528,6 +2654,101 @@ mod tests {
     }
 }
 
+/// `Ctrl-X Ctrl-N` / `Ctrl-P`'s words: every keyword in `text` once, nearest
+/// the cursor at char `at` first — going forward and round the end, or
+/// `backward` — leaving out the one being typed.
+fn nearby_words(text: &str, at: usize, backward: bool, typing: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().collect();
+    let keyword = |c: char| c.is_alphanumeric() || c == '_';
+    let mut runs: Vec<(usize, String)> = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if !keyword(chars[i]) {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < chars.len() && keyword(chars[i]) {
+            i += 1;
+        }
+        runs.push((start, chars[start..i].iter().collect()));
+    }
+    let (after, before): (Vec<_>, Vec<_>) = runs.into_iter().partition(|(start, _)| *start >= at);
+    let ordered: Vec<String> = if backward {
+        before
+            .into_iter()
+            .rev()
+            .chain(after.into_iter().rev())
+            .map(|(_, word)| word)
+            .collect()
+    } else {
+        after
+            .into_iter()
+            .chain(before)
+            .map(|(_, word)| word)
+            .collect()
+    };
+    let mut seen = std::collections::HashSet::new();
+    ordered
+        .into_iter()
+        .filter(|word| word != typing && seen.insert(word.clone()))
+        .collect()
+}
+
+/// `Ctrl-X Ctrl-L`'s lines: every other line whose text, blanks trimmed off
+/// its front, starts with `prefix` — nearest first, above before below, each
+/// once.
+fn matching_lines(text: &str, current: usize, prefix: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut order: Vec<usize> = (0..lines.len()).filter(|&i| i != current).collect();
+    order.sort_by_key(|&i| i.abs_diff(current));
+    let mut seen = std::collections::HashSet::new();
+    order
+        .into_iter()
+        .map(|i| lines[i].trim_start())
+        .filter(|line| {
+            !line.is_empty() && line.starts_with(prefix) && seen.insert(line.to_string())
+        })
+        .map(str::to_string)
+        .collect()
+}
+
+/// `Ctrl-X Ctrl-F`'s entries for the path typed so far: its directory part
+/// read from `cwd` (home for `~/`, as it is when absolute), then each entry
+/// whose name starts with the rest — directories with a `/` on, dot-files
+/// only when a `.` was typed.
+fn path_entries(typed: &str, cwd: &std::path::Path) -> Vec<String> {
+    let (dir_part, stem) = match typed.rfind('/') {
+        Some(i) => (&typed[..=i], &typed[i + 1..]),
+        None => ("", typed),
+    };
+    let dir = match dir_part.strip_prefix("~/") {
+        Some(rest) => match crate::paths::home_dir() {
+            Some(home) => home.join(rest),
+            None => return Vec::new(),
+        },
+        None if dir_part.starts_with('/') => PathBuf::from(dir_part),
+        None => cwd.join(dir_part),
+    };
+    let Ok(read) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = read
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let hidden = name.starts_with('.') && !stem.starts_with('.');
+            if hidden || !name.starts_with(stem) {
+                return None;
+            }
+            let slash = if entry.path().is_dir() { "/" } else { "" };
+            Some(format!("{dir_part}{name}{slash}"))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 /// Narrow a server-returned completion list to entries that match what the
 /// user has actually typed. Matches case-insensitively against `filter_text`
 /// (falls back to label inside the item itself), grouped by tier: prefix
@@ -2536,7 +2757,10 @@ mod tests {
 /// server signals that `document` outranks `documentElement` for prefix
 /// `docu`. Capped to 200 visible items after filtering. An empty prefix
 /// passes everything through, sorted by `sort_text`.
-fn filter_completion_items(items: Vec<CompletionItem>, prefix: &str) -> Vec<CompletionItem> {
+pub(super) fn filter_completion_items(
+    items: Vec<CompletionItem>,
+    prefix: &str,
+) -> Vec<CompletionItem> {
     const VISIBLE_CAP: usize = 200;
     if prefix.is_empty() {
         let mut sorted = items;
