@@ -258,6 +258,12 @@ follows [Semantic Versioning](https://semver.org/).
   with none come first), `u` drops repeats, and `/pat/` sorts on what
   follows the match — or on the match itself with `r` — keeping the lines
   it misses ahead, in their order. It's stable, and undoes as one step.
+- **`:!cmd`, `:r` and `:w !cmd` reach the shell.** `:!cmd` shows what the
+  command printed, and its exit code when it failed; `:r file` and `:r !cmd`
+  read a file or a command's output in below the line (`:0r` at the top);
+  `:w !cmd` hands the lines to a command's stdin without writing the file.
+  In these and in `:{range}!filter`, `%` and `#` stand for the current and
+  alternate file names.
 
 ### Fixed
 - **`/pat` moves on from a match the cursor is already on.** The search

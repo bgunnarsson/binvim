@@ -408,6 +408,9 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:norm[al][!] {keys}`      | Type `keys` in Normal mode on each line of the range (`:%norm A;`), each line its own undo step; `!` leaves `[keymaps]` out. |
 | `:g/pat/cmd` / `:g!` / `:v` | Run `cmd` — any `:` command, `:normal` included — on every line matching `pat`, or with `:g!` / `:v` every line that doesn't (`:g/TODO/d`, `:g/^/m0`). One undo step. |
 | `:sort[!] [flags] [/pat/]` | Sort the lines, the whole file by default: `!` reversed, `i` ignoring case, `n` / `x` on the first decimal / hex number, `u` dropping repeats, `/pat/` on what follows the match — or on the match itself with `r`. |
+| `:!cmd`                    | Run `cmd` in your shell (`cmd /C` on Windows) and show what it prints; `%` / `#` stand for the current / alternate file (`:!wc -l %`). |
+| `:r file` / `:r !cmd`      | Read a file, or what a command prints, in below the line — `:0r` for the top, a bare `:r` for the current file. |
+| `:w !cmd`                  | Hand the lines (the whole file by default) to `cmd` on its stdin and show its output; the file isn't written. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. `:dapb` accepts arg forms: `:dapb if <expr>` for a conditional breakpoint, `:dapb hit <expr>` for hit-count, `:dapb plain` to strip both. Conditional breakpoints render as `◆` in the gutter; the breakpoints pane lists each row's expression inline. |
 | `:noh`                    | Clear the search highlight.                                                                                                   |
 | `:x` / `ZZ` / `ZQ`        | `:x` and `ZZ` write only if the buffer is modified, then quit; `ZQ` is `:q!`. `:q`, `:wq` and `:x` refuse (`E162`) while another buffer has unsaved changes. |
