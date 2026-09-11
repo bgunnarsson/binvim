@@ -1714,9 +1714,9 @@ impl super::App {
                 }
             }
             KeyCode::Enter => self.handle_insert_newline(),
-            // Plain `w` never reaches this arm: `Char(c)` above takes every
-            // char typed without Ctrl.
-            KeyCode::Backspace | KeyCode::Char('w' | 'W') => {
+            // Plain `w` / `u` never reach this arm: `Char(c)` above takes
+            // every char typed without Ctrl.
+            KeyCode::Backspace | KeyCode::Char('w' | 'W' | 'u' | 'U') => {
                 let popup_was_open = self.completion.is_some();
                 // macOS-convention modifier shortcuts:
                 //   Alt / Option + Backspace → delete previous word
@@ -1724,24 +1724,36 @@ impl super::App {
                 //   Ctrl + Backspace         → also delete previous word
                 //                              (terminal / Linux alias)
                 //   Ctrl-W                   → Vim's word-delete, same rules
+                //   Ctrl-U                   → Vim's line-delete: to the
+                //                              indent, then to column 0
                 // Multi-cursor + a modifier falls back to plain mirror
                 // for v1; per-cursor word/line semantics would need more
                 // careful indexing and isn't urgent.
                 let mods = key.modifiers;
-                let word_back =
-                    mods.contains(KeyModifiers::ALT) || mods.contains(KeyModifiers::CONTROL);
-                let line_back =
-                    mods.contains(KeyModifiers::SUPER) || mods.contains(KeyModifiers::META);
+                let ctrl_u = matches!(key.code, KeyCode::Char('u' | 'U'));
+                let word_back = !ctrl_u
+                    && (mods.contains(KeyModifiers::ALT) || mods.contains(KeyModifiers::CONTROL));
+                let line_back = ctrl_u
+                    || mods.contains(KeyModifiers::SUPER)
+                    || mods.contains(KeyModifiers::META);
                 if !self.additional_cursors.is_empty() {
                     self.mirror_backspace();
                 } else if line_back && self.window.cursor.col > 0 {
+                    let indent = motion::first_non_blank(&self.buffer, self.window.cursor)
+                        .target
+                        .col;
+                    let to_col = if ctrl_u && self.window.cursor.col > indent {
+                        indent
+                    } else {
+                        0
+                    };
                     let line_start = self.buffer.line_start_idx(self.window.cursor.line);
                     let cursor_idx = self
                         .buffer
                         .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-                    self.buffer.delete_range(line_start, cursor_idx);
-                    self.window.cursor.col = 0;
-                    self.window.cursor.want_col = 0;
+                    self.buffer.delete_range(line_start + to_col, cursor_idx);
+                    self.window.cursor.col = to_col;
+                    self.window.cursor.want_col = to_col;
                 } else if word_back && self.window.cursor.col > 0 {
                     let new_col = previous_word_boundary(
                         &self.buffer,
@@ -2698,6 +2710,31 @@ mod tests {
     fn ctrl_w_at_column_zero_joins_the_previous_line() {
         let mut app = insert_at("foo\nbar\n", 1, 0);
         app.replay_key(ctrl('w'));
+        assert_eq!(app.buffer.rope.to_string(), "foobar\n");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 3));
+    }
+
+    #[test]
+    fn ctrl_u_keeps_the_indent_on_the_first_press() {
+        let mut app = insert_at("    foo bar\n", 0, 11);
+        app.replay_key(ctrl('u'));
+        assert_eq!(app.buffer.rope.to_string(), "    \n");
+        assert_eq!(app.window.cursor.col, 4);
+    }
+
+    #[test]
+    fn ctrl_u_from_the_indent_takes_the_indent() {
+        let mut app = insert_at("    foo bar\n", 0, 11);
+        app.replay_key(ctrl('u'));
+        app.replay_key(ctrl('u'));
+        assert_eq!(app.buffer.rope.to_string(), "\n");
+        assert_eq!(app.window.cursor.col, 0);
+    }
+
+    #[test]
+    fn ctrl_u_at_column_zero_joins_the_previous_line() {
+        let mut app = insert_at("foo\nbar\n", 1, 0);
+        app.replay_key(ctrl('u'));
         assert_eq!(app.buffer.rope.to_string(), "foobar\n");
         assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 3));
     }

@@ -11,6 +11,10 @@ follows [Semantic Versioning](https://semver.org/).
   as `Ctrl`/`Alt`+`Backspace` — the whitespace before the cursor, then one run
   of word characters or of punctuation — and at column 0 joins the line onto
   the one above, the way Vim does with `backspace=start,eol`.
+- **Insert-mode `Ctrl-U` deletes back to the indent, then to column 0.** The
+  first press keeps the line's indent; pressing it again from the indent takes
+  the indent too. At column 0 it joins the line onto the one above, like
+  `Ctrl-W`.
 
 ## [0.5.21] - 2026-09-10
 
