@@ -5172,6 +5172,26 @@ mod tests {
     }
 
     #[test]
+    fn at_colon_repeats_the_last_command_line() {
+        let mut app = app_with_keymaps("a a a a\n", "");
+        // `App::new` loads this directory's session, history included.
+        app.cmd_history.clear();
+        press(&mut app, "@:");
+        assert!(app.status_msg.contains("E30"), "{}", app.status_msg);
+        app.cmd_history.push("s/a/b/".into());
+        press(&mut app, "@:");
+        assert_eq!(app.buffer.rope.to_string(), "b a a a\n");
+        press(&mut app, "2@:");
+        assert_eq!(app.buffer.rope.to_string(), "b b b a\n");
+        press(&mut app, "@@");
+        assert_eq!(app.buffer.rope.to_string(), "b b b b\n");
+        // An error stops the count where it happens.
+        app.cmd_history.push("cd /binvim-no-such-dir".into());
+        press(&mut app, "3@:");
+        assert!(app.status_msg.contains("E344"), "{}", app.status_msg);
+    }
+
+    #[test]
     fn registers_shift_append_and_read_only() {
         let text =
             |app: &crate::app::App, name: char| app.read_register(Some(name)).map(|r| r.text);

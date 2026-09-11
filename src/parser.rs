@@ -1099,7 +1099,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // Resolve macro-play register: after `@`, next char is the macro to replay.
     if state.awaiting_macro_play {
         state.awaiting_macro_play = false;
-        if !ch.is_ascii_alphabetic() && !ch.is_ascii_digit() && ch != '@' {
+        if !ch.is_ascii_alphabetic() && !ch.is_ascii_digit() && !matches!(ch, '@' | ':') {
             state.reset();
             return ParseResult::Cancelled;
         }
@@ -2758,6 +2758,18 @@ mod tests {
 
     fn keys(s: &str) -> Vec<KeyEvent> {
         s.chars().map(key).collect()
+    }
+
+    #[test]
+    fn at_colon_replays_the_command_line_with_a_count() {
+        let mut state = PendingCmd::default();
+        match drive(&mut state, &keys("3@:")) {
+            ParseResult::Action(Action::ReplayMacro {
+                name: ':',
+                count: 3,
+            }) => {}
+            _ => panic!("3@: did not replay the command line"),
+        }
     }
 
     #[test]
