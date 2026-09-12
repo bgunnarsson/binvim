@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.2]
+
 ### Fixed
 - **A tree-sitter parse can no longer hang the editor either.** 0.6.1 bounded the
   highlight *query*, but the parse feeding it was still unbounded, as were the
