@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **A `.tsx` file can no longer wedge the editor while it's highlighted.**
+  tree-sitter's query cursor can spin indefinitely inside a single C call on
+  adversarial input — a generated 400-character TSX string held it at 100% CPU
+  for 21 minutes — and highlighting runs on every buffer version, so an unlucky
+  file would take the editor with it. A highlight pass now gives itself 500ms
+  and keeps whatever it had coloured when that runs out, leaving some spans
+  plain rather than hanging. Inline `<script>` and `<style>` highlighting shares
+  the one budget instead of starting a fresh one per block.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added

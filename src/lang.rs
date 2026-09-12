@@ -1,9 +1,11 @@
 use crate::buffer::Buffer;
 use crate::config::Config;
 use crossterm::style::Color;
+use std::ops::ControlFlow;
 use std::path::Path;
+use std::time::{Duration, Instant};
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Language, Parser, Query, QueryCursor};
+use tree_sitter::{Language, Parser, Query, QueryCursor, QueryCursorOptions, QueryCursorState};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
@@ -815,6 +817,19 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<H
     })
 }
 
+/// Wall-clock ceiling on one highlight pass, injections included.
+///
+/// tree-sitter's query cursor can spin for minutes inside
+/// `ts_query_cursor__advance` on adversarial input: `fuzz_tsx` generated a
+/// 400-character TSX string that burned 21 minutes at 100% CPU before it was
+/// killed, with the whole stack inside that one C call. `compute_highlights`
+/// runs the same call on every buffer version, so an unlucky file would wedge
+/// the editor, not just the fuzz test. Highlighting a large real file lands in
+/// the low tens of milliseconds, which leaves this roughly an order of
+/// magnitude of headroom over legitimate work while still bounding the
+/// pathological case.
+const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(500);
+
 /// Run tree-sitter highlighting over a raw source string and return the
 /// per-byte foreground colour map. Reused by the hover popup for fenced
 /// code blocks where there's no underlying `Buffer`. See `compute_highlights`
@@ -823,6 +838,19 @@ pub fn compute_byte_colors(
     lang: Lang,
     source: &str,
     config: &Config,
+) -> Option<Vec<Option<Color>>> {
+    compute_byte_colors_until(lang, source, config, Instant::now() + HIGHLIGHT_BUDGET)
+}
+
+/// `compute_byte_colors` against a caller-supplied deadline. One deadline is
+/// shared with every injected sub-language pass rather than restarted per
+/// call, so an HTML file with fifty `<script>` blocks is bounded once overall
+/// instead of fifty times over.
+fn compute_byte_colors_until(
+    lang: Lang,
+    source: &str,
+    config: &Config,
+    deadline: Instant,
 ) -> Option<Vec<Option<Color>>> {
     let language = lang.ts_language();
     let mut parser = Parser::new();
@@ -843,8 +871,22 @@ pub fn compute_byte_colors(
     // sometimes coloured as plain identifiers in C# and other languages.
     let mut byte_priority: Vec<u16> = vec![0; total_bytes];
 
+    // Declared ahead of the cursor so it outlives the borrow the match
+    // iterator holds on it. Returning `Break` cancels the C-side query.
+    let mut over_budget = |_: &QueryCursorState| {
+        if Instant::now() >= deadline {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
     let mut cursor = QueryCursor::new();
-    let mut matches = cursor.matches(&query, tree.root_node(), source.as_bytes());
+    let mut matches = cursor.matches_with_options(
+        &query,
+        tree.root_node(),
+        source.as_bytes(),
+        QueryCursorOptions::new().progress_callback(&mut over_budget),
+    );
     while let Some(m) = matches.next() {
         let priority = (m.pattern_index as u16).saturating_add(1);
         for capture in m.captures {
@@ -882,8 +924,12 @@ pub fn compute_byte_colors(
     // highlighter (JS / JSON / CSS depending on the `type` attribute),
     // and splats the resulting colours back onto the main map.
     if matches!(lang, Lang::Html | Lang::Razor | Lang::Svelte) {
-        apply_html_script_style_injections(source.as_bytes(), &mut colors, config);
+        apply_html_script_style_injections(source.as_bytes(), &mut colors, config, deadline);
     }
+    // A cancelled query leaves `colors` partly painted, which is the intended
+    // degradation rather than a failure: the map is still exactly
+    // `source.len()` long, so every caller's byte indexing stays valid and the
+    // file renders with some spans uncoloured instead of hanging the editor.
     Some(colors)
 }
 
@@ -899,6 +945,7 @@ fn apply_html_script_style_injections(
     source: &[u8],
     colors: &mut [Option<Color>],
     config: &Config,
+    deadline: Instant,
 ) {
     let len = source.len();
     let mut i = 0;
@@ -997,7 +1044,9 @@ fn apply_html_script_style_injections(
         if content_end > content_start {
             let content_bytes = &source[content_start..content_end];
             if let Ok(content_str) = std::str::from_utf8(content_bytes) {
-                if let Some(sub_colors) = compute_byte_colors(injection_lang, content_str, config) {
+                if let Some(sub_colors) =
+                    compute_byte_colors_until(injection_lang, content_str, config, deadline)
+                {
                     for (off, &c) in sub_colors.iter().enumerate() {
                         let idx = content_start + off;
                         if idx < colors.len() && c.is_some() {
@@ -1396,6 +1445,47 @@ fn apply_razor_overlay(source: &[u8], colors: &mut [Option<Color>], config: &Con
 mod tests {
     use super::*;
     use crate::config::Config;
+
+    #[test]
+    fn an_exhausted_budget_cancels_the_query_but_still_maps_every_byte() {
+        // `fuzz_tsx` caught tree-sitter's query cursor spinning 21 minutes
+        // inside one C call, so `compute_byte_colors` now cancels the query
+        // once its budget is gone. The input that triggers it is
+        // seed-dependent and can't be relied on to appear in a test run, so
+        // drive the same cancellation path with an already-expired deadline
+        // instead. Compared against a full pass over the same source, since
+        // asserting only on the cancelled run would still pass if the
+        // callback were never wired up at all.
+        let config = Config::load();
+        let source = "export const value: number = 1;\n".repeat(2000);
+
+        let full = compute_byte_colors_until(
+            Lang::Tsx,
+            &source,
+            &config,
+            Instant::now() + Duration::from_secs(60),
+        )
+        .expect("an unbudgeted pass should succeed");
+        let painted_full = full.iter().filter(|c| c.is_some()).count();
+        assert!(painted_full > 0, "the full pass should colour something");
+
+        let cancelled = compute_byte_colors_until(
+            Lang::Tsx,
+            &source,
+            &config,
+            Instant::now() - Duration::from_secs(1),
+        )
+        .expect("a cancelled pass should still return a map");
+
+        // The invariant every caller depends on: one entry per byte, so the
+        // renderer's byte indexing stays valid even on a partial paint.
+        assert_eq!(cancelled.len(), source.len());
+        assert!(
+            cancelled.iter().filter(|c| c.is_some()).count() < painted_full,
+            "an expired budget should cut the pass short, but it painted as \
+             much as the full run ({painted_full} bytes)"
+        );
+    }
 
     /// Find the byte offset of a whole-word occurrence of `word` in
     /// `source` — bounded by non-identifier chars on both sides so
