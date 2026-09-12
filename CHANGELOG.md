@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.1]
+## [0.6.1] - 2026-09-12
 
 ### Fixed
 - **A `.tsx` file can no longer wedge the editor while it's highlighted.**
