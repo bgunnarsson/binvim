@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.2]
+## [0.6.2] - 2026-09-12
 
 ### Fixed
 - **A tree-sitter parse can no longer hang the editor either.** 0.6.1 bounded the
