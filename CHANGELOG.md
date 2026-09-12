@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1]
+
 ### Fixed
 - **A `.tsx` file can no longer wedge the editor while it's highlighted.**
   tree-sitter's query cursor can spin indefinitely inside a single C call on
