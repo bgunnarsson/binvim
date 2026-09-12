@@ -5,7 +5,10 @@ use std::ops::ControlFlow;
 use std::path::Path;
 use std::time::{Duration, Instant};
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Language, Parser, Query, QueryCursor, QueryCursorOptions, QueryCursorState};
+use tree_sitter::{
+    Language, ParseOptions, ParseState, Parser, Query, QueryCursor, QueryCursorOptions,
+    QueryCursorState, Tree,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
@@ -817,18 +820,47 @@ pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<H
     })
 }
 
-/// Wall-clock ceiling on one highlight pass, injections included.
+/// Wall-clock ceiling on one tree-sitter pass — a parse, the highlight query
+/// over it, and any sub-language injections that query recurses into.
 ///
-/// tree-sitter's query cursor can spin for minutes inside
-/// `ts_query_cursor__advance` on adversarial input: `fuzz_tsx` generated a
-/// 400-character TSX string that burned 21 minutes at 100% CPU before it was
-/// killed, with the whole stack inside that one C call. `compute_highlights`
-/// runs the same call on every buffer version, so an unlucky file would wedge
-/// the editor, not just the fuzz test. Highlighting a large real file lands in
-/// the low tens of milliseconds, which leaves this roughly an order of
+/// Both halves of tree-sitter's C side can spin on adversarial input.
+/// `fuzz_tsx` generated a 400-character TSX string that held
+/// `ts_query_cursor__advance` at 100% CPU for 21 minutes before it was killed,
+/// with the whole stack inside that one call, and a grammar's parser can stall
+/// the same way. These run on every buffer version, so an unlucky file would
+/// wedge the editor rather than only the fuzz test. A large real file parses
+/// and highlights in the low tens of milliseconds, leaving roughly an order of
 /// magnitude of headroom over legitimate work while still bounding the
 /// pathological case.
-const HIGHLIGHT_BUDGET: Duration = Duration::from_millis(500);
+pub(crate) const TREE_SITTER_BUDGET: Duration = Duration::from_millis(500);
+
+/// Parse `source`, giving up if `deadline` passes. A cancelled parse yields
+/// `None`, the same answer callers already handle for an unset language, so
+/// they degrade to "no tree" instead of hanging.
+pub(crate) fn parse_bounded(parser: &mut Parser, source: &str, deadline: Instant) -> Option<Tree> {
+    let mut over_budget = |_: &ParseState| {
+        if Instant::now() >= deadline {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    // The chunk callback mirrors what `Parser::parse` does internally — it's
+    // the only form that takes options alongside the text.
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    parser.parse_with_options(
+        &mut |i, _| (i < len).then(|| &bytes[i..]).unwrap_or_default(),
+        None,
+        Some(ParseOptions::new().progress_callback(&mut over_budget)),
+    )
+}
+
+/// `parse_bounded` against the default budget, for callers that parse a buffer
+/// once rather than sharing one deadline across several passes.
+pub(crate) fn parse_budgeted(parser: &mut Parser, source: &str) -> Option<Tree> {
+    parse_bounded(parser, source, Instant::now() + TREE_SITTER_BUDGET)
+}
 
 /// Run tree-sitter highlighting over a raw source string and return the
 /// per-byte foreground colour map. Reused by the hover popup for fenced
@@ -839,7 +871,7 @@ pub fn compute_byte_colors(
     source: &str,
     config: &Config,
 ) -> Option<Vec<Option<Color>>> {
-    compute_byte_colors_until(lang, source, config, Instant::now() + HIGHLIGHT_BUDGET)
+    compute_byte_colors_until(lang, source, config, Instant::now() + TREE_SITTER_BUDGET)
 }
 
 /// `compute_byte_colors` against a caller-supplied deadline. One deadline is
@@ -855,7 +887,27 @@ fn compute_byte_colors_until(
     let language = lang.ts_language();
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
-    let tree = parser.parse(source, None)?;
+    // The parse shares the query's deadline rather than taking its own, so the
+    // two halves of one highlight pass are bounded together.
+    let tree = parse_bounded(&mut parser, source, deadline)?;
+    paint_from_tree(lang, source, config, &tree, deadline)
+}
+
+/// Paint the byte-colour map from an already-parsed `tree`, cancelling the
+/// highlight query if `deadline` passes.
+///
+/// Split from the parse so each half of a pass can be exercised on its own:
+/// the two share one deadline, so a budget that is already gone cancels the
+/// parse first and the query's cancellation path would otherwise be
+/// unreachable from `compute_byte_colors_until`.
+fn paint_from_tree(
+    lang: Lang,
+    source: &str,
+    config: &Config,
+    tree: &Tree,
+    deadline: Instant,
+) -> Option<Vec<Option<Color>>> {
+    let language = lang.ts_language();
     let query_src = lang.highlights_query();
     let query = Query::new(&language, &query_src).ok()?;
     let capture_names = query.capture_names();
@@ -1453,29 +1505,43 @@ mod tests {
         // once its budget is gone. The input that triggers it is
         // seed-dependent and can't be relied on to appear in a test run, so
         // drive the same cancellation path with an already-expired deadline
-        // instead. Compared against a full pass over the same source, since
-        // asserting only on the cancelled run would still pass if the
-        // callback were never wired up at all.
+        // instead. Goes through `paint_from_tree` with a tree parsed under a
+        // generous budget: parse and query share one deadline, so an expired
+        // one stops at the parse and never reaches the query. Compared against
+        // a full paint, since asserting only on the cancelled run would still
+        // pass if the callback were never wired up at all.
         let config = Config::load();
         let source = "export const value: number = 1;\n".repeat(2000);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&Lang::Tsx.ts_language())
+            .expect("the tsx grammar loads");
+        let tree = parse_bounded(
+            &mut parser,
+            &source,
+            Instant::now() + Duration::from_secs(60),
+        )
+        .expect("an unbudgeted parse should produce a tree");
 
-        let full = compute_byte_colors_until(
+        let full = paint_from_tree(
             Lang::Tsx,
             &source,
             &config,
+            &tree,
             Instant::now() + Duration::from_secs(60),
         )
-        .expect("an unbudgeted pass should succeed");
+        .expect("an unbudgeted paint should succeed");
         let painted_full = full.iter().filter(|c| c.is_some()).count();
         assert!(painted_full > 0, "the full pass should colour something");
 
-        let cancelled = compute_byte_colors_until(
+        let cancelled = paint_from_tree(
             Lang::Tsx,
             &source,
             &config,
+            &tree,
             Instant::now() - Duration::from_secs(1),
         )
-        .expect("a cancelled pass should still return a map");
+        .expect("a cancelled query should still return a map");
 
         // The invariant every caller depends on: one entry per byte, so the
         // renderer's byte indexing stays valid even on a partial paint.
@@ -1484,6 +1550,56 @@ mod tests {
             cancelled.iter().filter(|c| c.is_some()).count() < painted_full,
             "an expired budget should cut the pass short, but it painted as \
              much as the full run ({painted_full} bytes)"
+        );
+    }
+
+    #[test]
+    fn an_exhausted_budget_gives_up_on_the_whole_pass() {
+        // Parse and query share one deadline, so a budget that is already gone
+        // stops at the parse: the pass has no tree to paint from and answers
+        // `None` rather than an all-`None` map. Callers already treat that the
+        // same as an unsupported language.
+        let config = Config::load();
+        let source = "export const value: number = 1;\n".repeat(2000);
+        let cancelled = compute_byte_colors_until(
+            Lang::Tsx,
+            &source,
+            &config,
+            Instant::now() - Duration::from_secs(1),
+        );
+        assert!(
+            cancelled.is_none(),
+            "an expired budget should stop at the parse and yield no map"
+        );
+    }
+
+    #[test]
+    fn an_exhausted_budget_cancels_the_parse_too() {
+        // The query is only half of tree-sitter's C surface — a grammar's own
+        // parser can stall the same way, and `parse_bounded` is what stops it.
+        // Same shape as the query test above: measured against an unbudgeted
+        // parse of the same source, so it can't pass by never parsing at all.
+        let source = "export const value: number = 1;\n".repeat(2000);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&Lang::Tsx.ts_language())
+            .expect("the tsx grammar loads");
+
+        let full = parse_bounded(
+            &mut parser,
+            &source,
+            Instant::now() + Duration::from_secs(60),
+        );
+        assert!(full.is_some(), "an unbudgeted parse should produce a tree");
+
+        let cancelled = parse_bounded(
+            &mut parser,
+            &source,
+            Instant::now() - Duration::from_secs(1),
+        );
+        assert!(
+            cancelled.is_none(),
+            "an expired budget should cancel the parse and yield no tree"
         );
     }
 

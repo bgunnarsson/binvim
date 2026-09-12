@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **A tree-sitter parse can no longer hang the editor either.** 0.6.1 bounded the
+  highlight *query*, but the parse feeding it was still unbounded, as were the
+  parses behind function and class text objects (`af`, `ic`) and synthetic code
+  lenses. A grammar's C parser can stall on adversarial input the same way the
+  query cursor can, so all three now give up after the same 500ms and fall back
+  to no tree — the file loses its highlighting, text object or lenses instead of
+  pinning a core.
+
 ## [0.6.1] - 2026-09-12
 
 ### Fixed

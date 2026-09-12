@@ -356,7 +356,7 @@ fn syntax_object(
     let source = buf.rope.to_string();
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&lang.ts_language()).ok()?;
-    let tree = parser.parse(&source, None)?;
+    let tree = crate::lang::parse_budgeted(&mut parser, &source)?;
     let at = buf.pos_to_char(cur.line, cur.col).min(buf.total_chars());
     let byte = buf.rope.char_to_byte(at);
     let mut node = tree.root_node().descendant_for_byte_range(byte, byte)?;

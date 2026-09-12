@@ -44,7 +44,7 @@ fn synthesize_js_ts(lang: Lang, buf: &Buffer) -> Vec<CodeLensItem> {
         return Vec::new();
     }
     let source = buf.rope.to_string();
-    let Some(tree) = parser.parse(&source, None) else {
+    let Some(tree) = crate::lang::parse_budgeted(&mut parser, &source) else {
         return Vec::new();
     };
     let src = source.as_bytes();
