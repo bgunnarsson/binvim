@@ -16,6 +16,13 @@ jobs:
   test:
     name: cargo test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # A tree-sitter pathology can pin a test job outright rather than fail
+    # it, and with no cap that burns a runner until GitHub's six-hour
+    # default. The ceiling has to clear the fuzz suite's seed-driven
+    # spread, which is wide: ubuntu has run the same commit in 121s and in
+    # 740s. 30 minutes leaves that slowest observed run a wide margin while
+    # still failing a genuine hang promptly.
+    timeout-minutes: 30
     strategy:
       # Each platform runs independently — a Windows-specific regression
       # shouldn't mask a Linux-specific one and vice versa.
@@ -48,6 +55,7 @@ jobs:
   clippy:
     name: cargo clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
