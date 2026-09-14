@@ -1155,16 +1155,11 @@ impl App {
         // CLI-launched buffer (binvim huge.json) bypasses the
         // open_buffer path that ordinarily surfaces this hint, so fire
         // it here before lsp_attach_active short-circuits silently.
-        // A `[keymaps]` entry that didn't parse was skipped rather than
-        // failing the config, so say so once — otherwise the user is left
-        // wondering why their `H` still cycles buffers.
-        if let Some(first) = self.config.keymaps.errors.first() {
-            let more = self.config.keymaps.errors.len() - 1;
-            self.status_msg = if more == 0 {
-                format!("skipped {first}")
-            } else {
-                format!("skipped {first} (+{more} more)")
-            };
+        // A config entry that didn't parse was skipped rather than failing
+        // the config, so say so once — otherwise the user is left wondering
+        // why their `H` still cycles buffers.
+        if let Some(summary) = self.config.problem_summary() {
+            self.status_msg = summary;
         }
         if self.buffer.is_large() {
             self.status_msg = "large file — tree-sitter + LSP disabled".into();

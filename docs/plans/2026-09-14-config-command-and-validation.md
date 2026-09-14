@@ -1,7 +1,7 @@
 ---
 title: A bad config.toml is reported, not silently dropped, and :config opens, reloads and documents it
 date: 2026-09-14
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -82,7 +82,7 @@ durable `:health` listing for all of them.
 
 ## Tasks
 
-- [ ] **Lenient config parse.** Add `Config::parse(text: &str) -> Result<Config, String>` (Err
+- [x] **Lenient config parse.** Add `Config::parse(text: &str) -> Result<Config, String>` (Err
   only for a TOML syntax error) that parses to a `toml::Table`, deserializes each known section
   separately, falls back per section, validates `[colors]` per entry with `parse_color`, and
   reports unknown tables and keys via the `deserialize_struct` field-capture helper. Store
@@ -93,6 +93,9 @@ durable `:health` listing for all of them.
   `keymaps.errors`. Verify with new `config::tests`: bad section falls back and is named; unknown
   key and unknown table are named; bad colour skipped while others apply; syntax error is `Err`;
   empty text is default with no errors. `cargo test config::tests keymap::tests`.
+  Deviation: added `every_shipped_theme_parses_without_problems`, since the new per-entry colour
+  check could have rejected keys the `themes/` files ship; section errors name the key and a
+  syntax error gives `line N, column M`, both recovered from toml's Display/span.
 - [ ] **`:health` lists config problems.** Add `config_errors: Vec<String>` to `HealthSnapshot`
   (filled in `build_health_snapshot`), and in `render.rs`'s ENVIRONMENT box add a yellow
   `[N problems]` tag to the config row plus one indented line per problem, mirroring the

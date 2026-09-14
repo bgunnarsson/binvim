@@ -1,38 +1,47 @@
 use crossterm::style::Color;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct Config {
     #[allow(dead_code)]
-    #[serde(default = "default_schema")]
     pub schema_version: u32,
-    #[serde(default)]
     pub colors: HashMap<String, String>,
-    #[serde(default)]
     pub start_page: StartPageConfig,
-    #[serde(default)]
     pub whitespace: WhitespaceConfig,
-    #[serde(default)]
     pub line_numbers: LineNumberConfig,
-    #[serde(default)]
     pub hover: HoverConfig,
-    #[serde(default)]
     pub copilot: CopilotConfig,
-    #[serde(default)]
     pub lsp: LspConfig,
-    #[serde(default)]
     pub file_explorer: FileExplorerConfig,
-    #[serde(default)]
     pub install: InstallConfig,
-    #[serde(default)]
     pub update: UpdateConfig,
-    #[serde(default)]
     pub clipboard: ClipboardConfig,
-    #[serde(default)]
     pub keymaps: crate::keymap::Keymaps,
+    /// Problems found while loading, one line each, sorted. The section or
+    /// entry they name was left at its default and the rest of the file
+    /// still applies. `[keymaps]` keeps its own list in `keymaps.errors`.
+    pub errors: Vec<String>,
 }
+
+/// Every top-level table `Config::parse` accepts, for the message that names
+/// an unknown one.
+const SECTIONS: &[&str] = &[
+    "colors",
+    "start_page",
+    "whitespace",
+    "line_numbers",
+    "hover",
+    "copilot",
+    "lsp",
+    "file_explorer",
+    "install",
+    "update",
+    "clipboard",
+    "keymaps",
+];
 
 /// Update check. When `check` is on (the default), binvim asks crates.io once
 /// a day whether a newer release exists and, if so, says so once per launch —
@@ -304,10 +313,6 @@ impl<'de> Deserialize<'de> for Osc52Mode {
     }
 }
 
-fn default_schema() -> u32 {
-    1
-}
-
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -324,21 +329,81 @@ impl Default for Config {
             update: UpdateConfig::default(),
             clipboard: ClipboardConfig::default(),
             keymaps: crate::keymap::Keymaps::default(),
+            errors: Vec::new(),
         }
     }
 }
 
 impl Config {
-    /// Best-effort load of `~/.config/binvim/config.toml`. Returns the default config on
-    /// any IO/parse error so a malformed file never breaks the editor.
+    /// Load `~/.config/binvim/config.toml`. A missing file is the default
+    /// config; a file that isn't valid TOML is the default config carrying
+    /// that one error, so a malformed file never breaks the editor.
     pub fn load() -> Self {
         let Some(path) = config_path() else {
             return Config::default();
         };
         match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_default(),
+            Ok(text) => Self::parse(&text).unwrap_or_else(|e| Config {
+                errors: vec![e],
+                ..Config::default()
+            }),
             Err(_) => Config::default(),
         }
+    }
+
+    /// Parse config text section by section. Only a TOML syntax error fails
+    /// the parse; anything wrong inside a section is recorded in `errors` and
+    /// costs that section (or, in `[colors]`, that entry) its value, not the
+    /// whole file — serde would otherwise take every setting down with one
+    /// typo, and drop a misspelled key without a word.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let table: toml::Table = toml::from_str(text).map_err(|e| syntax_error(text, &e))?;
+        let mut config = Config::default();
+        let mut errors = Vec::new();
+        for (name, value) in table {
+            match name.as_str() {
+                "schema_version" => section(&name, value, &mut config.schema_version, &mut errors),
+                "colors" => config.colors = colors_from(value, &mut errors),
+                "start_page" => section(&name, value, &mut config.start_page, &mut errors),
+                "whitespace" => section(&name, value, &mut config.whitespace, &mut errors),
+                "line_numbers" => section(&name, value, &mut config.line_numbers, &mut errors),
+                "hover" => section(&name, value, &mut config.hover, &mut errors),
+                "copilot" => section(&name, value, &mut config.copilot, &mut errors),
+                "lsp" => section(&name, value, &mut config.lsp, &mut errors),
+                "file_explorer" => section(&name, value, &mut config.file_explorer, &mut errors),
+                "install" => section(&name, value, &mut config.install, &mut errors),
+                "update" => section(&name, value, &mut config.update, &mut errors),
+                "clipboard" => section(&name, value, &mut config.clipboard, &mut errors),
+                "keymaps" => section(&name, value, &mut config.keymaps, &mut errors),
+                _ => errors.push(format!(
+                    "[{name}]: not a config section — the sections are {}",
+                    SECTIONS.join(", ")
+                )),
+            }
+        }
+        // The table iterates in key order already, but the errors from one
+        // section can interleave; sort so the startup notice names the same
+        // problem on every launch.
+        errors.sort();
+        config.errors = errors;
+        Ok(config)
+    }
+
+    /// Every load problem, config sections first, then skipped keymaps — the
+    /// order the startup and reload notices name them in.
+    pub fn problems(&self) -> impl Iterator<Item = &String> {
+        self.errors.iter().chain(&self.keymaps.errors)
+    }
+
+    /// One line for the status bar: the first problem and how many follow.
+    pub fn problem_summary(&self) -> Option<String> {
+        let first = self.problems().next()?;
+        let more = self.problems().count() - 1;
+        Some(if more == 0 {
+            first.clone()
+        } else {
+            format!("{first} (+{more} more)")
+        })
     }
 
     /// Optional editor background. When set via `[colors] background = "#…"`
@@ -877,6 +942,120 @@ fn config_path() -> Option<PathBuf> {
     crate::paths::config_dir().map(|d| d.join("config.toml"))
 }
 
+/// Deserialize one section into `slot`, which keeps its default when the
+/// section doesn't fit. Keys the section's struct has no field for are named
+/// too, since serde skips them silently.
+fn section<T: DeserializeOwned>(
+    name: &str,
+    value: toml::Value,
+    slot: &mut T,
+    errors: &mut Vec<String>,
+) {
+    let known = struct_fields::<T>();
+    // A type that isn't a plain derived struct (`[keymaps]`, which reports
+    // its own unknown names, or `schema_version`) has no field list to hold
+    // the keys against.
+    if let (false, toml::Value::Table(table)) = (known.is_empty(), &value) {
+        for key in table.keys().filter(|k| !known.contains(&k.as_str())) {
+            errors.push(format!(
+                "[{name}] {key}: not a setting — expected {}",
+                known.join(", ")
+            ));
+        }
+    }
+    match value.try_into::<T>() {
+        Ok(parsed) => *slot = parsed,
+        Err(e) => {
+            // toml names the offending key on a trailing "in `key`" line of
+            // the error's Display, not in `message()`.
+            let text = e.to_string();
+            let (message, key) = match text.trim_end().rsplit_once("\nin `") {
+                Some((message, key)) => (message, format!(" {}", key.trim_end_matches('`'))),
+                None => (text.trim_end(), String::new()),
+            };
+            let message = message.replace('\n', "; ");
+            errors.push(format!("[{name}]{key}: {message} — left at defaults"));
+        }
+    }
+}
+
+/// A TOML syntax error on one line, with the position toml's multi-line
+/// Display would otherwise draw as a source excerpt.
+fn syntax_error(text: &str, e: &toml::de::Error) -> String {
+    let message = e.message().trim_end().replace('\n', "; ");
+    let Some(span) = e.span() else {
+        return format!("config.toml: {message}");
+    };
+    let before = &text[..span.start];
+    let line = before.matches('\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    format!("config.toml line {line}, column {column}: {message}")
+}
+
+/// `[colors]` entry by entry: a theme is the longest section and the one most
+/// likely to hold a typo, and one bad hex shouldn't unset the whole palette.
+fn colors_from(value: toml::Value, errors: &mut Vec<String>) -> HashMap<String, String> {
+    let toml::Value::Table(table) = value else {
+        errors.push("[colors]: expected a table of colours — left at defaults".into());
+        return HashMap::new();
+    };
+    let mut colors = HashMap::new();
+    for (key, value) in table {
+        match value {
+            toml::Value::String(s) if parse_color(&s).is_some() => {
+                colors.insert(key, s);
+            }
+            toml::Value::String(s) => errors.push(format!(
+                "[colors] {key}: {s:?} is not a colour — expected #rrggbb or a named colour"
+            )),
+            other => errors.push(format!(
+                "[colors] {key}: expected a colour string, found {}",
+                other.type_str()
+            )),
+        }
+    }
+    colors
+}
+
+/// The field names `T`'s derived `Deserialize` passes to `deserialize_struct`
+/// — the only place serde exposes a struct's keys, so the known-key check
+/// can't drift from the struct. Empty for anything that isn't a derived
+/// struct.
+fn struct_fields<T: DeserializeOwned>() -> &'static [&'static str] {
+    struct FieldNames<'a>(&'a mut &'static [&'static str]);
+
+    impl<'de> serde::Deserializer<'de> for FieldNames<'_> {
+        type Error = serde::de::value::Error;
+
+        fn deserialize_any<V: serde::de::Visitor<'de>>(
+            self,
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            Err(serde::de::Error::custom("not a struct"))
+        }
+
+        fn deserialize_struct<V: serde::de::Visitor<'de>>(
+            self,
+            _: &'static str,
+            fields: &'static [&'static str],
+            _: V,
+        ) -> Result<V::Value, Self::Error> {
+            *self.0 = fields;
+            Err(serde::de::Error::custom("fields captured"))
+        }
+
+        serde::forward_to_deserialize_any! {
+            bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+            byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map enum
+            identifier ignored_any
+        }
+    }
+
+    let mut fields: &'static [&'static str] = &[];
+    let _ = T::deserialize(FieldNames(&mut fields));
+    fields
+}
+
 fn parse_color(name: &str) -> Option<Color> {
     if let Some(hex) = name.strip_prefix('#') {
         return parse_hex(hex);
@@ -1135,31 +1314,154 @@ mod tests {
     /// local session, where `arboard` has already set the clipboard.
     #[test]
     fn osc52_accepts_a_bool_or_a_mode_name() {
-        let parse = |src: &str| toml::from_str::<Config>(src).map(|c| c.clipboard.osc52);
+        let parse = |src: &str| {
+            let c = Config::parse(src).unwrap();
+            (c.clipboard.osc52, c.errors)
+        };
 
-        assert_eq!(parse("").unwrap(), Osc52Mode::Auto, "absent section");
-        assert_eq!(parse("[clipboard]").unwrap(), Osc52Mode::Auto, "absent key");
+        assert_eq!(parse("").0, Osc52Mode::Auto, "absent section");
+        assert_eq!(parse("[clipboard]").0, Osc52Mode::Auto, "absent key");
+        assert_eq!(parse("[clipboard]\nosc52 = \"auto\"").0, Osc52Mode::Auto);
+        assert_eq!(parse("[clipboard]\nosc52 = true").0, Osc52Mode::Always);
+        assert_eq!(parse("[clipboard]\nosc52 = false").0, Osc52Mode::Never);
         assert_eq!(
-            parse("[clipboard]\nosc52 = \"auto\"").unwrap(),
-            Osc52Mode::Auto
-        );
-        assert_eq!(
-            parse("[clipboard]\nosc52 = true").unwrap(),
-            Osc52Mode::Always
-        );
-        assert_eq!(
-            parse("[clipboard]\nosc52 = false").unwrap(),
-            Osc52Mode::Never
-        );
-        assert_eq!(
-            parse("[clipboard]\nosc52 = \"Always\"").unwrap(),
+            parse("[clipboard]\nosc52 = \"Always\"").0,
             Osc52Mode::Always,
             "name match is case-insensitive"
         );
+        let (mode, errors) = parse("[clipboard]\nosc52 = \"sometimes\"");
+        assert_eq!(mode, Osc52Mode::Auto);
         assert!(
-            parse("[clipboard]\nosc52 = \"sometimes\"").is_err(),
-            "an unknown mode must be a config error, not a silent default"
+            errors.iter().any(|e| e.starts_with("[clipboard]")),
+            "an unknown mode must be a config error, not a silent default: {errors:?}"
         );
+    }
+
+    #[test]
+    fn empty_text_is_the_default_config_with_no_problems() {
+        let config = Config::parse("").unwrap();
+        assert!(config.errors.is_empty(), "{:?}", config.errors);
+        assert!(config.whitespace.show);
+        assert!(config.colors.is_empty());
+    }
+
+    /// One bad value used to cost the whole file — the user's theme with it.
+    #[test]
+    fn a_bad_section_falls_back_alone_and_is_named() {
+        let config = Config::parse(
+            "[colors]\nbackground = \"#101010\"\n\n[whitespace]\nshow = \"yes\"\n\n[line_numbers]\nrelative = false",
+        )
+        .unwrap();
+        assert_eq!(
+            config.colors.get("background").map(String::as_str),
+            Some("#101010")
+        );
+        assert!(config.whitespace.show, "the bad section keeps its default");
+        assert!(
+            !config.line_numbers.relative,
+            "a good section after it still applies"
+        );
+        assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
+        assert!(
+            config.errors[0].starts_with("[whitespace]"),
+            "{:?}",
+            config.errors
+        );
+    }
+
+    /// Serde drops a key the struct has no field for without failing, so a
+    /// misspelling used to do nothing at all.
+    #[test]
+    fn unknown_keys_and_sections_are_named() {
+        let config = Config::parse(
+            "[lsp]\nsemantic_token = false\ncode_lens = false\n\n[linenumbers]\nrelative = false",
+        )
+        .unwrap();
+        assert!(
+            !config.lsp.code_lens,
+            "the known key beside the typo still applies"
+        );
+        assert!(config.lsp.semantic_tokens);
+        assert_eq!(config.errors.len(), 2, "{:?}", config.errors);
+        assert!(
+            config
+                .errors
+                .iter()
+                .any(|e| e.starts_with("[linenumbers]:")),
+            "{:?}",
+            config.errors
+        );
+        assert!(
+            config
+                .errors
+                .iter()
+                .any(|e| e.starts_with("[lsp] semantic_token:")),
+            "{:?}",
+            config.errors
+        );
+    }
+
+    #[test]
+    fn a_bad_colour_is_skipped_and_the_rest_apply() {
+        let config = Config::parse(
+            "[colors]\nkeyword = \"#12345\"\nstring = \"#a6e3a1\"\ncomment = 3\nerror = \"Red\"",
+        )
+        .unwrap();
+        assert_eq!(config.colors.len(), 2, "{:?}", config.colors);
+        assert!(config.colors.contains_key("string") && config.colors.contains_key("error"));
+        assert_eq!(config.errors.len(), 2, "{:?}", config.errors);
+        assert!(
+            config.errors.iter().all(|e| e.starts_with("[colors] ")),
+            "{:?}",
+            config.errors
+        );
+    }
+
+    #[test]
+    fn a_toml_syntax_error_fails_the_parse() {
+        let err = Config::parse("[hover]\nwrap_code = true\n[colors\nbackground = \"#000000\"")
+            .unwrap_err();
+        assert!(err.starts_with("config.toml line 3, column 8: "), "{err}");
+    }
+
+    /// Keymap errors are counted in the summary but stay in their own list.
+    #[test]
+    fn the_problem_summary_names_the_first_and_counts_the_rest() {
+        let config =
+            Config::parse("[hover]\nwrap = true\n\n[keymaps.normal]\nH = \"<bogus>\"").unwrap();
+        assert_eq!(config.errors.len(), 1, "{:?}", config.errors);
+        assert_eq!(
+            config.keymaps.errors.len(),
+            1,
+            "{:?}",
+            config.keymaps.errors
+        );
+        let summary = config.problem_summary().unwrap();
+        assert!(
+            summary.starts_with("[hover] wrap:") && summary.ends_with("(+1 more)"),
+            "{summary}"
+        );
+        assert_eq!(Config::default().problem_summary(), None);
+    }
+
+    /// The shipped themes are what people copy into their config, so the
+    /// per-entry colour check must accept every one of them.
+    #[test]
+    fn every_shipped_theme_parses_without_problems() {
+        let themes = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
+        let mut checked = 0;
+        for entry in std::fs::read_dir(themes).unwrap() {
+            let path = entry.unwrap().path().join("theme.toml");
+            let config = Config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert!(
+                config.errors.is_empty(),
+                "{}: {:?}",
+                path.display(),
+                config.errors
+            );
+            checked += 1;
+        }
+        assert!(checked > 0);
     }
 
     /// Regression: tsserver tags nearly every DOM symbol with the
