@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.3]
+
 ### Added
 - **`:config` opens `config.toml`, and saving it applies it.** No restart:
   `:w` on the file reloads colours, whitespace markers, keymaps and every other
