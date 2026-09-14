@@ -436,8 +436,10 @@ impl super::App {
     /// (formatter, `.editorconfig`, undo persistence). Only the active buffer
     /// can be saved, so each one is switched to and back; the alternate file,
     /// tab set and active tab are put back afterwards so writing leaves no
-    /// trace in navigation. Returns how many buffers were written.
-    pub(super) fn save_all(&mut self) -> Result<usize> {
+    /// trace in navigation. Returns how many buffers were written, and
+    /// `config.toml`'s save note when it was one of them — its reload outcome
+    /// (a syntax error kept out, say) is the one note worth surfacing.
+    pub(super) fn save_all(&mut self) -> Result<(usize, Option<String>)> {
         let dirty: Vec<usize> = (0..self.buffers.len())
             .filter(|&i| {
                 if i == self.active {
@@ -448,16 +450,22 @@ impl super::App {
             })
             .collect();
         if dirty.is_empty() {
-            return Ok(0);
+            return Ok((0, None));
         }
         let home = self.active;
         let alternate = self.alternate_path.clone();
         let tabs = self.tabs.clone();
         let active_tab = self.active_tab;
+        let mut config_note = None;
         let written = dirty.iter().try_for_each(|&idx| {
             self.switch_to(idx)?;
             self.refresh_editorconfig();
-            self.save_active().map(|_| ())
+            let is_config = self.active_is_config();
+            let note = self.save_active()?;
+            if is_config {
+                config_note = note;
+            }
+            Ok::<(), anyhow::Error>(())
         });
         let back = self.switch_to(home);
         self.refresh_editorconfig();
@@ -466,7 +474,7 @@ impl super::App {
         self.active_tab = active_tab;
         written?;
         back?;
-        Ok(dirty.len())
+        Ok((dirty.len(), config_note))
     }
 
     /// Record the outgoing buffer as the alternate. An unnamed buffer has

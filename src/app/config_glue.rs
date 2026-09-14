@@ -17,8 +17,13 @@ impl super::App {
                 return;
             }
         }
-        if let Err(e) = self.open_buffer(path) {
-            self.status_msg = format!("error: {e}");
+        let exists = path.exists();
+        match self.open_buffer(path) {
+            Err(e) => self.status_msg = format!("error: {e}"),
+            Ok(()) if !exists => {
+                self.status_msg = "new config.toml — :config default lists every setting".into()
+            }
+            Ok(()) => {}
         }
     }
 
@@ -53,8 +58,16 @@ impl super::App {
 
     /// Re-read `config.toml` and apply it. Returns the message to show.
     pub(super) fn reload_config(&mut self) -> String {
-        let text = crate::config::config_path().and_then(|p| std::fs::read_to_string(p).ok());
-        self.apply_config_text(text.as_deref())
+        let Some(path) = crate::config::config_path() else {
+            return self.apply_config_text(None);
+        };
+        match std::fs::read_to_string(&path) {
+            Ok(text) => self.apply_config_text(Some(&text)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => self.apply_config_text(None),
+            // Only a file that's gone means the defaults; one that can't be
+            // read keeps the running config, as a syntax error does.
+            Err(e) => format!("config.toml: {e} — config not reloaded"),
+        }
     }
 
     /// Apply config text, `None` meaning there's no file. Returns the message
@@ -71,6 +84,14 @@ impl super::App {
         // on, so the flag on the manager only changes at startup.
         let copilot_changed = config.copilot.enabled != self.lsp.copilot_enabled;
         self.config = config;
+        // What `:set` chose is the session's, and outlasts a reload of a file
+        // that may not even mention it.
+        if let Some(on) = self.options.relativenumber {
+            self.config.line_numbers.relative = on;
+        }
+        if let Some(on) = self.options.list {
+            self.config.whitespace.show = on;
+        }
         self.recolour_highlights();
         let mut message = match self.config.problem_summary() {
             Some(summary) => format!("config reloaded — {summary}"),
@@ -120,6 +141,18 @@ mod tests {
         let message = app.apply_config_text(Some("[whitespace]\nshow = false"));
         assert_eq!(message, "config reloaded");
         assert!(!app.config.whitespace.show);
+    }
+
+    #[test]
+    fn set_options_outlast_a_reload() {
+        let mut app = app();
+        app.exec_command("set norelativenumber");
+        app.apply_config_text(Some("[colors]\nkeyword = \"#123456\""));
+        assert!(!app.config.line_numbers.relative);
+        assert!(
+            app.config.whitespace.show,
+            "an option never :set follows the file"
+        );
     }
 
     #[test]

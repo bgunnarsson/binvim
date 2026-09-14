@@ -6014,7 +6014,13 @@ fn draw_line_with_selection(
     let mut sem_col_color: Vec<Option<Color>> = vec![None; chars.len()];
     if !dim {
         if let Some(path) = bs.buffer.path.as_ref() {
-            if let Some(cache) = app.semantic_tokens.get(path) {
+            // Gated on the setting as well as the request, so turning it
+            // off with a config reload clears tokens already cached.
+            if let Some(cache) = app
+                .semantic_tokens
+                .get(path)
+                .filter(|_| app.config.lsp.semantic_tokens)
+            {
                 if cache.buffer_version == bs.buffer.version {
                     if let Some(row_tokens) = cache.by_line.get(line_idx) {
                         for tok in row_tokens {

@@ -102,9 +102,9 @@ pub struct Keymaps {
     /// before the held keys run as typed.
     pub timeout: Duration,
     /// Entries that didn't parse, one line each. They're skipped rather than
-    /// failing the load: `Config::load` falls back to the default config on
-    /// any deserialize error, so one typo'd mapping would take the user's
-    /// colours and every other setting down with it.
+    /// failing the section: `Config::parse` falls a section that doesn't
+    /// deserialize back to its defaults whole, so one typo'd mapping would
+    /// take every other mapping down with it.
     pub errors: Vec<String>,
 }
 

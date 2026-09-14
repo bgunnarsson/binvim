@@ -2606,35 +2606,12 @@ impl super::App {
             cmd => cmd,
         };
         match cmd {
-            ExCommand::Write => match self.save_active() {
-                Ok(format_note) => {
-                    // Show the basename only — full paths blow up the
-                    // notification box for deep working trees. Disambiguating
-                    // between two `index.ts` files isn't this message's job;
-                    // the tab bar already carries that signal.
-                    let name = self
-                        .buffer
-                        .path
-                        .as_ref()
-                        .and_then(|p| p.file_name())
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "[No Name]".into());
-                    let lines = self.buffer.line_count();
-                    self.status_msg = match format_note {
-                        Some(note) => format!("\"{name}\" {lines}L written ({note})"),
-                        None => format!("\"{name}\" {lines}L written"),
-                    };
-                }
-                Err(e) => self.status_msg = format!("error: {e}"),
-            },
+            ExCommand::Write => self.write_and_report(),
             ExCommand::WriteAs(p) => {
                 let path = PathBuf::from(p);
                 self.buffer.path = Some(std::path::absolute(&path).unwrap_or(path));
                 self.refresh_editorconfig();
-                if let Err(e) = self.save_active() {
-                    self.status_msg = format!("error: {e}");
-                }
+                self.write_and_report();
             }
             ExCommand::Quit => {
                 if self.show_health_page {
@@ -2677,9 +2654,13 @@ impl super::App {
                 }
             }
             ExCommand::WriteAll => match self.save_all() {
-                Ok(0) => self.status_msg = "No buffers were modified".into(),
-                Ok(n) => {
-                    self.status_msg = format!("{n} buffer{} written", if n == 1 { "" } else { "s" })
+                Ok((0, _)) => self.status_msg = "No buffers were modified".into(),
+                Ok((n, config_note)) => {
+                    let plural = if n == 1 { "" } else { "s" };
+                    self.status_msg = match config_note {
+                        Some(note) => format!("{n} buffer{plural} written ({note})"),
+                        None => format!("{n} buffer{plural} written"),
+                    };
                 }
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
@@ -3478,6 +3459,33 @@ impl super::App {
         }
     }
 
+    /// `:w` and `:w {file}`: write, then say so with whatever the save
+    /// noted — the formatter, or a reload when the file is `config.toml`.
+    fn write_and_report(&mut self) {
+        match self.save_active() {
+            Ok(format_note) => {
+                // Show the basename only — full paths blow up the
+                // notification box for deep working trees. Disambiguating
+                // between two `index.ts` files isn't this message's job;
+                // the tab bar already carries that signal.
+                let name = self
+                    .buffer
+                    .path
+                    .as_ref()
+                    .and_then(|p| p.file_name())
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "[No Name]".into());
+                let lines = self.buffer.line_count();
+                self.status_msg = match format_note {
+                    Some(note) => format!("\"{name}\" {lines}L written ({note})"),
+                    None => format!("\"{name}\" {lines}L written"),
+                };
+            }
+            Err(e) => self.status_msg = format!("error: {e}"),
+        }
+    }
+
     fn set_flag(&mut self, name: &str, on: bool) {
         match name {
             "ignorecase" => self.options.ignorecase = on,
@@ -3489,8 +3497,14 @@ impl super::App {
                 self.search_hl_off = false;
             }
             "incsearch" => self.options.incsearch = on,
-            "relativenumber" => self.config.line_numbers.relative = on,
-            "list" => self.config.whitespace.show = on,
+            "relativenumber" => {
+                self.options.relativenumber = Some(on);
+                self.config.line_numbers.relative = on;
+            }
+            "list" => {
+                self.options.list = Some(on);
+                self.config.whitespace.show = on;
+            }
             "expandtab" => {
                 self.options.expandtab = Some(on);
                 self.refresh_editorconfig();

@@ -1375,6 +1375,11 @@ impl super::App {
         path: &std::path::Path,
         line: usize,
     ) -> Vec<(usize, usize)> {
+        // Checked here as well as before the request, so turning it off with
+        // a config reload clears a highlight already cached.
+        if !self.config.lsp.document_highlight {
+            return Vec::new();
+        }
         let active_path = match self.buffer.path.as_deref() {
             Some(p) => p,
             None => return Vec::new(),

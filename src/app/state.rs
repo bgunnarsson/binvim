@@ -226,7 +226,8 @@ pub struct HistoryWindow {
 /// `:set`'s own options (D4), for the session only. The rest of D4 lives
 /// where it's read: `relativenumber` / `list` in the config, and the indent
 /// options on the editorconfig, which `expandtab` / `shiftwidth` / `tabstop`
-/// here are laid over.
+/// here are laid over. `relativenumber` / `list` are kept here too, so a
+/// config reload can lay them back over the file it read.
 #[derive(Debug, Clone)]
 pub struct SessionOptions {
     /// The search already folds case unless a pattern has a capital — both
@@ -241,6 +242,8 @@ pub struct SessionOptions {
     pub expandtab: Option<bool>,
     pub shiftwidth: Option<usize>,
     pub tabstop: Option<usize>,
+    pub relativenumber: Option<bool>,
+    pub list: Option<bool>,
 }
 
 impl Default for SessionOptions {
@@ -255,6 +258,8 @@ impl Default for SessionOptions {
             expandtab: None,
             shiftwidth: None,
             tabstop: None,
+            relativenumber: None,
+            list: None,
         }
     }
 }
