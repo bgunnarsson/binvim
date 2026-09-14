@@ -77,3 +77,4 @@ tokens stay on screen was established from the render path (`render.rs`, the
   `apply_config_text`. Otherwise the next reload silently undoes it.
 - **Plan claims about stored state.** A plan statement about what a cache or struct stores must
   name the field and its type as read in the source, not repeat a research agent's summary.
+- Enforced by: CLAUDE.md (Conventions to preserve) as a written rule; review holds diffs to it.
