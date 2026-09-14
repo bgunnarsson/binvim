@@ -4259,6 +4259,16 @@ fn build_health_rows(
         .map(|(mode, n)| format!("{mode} {n}"))
         .collect::<Vec<_>>()
         .join(" · ");
+    let mut config_parts = vec![
+        ("config  ".into(), p.subtext1),
+        (cfg_path_disp, p.text),
+        ("  ".into(), p.subtext1),
+        (cfg_status_label.into(), cfg_status_colour),
+    ];
+    if !snap.config_errors.is_empty() {
+        config_parts.push(("  ".into(), p.subtext1));
+        config_parts.push((format!("[{} problems]", snap.config_errors.len()), p.yellow));
+    }
     let mut keymap_parts = vec![("keymaps ".into(), p.subtext1), (keymap_counts, p.text)];
     if !snap.keymaps.skipped.is_empty() {
         keymap_parts.push(("  ".into(), p.subtext1));
@@ -4272,19 +4282,20 @@ fn build_health_rows(
             parts: vec![("cwd     ".into(), p.subtext1), (cwd_disp, p.text)],
         },
         SectionLine::Custom {
-            parts: vec![
-                ("config  ".into(), p.subtext1),
-                (cfg_path_disp, p.text),
-                ("  ".into(), p.subtext1),
-                (cfg_status_label.into(), cfg_status_colour),
-            ],
-        },
-        SectionLine::Custom {
-            parts: keymap_parts,
+            parts: config_parts,
         },
     ];
-    // Every skipped entry, not just the first — the startup notice only
-    // had room for one, and it has long since timed out.
+    // Every problem and skipped entry, not just the first — the startup
+    // notice only had room for one, and it has long since timed out. Each
+    // list sits under the row it belongs to.
+    for entry in &snap.config_errors {
+        env_lines.push(SectionLine::Custom {
+            parts: vec![("        ".into(), p.subtext1), (entry.clone(), p.yellow)],
+        });
+    }
+    env_lines.push(SectionLine::Custom {
+        parts: keymap_parts,
+    });
     for entry in &snap.keymaps.skipped {
         env_lines.push(SectionLine::Custom {
             parts: vec![("        ".into(), p.subtext1), (entry.clone(), p.yellow)],

@@ -96,7 +96,7 @@ durable `:health` listing for all of them.
   Deviation: added `every_shipped_theme_parses_without_problems`, since the new per-entry colour
   check could have rejected keys the `themes/` files ship; section errors name the key and a
   syntax error gives `line N, column M`, both recovered from toml's Display/span.
-- [ ] **`:health` lists config problems.** Add `config_errors: Vec<String>` to `HealthSnapshot`
+- [x] **`:health` lists config problems.** Add `config_errors: Vec<String>` to `HealthSnapshot`
   (filled in `build_health_snapshot`), and in `render.rs`'s ENVIRONMENT box add a yellow
   `[N problems]` tag to the config row plus one indented line per problem, mirroring the
   keymaps `skipped` rows. Verify manually: `XDG_CONFIG_HOME=<scratch> cargo run` with a broken

@@ -24,6 +24,8 @@ pub struct HealthSnapshot {
     pub cwd: String,
     pub config_path: String,
     pub config_loaded: bool,
+    /// `config.errors` — the startup notice names only the first.
+    pub config_errors: Vec<String>,
     pub keymaps: HealthKeymaps,
     pub cpu: Option<f64>,
     pub ram_pct: Option<f64>,
@@ -358,6 +360,7 @@ impl super::App {
             cwd,
             config_path,
             config_loaded,
+            config_errors: self.config.errors.clone(),
             keymaps,
             cpu,
             ram_pct,
