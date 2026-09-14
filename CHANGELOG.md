@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.3]
+## [0.6.3] - 2026-09-14
 
 ### Added
 - **`:config` opens `config.toml`, and saving it applies it.** No restart:
