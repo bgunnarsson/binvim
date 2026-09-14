@@ -129,10 +129,7 @@ impl super::App {
 #[cfg(test)]
 mod tests {
     fn app() -> crate::app::App {
-        let mut app = crate::app::App::new(None).expect("App::new");
-        app.config = crate::config::Config::default();
-        app.lsp.copilot_enabled = false;
-        app
+        crate::app::App::new(None).expect("App::new")
     }
 
     #[test]

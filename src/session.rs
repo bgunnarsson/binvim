@@ -153,6 +153,12 @@ impl SessionKey {
 /// `<cache>/binvim/sessions/<hash>.json` for the given cwd. Returns `None`
 /// if the cache dir can't be resolved.
 pub fn session_path(cwd: &Path) -> Option<PathBuf> {
+    // Tests build their editor through `App::new(None)`, which would restore
+    // the session a real run left for this checkout — and a restored buffer
+    // made the fold tests fail for as long as that file existed.
+    if cfg!(test) {
+        return None;
+    }
     let canon = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let key = hash_path(&canon);
     let mut p = crate::paths::cache_dir()?;

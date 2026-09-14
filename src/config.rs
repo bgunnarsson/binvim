@@ -943,6 +943,11 @@ impl Config {
 }
 
 pub fn config_path() -> Option<PathBuf> {
+    // `App::new` loads this, so a test would otherwise run on the host's
+    // settings instead of the defaults it asserts against.
+    if cfg!(test) {
+        return None;
+    }
     crate::paths::config_dir().map(|d| d.join("config.toml"))
 }
 

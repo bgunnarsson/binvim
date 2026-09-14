@@ -1136,6 +1136,11 @@ fn file_at(line: &str, col: usize) -> Option<(String, Option<usize>)> {
 }
 
 fn recents_path() -> Option<PathBuf> {
+    // Opening a buffer saves the list, so tests that open temp files would
+    // otherwise write them into the host's recents.
+    if cfg!(test) {
+        return None;
+    }
     crate::paths::cache_dir().map(|d| d.join("recents"))
 }
 
