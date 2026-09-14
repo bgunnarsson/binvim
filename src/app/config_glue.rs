@@ -22,6 +22,17 @@ impl super::App {
         }
     }
 
+    /// Every setting at its default, in a scratch buffer to copy from.
+    pub(super) fn config_show_defaults(&mut self) {
+        if let Err(e) = self.open_empty_buffer() {
+            self.status_msg = format!("error: {e}");
+            return;
+        }
+        self.buffer.insert_str(0, 0, crate::config::DEFAULT_CONFIG);
+        self.buffer.dirty = false;
+        self.buffer.display_name = Some("[config defaults]".into());
+    }
+
     /// Whether the active buffer is `config.toml`. Compared through symlinks,
     /// since a dotfiles setup usually links the file in from a repo and the
     /// buffer may have been opened from either end.

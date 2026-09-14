@@ -121,7 +121,7 @@ durable `:health` listing for all of them.
   a symlinked dotfile still reloads. `ConfigSubCmd::Default` lands with task 4 rather than as a
   stub here. Checked in tmux against the release build: `:config`, then `:w` after an edit,
   applies `[whitespace] show` live and names the remaining problems.
-- [ ] **`:config default`.** Write `src/default_config.toml`: every section and key at its
+- [x] **`:config default`.** Write `src/default_config.toml`: every section and key at its
   default value, commented out, each with a one-line why taken from the struct's doc comment;
   `[colors]` lists the chrome palette keys commented. Expose it as
   `pub const DEFAULT_CONFIG: &str = include_str!("default_config.toml")`. `Default` opens an

@@ -1,0 +1,87 @@
+# binvim's defaults, every setting commented out at the value binvim uses when
+# it's absent. Copy what you want to change into ~/.config/binvim/config.toml
+# (`:config` opens it) and uncomment it there; saving that file applies it.
+
+# schema_version = 1
+
+[colors]
+# Hex (#rrggbb) or a named colour (Red, DarkGrey, Reset, ...). Unset keys use
+# the built-in Catppuccin Mocha palette; set only `background` and the chrome
+# neutrals are derived from it. Tree-sitter and LSP capture names (keyword,
+# string, "keyword.return", ...) colour syntax, and a dotted name falls back
+# to its prefix. Mode chips take "mode.normal", "mode.insert" and so on. See
+# themes/ in the repository for complete palettes.
+#
+# Buffer body; unset, the buffer inherits the terminal's background.
+# background = "#1e1e2e"
+# Tabs, popups, status segments and side panes.
+# chrome_bg = "#181825"
+# foreground = "#cdd6f4"
+# dim = "#6c7086"
+# emphasis = "#b4befe"
+# surface = "#45475a"
+# border = "#585b70"
+# accent = "#fab387"
+# accent_secondary = "#a6e3a1"
+# chip_fg = "#1e1e2e"
+# error = "#f38ba8"
+# warning = "#f9e2af"
+# info = "#89b4fa"
+# hint = "#89dceb"
+
+[start_page]
+# Lines drawn in place of the binvim logo, each centred; empty keeps the logo.
+# lines = []
+
+[whitespace]
+# Markers for tabs and trailing whitespace.
+# show = true
+
+[line_numbers]
+# The cursor row shows its line number and every other row its distance from
+# the cursor, for count-prefixed motions like 5j.
+# relative = true
+
+[hover]
+# Wrap long code lines in the hover popup instead of clipping a signature at
+# its right edge.
+# wrap_code = true
+
+[copilot]
+# Attach copilot-language-server to every buffer. Read at startup only.
+# enabled = false
+
+[lsp]
+# Semantic tokens layered over tree-sitter highlighting.
+# semantic_tokens = true
+# Shade every occurrence of the symbol under the cursor.
+# document_highlight = true
+# The run/debug row above tests, from the server and binvim's own lenses.
+# code_lens = true
+# Preview code-action edits in the rename overlay before applying them.
+# preview_workspace_edits = false
+
+[file_explorer]
+# <leader>e shells out to yazi instead of opening the built-in tree.
+# yazi = false
+
+[install]
+# Offer to install a language's LSP and formatter when a file needs them.
+# prompt_on_open = true
+
+[update]
+# Ask crates.io once a day whether a newer binvim is out.
+# check = true
+
+[clipboard]
+# Also emit OSC 52 so a yank reaches the local clipboard: "auto" does it over
+# SSH only, true always, false never.
+# osc52 = "auto"
+
+[keymaps]
+# Milliseconds a mapped key waits for the rest of a longer mapping.
+# timeout = 1000
+#
+# Mappings go in [keymaps.normal], [keymaps.visual], [keymaps.insert] and
+# [keymaps.command], each a key in Vim notation mapped to the keys it types:
+# for example H = "^", or "<leader>w" = { keys = ":w<CR>", desc = "Save" }.

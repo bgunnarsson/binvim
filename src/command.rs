@@ -274,7 +274,8 @@ pub enum ExCommand {
     /// reports current sign-in state; subcommands drive the auth
     /// flow without restarting the editor.
     Copilot(CopilotSubCmd),
-    /// `:config` opens `config.toml`; `:config reload` re-reads it.
+    /// `:config` opens `config.toml`; `:config reload` re-reads it;
+    /// `:config default` shows every setting at its default.
     Config(ConfigSubCmd),
     /// `:test` (picker) / `:testnearest` / `:testfile` / `:testlast`
     /// / `:testcancel` / `:testresults`. Dispatched into
@@ -382,6 +383,8 @@ pub enum CopilotSubCmd {
 pub enum ConfigSubCmd {
     Open,
     Reload,
+    /// `:config default` — the annotated defaults in a scratch buffer.
+    Default,
 }
 
 /// Quickfix sub-commands. Grouped so the dispatch arm stays tight.
@@ -902,6 +905,7 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "config" => match rest.trim() {
             "" => ExCommand::Config(ConfigSubCmd::Open),
             "reload" => ExCommand::Config(ConfigSubCmd::Reload),
+            "default" | "defaults" => ExCommand::Config(ConfigSubCmd::Default),
             _ => ExCommand::Unknown(line.to_string()),
         },
         "spell" | "spelltoggle" => ExCommand::SpellToggle,
@@ -1591,7 +1595,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_opens_bare_and_reloads_by_name() {
+    fn config_opens_bare_and_takes_reload_and_default() {
         assert!(matches!(
             parse("config"),
             ExCommand::Config(ConfigSubCmd::Open)
@@ -1599,6 +1603,10 @@ mod tests {
         assert!(matches!(
             parse("config reload"),
             ExCommand::Config(ConfigSubCmd::Reload)
+        ));
+        assert!(matches!(
+            parse("config default"),
+            ExCommand::Config(ConfigSubCmd::Default)
         ));
         assert!(matches!(parse("config bogus"), ExCommand::Unknown(_)));
     }

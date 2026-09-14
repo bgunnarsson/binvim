@@ -26,6 +26,10 @@ pub struct Config {
     pub errors: Vec<String>,
 }
 
+/// Every setting at its default, commented out — what `:config default` shows.
+/// Tests hold it to `Config::default()` and to every section's fields.
+pub const DEFAULT_CONFIG: &str = include_str!("default_config.toml");
+
 /// Every top-level table `Config::parse` accepts, for the message that names
 /// an unknown one.
 const SECTIONS: &[&str] = &[
@@ -1442,6 +1446,98 @@ mod tests {
             "{summary}"
         );
         assert_eq!(Config::default().problem_summary(), None);
+    }
+
+    /// `DEFAULT_CONFIG` with every `# key = value` line uncommented.
+    fn default_config_uncommented() -> String {
+        DEFAULT_CONFIG
+            .lines()
+            .map(|line| match line.strip_prefix("# ") {
+                Some(rest)
+                    if rest
+                        .split_once(" = ")
+                        .is_some_and(|(key, _)| is_toml_key(key)) =>
+                {
+                    rest
+                }
+                _ => line,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn is_toml_key(key: &str) -> bool {
+        let bare = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let quoted = key.len() > 2 && key.starts_with('"') && key.ends_with('"');
+        bare || quoted
+    }
+
+    /// The file `:config default` shows must be binvim's real defaults, or
+    /// copying a line out of it changes a setting.
+    #[test]
+    fn the_default_config_file_holds_the_defaults() {
+        let as_shipped = Config::parse(DEFAULT_CONFIG).unwrap();
+        assert!(as_shipped.errors.is_empty(), "{:?}", as_shipped.errors);
+        let mut uncommented = Config::parse(&default_config_uncommented()).unwrap();
+        assert!(uncommented.errors.is_empty(), "{:?}", uncommented.errors);
+        assert!(
+            uncommented.keymaps.errors.is_empty(),
+            "{:?}",
+            uncommented.keymaps.errors
+        );
+        assert!(
+            !uncommented.colors.is_empty(),
+            "the colour keys are uncommented too"
+        );
+        // The listed colours are the palette the defaults resolve to, but the
+        // default config sets none of them.
+        uncommented.colors.clear();
+        assert_eq!(
+            format!("{uncommented:?}"),
+            format!("{:?}", Config::default())
+        );
+    }
+
+    /// A setting added to a section struct has to be documented in
+    /// `DEFAULT_CONFIG` too.
+    #[test]
+    fn the_default_config_file_lists_every_setting() {
+        let table: toml::Table = toml::from_str(&default_config_uncommented()).unwrap();
+        for section in SECTIONS {
+            assert!(
+                table.contains_key(*section),
+                "[{section}] missing from DEFAULT_CONFIG"
+            );
+        }
+        let fields = [
+            ("start_page", struct_fields::<StartPageConfig>()),
+            ("whitespace", struct_fields::<WhitespaceConfig>()),
+            ("line_numbers", struct_fields::<LineNumberConfig>()),
+            ("hover", struct_fields::<HoverConfig>()),
+            ("copilot", struct_fields::<CopilotConfig>()),
+            ("lsp", struct_fields::<LspConfig>()),
+            ("file_explorer", struct_fields::<FileExplorerConfig>()),
+            ("install", struct_fields::<InstallConfig>()),
+            ("update", struct_fields::<UpdateConfig>()),
+            ("clipboard", struct_fields::<ClipboardConfig>()),
+            // `Keymaps` deserializes by hand, so its one setting is named here.
+            ("keymaps", &["timeout"]),
+        ];
+        assert_eq!(
+            fields.len(),
+            SECTIONS.len() - 1,
+            "every section but [colors] is checked"
+        );
+        for (section, names) in fields {
+            assert!(!names.is_empty(), "[{section}] has no fields to check");
+            let keys = table[section].as_table().unwrap();
+            for name in names {
+                assert!(
+                    keys.contains_key(*name),
+                    "[{section}] {name} missing from DEFAULT_CONFIG"
+                );
+            }
+        }
     }
 
     /// The shipped themes are what people copy into their config, so the

@@ -2977,6 +2977,7 @@ impl super::App {
                 match sub {
                     ConfigSubCmd::Open => self.config_open(),
                     ConfigSubCmd::Reload => self.status_msg = self.reload_config(),
+                    ConfigSubCmd::Default => self.config_show_defaults(),
                 }
             }
             ExCommand::Quickfix(sub) => {
