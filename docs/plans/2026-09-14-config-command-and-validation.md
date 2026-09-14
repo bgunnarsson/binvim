@@ -130,7 +130,7 @@ durable `:health` listing for all of them.
   with `config::tests`: the file with every `# key = value` line uncommented parses with no
   errors and equals `Config::default()` section by section; every field of every section struct
   (from the field-capture helper) appears in it. `cargo test config::tests`.
-- [ ] **Docs.** README `## Configuration`: a short paragraph on `:config`, `:config reload`,
+- [x] **Docs.** README `## Configuration`: a short paragraph on `:config`, `:config reload`,
   reload on `:w`, `:config default`, how problems are reported, and that `[copilot] enabled`
   needs a restart; add `:config` to wherever README lists ex commands. CHANGELOG `[Unreleased]`
   gets an `Added` entry for `:config` and a `Fixed`/`Changed` entry for the no-longer-silent

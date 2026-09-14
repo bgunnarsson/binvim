@@ -6,6 +6,25 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`:config` opens `config.toml`, and saving it applies it.** No restart:
+  `:w` on the file reloads colours, whitespace markers, keymaps and every other
+  setting, and says so in the write message. `:config reload` picks up an edit
+  made outside binvim, and `:config default` opens a scratch buffer listing
+  every setting at its default, commented. `[copilot] enabled` still needs a
+  restart, and the reload says that too. `:config` creates
+  `~/.config/binvim/` when it doesn't exist yet.
+
+### Fixed
+- **A mistake in `config.toml` no longer throws the whole file away.** One
+  wrong value — `show = "yes"`, say — used to load the defaults for
+  everything, theme included, without a word, and a misspelled setting or
+  section was ignored just as quietly. Now a bad value costs only its section,
+  a colour that doesn't parse only its entry, and unknown settings and
+  sections are named. The first problem shows in the status line at startup
+  and `:health` lists them all. A file that isn't valid TOML reports its line
+  and column; on a reload it keeps the config that's running.
+
 ## [0.6.2] - 2026-09-12
 
 ### Fixed
