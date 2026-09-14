@@ -51,6 +51,7 @@ const COMMAND_NAMES: &[&str] = &[
     "codelens",
     "codelenses",
     "codex",
+    "config",
     "copilot",
     "cp",
     "cprev",

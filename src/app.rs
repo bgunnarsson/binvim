@@ -25,6 +25,7 @@ mod buffers;
 mod cmdline_complete;
 mod cmdline_history;
 mod comment;
+mod config_glue;
 mod copilot;
 mod dap_glue;
 mod dispatch;

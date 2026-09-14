@@ -938,7 +938,7 @@ impl Config {
     }
 }
 
-fn config_path() -> Option<PathBuf> {
+pub fn config_path() -> Option<PathBuf> {
     crate::paths::config_dir().map(|d| d.join("config.toml"))
 }
 

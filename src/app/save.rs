@@ -86,6 +86,13 @@ impl super::App {
                 let _ = self.history.save_to_path(&cache, hash);
             }
         }
+        if self.active_is_config() {
+            let reload = self.reload_config();
+            format_note = Some(match format_note {
+                Some(note) => format!("{note}, {reload}"),
+                None => reload,
+            });
+        }
         Ok(format_note)
     }
 

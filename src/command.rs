@@ -274,6 +274,8 @@ pub enum ExCommand {
     /// reports current sign-in state; subcommands drive the auth
     /// flow without restarting the editor.
     Copilot(CopilotSubCmd),
+    /// `:config` opens `config.toml`; `:config reload` re-reads it.
+    Config(ConfigSubCmd),
     /// `:test` (picker) / `:testnearest` / `:testfile` / `:testlast`
     /// / `:testcancel` / `:testresults`. Dispatched into
     /// `app/test_glue.rs`.
@@ -372,6 +374,13 @@ pub enum CopilotSubCmd {
     SignOut,
     /// `:copilot reload` — re-fire `checkStatus`. Used to pick up
     /// "I just finished signing in" without waiting for the 3s poll.
+    Reload,
+}
+
+/// Sub-commands under `:config`. Bare `:config` opens the file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigSubCmd {
+    Open,
     Reload,
 }
 
@@ -890,6 +899,11 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
             };
             ExCommand::Copilot(sub)
         }
+        "config" => match rest.trim() {
+            "" => ExCommand::Config(ConfigSubCmd::Open),
+            "reload" => ExCommand::Config(ConfigSubCmd::Reload),
+            _ => ExCommand::Unknown(line.to_string()),
+        },
         "spell" | "spelltoggle" => ExCommand::SpellToggle,
         "debugtest" | "dt" | "dapdt" => ExCommand::DebugTestNearest,
         "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
@@ -1575,6 +1589,19 @@ fn parse_sub_flags(text: &str) -> Result<SubFlags, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn config_opens_bare_and_reloads_by_name() {
+        assert!(matches!(
+            parse("config"),
+            ExCommand::Config(ConfigSubCmd::Open)
+        ));
+        assert!(matches!(
+            parse("config reload"),
+            ExCommand::Config(ConfigSubCmd::Reload)
+        ));
+        assert!(matches!(parse("config bogus"), ExCommand::Unknown(_)));
+    }
 
     #[test]
     fn substitute_splits_at_its_delimiter_and_reads_the_flags() {

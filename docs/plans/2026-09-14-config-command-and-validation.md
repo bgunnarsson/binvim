@@ -101,7 +101,7 @@ durable `:health` listing for all of them.
   `[N problems]` tag to the config row plus one indented line per problem, mirroring the
   keymaps `skipped` rows. Verify manually: `XDG_CONFIG_HOME=<scratch> cargo run` with a broken
   config, then `:health`.
-- [ ] **`:config` and reload.** Add `ExCommand::Config(ConfigSubCmd { Open, Reload, Default })`
+- [x] **`:config` and reload.** Add `ExCommand::Config(ConfigSubCmd { Open, Reload, Default })`
   parsed like `:copilot` (`src/command.rs:883`; bare `:config` → `Open`, unknown sub → `Unknown`),
   dispatched from `src/app/input.rs` next to `ExCommand::Copilot`, implemented in a new
   `src/app/config_glue.rs` (`pub(super)` methods; register in `src/app.rs`). Make `config_path`
@@ -114,6 +114,13 @@ durable `:health` listing for all of them.
   rejects `:config bogus`; `config_glue.rs` tests on `apply_config_text` — a good text swaps and
   reports "config reloaded", a syntax error keeps the previous colours, a copilot change reports
   a restart. `cargo test command::tests app::config_glue::tests`.
+  Deviation: the highlight cache holds colours already resolved against `[colors]`
+  (`HighlightCache.byte_colors`), not capture names as planned, so a reload clears the active
+  cache and rebuilds stashed ones (`recolour_highlights`), covered by
+  `a_reload_recolours_the_active_buffer`. The config path is compared through `canonicalize` so
+  a symlinked dotfile still reloads. `ConfigSubCmd::Default` lands with task 4 rather than as a
+  stub here. Checked in tmux against the release build: `:config`, then `:w` after an edit,
+  applies `[whitespace] show` live and names the remaining problems.
 - [ ] **`:config default`.** Write `src/default_config.toml`: every section and key at its
   default value, commented out, each with a one-line why taken from the struct's doc comment;
   `[colors]` lists the chrome palette keys commented. Expose it as

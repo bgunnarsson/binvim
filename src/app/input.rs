@@ -2972,6 +2972,13 @@ impl super::App {
                     CopilotSubCmd::Reload => self.copilot_reload(),
                 }
             }
+            ExCommand::Config(sub) => {
+                use crate::command::ConfigSubCmd;
+                match sub {
+                    ConfigSubCmd::Open => self.config_open(),
+                    ConfigSubCmd::Reload => self.status_msg = self.reload_config(),
+                }
+            }
             ExCommand::Quickfix(sub) => {
                 use crate::command::QuickfixSubCmd;
                 match sub {
