@@ -1,7 +1,7 @@
 ---
 title: A bad config.toml is reported, not silently dropped, and :config opens, reloads and documents it
 date: 2026-09-14
-status: in-progress
+status: done
 ---
 
 ## Context
