@@ -1088,15 +1088,12 @@ fn handle_response(
             path,
             buffer_version,
         } => {
-            let tokens = match legend {
-                Some(l) => super::parse::parse_semantic_tokens_response(result, l),
-                // Server returned tokens but we never captured a legend
-                // — shouldn't happen because `request_semantic_tokens_full`
-                // gates on the legend being present. Drop the reply
-                // silently rather than emitting an event with empty
-                // tokens that would clobber a valid cache.
-                None => return None,
-            };
+            // Server returned tokens but we never captured a legend —
+            // shouldn't happen because `request_semantic_tokens_full` gates
+            // on the legend being present. Drop the reply silently rather
+            // than emitting an event with empty tokens that would clobber a
+            // valid cache.
+            let tokens = super::parse::parse_semantic_tokens_response(result, legend?);
             Some(LspEvent::SemanticTokens {
                 path,
                 buffer_version,

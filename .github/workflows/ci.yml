@@ -63,15 +63,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # Pinned, unlike the other jobs: with warnings denied, a floating
+      # `stable` would fail main the day a release adds a lint the code
+      # trips. New lints arrive by bumping this, locally first.
       - name: install rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.0
           components: clippy
 
       - name: cache cargo registry & target
         uses: Swatinem/rust-cache@v2
         with:
-          key: ci-clippy-${{ matrix.os }}
+          key: ci-clippy-1.98.0-${{ matrix.os }}
 
       # Any warning fails the job — clippy lints and rustc's own (dead code,
       # unused imports) alike. Running on all three OSes catches warnings in

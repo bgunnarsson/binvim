@@ -613,6 +613,7 @@ const CSS_QUERY_OVERRIDE: &str = r#"
 /// adds on top of CSS's `/* … */` only model. Mixin / include /
 /// function names ride the `@function` capture (Blue) to match the
 /// way CSS function calls (`rgb(`, `calc(`) already render.
+#[cfg(not(target_env = "msvc"))]
 const SCSS_QUERY_OVERLAY: &str = r##"
 ; `//` line comments — SCSS extends CSS with these. The grammar
 ; tags them `js_comment` (it ported the JS-style comment lexer);

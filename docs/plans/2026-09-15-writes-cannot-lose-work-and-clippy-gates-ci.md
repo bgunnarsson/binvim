@@ -122,6 +122,11 @@ writes, recovery or clippy.
   above it. Verify: `cargo clippy --locked --all-targets -- -D warnings` exits 0;
   `cargo test -- --test-threads=1`; push and `gh run watch` the ci run. If an ubuntu or windows
   clippy job fails, add a task below this one for its warnings and fix it next.
+  Deviation: CI's floating `stable` was clippy 1.98, local was 1.95, so all three OS jobs failed on
+  two `question_mark` lints 1.95 doesn't have (`task_glue.rs:364`, `lsp/manager.rs:1091`) plus
+  `SCSS_QUERY_OVERLAY` dead on MSVC. Fixed, and the clippy job is pinned to 1.98.0 — with warnings
+  denied, a floating toolchain fails main whenever a release adds a lint. Local lint runs use
+  `cargo +1.98.0 clippy`.
 - [x] **`paths::write_atomic`.** Add `pub fn write_atomic(path: &Path, bytes: &[u8]) ->
   io::Result<()>` to `src/paths.rs`: resolve a symlink with `canonicalize` when
   `symlink_metadata` says it is one; temp file `.<name>.binvim-<pid>.tmp` in the target's

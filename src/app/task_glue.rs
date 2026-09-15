@@ -361,15 +361,11 @@ fn parse_posix_form(line: &str, cwd: &std::path::Path) -> Option<crate::app::sta
     // Must be followed by `:` (with or without an end_col) and then
     // a message — bare `path:N:M` rows without a trailing colon are
     // probably greps or BIND-style log timestamps.
-    let after_col = if let Some(stripped) = after_col.strip_prefix(':') {
-        // Could be `:end_col:` or just the message.
-        if let Some((_, rest)) = take_digits(stripped) {
-            rest.strip_prefix(':').unwrap_or(stripped)
-        } else {
-            stripped
-        }
-    } else {
-        return None;
+    let after_col = after_col.strip_prefix(':')?;
+    // Could be `:end_col:` or just the message.
+    let after_col = match take_digits(after_col) {
+        Some((_, rest)) => rest.strip_prefix(':').unwrap_or(after_col),
+        None => after_col,
     };
     let message = after_col.trim().to_string();
     if message.is_empty() {
