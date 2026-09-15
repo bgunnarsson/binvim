@@ -83,7 +83,7 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
   `None`. `cargo test app::health::tests app::installer::tests install::tests`.
   Deviation: `HealthSetup` is not re-exported from `src/app.rs` — `render.rs` only reads the
   snapshot's fields, so the re-export was an unused import.
-- [ ] **Paint it.** In `build_health_rows` (`src/render.rs:4166`), when `snap.setup` is `Some`,
+- [x] **Paint it.** In `build_health_rows` (`src/render.rs:4166`), when `snap.setup` is `Some`,
   push a `SETUP` section box in `p.red` after the banner's blank row and before PROCESS: one line
   `<bundle> — N not installed` in `p.text`, one indented line per missing tool as
   `<label>  ·  <role>` in `p.subtext1`, and a line `press i to install` in `p.yellow`, followed by

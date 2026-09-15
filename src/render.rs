@@ -2275,18 +2275,23 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
     // --- Footer (anchored to bottom of buffer area) -------------------
     let has_more_below = scroll + viewport_rows < rows_buf.len();
     let has_more_above = scroll > 0;
-    let footer = match (has_more_above, has_more_below) {
+    let hint = match (has_more_above, has_more_below) {
         (false, false) => "Esc · q · :q to dismiss",
         (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
         (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
         (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
+    };
+    // The SETUP box scrolls away; the footer doesn't, so it carries the key too.
+    let footer = match &snap.setup {
+        Some(setup) => format!("i install {} toolchain · {hint}", setup.bundle),
+        None => hint.to_string(),
     };
     queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
     apply_buf_bg(out, page_bg)?;
     queue!(
         out,
         SetForegroundColor(p.overlay0),
-        Print(truncate(footer, area_w.saturating_sub(2))),
+        Print(truncate(&footer, area_w.saturating_sub(2))),
     )?;
     reset_to_buf_bg(out, page_bg)?;
     Ok(())
@@ -4185,6 +4190,25 @@ fn build_health_rows(
     }
 
     rows.push(DashRow::Blank);
+
+    // --- SETUP (only when something installable is missing) ------------
+    // Above everything else: a newcomer pointed at `:health` should see the
+    // fix without scrolling past process stats to find the `✗` rows.
+    if let Some(setup) = &snap.setup {
+        let mut setup_lines = vec![SectionLine::plain(
+            &format!("{} — {} not installed", setup.bundle, setup.missing.len()),
+            p.text,
+        )];
+        for (label, role) in &setup.missing {
+            setup_lines.push(SectionLine::plain(
+                &format!("  {label}  ·  {role}"),
+                p.subtext1,
+            ));
+        }
+        setup_lines.push(SectionLine::plain("press i to install", p.yellow));
+        push_section_box(rows, left, body_w, "SETUP", p.red, &setup_lines);
+        rows.push(DashRow::Blank);
+    }
 
     // --- PROCESS + RESOURCES (two columns) ----------------------------
     let cpu_str = snap
