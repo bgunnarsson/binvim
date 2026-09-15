@@ -1468,9 +1468,62 @@ pub fn is_start_page_passthrough(k: &KeyEvent) -> bool {
     }
 }
 
+/// A full-screen page drawn over the editor. The `show_*_page` flags behind
+/// these are independent bools and several can be set at once (`:health` run
+/// from `:registers` leaves the registers flag up), so what the user sees is
+/// decided by precedence — and anything that acts on "the page up" has to
+/// ask `App::top_overlay` rather than test the flags itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverlayPage {
+    Install,
+    Health,
+    Messages,
+    List,
+    TestResults,
+}
+
+impl super::App {
+    /// The overlay page `render::draw` paints, if any.
+    pub fn top_overlay(&self) -> Option<OverlayPage> {
+        if self.show_install_page {
+            Some(OverlayPage::Install)
+        } else if self.show_health_page {
+            Some(OverlayPage::Health)
+        } else if self.show_messages_page {
+            Some(OverlayPage::Messages)
+        } else if self.show_list_page {
+            Some(OverlayPage::List)
+        } else if self.show_test_results_page {
+            Some(OverlayPage::TestResults)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn top_overlay_follows_draw_order_when_flags_stack() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        assert_eq!(app.top_overlay(), None);
+
+        app.show_messages_page = true;
+        app.show_health_page = true;
+        assert_eq!(app.top_overlay(), Some(OverlayPage::Health));
+
+        app.show_messages_page = false;
+        app.show_install_page = true;
+        assert_eq!(app.top_overlay(), Some(OverlayPage::Install));
+
+        app.show_install_page = false;
+        app.show_health_page = false;
+        app.show_test_results_page = true;
+        app.show_list_page = true;
+        assert_eq!(app.top_overlay(), Some(OverlayPage::List));
+    }
 
     #[test]
     fn hover_wrap_off_keeps_long_signatures_on_one_row() {

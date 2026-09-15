@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::app::state::OverlayPage;
 use crate::lang::Lang;
 use crate::lsp::Severity;
 use crate::mode::Mode;
@@ -84,34 +85,30 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     // Start / health pages take over the full editor area — splits stay
     // dormant while they're up so the user isn't looking at a partitioned
     // "[No Name]" placeholder.
-    if app.show_install_page {
-        draw_install_page(out, app)?;
-    } else if app.show_health_page {
-        draw_health_page(out, app)?;
-    } else if app.show_messages_page {
-        draw_messages_page(out, app)?;
-    } else if app.show_list_page {
-        draw_list_page(out, app)?;
-    } else if app.show_test_results_page {
-        draw_test_results_page(out, app)?;
-    } else if app.show_start_page {
-        draw_start_page(out, app)?;
-    } else {
-        let editor_rect = app.editor_rect();
-        let panes = app.layout.partition(editor_rect);
-        for (id, rect) in &panes {
-            let is_active = *id == app.active_window;
-            let window = if is_active {
-                &app.window
-            } else {
-                app.windows
-                    .get(id)
-                    .expect("layout window id not present in App.windows")
-            };
-            let bs = app.buffer_state(window.buffer_idx);
-            draw_buffer(out, app, &bs, window, *rect, is_active)?;
+    match app.top_overlay() {
+        Some(OverlayPage::Install) => draw_install_page(out, app)?,
+        Some(OverlayPage::Health) => draw_health_page(out, app)?,
+        Some(OverlayPage::Messages) => draw_messages_page(out, app)?,
+        Some(OverlayPage::List) => draw_list_page(out, app)?,
+        Some(OverlayPage::TestResults) => draw_test_results_page(out, app)?,
+        None if app.show_start_page => draw_start_page(out, app)?,
+        None => {
+            let editor_rect = app.editor_rect();
+            let panes = app.layout.partition(editor_rect);
+            for (id, rect) in &panes {
+                let is_active = *id == app.active_window;
+                let window = if is_active {
+                    &app.window
+                } else {
+                    app.windows
+                        .get(id)
+                        .expect("layout window id not present in App.windows")
+                };
+                let bs = app.buffer_state(window.buffer_idx);
+                draw_buffer(out, app, &bs, window, *rect, is_active)?;
+            }
+            draw_pane_dividers(out, app, editor_rect)?;
         }
-        draw_pane_dividers(out, app, editor_rect)?;
     }
     draw_file_tree_pane(out, app)?;
     draw_terminal_pane(out, app)?;

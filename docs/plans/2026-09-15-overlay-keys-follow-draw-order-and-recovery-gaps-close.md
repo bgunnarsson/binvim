@@ -1,7 +1,7 @@
 ---
 title: Overlay keys act on the page that's drawn, and the gaps left by the data-loss work are closed
 date: 2026-09-15
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -86,7 +86,7 @@ Decisions:
 
 ## Tasks
 
-- [ ] **`OverlayPage` + `top_overlay()`, used by `draw`.** Add the enum and `App::top_overlay()` in
+- [x] **`OverlayPage` + `top_overlay()`, used by `draw`.** Add the enum and `App::top_overlay()` in
   `src/app/state.rs` in draw's order (install, health, messages, list, test-results); `render::draw`
   matches on it. Verify: unit test in `app/state.rs` setting flags in pairs (health + messages,
   install + health, list + test-results) and asserting the page returned; `cargo test state::tests`.
