@@ -457,18 +457,25 @@ pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
     Some(p)
 }
 
-/// Remove history files not written for `UNDO_MAX_AGE`. Files are named by a
-/// hash of their path, so nothing else ever finds one whose file was deleted
-/// or moved.
+/// Narrow the history directory to its owner and remove files not written for
+/// `UNDO_MAX_AGE`. Files are named by a hash of their path, so nothing else
+/// ever finds one whose file was deleted or moved.
 pub fn prune_stale_history() {
     if let Some(dir) = undo_dir() {
-        prune_older_than(&dir, UNDO_MAX_AGE, std::time::SystemTime::now());
+        tidy_history_dir(&dir, UNDO_MAX_AGE, std::time::SystemTime::now());
     }
 }
 
-/// Remove the regular files in `dir` last modified before `now - max_age`,
-/// returning how many went.
-fn prune_older_than(dir: &Path, max_age: Duration, now: std::time::SystemTime) -> usize {
+/// Make `dir` private, then remove the regular files in it last modified before
+/// `now - max_age`, returning how many went. Narrowed here as well as on save:
+/// a directory an older binvim made is `0755`, and would stay that way until
+/// the next `:w`.
+fn tidy_history_dir(dir: &Path, max_age: Duration, now: std::time::SystemTime) -> usize {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
     let Some(cutoff) = now.checked_sub(max_age) else {
         return 0;
     };
@@ -668,7 +675,7 @@ mod tests {
     }
 
     #[test]
-    fn only_history_older_than_the_limit_is_pruned() {
+    fn tidying_prunes_only_stale_history_and_makes_the_directory_private() {
         let dir = std::env::temp_dir().join(format!("binvim-undo-prune-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("temp dir");
@@ -684,9 +691,15 @@ mod tests {
             .unwrap()
             .set_modified(now - day * 91)
             .unwrap();
-        assert_eq!(prune_older_than(&dir, day * 90, now), 1);
+        assert_eq!(tidy_history_dir(&dir, day * 90, now), 1);
         assert!(!stale.exists());
         assert!(fresh.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 
