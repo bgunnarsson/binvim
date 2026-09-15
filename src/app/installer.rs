@@ -1020,6 +1020,20 @@ mod tests {
     }
 
     #[test]
+    fn opening_for_a_bundle_takes_the_health_page_down_and_checks_its_row() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.cmd_health();
+        let rust = bundle_index_by_name("Rust").unwrap();
+        app.open_installer_for_bundle(rust);
+        assert!(!app.show_health_page);
+        assert_eq!(app.mode, Mode::Installer);
+        let state = app.installer.as_ref().unwrap();
+        let row = rust + state.binvim_offset();
+        assert!(state.checked[row]);
+        assert_eq!(state.cursor, row);
+    }
+
+    #[test]
     fn bundle_for_lang_stays_quiet_for_bundleless_langs() {
         // JSON has no LSP bundle (biome formats it via the TS bundle, but we
         // don't want to nag "typescript-language-server missing" on a .json

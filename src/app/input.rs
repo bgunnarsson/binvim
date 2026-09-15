@@ -390,7 +390,8 @@ impl super::App {
                 // Other keys are swallowed so the user can't
                 // accidentally type into the underlying buffer. The
                 // three overlays share the same scroll bindings — only
-                // the dismiss flag differs.
+                // the dismiss flag differs. The health dashboard alone
+                // also takes `i`, to install what its SETUP box names.
                 let overlay_active = self.show_health_page
                     || self.show_messages_page
                     || self.show_test_results_page
@@ -502,6 +503,12 @@ impl super::App {
                             } else {
                                 self.health_scroll = self.health_max_scroll();
                             }
+                            return Ok(());
+                        }
+                        KeyCode::Char('i')
+                            if normal && no_ctrl && !messages && !test_results && !registers =>
+                        {
+                            self.health_install();
                             return Ok(());
                         }
                         KeyCode::Char(':') if normal => {

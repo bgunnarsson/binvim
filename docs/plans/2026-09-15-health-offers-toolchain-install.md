@@ -90,7 +90,7 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
   `DashRow::Blank`. In `draw_health_page`, prefix the footer with `i install <bundle> toolchain · `
   when `snap.setup` is `Some`. Verify by eye in tmux against the release build (Verification
   step 2); `cargo build --release`.
-- [ ] **Bind `i`.** In the overlay block of `src/app/input.rs` (`:437` match), add an arm
+- [x] **Bind `i`.** In the overlay block of `src/app/input.rs` (`:437` match), add an arm
   `KeyCode::Char('i') if normal && no_ctrl && self.show_health_page && !messages && !test_results
   && !registers`: when `health_setup()` is `Some`, call `open_installer_for_bundle` with its
   index; either way `return Ok(())`. Update the block's leading comment, which lists what passes
@@ -100,6 +100,14 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
   `app::installer::tests`: with `show_health_page` true, `open_installer_for_bundle(idx)` clears
   it, sets `Mode::Installer`, and checks row `idx + binvim_offset()`.
   `cargo test app::input::tests app::installer::tests`.
+  Deviation: the overlay key block is inline in `handle_event`, which reads from crossterm, and
+  the test helpers' `replay_key` enters the per-mode handlers below it — so no unit test can press
+  `i` there. The arm calls a `health_install` method in `health.rs` instead, tested in
+  `app::health::tests` (`[No Name]`: dashboard stays up, no installer); the installer test is as
+  planned. The arm's scoping was checked by hand in tmux against the release build: `i` on
+  `:health` with Rust missing opens `:install` on Rust, and on `:registers` (the list overlay)
+  does nothing. `:messages` with nothing logged is a notification, not the overlay, so it was not
+  the one used.
 - [ ] **Docs.** README `:health` row (`README.md:446`): add that when the active buffer's language
   is missing its LSP or formatter, the dashboard names them at the top and `i` opens `:install` on
   that language. CHANGELOG `[Unreleased]` → `### Added` entry in the 0.6.3 style (bold one-line

@@ -214,6 +214,15 @@ impl super::App {
         HealthSetup::from_missing(bundle_idx, &missing_core_tools(bundle_idx))
     }
 
+    /// `i` on the dashboard. Nothing to install means nothing happens —
+    /// the key is only advertised while the SETUP box is showing.
+    /// `open_installer` takes the dashboard down itself.
+    pub(super) fn health_install(&mut self) {
+        if let Some(setup) = self.health_setup() {
+            self.open_installer_for_bundle(setup.bundle_idx);
+        }
+    }
+
     /// Sample every piece of state the dashboard needs. Called from
     /// the renderer per frame while the health page is showing.
     pub fn build_health_snapshot(&self) -> HealthSnapshot {
@@ -480,5 +489,14 @@ mod tests {
         assert!(app.health_setup().is_none());
         app.buffer.path = Some(PathBuf::from("/tmp/binvim-health-test.json"));
         assert!(app.health_setup().is_none());
+    }
+
+    #[test]
+    fn install_key_with_nothing_missing_leaves_the_dashboard_up() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.cmd_health();
+        app.health_install();
+        assert!(app.show_health_page);
+        assert!(app.installer.is_none());
     }
 }
