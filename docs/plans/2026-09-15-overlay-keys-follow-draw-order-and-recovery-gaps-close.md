@@ -101,7 +101,7 @@ Decisions:
   → `G`, `q` (registers still showing), `q` (editor); same from `:messages`.
   Deviation: `ExCommand::Quit` carried the same flag chain (in draw's order already), so `:q` on an
   overlay goes through `top_overlay()` / `overlay_dismiss` too, leaving no chain outside `top_overlay`.
-- [ ] **Test the failed-rename fallback.** Split `write_atomic` into a private
+- [x] **Test the failed-rename fallback.** Split `write_atomic` into a private
   `write_atomic_with(path, bytes, rename: fn(&Path, &Path) -> io::Result<()>)`; `write_atomic`
   passes `std::fs::rename`. Every existing fallback stays as it is. Verify: a `#[cfg(unix)]` test in
   `paths::tests` whose rename returns an error — target holds the new bytes, same inode

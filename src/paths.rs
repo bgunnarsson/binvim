@@ -182,6 +182,15 @@ pub fn path_key(path: &Path) -> String {
 /// symlink or file planted there makes the create fail rather than redirecting
 /// the write, and its mode is right from the moment it exists.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_atomic_with(path, bytes, |from, to| std::fs::rename(from, to))
+}
+
+/// `write_atomic` with the rename passed in, so a test can make it fail.
+fn write_atomic_with(
+    path: &Path,
+    bytes: &[u8],
+    rename: fn(&Path, &Path) -> std::io::Result<()>,
+) -> std::io::Result<()> {
     let target = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => match path.canonicalize() {
             Ok(real) => real,
@@ -229,7 +238,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
-    if std::fs::rename(&tmp, &target).is_err() {
+    if rename(&tmp, &target).is_err() {
         let _ = std::fs::remove_file(&tmp);
         // The bytes all fit, so the disk isn't the problem — the target just
         // can't be replaced: a file another Windows program holds open, a
@@ -356,6 +365,20 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap(), b"one\n");
         write_atomic(&file, b"two\n").unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"two\n");
+        assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_rename_writes_the_file_in_place() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = scratch("renamefails");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "old").unwrap();
+        let inode = std::fs::metadata(&file).unwrap().ino();
+        write_atomic_with(&file, b"new", |_, _| Err(std::io::Error::other("busy"))).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
         assert!(leftover_temp_files(&dir).is_empty());
     }
 
