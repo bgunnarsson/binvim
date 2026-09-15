@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::git::GitStatusSummary;
 use crate::lsp::{ActiveBufferLspStatus, LspHealth, Severity};
+use binvim::install::{BUNDLES, Tool, missing_core_tools};
 
 /// Everything `draw_health_page` needs to paint the dashboard. Built
 /// fresh per frame so the user sees live CPU / RAM / LSP-pending
@@ -33,6 +34,9 @@ pub struct HealthSnapshot {
     pub buffers: Vec<HealthBuffer>,
     pub lsps: Vec<LspHealth>,
     pub active_buffer: Option<HealthActiveBuffer>,
+    /// What the active buffer's language is missing that `i` can install.
+    /// `None` when nothing is, or when nothing missing is auto-installable.
+    pub setup: Option<HealthSetup>,
     pub tailwind: Option<PathBuf>,
     pub git: Option<GitStatusSummary>,
     /// On-save formatter that would run for the active buffer. `None`
@@ -56,6 +60,33 @@ pub struct HealthKeymaps {
     /// `(mode, mappings)` for every mode, in table order.
     pub counts: Vec<(&'static str, usize)>,
     pub skipped: Vec<String>,
+}
+
+/// The SETUP box: the active buffer's bundle and the core tools it lacks.
+/// Built from `missing_core_tools`, so it only ever offers what the
+/// installer can set up unattended — the same set the first-run picker nags
+/// about.
+pub struct HealthSetup {
+    pub bundle_idx: usize,
+    pub bundle: &'static str,
+    /// `(label, role)` per missing tool.
+    pub missing: Vec<(&'static str, &'static str)>,
+}
+
+impl HealthSetup {
+    fn from_missing(bundle_idx: usize, missing: &[&'static Tool]) -> Option<Self> {
+        if missing.is_empty() {
+            return None;
+        }
+        Some(Self {
+            bundle_idx,
+            bundle: BUNDLES.get(bundle_idx)?.name,
+            missing: missing
+                .iter()
+                .map(|t| (t.label, super::installer::role_label(t.role)))
+                .collect(),
+        })
+    }
 }
 
 pub struct HealthEditorConfig {
@@ -168,6 +199,19 @@ impl super::App {
         let cur = self.health_scroll as isize;
         let next = (cur + delta).max(0) as usize;
         self.health_scroll = next.min(max);
+    }
+
+    /// The install offer for the active buffer. Resolved fresh rather than
+    /// read off the last painted snapshot so the `i` handler doesn't pay for
+    /// a whole snapshot (and its `ps` shell-out) on a keypress.
+    pub(super) fn health_setup(&self) -> Option<HealthSetup> {
+        let lang = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(crate::lang::Lang::detect)?;
+        let bundle_idx = super::installer::bundle_for_lang(lang)?;
+        HealthSetup::from_missing(bundle_idx, &missing_core_tools(bundle_idx))
     }
 
     /// Sample every piece of state the dashboard needs. Called from
@@ -368,6 +412,7 @@ impl super::App {
             buffers,
             lsps,
             active_buffer,
+            setup: self.health_setup(),
             tailwind,
             git,
             formatter,
@@ -401,4 +446,39 @@ fn read_process_stats(pid: u32) -> (Option<f64>, Option<f64>, Option<f64>) {
         .and_then(|s| s.parse::<f64>().ok())
         .map(|kb| kb / 1024.0);
     (cpu, mem, rss_mb)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use binvim::install::bundle_index_by_name;
+    use std::path::PathBuf;
+
+    #[test]
+    fn nothing_missing_offers_no_setup() {
+        let rust = bundle_index_by_name("Rust").unwrap();
+        assert!(HealthSetup::from_missing(rust, &[]).is_none());
+    }
+
+    #[test]
+    fn a_missing_tool_names_its_bundle_and_role() {
+        let rust = bundle_index_by_name("Rust").unwrap();
+        let lsp = BUNDLES[rust]
+            .tools
+            .iter()
+            .find(|t| t.bin == "rust-analyzer")
+            .unwrap();
+        let setup = HealthSetup::from_missing(rust, &[lsp]).unwrap();
+        assert_eq!(setup.bundle_idx, rust);
+        assert_eq!(setup.bundle, "Rust");
+        assert_eq!(setup.missing, vec![("rust-analyzer", "LSP")]);
+    }
+
+    #[test]
+    fn no_name_and_bundleless_buffers_offer_no_setup() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        assert!(app.health_setup().is_none());
+        app.buffer.path = Some(PathBuf::from("/tmp/binvim-health-test.json"));
+        assert!(app.health_setup().is_none());
+    }
 }

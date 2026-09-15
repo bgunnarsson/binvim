@@ -1,7 +1,7 @@
 ---
 title: :health names the active buffer's missing toolchain and installs it on one key
 date: 2026-09-15
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -68,7 +68,7 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
 
 ## Tasks
 
-- [ ] **Resolve the setup offer.** In `src/app/installer.rs`, make `bundle_for_lang`
+- [x] **Resolve the setup offer.** In `src/app/installer.rs`, make `bundle_for_lang`
   `pub(super)` and extract `pub(super) fn role_label(Role) -> &'static str` from
   `open_toolchain_picker`, which then calls it. In `src/app/health.rs`, add
   `pub struct HealthSetup { pub bundle_idx: usize, pub bundle: &'static str, pub missing:
@@ -81,6 +81,8 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
   slice is `None`; with the Rust bundle's LSP tool it carries the bundle index, `"Rust"` and
   `("rust-analyzer", "LSP")`; `health_setup` on a `[No Name]` buffer and on a `.json` path is
   `None`. `cargo test app::health::tests app::installer::tests install::tests`.
+  Deviation: `HealthSetup` is not re-exported from `src/app.rs` — `render.rs` only reads the
+  snapshot's fields, so the re-export was an unused import.
 - [ ] **Paint it.** In `build_health_rows` (`src/render.rs:4166`), when `snap.setup` is `Some`,
   push a `SETUP` section box in `p.red` after the banner's blank row and before PROCESS: one line
   `<bundle> — N not installed` in `p.text`, one indented line per missing tool as
@@ -110,7 +112,6 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
   `open_toolchain_picker`); reuses `open_installer_for_bundle` unchanged.
 - `src/install.rs`: unchanged; `missing_core_tools` and `bundle_index_by_name` are reused.
 - `src/app/health.rs`: `HealthSetup`, `health_setup`, snapshot field, new `mod tests`.
-- `src/app.rs`: re-export `HealthSetup`.
 - `src/render.rs`: SETUP box in `build_health_rows`, footer in `draw_health_page`; reuses
   `push_section_box` and `SectionLine`.
 - `src/app/input.rs`: `i` arm in the overlay key block.

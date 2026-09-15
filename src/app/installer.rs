@@ -42,7 +42,7 @@ use binvim::install::{
 /// Languages with no auto-installable bundle (JSON — biome formats it but no
 /// JSON LSP ships in a bundle; XML / `.editorconfig` / `.gitignore` — no
 /// server at all) return `None`: the caller stays quiet.
-fn bundle_for_lang(lang: Lang) -> Option<usize> {
+pub(super) fn bundle_for_lang(lang: Lang) -> Option<usize> {
     let name = match lang {
         Lang::Rust => "Rust",
         Lang::TypeScript | Lang::Tsx | Lang::JavaScript => "TypeScript / JavaScript",
@@ -71,6 +71,17 @@ fn bundle_for_lang(lang: Lang) -> Option<usize> {
         Lang::Json | Lang::Xml | Lang::EditorConfig | Lang::GitIgnore => return None,
     };
     bundle_index_by_name(name)
+}
+
+/// How a tool's role reads to the user — shared by the first-run picker and
+/// the `:health` SETUP box, so both name a missing tool the same way.
+pub(super) fn role_label(role: Role) -> &'static str {
+    match role {
+        Role::Lsp => "LSP",
+        Role::Formatter => "formatter",
+        Role::Dap => "debugger",
+        Role::Tool => "tool",
+    }
 }
 
 /// State machine for the overlay. `App.installer` is `Some` while the
@@ -318,14 +329,8 @@ impl super::App {
             PickerPayload::InstallToolchain { bundle_idx },
         ));
         for t in missing {
-            let role = match t.role {
-                Role::Lsp => "LSP",
-                Role::Formatter => "formatter",
-                Role::Dap => "debugger",
-                Role::Tool => "tool",
-            };
             items.push((
-                format!("{}  ·  {role}", t.label),
+                format!("{}  ·  {}", t.label, role_label(t.role)),
                 PickerPayload::InstallToolchain { bundle_idx },
             ));
         }
