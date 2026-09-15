@@ -3476,6 +3476,9 @@ impl super::App {
                 self.status_msg = "E13: File exists (add ! to override)".into();
                 return;
             }
+            if let Some(old) = self.buffer.path.clone() {
+                self.discard_recovery(&old);
+            }
             self.buffer.path = Some(path);
             // What was recorded describes the old file, and would read as a
             // conflict against the new one.
@@ -4226,7 +4229,12 @@ impl super::App {
         let mut total_subs = 0usize;
         let mut files_changed = 0usize;
         let mut errors = 0usize;
+        let mut skipped = 0usize;
         for path in files {
+            if self.pending_recovery(&path) {
+                skipped += 1;
+                continue;
+            }
             if self.open_buffer(path.clone()).is_err() {
                 errors += 1;
                 continue;
@@ -4251,10 +4259,17 @@ impl super::App {
         if original_active < self.buffers.len() && self.active != original_active {
             let _ = self.switch_to(original_active);
         }
+        let skipped_note = if skipped > 0 {
+            let s = if skipped == 1 { "" } else { "s" };
+            format!(" ({skipped} file{s} skipped: recovered unsaved changes — open to review)")
+        } else {
+            String::new()
+        };
         if flags.count_only && total_subs > 0 {
             let es = if total_subs == 1 { "" } else { "es" };
             let s = if files_changed == 1 { "" } else { "s" };
-            self.status_msg = format!("{total_subs} match{es} in {files_changed} file{s}");
+            self.status_msg =
+                format!("{total_subs} match{es} in {files_changed} file{s}{skipped_note}");
             return;
         }
         self.status_msg = if total_subs == 0 {
@@ -4269,7 +4284,7 @@ impl super::App {
                 } else {
                     String::new()
                 },
-            )
+            ) + &skipped_note
         };
     }
 
@@ -6957,6 +6972,24 @@ mod tests {
         app.exec_command("e!");
         assert_eq!(app.buffer.rope.to_string(), "a\n");
         assert!(!app.buffer.dirty);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn e_bang_on_a_file_now_valid_utf8_clears_lossy() {
+        let (dir, _, _) = two_files("lossyreload");
+        let latin = dir.join("latin1.txt");
+        std::fs::write(&latin, b"caf\xe9\n").unwrap();
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(latin.clone()).unwrap();
+        assert!(app.buffer.lossy);
+        std::fs::write(&latin, "café\n").unwrap();
+        app.exec_command("e!");
+        assert!(!app.buffer.lossy);
+        app.buffer.insert_str(0, 0, "x");
+        app.buffer.dirty = true;
+        app.exec_command("w");
+        assert_eq!(std::fs::read_to_string(&latin).unwrap(), "xcafé\n");
         std::fs::remove_dir_all(&dir).ok();
     }
 

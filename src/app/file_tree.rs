@@ -642,6 +642,9 @@ impl super::App {
     /// active buffer and every stashed inactive buffer so an open tab
     /// that wasn't the focused one survives the move too.
     fn adopt_renamed_path(&mut self, from: &Path, to: &Path) {
+        // The buffer's next dump lands under the new name; one under the old
+        // name would be applied to whatever file takes that name next.
+        self.discard_recovery(from);
         if self.buffer.path.as_deref() == Some(from) {
             self.buffer.path = Some(to.to_path_buf());
         }

@@ -18,6 +18,10 @@ pub struct RecoveryFile {
     /// Unix seconds when the text was written.
     pub saved_at: u64,
     pub text: String,
+    /// The binvim that wrote it. While that process is alive the file is its
+    /// live dump, not something left by a crash.
+    #[serde(default)]
+    pub pid: u32,
 }
 
 /// Where `file`'s recovery text lives. `None` under test, like every other
@@ -60,6 +64,30 @@ pub fn recovered_text<'a>(rec: &'a RecoveryFile, disk: &str) -> Option<&'a str> 
     (rec.text != disk).then_some(rec.text.as_str())
 }
 
+/// Written by another binvim that's still running — a second editor on the
+/// same file, whose dump this one must neither apply nor remove.
+pub fn held_by_another_process(rec: &RecoveryFile) -> bool {
+    rec.pid != 0 && rec.pid != std::process::id() && process_alive(rec.pid)
+}
+
+#[cfg(unix)]
+fn process_alive(pid: u32) -> bool {
+    // `kill -0` delivers nothing and fails only for a pid that isn't running
+    // (or isn't ours to signal, which a dump in this user's cache would be).
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// No cheap check without a new dependency, so on Windows every dump is
+/// taken to be left by a crash.
+#[cfg(not(unix))]
+fn process_alive(_: u32) -> bool {
+    false
+}
+
 pub fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -86,6 +114,7 @@ mod tests {
             path: "/tmp/a.txt".into(),
             saved_at: 42,
             text: "unsaved\n".into(),
+            pid: 7,
         };
         write_to(&dest, &rec).unwrap();
         let back = load_from(&dest).unwrap();
@@ -105,6 +134,7 @@ mod tests {
             path: "/tmp/a.txt".into(),
             saved_at: 0,
             text: "secret\n".into(),
+            pid: 0,
         };
         write_to(&dest, &rec).unwrap();
         let mode = std::fs::metadata(dest.parent().unwrap())
@@ -132,8 +162,42 @@ mod tests {
             path: "/tmp/a.txt".into(),
             saved_at: 0,
             text: "same\n".into(),
+            pid: 0,
         };
         assert_eq!(recovered_text(&rec, "same\n"), None);
         assert_eq!(recovered_text(&rec, "older\n"), Some("same\n"));
+    }
+
+    #[test]
+    fn a_file_without_a_pid_loads_as_left_by_a_crash() {
+        let dir = scratch("nopid");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join("r.json");
+        std::fs::write(&dest, r#"{"path":"/tmp/a.txt","saved_at":4,"text":"x"}"#).unwrap();
+        let rec = load_from(&dest).unwrap();
+        assert_eq!(rec.pid, 0);
+        assert!(!held_by_another_process(&rec));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dump_is_held_only_while_its_writer_runs() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let mut rec = RecoveryFile {
+            path: "/tmp/a.txt".into(),
+            saved_at: 0,
+            text: "x".into(),
+            pid: child.id(),
+        };
+        assert!(held_by_another_process(&rec));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(!held_by_another_process(&rec));
+        rec.pid = std::process::id();
+        assert!(!held_by_another_process(&rec));
     }
 }

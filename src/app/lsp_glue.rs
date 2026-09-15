@@ -1743,6 +1743,14 @@ impl super::App {
                 grouped.push((e.path.clone(), vec![e]));
             }
         }
+        // Checked for every file before any is touched, so a rename is applied
+        // whole or not at all.
+        if let Some((path, _)) = grouped.iter().find(|(p, _)| self.pending_recovery(p)) {
+            anyhow::bail!(
+                "{} has recovered unsaved changes — open it to review them, then try again",
+                path.display()
+            );
+        }
         let original_active = self.active;
         let mut total_edits = 0usize;
         let files = grouped.len();

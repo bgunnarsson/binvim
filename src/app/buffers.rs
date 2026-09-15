@@ -345,8 +345,11 @@ impl super::App {
     /// for status reporting (or `None` if the reload failed).
     pub(super) fn force_reload_from_disk(&mut self) -> Option<String> {
         let path = self.buffer.path.clone()?;
+        let name = self.reload_buffer_from_disk_inner(&path, None)?;
+        // After the reload, not before: one that fails leaves the buffer
+        // dirty, and its recovery file still wanted.
         self.discard_recovery(&path);
-        self.reload_buffer_from_disk_inner(&path, None)
+        Some(name)
     }
 
     fn reload_buffer_from_disk_inner(
@@ -355,6 +358,8 @@ impl super::App {
         disk_mtime: Option<std::time::SystemTime>,
     ) -> Option<String> {
         let raw = std::fs::read_to_string(path).ok()?;
+        // Read as a string, so the file is valid UTF-8 now.
+        self.buffer.lossy = false;
         // Normalize CRLF → LF (matches Buffer::from_path) so reloaded
         // CRLF files don't leak `\r` chars into the rope.
         let text = raw.replace("\r\n", "\n");
@@ -707,6 +712,18 @@ impl super::App {
                     anyhow::bail!("E89: buffer {} has unsaved changes (use <leader>bA)", i + 1);
                 }
             }
+        }
+        let closed: Vec<PathBuf> = (0..self.buffers.len())
+            .filter_map(|i| {
+                if i == self.active {
+                    self.buffer.path.clone()
+                } else {
+                    self.buffers[i].buffer.path.clone()
+                }
+            })
+            .collect();
+        for path in closed {
+            self.discard_recovery(&path);
         }
         let count = self.buffers.len();
         self.buffers.clear();
