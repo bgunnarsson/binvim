@@ -1,7 +1,7 @@
 ---
 title: Overlay keys act on the page that's drawn, and the gaps left by the data-loss work are closed
 date: 2026-09-15
-status: in-progress
+status: done
 ---
 
 ## Context
