@@ -138,11 +138,17 @@ Decisions:
   restored tabs behind the start page, which hides the recovered-changes notice, so "recovered" was
   confirmed by the dirty marker, the buffer's text and `u` returning the disk text. The quit path also
   empties the session snapshot under its lock, so a signal mid-quit can't save an older session over it.
-- [ ] **Trigger the panic path once.** Temporarily add a `panic!` to a normal-mode key in a local
+- [x] **Trigger the panic path once.** Temporarily add a `panic!` to a normal-mode key in a local
   build (not committed); in tmux open a file, dirty it, wait 5 s, press the key; confirm the crash
   log path is printed, a recovery file exists, and relaunching on the file reports recovered
   changes. Revert with `git checkout -- <file>` and confirm `git status` is clean. Record the result
   under this task; no commit beyond the plan tick.
+  Result (2026-09-15, release build, F12 → `panic!` at the top of the key handler): with `d.txt`
+  dirtied and F12 pressed 0.3 s later, inside the 4 s interval so only `main.rs`'s panic arm could
+  write, the shell printed `binvim crashed — log: ~/.cache/binvim/crash/1789506915.log` and exit 101;
+  the recovery file held `delta FRESH` with `saved_at` 1789506915 and the dead pid. `binvim d.txt`
+  showed `delta FRESH`, dirty, with "recovered unsaved changes from 0s ago", and `u` gave `delta`.
+  `git checkout -- src/app/input.rs` left `git status` clean.
 - [ ] **`CLAUDE.md` rules.** Under "Conventions to preserve", add: overlay page flags can be set
   together, and every handler reads `App::top_overlay()` rather than testing flags itself; and
   anything added to `open_buffer` / `switch_to` that changes buffer text, dirty state or disk must be
