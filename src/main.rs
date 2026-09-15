@@ -49,5 +49,19 @@ fn main() -> Result<()> {
     crash::install_panic_hook();
     let path = env::args().nth(1).map(PathBuf::from);
     let mut app = app::App::new(path)?;
-    app.run()
+    // The loop can end without a quit: a panic, or an error out of it (a draw
+    // that failed). Buffers are still dirty then, so their recovery files are
+    // brought up to date before the process goes. Signals are handled on
+    // their own thread — see `App::spawn_signal_recovery`.
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.run())) {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => {
+            app.write_recovery_now();
+            Err(e)
+        }
+        Err(panic) => {
+            app.write_recovery_now();
+            std::panic::resume_unwind(panic)
+        }
+    }
 }

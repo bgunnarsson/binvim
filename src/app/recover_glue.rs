@@ -48,16 +48,10 @@ impl super::App {
                 cleaned.push(path.clone());
             }
         }
+        let snapshot = self.recovery_snapshot.clone();
+        let _writing = snapshot.lock().unwrap_or_else(|e| e.into_inner());
         for (path, version, text) in writes {
-            let Some(dest) = recovery_path(&path) else {
-                continue;
-            };
-            let rec = RecoveryFile {
-                path: path.display().to_string(),
-                saved_at: now_secs(),
-                text,
-            };
-            if write_to(&dest, &rec).is_ok() {
+            if dump(&path, text) {
                 self.recovery_written.insert(path, version);
             }
         }
@@ -99,6 +93,53 @@ impl super::App {
         );
     }
 
+    /// The dirty buffers as the signal thread would find them. A rope clone
+    /// shares its nodes, so this costs a `Vec` per iteration, not the text.
+    #[cfg(unix)]
+    pub(super) fn refresh_recovery_snapshot(&mut self) {
+        let dirty: Vec<(PathBuf, ropey::Rope)> = (0..self.buffers.len())
+            .filter_map(|i| {
+                let buf = if i == self.active {
+                    &self.buffer
+                } else {
+                    &self.buffers[i].buffer
+                };
+                let path = buf.path.clone()?;
+                buf.dirty.then(|| (path, buf.rope.clone()))
+            })
+            .collect();
+        *self
+            .recovery_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = dirty;
+    }
+
+    /// SIGTERM and SIGHUP end the process on the spot by default. They're
+    /// caught on a thread of their own rather than by a flag the loop checks:
+    /// a closed terminal leaves crossterm's poll spinning in `read` on the dead
+    /// tty, so the loop never comes round to look. The thread writes every
+    /// snapshotted buffer's recovery file, puts the terminal back, and exits
+    /// with the signal's conventional status.
+    #[cfg(unix)]
+    pub(super) fn spawn_signal_recovery(&self) {
+        use signal_hook::consts::{SIGHUP, SIGTERM};
+        let Ok(mut signals) = signal_hook::iterator::Signals::new([SIGTERM, SIGHUP]) else {
+            return;
+        };
+        let snapshot = self.recovery_snapshot.clone();
+        std::thread::spawn(move || {
+            let Some(signal) = signals.forever().next() else {
+                return;
+            };
+            let dirty = snapshot.lock().unwrap_or_else(|e| e.into_inner());
+            for (path, rope) in dirty.iter() {
+                dump(path, rope.to_string());
+            }
+            crate::crash::restore_terminal_best_effort();
+            std::process::exit(128 + signal);
+        });
+    }
+
     pub(super) fn discard_recovery(&mut self, path: &Path) {
         self.recovery_written.remove(path);
         if let Some(dest) = recovery_path(path) {
@@ -109,6 +150,11 @@ impl super::App {
     /// A deliberate quit. Whatever was still dirty was thrown away with `:q!`,
     /// and a file dumped for a buffer since closed is stale either way.
     pub(super) fn discard_all_recovery(&mut self) {
+        // Emptied first, so a signal arriving mid-quit has nothing to rewrite.
+        self.recovery_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         let mut paths: Vec<PathBuf> = self.recovery_written.keys().cloned().collect();
         for i in 0..self.buffers.len() {
             let buf = if i == self.active {
@@ -122,4 +168,18 @@ impl super::App {
             self.discard_recovery(&path);
         }
     }
+}
+
+/// Write `text` as `path`'s recovery file. False when there's nowhere to put
+/// it (tests, no cache dir) or the write failed.
+fn dump(path: &Path, text: String) -> bool {
+    let Some(dest) = recovery_path(path) else {
+        return false;
+    };
+    let rec = RecoveryFile {
+        path: path.display().to_string(),
+        saved_at: now_secs(),
+        text,
+    };
+    write_to(&dest, &rec).is_ok()
 }

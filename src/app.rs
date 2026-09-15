@@ -411,6 +411,10 @@ pub struct App {
     /// unchanged buffer isn't rewritten every interval.
     pub recovery_written: HashMap<PathBuf, u64>,
     pub recovery_checked_at: Instant,
+    /// Every dirty buffer's path and text, refreshed each loop iteration, for
+    /// the signal thread to write out (`recover_glue`). The lock also keeps
+    /// that thread and the loop from writing the same recovery file at once.
+    pub recovery_snapshot: std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, ropey::Rope)>>>,
     /// Number of dashboard rows scrolled off the top while
     /// `show_health_page` is up. Clamped against
     /// `health_content_height` by the input handlers.
@@ -1023,6 +1027,7 @@ impl App {
             health_last_refresh: Instant::now(),
             recovery_written: HashMap::new(),
             recovery_checked_at: Instant::now(),
+            recovery_snapshot: Default::default(),
             health_scroll: 0,
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
@@ -1193,7 +1198,11 @@ impl App {
         // we come straight back to finish draining instead of idling —
         // see the poll-budget block below.
         let mut pty_backlog = false;
+        #[cfg(unix)]
+        self.spawn_signal_recovery();
         while !self.should_quit {
+            #[cfg(unix)]
+            self.refresh_recovery_snapshot();
             self.recover_if_due();
             if needs_render {
                 self.maybe_reload_from_disk();

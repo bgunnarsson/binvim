@@ -60,7 +60,7 @@ pub fn install_panic_hook() {
 /// recoverable. Order matters: pop keyboard flags before leaving the
 /// alt screen, leave the alt screen before disabling raw mode, so
 /// each step still has the input modes it expects.
-fn restore_terminal_best_effort() {
+pub fn restore_terminal_best_effort() {
     use crossterm::{
         cursor::{SetCursorStyle, Show},
         event::{DisableMouseCapture, PopKeyboardEnhancementFlags},

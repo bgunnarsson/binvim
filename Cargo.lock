@@ -61,6 +61,7 @@ dependencies = [
  "ropey",
  "serde",
  "serde_json",
+ "signal-hook",
  "streaming-iterator",
  "toml",
  "tree-sitter",

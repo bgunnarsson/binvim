@@ -226,7 +226,7 @@ writes, recovery or clippy.
   buffer was still dirty. Checked in tmux against the release build: after `kill -9` a relaunch
   shows the text dirty with the notice, `u` shows the file's text, `:w` writes and removes the
   recovery file, and `:e!` reverts and removes it.
-- [ ] **Panics and signals dump before exit.** `main.rs`: run `app.run()` inside
+- [x] **Panics and signals dump before exit.** `main.rs`: run `app.run()` inside
   `std::panic::catch_unwind(AssertUnwindSafe(..))`; on a panic call `app.write_recovery_now()`
   then `resume_unwind`; on `Err` call it then return the error. `Cargo.toml`:
   `[target.'cfg(unix)'.dependencies] signal-hook = "0.3"` with a why-comment. `App::run`
@@ -236,6 +236,18 @@ writes, recovery or clippy.
   Verify by hand in Verification step 3 (`kill -TERM`, tmux `kill-session`). If a signal isn't
   noticed within a second because the poll doesn't wake, cap `poll_dur` at 500ms and record it
   as a deviation. `cargo build --release`.
+  Deviation (approach changed, with the user's agreement): the flag cannot work for SIGHUP. A closed
+  terminal leaves crossterm's `poll` spinning at 100% CPU in `read` on the dead tty
+  (`UnixInternalEventSource::try_read`, seen with `sample` on a debug build), so the loop never
+  checks the flag — and with the default action replaced, the process no longer dies either. Instead
+  `spawn_signal_recovery` runs a `signal_hook::iterator::Signals` thread that writes recovery files
+  from `recovery_snapshot` (dirty buffers' ropes, refreshed each loop iteration; clones share
+  nodes), restores the terminal (`crash::restore_terminal_best_effort`, now `pub`) and exits
+  `128 + signal`. The same mutex guards the loop's own dumps so the two never write one temp file
+  at once. A signalled exit doesn't save the session — the thread can't reach `App`. Checked in
+  tmux against the release build: `kill -TERM` straight after typing exits 143 with the terminal
+  back in canonical mode and the text in the recovery file; `tmux kill-session` exits (no spin)
+  with the text written; `:q!` still leaves no file. The panic branch was reviewed, not triggered.
 - [ ] **Docs.** README: a `:w!` row beside `:w` in the ex-command table; a short "Unsaved work"
   paragraph covering write conflicts, non-UTF-8 files, recovery files (where they live, when
   they're applied and removed, `[No Name]` not covered, Windows covered only by the periodic

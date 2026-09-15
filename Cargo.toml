@@ -93,6 +93,13 @@ vte = "0.15"
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tree-sitter-scss = "1.0.0"
 
+# SIGTERM and SIGHUP (a `kill`, a closed terminal) end the process on the
+# spot by default, before dirty buffers' recovery files are brought up to
+# date. Already in the dependency tree through crossterm; Windows has no
+# equivalent signals to catch.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.3"
+
 [dev-dependencies]
 # proptest drives the property-based test suite for motion / text_object
 # invariants and the panic-hardening passes over compute_byte_colors and the
