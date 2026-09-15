@@ -485,7 +485,7 @@ pub fn add(eco: PackageEcosystem, manifest: &Path, id: &str, version: &str) -> R
             let text = std::fs::read_to_string(manifest)
                 .map_err(|e| format!("read {}: {e}", manifest.display()))?;
             let updated = requirements_set_version(&text, id, version);
-            std::fs::write(manifest, updated)
+            crate::paths::write_atomic(manifest, updated.as_bytes())
                 .map_err(|e| format!("write {}: {e}", manifest.display()))
         }
     }

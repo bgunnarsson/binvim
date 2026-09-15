@@ -149,6 +149,19 @@ fn candidate_names(name: &str) -> Vec<String> {
     out
 }
 
+/// FNV-1a 64-bit of the path's string form, as 16 hex digits — the file name
+/// persisted per-path and per-cwd state is keyed by. Stable across Rust
+/// releases, unlike `DefaultHasher`, so the key a file got last month still
+/// finds it.
+pub fn path_key(path: &Path) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in path.to_string_lossy().bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    format!("{h:016x}")
+}
+
 /// Write `bytes` to `path` so that a write failing partway — a full disk, a
 /// dropped mount — leaves the old file whole rather than truncated: the bytes
 /// go to a temp file beside the target, are synced, and are renamed over it.
@@ -234,6 +247,13 @@ mod tests {
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .filter(|n| n.ends_with(".tmp"))
             .collect()
+    }
+
+    #[test]
+    fn path_key_is_pinned() {
+        // Session files already on disk are named by this value; a change
+        // would orphan every one of them.
+        assert_eq!(path_key(Path::new("/tmp/project")), "ebab4cfadaecf751");
     }
 
     #[test]

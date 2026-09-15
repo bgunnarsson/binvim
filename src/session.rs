@@ -160,25 +160,13 @@ pub fn session_path(cwd: &Path) -> Option<PathBuf> {
         return None;
     }
     let canon = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let key = hash_path(&canon);
+    // A collision would only restore the wrong session, which the cwd check
+    // inside `load_for_cwd` catches.
+    let key = crate::paths::path_key(&canon);
     let mut p = crate::paths::cache_dir()?;
     p.push("sessions");
     p.push(format!("{key}.json"));
     Some(p)
-}
-
-/// FNV-1a 64-bit of the path's string representation. Stable, fast, and
-/// good enough to key sessions by — collision odds are negligible at this
-/// scale and a collision would only mean "restore the wrong session,"
-/// which the cwd check inside `load_for_cwd` catches anyway.
-fn hash_path(path: &Path) -> String {
-    let bytes = path.to_string_lossy();
-    let mut h: u64 = 0xcbf29ce484222325;
-    for b in bytes.bytes() {
-        h ^= b as u64;
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    format!("{h:016x}")
 }
 
 pub fn save(session: &Session) -> std::io::Result<()> {
@@ -190,7 +178,7 @@ pub fn save(session: &Session) -> std::io::Result<()> {
     }
     let json = serde_json::to_string_pretty(session)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(&path, json)
+    crate::paths::write_atomic(&path, json.as_bytes())
 }
 
 /// Remove the saved session for `cwd`. Called on clean shutdown when

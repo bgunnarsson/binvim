@@ -143,7 +143,7 @@ writes, recovery or clippy.
   Deviation: only a `PermissionDenied` from creating the temp file falls back to writing in place;
   any other failure (a full disk) returns the error with the file untouched, since an in-place
   retry would truncate it. A dangling symlink is written through with `std::fs::write`.
-- [ ] **Every other writer shares it.** `session::save`, the `PackageEcosystem::Pip` manifest
+- [x] **Every other writer shares it.** `session::save`, the `PackageEcosystem::Pip` manifest
   write in `src/package.rs`, and `History::save_to_path` in `src/undo.rs` call `write_atomic`.
   Gate `undo::cache_path_for` with `if cfg!(test) { return None; }` and a why-comment matching
   `session_path`'s. Move `session.rs`'s `hash_path` to `pub fn path_key(&Path) -> String` in

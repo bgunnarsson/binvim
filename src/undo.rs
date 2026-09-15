@@ -2,7 +2,7 @@ use crate::cursor::Cursor;
 use ropey::Rope;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -353,16 +353,8 @@ impl History {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let mut tmp = path.to_path_buf();
-        tmp.set_extension("tmp");
-        let serialized = match serde_json::to_vec(&stored) {
-            Ok(v) => v,
-            Err(e) => return Err(std::io::Error::other(e)),
-        };
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(&serialized)?;
-        f.sync_all()?;
-        std::fs::rename(tmp, path)
+        let serialized = serde_json::to_vec(&stored).map_err(std::io::Error::other)?;
+        crate::paths::write_atomic(path, &serialized)
     }
 
     /// Inverse of `save_to_path`. Returns `None` if the file is missing,
@@ -432,6 +424,11 @@ pub fn hash_text(text: &str) -> u64 {
 /// `<cache>/binvim/undo/`. Returns `None` if the cache dir can't be
 /// resolved.
 pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
+    // Tests write buffers with `:w`, which persists undo — without this every
+    // run left history files for temp paths in the real cache.
+    if cfg!(test) {
+        return None;
+    }
     let canon = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
