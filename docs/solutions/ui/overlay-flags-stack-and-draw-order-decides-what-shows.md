@@ -58,17 +58,22 @@ mismatch in the existing `q` / `Esc` / scroll handling, where `q` on a health pa
 ## Fix
 
 `c8c2944`: the `i` arm is gated on `self.show_health_page` itself, which is exactly when `draw`
-paints the dashboard. The existing `dismiss` / `scroll` / `g` / `G` ordering predates this change
-and was left as it is.
+paints the dashboard. The existing `dismiss` / `scroll` / `g` / `G` ordering predated this change
+and was left as it was.
+
+`c62a163` and `69530c0` closed the rest. `App::top_overlay()` (`src/app/state.rs`) returns the
+page `draw` paints, and `draw`, the overlay key block, `:q` and the mouse wheel all branch on it;
+the scroll / dismiss / top / bottom logic became `overlay_*` methods on `App`, which unit tests
+reach. The mouse wheel had a mismatch of its own, checking health before install.
 
 ## Prevention
 
-- A key handler for one overlay page must test the flag in `render::draw`'s precedence: for
-  health, `self.show_health_page` alone (only `show_install_page` outranks it, and that has its
-  own mode). A guard written as `!messages && !test_results && !registers`, or any "the other
-  flags are clear" form, is a violation.
-- A new overlay page, or a new opener for an existing one, either clears the sibling page flags
-  (as `open_installer` does) or has every key and dismiss branch that reads the flags follow
-  `draw`'s order. A new `show_*_page = true` with neither is a violation.
+- A handler that acts on the overlay page up asks `App::top_overlay()` — for health,
+  `page == OverlayPage::Health`. Testing `show_*_page` flags for precedence in a handler, a guard
+  written as `!messages && !test_results && !registers`, or any "the other flags are clear" form,
+  is a violation.
+- A new overlay page gets an `OverlayPage` variant placed in `top_overlay()` where `draw` paints
+  it. A new `show_*_page` flag that `top_overlay()` doesn't know is a violation.
 - A manual check of an overlay key includes opening that overlay from another overlay's `:`
-  prompt (`:registers`, then `:health`), because unit tests cannot reach the overlay key block.
+  prompt (`:registers`, then `:health`), because unit tests reach the `overlay_*` methods but not
+  the key block that picks which page they get.

@@ -149,7 +149,7 @@ Decisions:
   the recovery file held `delta FRESH` with `saved_at` 1789506915 and the dead pid. `binvim d.txt`
   showed `delta FRESH`, dirty, with "recovered unsaved changes from 0s ago", and `u` gave `delta`.
   `git checkout -- src/app/input.rs` left `git status` clean.
-- [ ] **`CLAUDE.md` rules.** Under "Conventions to preserve", add: overlay page flags can be set
+- [x] **`CLAUDE.md` rules.** Under "Conventions to preserve", add: overlay page flags can be set
   together, and every handler reads `App::top_overlay()` rather than testing flags itself; and
   anything added to `open_buffer` / `switch_to` that changes buffer text, dirty state or disk must be
   safe for `:S` and `apply_concrete_edits`, which open, edit and save with nobody looking. Also
