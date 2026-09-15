@@ -168,10 +168,18 @@ pub fn path_key(path: &Path) -> String {
 ///
 /// A rename replaces the directory entry, so the ways it would change the file
 /// rather than its contents are handled here. A symlink is written through to
-/// what it names, and the target's permissions are copied onto the temp file.
-/// Two cases fall back to writing in place, which keeps the inode: a file with
-/// other hard links (a rename would split them), and a directory the temp file
-/// can't be created in (a file the user may write but not replace).
+/// what it names, and the temp file is created with the target's permissions
+/// and given its owner and group. Where the rename would still change the file,
+/// it's written in place instead, keeping the inode: other hard links (a rename
+/// would split them), an owner or group this user can't give the temp file
+/// (`sudo binvim` on someone else's file), and a directory the temp file can't
+/// be created in (a file the user may write but not replace). ACLs and extended
+/// attributes aren't carried over.
+///
+/// The temp file sits beside the target, possibly in a directory other users
+/// can write, so it's created exclusively under a name they can't predict: a
+/// symlink or file planted there makes the create fail rather than redirecting
+/// the write, and its mode is right from the moment it exists.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let target = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => match path.canonicalize() {
@@ -185,24 +193,25 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if existing.as_ref().is_some_and(has_other_links) {
         return std::fs::write(&target, bytes);
     }
-    let name = target.file_name().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
-    })?;
-    let tmp = target.with_file_name(format!(
-        ".{}.binvim-{}.tmp",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
-    let file = match std::fs::File::create(&tmp) {
-        Ok(file) => file,
+    let (tmp, file) = match create_temp_beside(&target, existing.as_ref()) {
+        Ok(created) => created,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
             return std::fs::write(&target, bytes);
         }
         Err(e) => return Err(e),
     };
+    if let Some(meta) = &existing {
+        if !take_owner(&file, meta) {
+            drop(file);
+            let _ = std::fs::remove_file(&tmp);
+            return std::fs::write(&target, bytes);
+        }
+    }
     let written = (|| {
         let mut file = file;
         if let Some(meta) = &existing {
+            // The create applied the mode through the umask; this restores
+            // any bits it took away.
             file.set_permissions(meta.permissions())?;
         }
         file.write_all(bytes)?;
@@ -215,6 +224,75 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         let _ = std::fs::remove_file(&tmp);
     }
     written
+}
+
+/// Exclusively create a temp file in `target`'s directory, retrying under a
+/// new name if one is taken.
+fn create_temp_beside(
+    target: &Path,
+    existing: Option<&std::fs::Metadata>,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let name = target.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+    })?;
+    let mut last = None;
+    for _ in 0..16 {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let tmp = target.with_file_name(format!(
+            ".{}.binvim-{}-{nanos:08x}-{}.tmp",
+            name.to_string_lossy(),
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        match create_exclusive(&tmp, existing) {
+            Ok(file) => return Ok((tmp, file)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::Error::other("no free temp file name")))
+}
+
+/// `O_CREAT | O_EXCL`, which fails on an existing path — a symlink included,
+/// since an exclusive create never follows one.
+fn create_exclusive(
+    path: &Path,
+    existing: Option<&std::fs::Metadata>,
+) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(existing.map_or(0o666, |m| m.permissions().mode() & 0o7777));
+    }
+    #[cfg(not(unix))]
+    let _ = existing;
+    options.open(path)
+}
+
+/// Give the temp file `target`'s owner and group. False when this user can't,
+/// so the caller writes in place rather than change who owns the file.
+#[cfg(unix)]
+fn take_owner(file: &std::fs::File, target: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(meta) = file.metadata() else {
+        return false;
+    };
+    if meta.uid() == target.uid() && meta.gid() == target.gid() {
+        return true;
+    }
+    std::os::unix::fs::fchown(file, Some(target.uid()), Some(target.gid())).is_ok()
+}
+
+#[cfg(not(unix))]
+fn take_owner(_: &std::fs::File, _: &std::fs::Metadata) -> bool {
+    true
 }
 
 #[cfg(unix)]
@@ -265,6 +343,45 @@ mod tests {
         write_atomic(&file, b"two\n").unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"two\n");
         assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_exclusive_create_refuses_a_planted_symlink() {
+        let dir = scratch("planted");
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, "untouched").unwrap();
+        let planted = dir.join(".a.txt.tmp");
+        std::os::unix::fs::symlink(&victim, &planted).unwrap();
+        let err = create_exclusive(&planted, None).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_gives_a_new_file_the_usual_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("newmode");
+        let plain = dir.join("plain.txt");
+        std::fs::write(&plain, "x").unwrap();
+        let atomic = dir.join("atomic.txt");
+        write_atomic(&atomic, b"x").unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&atomic), mode(&plain));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_keeps_the_owner_and_group() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = scratch("owner");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "old").unwrap();
+        let before = std::fs::metadata(&file).unwrap();
+        write_atomic(&file, b"new").unwrap();
+        let after = std::fs::metadata(&file).unwrap();
+        assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
     }
 
     #[cfg(unix)]
