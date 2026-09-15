@@ -6,6 +6,8 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.4]
+
 ### Added
 - **`:health` offers to install what the open file is missing.** When the
   language of the file you're in lacks its language server or formatter, a
