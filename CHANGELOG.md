@@ -12,6 +12,26 @@ follows [Semantic Versioning](https://semver.org/).
   SETUP box at the top of the dashboard names them, and `i` opens `:install`
   with that language already checked. Tools binvim can't install for you —
   OmniSharp, netcoredbg — are still only reported as not installed.
+- **Unsaved work comes back after a crash.** While a buffer has unsaved
+  changes its text is copied aside every four seconds, and at once when binvim
+  is killed, its terminal is closed or it crashes. Opening the file again puts
+  the text back as unsaved changes: `u` shows what's on disk, `:w` keeps it,
+  `:e!` discards it.
+- **`:w!` writes past a refusal**, and `:w! {file}` over a file that exists.
+
+### Fixed
+- **A write that fails partway no longer destroys the file.** `:w` used to
+  empty the file before writing it, so a full disk left neither version; it
+  now writes a copy and swaps it in, keeping symlinks and permissions.
+- **Saving no longer overwrites changes made on disk.** If the file changed
+  since it was read — a `git pull` under unsaved edits — `:w` says so and
+  leaves it alone until `:w!`. `:w {file}` no longer writes over another file
+  that exists (`E13`).
+- **Files that aren't valid UTF-8 are no longer corrupted silently.** Opening
+  one says its invalid bytes show as `�`, and `:w` won't make that permanent
+  without `:w!`.
+- **A formatter that prints nothing no longer empties the file** on save; the
+  buffer is left as it was and the failure is reported.
 
 ## [0.6.3] - 2026-09-14
 

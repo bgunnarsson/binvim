@@ -86,6 +86,8 @@ binvim is the first vim IDE. Here's how it stacks up against the editors and IDE
 - **Whitespace markers** — every space, tab, non-breaking space, and end-of-line surface as a muted glyph (`·`, `→`, `⎵`, `¬`). Configurable.
 - **Format on save / on-demand** — `<leader>f` or `:fmt` runs the right tool per extension. biome for JS / TS / JSX / TSX / JSON / JSONC; csharpier for `.cs`; `gofmt` / `goimports` for `.go`; `ruff format` (or `black` as fallback) for `.py`; `clang-format` for `.c` / `.h` / `.cpp` / `.cc` / `.hpp` / `.cxx` / `.hxx`; `shfmt` for `.sh` / `.bash` / `.zsh`; `stylua` for `.lua`; Prettier (project-local `node_modules/.bin/prettier` first, then global) for the file types biome doesn't currently format — `.md` / `.mdx` / `.vue` / `.svelte` / `.html` / `.htm` / `.css` / `.scss` / `.less` / `.yaml` / `.yml` / `.graphql` / `.gql`; `taplo format` for `.toml`; `rufo` for `.rb`; `php-cs-fixer` for `.php` (temp-file dance — no stdin mode); `google-java-format` for `.java`; `zig fmt` for `.zig`; `nixfmt` (or `alejandra`) for `.nix`; `mix format` for `.ex` / `.exs`; `ktfmt` for `.kt` / `.kts` (temp-file dance); `sql-formatter` for `.sql`; `.editorconfig` indent reflow for `.cshtml` / `.razor` (csharpier rejects those, so we fall through). `.editorconfig` directives (final newline, trailing whitespace) apply on every save regardless of extension.
 - **Auto-reload on disk change** — when an open file changes externally and the buffer isn't dirty, binvim notices via mtime poll and reloads with a status note.
+- **Writes that can't lose work** — `:w` writes a temp file beside the original and renames it over, so a write that fails partway (a full disk) leaves the old file whole; symlinks, permissions and hard links are kept. `:w` refuses, and `:w!` writes anyway, when the file was changed on disk since it was read (a `git pull` under unsaved edits), when `:w {file}` names another file that already exists (`E13`), and when the file wasn't valid UTF-8 — opening one says so, since its invalid bytes show as `�` and writing makes that permanent. A formatter that prints nothing for a non-empty buffer is reported as a failure instead of emptying the file.
+- **Recovery after a crash** — while a buffer has unsaved changes, its text is copied to `~/.cache/binvim/recover/<hash>.json` every four seconds, and straight away when binvim is killed (`SIGTERM`), its terminal is closed (`SIGHUP`) or it crashes. Opening the file again puts that text back as unsaved changes and says so: `u` shows what's on disk, `:w` keeps the recovered text, `:e!` throws it away. The copy is removed once the buffer is written, reverted, closed, or quit with `:q!`. A `kill -9` loses at most the last four seconds; so does anything on Windows, where only the periodic copy runs. Buffers with no file name aren't covered, and a signal doesn't save the session.
 - **Recents in the file picker** — most-recently-opened files surface at the top of the file picker on an empty query, persisted at `~/.cache/binvim/recents`.
 
 ### Sessions & tabs
@@ -444,6 +446,7 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | Command                   | Description                                                                                                                   |
 |---------------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | `:health`                 | Full-screen dashboard: version, CPU / RAM, buffers, attached LSPs (binary path + running flag + init state + per-kind pending-request breakdown), per-buffer LSP cache counts (`doc-hi: N cached · sem-tok: M cached`), Tailwind / formatter / editorconfig / git detection. When the active buffer's language is missing its LSP or formatter, a SETUP box at the top names them and `i` opens `:install` on that language. `:checkhealth` works too. Stuck-init LSPs (binary running but not answering `initialize` — the classic rustup-wrapper failure mode) get a loud red `NOT INITIALIZED` chip + a hint pointing at `:messages` for stderr. |
+| `:w!` / `:w! {file}`      | Write past a refusal: over a file changed on disk since it was read, over another file that already exists, or a file that wasn't valid UTF-8 (its invalid bytes are written as `�`). |
 | `:config`                 | Open `~/.config/binvim/config.toml`; writing it applies it without a restart. `:config reload` re-reads it after an outside edit; `:config default` opens a scratch buffer with every setting at its default. Problems in the file are named in the status line and listed in `:health`. |
 | `:workspaces` / `:ws`     | Dump every running LSP client + its currently-attached workspace folders to the status line. In a monorepo / sibling-repo session you'll see entries like `rust-analyzer: ~/code/api  +  ~/code/shared-lib · tsserver: ~/code/web` — a single rust-analyzer process is holding both Cargo roots via `workspace/didChangeWorkspaceFolders` rather than two parallel processes. |
 | `:messages` / `:message`  | Severity-coloured scrollable overlay of captured `window/showMessage` + `window/logMessage` notifications plus server stderr (bounded 500-entry ring). Esc / `q` / `:q` to dismiss; `j`/`k`/`Ctrl-D`/`Ctrl-U`/`g`/`G` to scroll. Error / Warning `showMessage`s also flash through the status line as they arrive. |
@@ -713,6 +716,7 @@ src/
     picker_glue.rs picker open / handle / refilter, yazi shell-out
     file_tree.rs   built-in sidebar tree explorer — state + key handler + click flow
     health.rs      `:health` output
+    recover_glue.rs recovery files — periodic dump, apply on open, signal thread
   buffer.rs        rope-backed text buffer
   command.rs       ex-command (`:`) parser
   config.rs        config loader and colour resolution
@@ -739,6 +743,7 @@ src/
   motion.rs        motions
   parser.rs        keystroke → action parser
   picker.rs        fuzzy pickers
+  recover.rs       recovery-file format + paths
   render.rs        terminal rendering (incl. tab bar)
   session.rs       per-workspace session persistence
   text_object.rs   text objects (`iw`, `i"`, `ap`, …)

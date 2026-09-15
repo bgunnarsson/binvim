@@ -248,13 +248,16 @@ writes, recovery or clippy.
   tmux against the release build: `kill -TERM` straight after typing exits 143 with the terminal
   back in canonical mode and the text in the recovery file; `tmux kill-session` exits (no spin)
   with the text written; `:q!` still leaves no file. The panic branch was reviewed, not triggered.
-- [ ] **Docs.** README: a `:w!` row beside `:w` in the ex-command table; a short "Unsaved work"
+- [x] **Docs.** README: a `:w!` row beside `:w` in the ex-command table; a short "Unsaved work"
   paragraph covering write conflicts, non-UTF-8 files, recovery files (where they live, when
   they're applied and removed, `[No Name]` not covered, Windows covered only by the periodic
   dump). CLAUDE.md: `recover.rs` and `app/recover_glue.rs` in the architecture map, and
   `paths::write_atomic` as the way to write a user's file. CHANGELOG `[Unreleased]`: `Added`
   (recovery, `:w!`), `Fixed` (atomic writes, conflicts, `E13`, non-UTF-8, empty formatter output).
   Verify by reading; `cargo fmt --check`.
+  Deviation: README gets two feature bullets ("Writes that can't lose work", "Recovery after a
+  crash") beside auto-reload rather than one paragraph, plus the layout entries; CLAUDE.md's CI
+  line now says clippy is pinned and denies warnings.
 
 ## Files
 
