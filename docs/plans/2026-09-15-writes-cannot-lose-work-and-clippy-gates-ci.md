@@ -184,7 +184,7 @@ writes, recovery or clippy.
   `formatted.trim()` is empty and `source.trim()` isn't. Verify with `format::tests`: empty output
   for non-empty source is `Err`; empty for empty is `Ok`; ordinary output passes through.
   `cargo test format::tests`.
-- [ ] **Recovery files.** New flat `src/recover.rs` (declared in `main.rs`):
+- [x] **Recovery files.** New flat `src/recover.rs` (declared in `main.rs`):
   `#[derive(Serialize, Deserialize)] pub struct RecoveryFile { pub path: String, pub saved_at:
   u64, pub text: String }`; `pub fn recovery_path(file: &Path) -> Option<PathBuf>` —
   `cfg!(test)` → `None`, else `<cache_dir>/recover/<path_key(file)>.json`; `write_to(dest,
@@ -193,6 +193,8 @@ writes, recovery or clippy.
   Option<&'a str>` — `None` when the texts match. Verify with `recover::tests` on temp paths: write
   then load round-trips; a truncated file loads as `None`; `recovered_text` is `None` for
   identical text and `Some` otherwise. `cargo test recover::tests`.
+  Deviation: also `now_secs()` for `saved_at`. Its items are unused until the next two tasks, so
+  this commit is held back from the push until they land — the clippy gate denies dead code.
 - [ ] **Dirty buffers are dumped, and cleaned up.** App fields `recovery_written: HashMap<PathBuf,
   u64>` (path → version dumped) and `recovery_checked_at: Instant`; `const RECOVERY_INTERVAL:
   Duration = 4s` in `app/state.rs`. New `src/app/recover_glue.rs` (registered in `app.rs`,

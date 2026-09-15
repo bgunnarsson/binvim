@@ -26,6 +26,7 @@ mod package;
 mod parser;
 mod paths;
 mod picker;
+mod recover;
 mod render;
 mod session;
 mod spell;
