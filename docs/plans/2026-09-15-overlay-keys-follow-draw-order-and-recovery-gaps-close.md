@@ -125,7 +125,7 @@ Decisions:
   `UNDO_MAX_AGE = 90 days`; spawn it once from `App::run` beside `update_spawn_check`
   (`src/app.rs:1194`). Verify: test in `undo::tests` with two scratch files, one back-dated with
   `File::set_modified` — only it is removed; `cargo test undo::tests`.
-- [ ] **Save the session on SIGTERM / SIGHUP.** Move the save-or-clear branch at `src/app.rs:1557-1567`
+- [x] **Save the session on SIGTERM / SIGHUP.** Move the save-or-clear branch at `src/app.rs:1557-1567`
   into `session::save_or_clear(&Session)` and call it there. Add
   `App.session_snapshot: Arc<Mutex<Option<Session>>>`, refreshed under `#[cfg(unix)]` from
   `recover_if_due` via `build_session`; `spawn_signal_recovery` saves it after the recovery dumps
@@ -133,6 +133,11 @@ Decisions:
   `cargo test session::tests`; then in tmux against a release build, per the lore: open two files,
   dirty one, wait 5 s, `tmux kill-session`; relaunch bare `binvim` in the same cwd, poll for the UI —
   both buffers restored, the dirty one reporting recovered changes. Repeat with `kill -TERM`.
+  Deviation: `session.rs` has no `tests` module and `session_path` is `None` under test, so there was
+  nothing for `cargo test session::tests` to run; the tmux runs are the check. The relaunch parks the
+  restored tabs behind the start page, which hides the recovered-changes notice, so "recovered" was
+  confirmed by the dirty marker, the buffer's text and `u` returning the disk text. The quit path also
+  empties the session snapshot under its lock, so a signal mid-quit can't save an older session over it.
 - [ ] **Trigger the panic path once.** Temporarily add a `panic!` to a normal-mode key in a local
   build (not committed); in tmux open a file, dirty it, wait 5 s, press the key; confirm the crash
   log path is printed, a recovery file exists, and relaunching on the file reports recovered

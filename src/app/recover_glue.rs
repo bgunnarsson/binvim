@@ -26,6 +26,14 @@ impl super::App {
         }
         self.recovery_checked_at = Instant::now();
         self.write_recovery_now();
+        #[cfg(unix)]
+        {
+            let session = self.build_session();
+            *self
+                .session_snapshot
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(session);
+        }
     }
 
     /// Bring every buffer's recovery file up to date: write the dirty ones
@@ -132,8 +140,15 @@ impl super::App {
     /// caught on a thread of their own rather than by a flag the loop checks:
     /// a closed terminal leaves crossterm's poll spinning in `read` on the dead
     /// tty, so the loop never comes round to look. The thread writes every
-    /// snapshotted buffer's recovery file, puts the terminal back, and exits
-    /// with the signal's conventional status.
+    /// snapshotted buffer's recovery file, saves the session, puts the terminal
+    /// back, and exits with the signal's conventional status.
+    ///
+    /// The session is saved here and not after a panic: a panic can come from
+    /// a file's content, and a session naming that file would reopen it — and
+    /// crash again — on the next bare `binvim`. A signal says nothing about
+    /// what's open. The snapshot can be a recovery interval old; a buffer
+    /// opened since is missing from it, though its recovery file still applies
+    /// when it's next opened.
     #[cfg(unix)]
     pub(super) fn spawn_signal_recovery(&self) {
         use signal_hook::consts::{SIGHUP, SIGTERM};
@@ -141,13 +156,19 @@ impl super::App {
             return;
         };
         let snapshot = self.recovery_snapshot.clone();
+        let session = self.session_snapshot.clone();
         std::thread::spawn(move || {
             let Some(signal) = signals.forever().next() else {
                 return;
             };
-            let dirty = snapshot.lock().unwrap_or_else(|e| e.into_inner());
-            for (path, rope) in dirty.iter() {
-                dump(path, rope.to_string());
+            {
+                let dirty = snapshot.lock().unwrap_or_else(|e| e.into_inner());
+                for (path, rope) in dirty.iter() {
+                    dump(path, rope.to_string());
+                }
+            }
+            if let Some(session) = session.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                let _ = crate::session::save_or_clear(session);
             }
             crate::crash::restore_terminal_best_effort();
             std::process::exit(128 + signal);

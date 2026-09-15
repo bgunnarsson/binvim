@@ -181,6 +181,23 @@ pub fn save(session: &Session) -> std::io::Result<()> {
     crate::paths::write_atomic(&path, json.as_bytes())
 }
 
+/// Save `session`, or remove this cwd's saved one when there's nothing worth
+/// restoring (no buffers AND no histories). Buffers-empty-but-history-non-empty
+/// still saves: the `<leader>bA` flow shouldn't wipe `:` / `/` recall, and
+/// `hydrate_from_session` already tolerates a session whose tracked files have
+/// all been deleted.
+pub fn save_or_clear(session: &Session) -> std::io::Result<()> {
+    if !session.buffers.is_empty()
+        || !session.cmd_history.is_empty()
+        || !session.search_history.is_empty()
+        || !session.macros.is_empty()
+    {
+        save(session)
+    } else {
+        clear_for_cwd(Path::new(&session.cwd))
+    }
+}
+
 /// Remove the saved session for `cwd`. Called on clean shutdown when
 /// no buffers are open — leaving a stale session on disk would cause
 /// the next launch in the same cwd to silently revive every closed

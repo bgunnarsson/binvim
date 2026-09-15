@@ -415,6 +415,10 @@ pub struct App {
     /// the signal thread to write out (`recover_glue`). The lock also keeps
     /// that thread and the loop from writing the same recovery file at once.
     pub recovery_snapshot: std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, ropey::Rope)>>>,
+    /// The session as a clean quit would save it, refreshed with the recovery
+    /// dumps, for the signal thread to save. `None` until the first refresh,
+    /// so a signal that early leaves the last session on disk alone.
+    pub session_snapshot: std::sync::Arc<std::sync::Mutex<Option<crate::session::Session>>>,
     /// Number of dashboard rows scrolled off the top while
     /// `show_health_page` is up. Clamped against
     /// `health_content_height` by the input handlers.
@@ -1028,6 +1032,7 @@ impl App {
             recovery_written: HashMap::new(),
             recovery_checked_at: Instant::now(),
             recovery_snapshot: Default::default(),
+            session_snapshot: Default::default(),
             health_scroll: 0,
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
@@ -1551,23 +1556,13 @@ impl App {
         }
         // Clean shutdown — persist the session so the next launch in this
         // cwd can restore it. Best-effort: errors don't block exit.
-        // We DELETE the file only when there's truly nothing worth
-        // restoring (no buffers AND no histories). Buffers-empty-but-
-        // history-non-empty still saves: the `<leader>bA` flow shouldn't
-        // wipe `:` / `/` recall, and `hydrate_from_session` already
-        // tolerates a session whose tracked files have all been deleted.
         self.discard_all_recovery();
-        let session = self.build_session();
-        if !session.buffers.is_empty()
-            || !session.cmd_history.is_empty()
-            || !session.search_history.is_empty()
-            || !session.macros.is_empty()
-        {
-            let _ = crate::session::save(&session);
-        } else {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let _ = crate::session::clear_for_cwd(&cwd);
-        }
+        // Held through the save and emptied, so a signal arriving mid-quit
+        // can't write its older snapshot over this one.
+        let snapshot = self.session_snapshot.clone();
+        let mut pending = snapshot.lock().unwrap_or_else(|e| e.into_inner());
+        *pending = None;
+        let _ = crate::session::save_or_clear(&self.build_session());
         Ok(())
     }
 }
