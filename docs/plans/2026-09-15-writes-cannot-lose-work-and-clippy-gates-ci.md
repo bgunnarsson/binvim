@@ -122,7 +122,7 @@ writes, recovery or clippy.
   above it. Verify: `cargo clippy --locked --all-targets -- -D warnings` exits 0;
   `cargo test -- --test-threads=1`; push and `gh run watch` the ci run. If an ubuntu or windows
   clippy job fails, add a task below this one for its warnings and fix it next.
-- [ ] **`paths::write_atomic`.** Add `pub fn write_atomic(path: &Path, bytes: &[u8]) ->
+- [x] **`paths::write_atomic`.** Add `pub fn write_atomic(path: &Path, bytes: &[u8]) ->
   io::Result<()>` to `src/paths.rs`: resolve a symlink with `canonicalize` when
   `symlink_metadata` says it is one; temp file `.<name>.binvim-<pid>.tmp` in the target's
   directory; copy the existing target's permissions onto it; write, `sync_all`, rename; remove
@@ -135,6 +135,9 @@ writes, recovery or clippy.
   read-only directory holding a writable file still gets the write (unix, skipped when running as
   root); no `.tmp` file is left behind. Plus `buffer::tests` round-trips still pass.
   `cargo test paths::tests buffer::tests`.
+  Deviation: only a `PermissionDenied` from creating the temp file falls back to writing in place;
+  any other failure (a full disk) returns the error with the file untouched, since an in-place
+  retry would truncate it. A dangling symlink is written through with `std::fs::write`.
 - [ ] **Every other writer shares it.** `session::save`, the `PackageEcosystem::Pip` manifest
   write in `src/package.rs`, and `History::save_to_path` in `src/undo.rs` call `write_atomic`.
   Gate `undo::cache_path_for` with `if cfg!(test) { return None; }` and a why-comment matching

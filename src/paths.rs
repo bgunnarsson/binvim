@@ -37,7 +37,8 @@
 // rather than splitting the module artificially.
 #![allow(dead_code)]
 
-use std::path::PathBuf;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 const APP: &str = "binvim";
 
@@ -146,4 +147,167 @@ fn candidate_names(name: &str) -> Vec<String> {
         }
     }
     out
+}
+
+/// Write `bytes` to `path` so that a write failing partway — a full disk, a
+/// dropped mount — leaves the old file whole rather than truncated: the bytes
+/// go to a temp file beside the target, are synced, and are renamed over it.
+///
+/// A rename replaces the directory entry, so the ways it would change the file
+/// rather than its contents are handled here. A symlink is written through to
+/// what it names, and the target's permissions are copied onto the temp file.
+/// Two cases fall back to writing in place, which keeps the inode: a file with
+/// other hard links (a rename would split them), and a directory the temp file
+/// can't be created in (a file the user may write but not replace).
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let target = match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => match path.canonicalize() {
+            Ok(real) => real,
+            // Dangling: writing through it creates the file it names.
+            Err(_) => return std::fs::write(path, bytes),
+        },
+        _ => path.to_path_buf(),
+    };
+    let existing = std::fs::metadata(&target).ok();
+    if existing.as_ref().is_some_and(has_other_links) {
+        return std::fs::write(&target, bytes);
+    }
+    let name = target.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+    })?;
+    let tmp = target.with_file_name(format!(
+        ".{}.binvim-{}.tmp",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let file = match std::fs::File::create(&tmp) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return std::fs::write(&target, bytes);
+        }
+        Err(e) => return Err(e),
+    };
+    let written = (|| {
+        let mut file = file;
+        if let Some(meta) = &existing {
+            file.set_permissions(meta.permissions())?;
+        }
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        // Closed before the rename — Windows won't rename an open file.
+        drop(file);
+        std::fs::rename(&tmp, &target)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
+#[cfg(unix)]
+fn has_other_links(meta: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    meta.nlink() > 1
+}
+
+#[cfg(not(unix))]
+fn has_other_links(_: &std::fs::Metadata) -> bool {
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh directory per test, so parallel runs don't share files.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("binvim_paths_{name}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn leftover_temp_files(dir: &Path) -> Vec<String> {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect()
+    }
+
+    #[test]
+    fn write_atomic_creates_and_replaces_a_file() {
+        let dir = scratch("replace");
+        let file = dir.join("a.txt");
+        write_atomic(&file, b"one\n").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"one\n");
+        write_atomic(&file, b"two\n").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"two\n");
+        assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_keeps_the_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("mode");
+        let file = dir.join("secret.txt");
+        std::fs::write(&file, "old").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_atomic(&file, b"new").unwrap();
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_writes_through_a_symlink() {
+        let dir = scratch("symlink");
+        let real = dir.join("real.txt");
+        let link = dir.join("link.txt");
+        std::fs::write(&real, "old").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        write_atomic(&link, b"new").unwrap();
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read(&real).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_keeps_hard_links_together() {
+        let dir = scratch("hardlink");
+        let first = dir.join("first.txt");
+        let second = dir.join("second.txt");
+        std::fs::write(&first, "old").unwrap();
+        std::fs::hard_link(&first, &second).unwrap();
+        write_atomic(&first, b"new").unwrap();
+        assert_eq!(std::fs::read(&second).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_writes_in_place_when_the_directory_is_read_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("readonly");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "old").unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        // Root ignores directory permissions, so the temp file gets created
+        // and this would test the ordinary path instead.
+        let root = std::fs::File::create(dir.join("probe")).is_ok();
+        let result = write_atomic(&file, b"new");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if root {
+            return;
+        }
+        result.unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert!(leftover_temp_files(&dir).is_empty());
+    }
 }

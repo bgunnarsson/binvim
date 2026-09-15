@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use ropey::Rope;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufWriter, Read, Write};
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -230,8 +230,9 @@ impl Buffer {
             .path
             .as_ref()
             .context("no file path set (use :w {filename})")?;
-        let file = File::create(path).with_context(|| format!("creating {}", path.display()))?;
-        write_rope_with_eol(&self.rope, self.line_ending, BufWriter::new(file))
+        let mut bytes = Vec::with_capacity(self.rope.len_bytes());
+        write_rope_with_eol(&self.rope, self.line_ending, &mut bytes)?;
+        crate::paths::write_atomic(path, &bytes)
             .with_context(|| format!("writing {}", path.display()))?;
         self.dirty = false;
         // Refresh mtime so the watcher doesn't immediately think the file
