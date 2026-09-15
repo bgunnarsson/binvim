@@ -1,7 +1,7 @@
 ---
 title: :health names the active buffer's missing toolchain and installs it on one key
 date: 2026-09-15
-status: in-progress
+status: done
 ---
 
 ## Context
