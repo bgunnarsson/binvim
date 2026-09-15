@@ -268,6 +268,8 @@ impl super::App {
         if lossy {
             self.status_msg = self.lossy_notice();
         }
+        // Last, so its notice is the one left showing.
+        self.apply_recovery();
         // Strip the phantom `[No Name]` seed that App::new() seeds at
         // index 0 — only on the transition from "fresh launch" (one
         // empty no-path buffer) to a first real file. Skip the strip

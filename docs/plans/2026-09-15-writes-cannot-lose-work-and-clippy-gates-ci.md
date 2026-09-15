@@ -213,12 +213,19 @@ writes, recovery or clippy.
   discards files dumped for buffers already closed (`discard_all_recovery`). Checked in tmux
   against the release build: an unsaved edit left idle 5.5s was dumped with its text, and `:q!`
   removed the file.
-- [ ] **Recovery is applied on open.** `apply_recovery()` in `recover_glue.rs`, called in
+- [x] **Recovery is applied on open.** `apply_recovery()` in `recover_glue.rs`, called in
   `open_buffer` after `switch_to` and in `App::run` for the CLI buffer: load the active path's
   recovery file; `recovered_text` against the rope; `None` → remove the file; `Some(text)` →
   `history.record` the current rope, `replace_all(text)`, `dirty = true`, record the version in
   `recovery_written`, status `recovered unsaved changes from <HH:MM> — :w keeps them, :e!
   discards`. Verify by hand in Verification step 3.
+  Deviation: the age reads `from 4s ago` through the `time_ago` helper `:undolist` already uses
+  (made `pub(super)`) — local `HH:MM` needs a timezone library the project doesn't carry. A path
+  already in `recovery_written` is skipped: a restored session applies recovery in `open_buffer`,
+  and `App::run`'s second call would otherwise find the text matching and remove the file while the
+  buffer was still dirty. Checked in tmux against the release build: after `kill -9` a relaunch
+  shows the text dirty with the notice, `u` shows the file's text, `:w` writes and removes the
+  recovery file, and `:e!` reverts and removes it.
 - [ ] **Panics and signals dump before exit.** `main.rs`: run `app.run()` inside
   `std::panic::catch_unwind(AssertUnwindSafe(..))`; on a panic call `app.write_recovery_now()`
   then `resume_unwind`; on `Err` call it then return the error. `Cargo.toml`:

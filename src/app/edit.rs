@@ -1448,7 +1448,7 @@ impl super::App {
 }
 
 /// `age` the way `:undolist` shows it: seconds, then minutes, then hours.
-fn time_ago(age: std::time::Duration) -> String {
+pub(super) fn time_ago(age: std::time::Duration) -> String {
     let secs = age.as_secs();
     if secs < 60 {
         format!("{secs}s ago")

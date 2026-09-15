@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use crate::recover::{RecoveryFile, now_secs, recovery_path, write_to};
+use crate::recover::{RecoveryFile, load_from, now_secs, recovered_text, recovery_path, write_to};
 
 /// How often dirty buffers are dumped, and so the most typing a `kill -9`
 /// can cost. Vim's `updatetime`.
@@ -64,6 +64,39 @@ impl super::App {
         for path in cleaned {
             self.discard_recovery(&path);
         }
+    }
+
+    /// A buffer just opened has a recovery file left by an editor that died:
+    /// put its text in the buffer as unsaved changes. The file's own text is
+    /// recorded as an undo step first, so `u` shows what's on disk and `:e!`
+    /// throws the recovered text away; nothing reaches the file until `:w`.
+    pub(super) fn apply_recovery(&mut self) {
+        let Some(path) = self.buffer.path.clone() else {
+            return;
+        };
+        // Already this session's: applied when a restored session opened it,
+        // or dumped since. Read again, it would match the buffer and be
+        // removed while the buffer is still dirty.
+        if self.recovery_written.contains_key(&path) {
+            return;
+        }
+        let Some(rec) = recovery_path(&path).and_then(|dest| load_from(&dest)) else {
+            return;
+        };
+        let Some(text) = recovered_text(&rec, &self.buffer.rope.to_string()) else {
+            self.discard_recovery(&path);
+            return;
+        };
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        self.buffer.replace_all(text);
+        self.buffer.dirty = true;
+        self.clamp_cursor_normal();
+        self.recovery_written.insert(path, self.buffer.version);
+        let age = Duration::from_secs(now_secs().saturating_sub(rec.saved_at));
+        self.status_msg = format!(
+            "recovered unsaved changes from {} — :w keeps them, :e! discards them",
+            super::edit::time_ago(age)
+        );
     }
 
     pub(super) fn discard_recovery(&mut self, path: &Path) {
