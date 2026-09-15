@@ -505,9 +505,11 @@ impl super::App {
                             }
                             return Ok(());
                         }
-                        KeyCode::Char('i')
-                            if normal && no_ctrl && !messages && !test_results && !registers =>
-                        {
+                        // Keyed on the health flag alone, not on the others
+                        // being clear: running `:health` from `:messages`
+                        // leaves that flag set, and `draw` paints health
+                        // over it, SETUP box and all.
+                        KeyCode::Char('i') if normal && no_ctrl && self.show_health_page => {
                             self.health_install();
                             return Ok(());
                         }
