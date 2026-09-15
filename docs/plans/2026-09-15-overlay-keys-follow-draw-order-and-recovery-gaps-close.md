@@ -156,7 +156,7 @@ Decisions:
   update the `recover_glue` description (session saved on signal) and the `undo.rs` line (0700,
   90-day prune). Update the overlay lore doc's closing note that the ordering was left as-is.
   Verify: read the section back; `scripts/check-ai-attribution.sh`.
-- [ ] **Docs.** CHANGELOG Unreleased entries for the overlay fix, Windows second-instance check,
+- [x] **Docs.** CHANGELOG Unreleased entries for the overlay fix, Windows second-instance check,
   undo privacy and pruning, and session-on-signal; README wherever recovery or undo persistence is
   described. Verify: `grep -n "undo" README.md` read back against the new behaviour.
 

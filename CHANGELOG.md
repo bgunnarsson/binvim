@@ -18,6 +18,10 @@ follows [Semantic Versioning](https://semver.org/).
   the text back as unsaved changes: `u` shows what's on disk, `:w` keeps it,
   `:e!` discards it.
 - **`:w!` writes past a refusal**, and `:w! {file}` over a file that exists.
+- **Closing the terminal or killing binvim keeps your session.** `SIGTERM` and
+  `SIGHUP` now save the open buffers as a clean quit does, so a bare `binvim`
+  brings them back with their unsaved changes recovered. A crash still doesn't
+  save the session, so a file that crashes binvim isn't reopened by it.
 
 ### Fixed
 - **A write that fails partway no longer destroys the file.** `:w` used to
@@ -32,6 +36,15 @@ follows [Semantic Versioning](https://semver.org/).
   without `:w!`.
 - **A formatter that prints nothing no longer empties the file** on save; the
   buffer is left as it was and the failure is reported.
+- **Overlay keys act on the page you can see.** With `:health` opened from
+  `:messages`, `:registers` or test results, `q`, `Esc`, `j` / `k`, `g` / `G`
+  and the mouse wheel moved or closed the page underneath instead.
+- **A second binvim on Windows no longer takes over the first's unsaved
+  changes.** Whether the other editor is still running is now checked there
+  too, as it already was on macOS and Linux.
+- **Undo history is private and doesn't pile up.** `~/.cache/binvim/undo` is
+  readable only by you, since each file in it holds your text, and history
+  for a file not saved in 90 days is removed at startup.
 
 ## [0.6.3] - 2026-09-14
 
