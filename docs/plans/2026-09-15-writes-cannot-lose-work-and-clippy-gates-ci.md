@@ -114,7 +114,7 @@ writes, recovery or clippy.
 
 ## Tasks
 
-- [ ] **Clippy clean, then gated.** Fix the 12 warnings: `lang.rs:853` (`if .. else`),
+- [x] **Clippy clean, then gated.** Fix the 12 warnings: `lang.rs:853` (`if .. else`),
   `picker.rs:304` and `:348` and `markdown_render.rs:1670` and `install.rs:1296`/`:1316`
   (iterate instead of indexing), `lsp/io.rs:365-366` and `lsp/parse.rs:848-849` (`Value::from`),
   and move the items after the test module in `app/lsp_glue.rs:2491` and `lsp/io.rs:319` above it.
