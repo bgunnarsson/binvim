@@ -193,6 +193,12 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if existing.as_ref().is_some_and(has_other_links) {
         return std::fs::write(&target, bytes);
     }
+    if existing.is_some() {
+        // A rename only needs the directory to be writable, so without this a
+        // read-only file would be replaced. Asking to open it for writing —
+        // what writing in place needed — keeps it refusing as it always did.
+        std::fs::OpenOptions::new().write(true).open(&target)?;
+    }
     let (tmp, file) = match create_temp_beside(&target, existing.as_ref()) {
         Ok(created) => created,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
@@ -369,6 +375,23 @@ mod tests {
         write_atomic(&atomic, b"x").unwrap();
         let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&atomic), mode(&plain));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_refuses_a_read_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("readonlyfile");
+        let file = dir.join("locked.txt");
+        std::fs::write(&file, "old").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+        // Root may write a read-only file, so there's nothing to refuse.
+        if std::fs::OpenOptions::new().write(true).open(&file).is_ok() {
+            return;
+        }
+        let err = write_atomic(&file, b"new").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "old");
     }
 
     #[cfg(unix)]
