@@ -150,7 +150,7 @@ writes, recovery or clippy.
   `src/paths.rs`, called by `session_path` (same output, so existing sessions still resolve).
   Verify: `cargo test undo::tests session paths::tests package::tests`, and `path_key` gives the
   same string `hash_path` did for a fixed path (a test pinning one known value).
-- [ ] **Buffers know when they're lossy or stale.** Add `pub lossy: bool` (set when
+- [x] **Buffers know when they're lossy or stale.** Add `pub lossy: bool` (set when
   `std::str::from_utf8(&bytes)` fails in `from_path`) and `pub disk_len: Option<u64>` (set beside
   `disk_mtime` in `from_path`, `save`, and `reload_buffer_from_disk_inner`) to `Buffer`, and
   `pub fn changed_on_disk(&self) -> bool`: false with no path, no recorded mtime, or no file on

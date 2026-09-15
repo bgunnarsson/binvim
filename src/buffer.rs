@@ -114,6 +114,13 @@ pub struct Buffer {
     /// the auto-reload watcher — if the file's current mtime is newer and
     /// the buffer isn't dirty, the watcher reloads from disk.
     pub disk_mtime: Option<SystemTime>,
+    /// File length beside `disk_mtime`. A rewrite inside the same mtime tick
+    /// (filesystems with one- or two-second resolution) still shows up as a
+    /// changed length.
+    pub disk_len: Option<u64>,
+    /// The file wasn't valid UTF-8, so its invalid bytes were replaced with
+    /// U+FFFD on load. Writing it back makes that replacement permanent.
+    pub lossy: bool,
     /// Synthetic label for path-less internal buffers (e.g. `[Health]`). Lets
     /// the buffer list show something meaningful instead of `[No Name]`.
     pub display_name: Option<String>,
@@ -164,6 +171,8 @@ impl Buffer {
             dirty: false,
             version: 0,
             disk_mtime: None,
+            disk_len: None,
+            lossy: false,
             display_name: None,
             line_ending: LineEnding::platform_default(),
             marks: HashMap::new(),
@@ -181,7 +190,9 @@ impl Buffer {
         if path.exists() {
             let mut file =
                 File::open(&path).with_context(|| format!("opening {}", path.display()))?;
-            let mtime = file.metadata().ok().and_then(|m| m.modified().ok());
+            let meta = file.metadata().ok();
+            let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+            let disk_len = meta.map(|m| m.len());
             // Normalize CRLF → LF on load. ropey preserves bytes verbatim, so a
             // stray `\r` left in a line would reach the renderer and reset the
             // terminal cursor to column 0 — clobbering inline diagnostics and
@@ -191,6 +202,7 @@ impl Buffer {
             file.read_to_end(&mut bytes)
                 .with_context(|| format!("reading {}", path.display()))?;
             let line_ending = detect_line_ending(&bytes);
+            let lossy = std::str::from_utf8(&bytes).is_err();
             let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
             let rope = Rope::from_str(&text);
             Ok(Self {
@@ -199,6 +211,8 @@ impl Buffer {
                 dirty: false,
                 version: 0,
                 disk_mtime: mtime,
+                disk_len,
+                lossy,
                 display_name: None,
                 line_ending,
                 marks: HashMap::new(),
@@ -214,6 +228,8 @@ impl Buffer {
                 dirty: false,
                 version: 0,
                 disk_mtime: None,
+                disk_len: None,
+                lossy: false,
                 display_name: None,
                 line_ending: LineEnding::platform_default(),
                 marks: HashMap::new(),
@@ -239,8 +255,22 @@ impl Buffer {
         // changed under us.
         if let Ok(meta) = std::fs::metadata(path) {
             self.disk_mtime = meta.modified().ok();
+            self.disk_len = Some(meta.len());
         }
         Ok(())
+    }
+
+    /// The file on disk is no longer the one this buffer last read or wrote —
+    /// another program has written it since. A file that has gone missing
+    /// isn't counted: writing it again loses nothing.
+    pub fn changed_on_disk(&self) -> bool {
+        let (Some(path), Some(mtime)) = (self.path.as_deref(), self.disk_mtime) else {
+            return false;
+        };
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        meta.modified().ok() != Some(mtime) || Some(meta.len()) != self.disk_len
     }
 
     pub fn line_count(&self) -> usize {
@@ -589,6 +619,34 @@ mod tests {
             detect_line_ending(b"no newlines"),
             LineEnding::platform_default()
         );
+    }
+
+    #[test]
+    fn invalid_utf8_marks_the_buffer_lossy() {
+        let bad = std::env::temp_dir().join("binvim_lossy_latin1.txt");
+        std::fs::write(&bad, b"caf\xe9\n").unwrap();
+        let buf = Buffer::from_path(bad.clone()).unwrap();
+        assert!(buf.lossy);
+        assert_eq!(buf.rope.to_string(), "caf\u{FFFD}\n");
+        let good = std::env::temp_dir().join("binvim_lossy_utf8.txt");
+        std::fs::write(&good, "café\n").unwrap();
+        assert!(!Buffer::from_path(good.clone()).unwrap().lossy);
+        let _ = std::fs::remove_file(bad);
+        let _ = std::fs::remove_file(good);
+    }
+
+    #[test]
+    fn changed_on_disk_follows_writes_by_other_programs() {
+        let tmp = std::env::temp_dir().join("binvim_changed_on_disk.txt");
+        std::fs::write(&tmp, "one\n").unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert!(!buf.changed_on_disk());
+        std::fs::write(&tmp, "someone else\n").unwrap();
+        assert!(buf.changed_on_disk());
+        buf.save().unwrap();
+        assert!(!buf.changed_on_disk());
+        std::fs::remove_file(&tmp).unwrap();
+        assert!(!buf.changed_on_disk());
     }
 
     #[test]

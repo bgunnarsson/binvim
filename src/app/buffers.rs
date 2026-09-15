@@ -243,6 +243,7 @@ impl super::App {
             })
             .unwrap_or_default();
         let large = buf.is_large();
+        let lossy = buf.lossy;
         let stash = BufferStash {
             buffer: buf,
             history,
@@ -263,6 +264,9 @@ impl super::App {
             // First-run nudge if this language's LSP/formatter isn't set up.
             // After the large-file branch so it can't clobber that notice.
             self.maybe_prompt_toolchain();
+        }
+        if lossy {
+            self.status_msg = self.lossy_notice();
         }
         // Strip the phantom `[No Name]` seed that App::new() seeds at
         // index 0 — only on the transition from "fresh launch" (one
@@ -322,6 +326,21 @@ impl super::App {
     /// Force-reload the active buffer from disk, bypassing the dirty
     /// guard and the once-per-second throttle. Returns the file's name
     /// for status reporting (or `None` if the reload failed).
+    /// Said when a file that isn't valid UTF-8 is opened — nothing else
+    /// tells the user its bytes were replaced.
+    pub(super) fn lossy_notice(&self) -> String {
+        let name = self
+            .buffer
+            .path
+            .as_deref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        format!(
+            "\"{name}\" is not valid UTF-8 — invalid bytes show as \u{FFFD}, and :w! writes them that way"
+        )
+    }
+
     pub(super) fn force_reload_from_disk(&mut self) -> Option<String> {
         let path = self.buffer.path.clone()?;
         self.reload_buffer_from_disk_inner(&path, None)
@@ -338,8 +357,9 @@ impl super::App {
         let text = raw.replace("\r\n", "\n");
         let _ = Rope::from_str(&text); // touch ropey so caches invalidate downstream
         self.buffer.replace_all(&text);
-        self.buffer.disk_mtime =
-            disk_mtime.or_else(|| std::fs::metadata(path).and_then(|m| m.modified()).ok());
+        let meta = std::fs::metadata(path).ok();
+        self.buffer.disk_mtime = disk_mtime.or_else(|| meta.as_ref()?.modified().ok());
+        self.buffer.disk_len = meta.map(|m| m.len());
         self.buffer.dirty = false;
         let last = self.buffer.line_count().saturating_sub(1);
         if self.window.cursor.line > last {

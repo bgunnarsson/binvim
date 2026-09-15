@@ -1165,6 +1165,9 @@ impl App {
         if self.buffer.is_large() {
             self.status_msg = "large file — tree-sitter + LSP disabled".into();
         }
+        if self.buffer.lossy {
+            self.status_msg = self.lossy_notice();
+        }
         self.lsp_attach_active();
         // Same first-run toolchain nudge open_buffer fires, for the
         // CLI-launched buffer that never went through it. No-op on the
