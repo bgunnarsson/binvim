@@ -325,9 +325,6 @@ impl super::App {
         }
     }
 
-    /// Force-reload the active buffer from disk, bypassing the dirty
-    /// guard and the once-per-second throttle. Returns the file's name
-    /// for status reporting (or `None` if the reload failed).
     /// Said when a file that isn't valid UTF-8 is opened — nothing else
     /// tells the user its bytes were replaced.
     pub(super) fn lossy_notice(&self) -> String {
@@ -343,6 +340,9 @@ impl super::App {
         )
     }
 
+    /// Force-reload the active buffer from disk, bypassing the dirty
+    /// guard and the once-per-second throttle. Returns the file's name
+    /// for status reporting (or `None` if the reload failed).
     pub(super) fn force_reload_from_disk(&mut self) -> Option<String> {
         let path = self.buffer.path.clone()?;
         self.discard_recovery(&path);
