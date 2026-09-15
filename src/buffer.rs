@@ -257,6 +257,8 @@ impl Buffer {
             self.disk_mtime = meta.modified().ok();
             self.disk_len = Some(meta.len());
         }
+        // The replacement characters are the file's bytes now.
+        self.lossy = false;
         Ok(())
     }
 

@@ -2615,13 +2615,10 @@ impl super::App {
             cmd => cmd,
         };
         match cmd {
-            ExCommand::Write => self.write_and_report(),
-            ExCommand::WriteAs(p) => {
-                let path = PathBuf::from(p);
-                self.buffer.path = Some(std::path::absolute(&path).unwrap_or(path));
-                self.refresh_editorconfig();
-                self.write_and_report();
-            }
+            ExCommand::Write => self.write_and_report(false),
+            ExCommand::WriteForce => self.write_and_report(true),
+            ExCommand::WriteAs(p) => self.write_as(p, false),
+            ExCommand::WriteAsForce(p) => self.write_as(p, true),
             ExCommand::Quit => {
                 if self.show_health_page {
                     self.show_health_page = false;
@@ -2647,13 +2644,13 @@ impl super::App {
                 }
             }
             ExCommand::QuitForce | ExCommand::QuitAllForce => self.quit_now(),
-            ExCommand::WriteQuit => match self.save_active() {
+            ExCommand::WriteQuit => match self.save_active(false) {
                 Ok(_) => self.quit_unless_background_dirty(),
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
             ExCommand::WriteQuitIfModified => {
                 let saved = if self.buffer.dirty {
-                    self.save_active().map(|_| ())
+                    self.save_active(false).map(|_| ())
                 } else {
                     Ok(())
                 };
@@ -3468,10 +3465,31 @@ impl super::App {
         }
     }
 
+    /// `:w {file}` / `:w! {file}`. Another file that already exists is only
+    /// written over with `!` — Vim's E13 — and the check comes before the
+    /// buffer is renamed, so a refusal leaves it pointing where it was.
+    fn write_as(&mut self, target: String, force: bool) {
+        let path = PathBuf::from(target);
+        let path = std::path::absolute(&path).unwrap_or(path);
+        if self.buffer.path.as_deref() != Some(path.as_path()) {
+            if !force && path.exists() {
+                self.status_msg = "E13: File exists (add ! to override)".into();
+                return;
+            }
+            self.buffer.path = Some(path);
+            // What was recorded describes the old file, and would read as a
+            // conflict against the new one.
+            self.buffer.disk_mtime = None;
+            self.buffer.disk_len = None;
+            self.refresh_editorconfig();
+        }
+        self.write_and_report(force);
+    }
+
     /// `:w` and `:w {file}`: write, then say so with whatever the save
     /// noted — the formatter, or a reload when the file is `config.toml`.
-    fn write_and_report(&mut self) {
-        match self.save_active() {
+    fn write_and_report(&mut self, force: bool) {
+        match self.save_active(force) {
             Ok(format_note) => {
                 // Show the basename only — full paths blow up the
                 // notification box for deep working trees. Disambiguating
@@ -4220,7 +4238,7 @@ impl super::App {
                 Ok((n, _)) if n > 0 => {
                     total_subs += n;
                     files_changed += 1;
-                    if !flags.count_only && self.save_active().is_err() {
+                    if !flags.count_only && self.save_active(false).is_err() {
                         errors += 1;
                     }
                 }
@@ -6851,6 +6869,59 @@ mod tests {
         app.exec_command("q");
         assert!(app.status_msg.contains("E162"), "{}", app.status_msg);
         assert!(!app.should_quit);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn w_refuses_a_file_rewritten_on_disk_until_w_bang() {
+        let (dir, a, _) = two_files("wconflict");
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a.clone()).unwrap();
+        app.buffer.insert_str(0, 0, "x");
+        app.buffer.dirty = true;
+        std::fs::write(&a, "outside\n").unwrap();
+        app.exec_command("w");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "outside\n");
+        assert!(app.status_msg.contains(":w!"), "{}", app.status_msg);
+        assert!(app.buffer.dirty);
+        app.exec_command("w!");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "xa\n");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn w_to_another_existing_file_is_e13_until_w_bang() {
+        let (dir, a, b) = two_files("we13");
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(a.clone()).unwrap();
+        app.exec_command(&format!("w {}", b.display()));
+        assert!(app.status_msg.contains("E13"), "{}", app.status_msg);
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "b\n");
+        assert_eq!(app.buffer.path.as_deref(), Some(a.as_path()));
+        app.exec_command(&format!("w! {}", b.display()));
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "a\n");
+        assert_eq!(app.buffer.path.as_deref(), Some(b.as_path()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn w_refuses_a_file_that_was_not_utf8_until_w_bang() {
+        let (dir, _, _) = two_files("wlossy");
+        let latin = dir.join("latin1.txt");
+        std::fs::write(&latin, b"caf\xe9\n").unwrap();
+        let mut app = app_with_keymaps("", "");
+        app.open_buffer(latin.clone()).unwrap();
+        assert!(
+            app.status_msg.contains("not valid UTF-8"),
+            "{}",
+            app.status_msg
+        );
+        app.exec_command("w");
+        assert_eq!(std::fs::read(&latin).unwrap(), b"caf\xe9\n");
+        assert!(app.status_msg.contains(":w!"), "{}", app.status_msg);
+        app.exec_command("w!");
+        assert_eq!(std::fs::read(&latin).unwrap(), "caf\u{FFFD}\n".as_bytes());
+        assert!(!app.buffer.lossy);
         std::fs::remove_dir_all(&dir).ok();
     }
 

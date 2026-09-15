@@ -188,7 +188,7 @@ fn split_for_completion(cmdline: &str) -> Option<(String, String, CompletionKind
     let prefix = cmdline[..after_head_idx + token_offset].to_string();
     let token = cmdline[after_head_idx + token_offset..].to_string();
     let kind = match head {
-        "e" | "edit" | "w" | "write" => CompletionKind::FilePath,
+        "e" | "edit" | "w" | "write" | "w!" | "write!" => CompletionKind::FilePath,
         "b" | "buffer" => CompletionKind::Buffer,
         _ => return None,
     };

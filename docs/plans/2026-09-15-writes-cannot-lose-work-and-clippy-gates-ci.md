@@ -160,7 +160,7 @@ writes, recovery or clippy.
   bytes set `lossy`, valid ones don't; `changed_on_disk` is false after load, true after the file
   is rewritten with different length, false after `save`, false after the file is deleted.
   `cargo test buffer::tests`.
-- [ ] **`:w` refuses what would lose work; `:w!` overrides.** `src/command.rs`: `w!`/`write!`
+- [x] **`:w` refuses what would lose work; `:w!` overrides.** `src/command.rs`: `w!`/`write!`
   parse to `ExCommand::WriteForce`, with a path to `WriteAsForce(String)`; tests beside the
   existing `parse("w")` ones. `save_active(&mut self, force: bool)`: unless `force`, bail before
   formatting with `file changed on disk since it was read (add ! to overwrite)` when
@@ -175,6 +175,9 @@ writes, recovery or clippy.
   dirty buffer makes `:w` leave the file and set a status containing `:w!`, and `:w!` writes it;
   `:w <existing>` leaves both files and says `E13`, `:w! <existing>` writes; a lossy buffer's
   `:w` refuses and `:w!` writes. `cargo test app::input::tests command::tests`.
+  Deviation: `Buffer::save` clears `lossy` (rather than `save_active`), so every successful write
+  does; `:w! <Tab>` completes paths like `:w <Tab>`. The refusal texts end `(:w! overwrites it)` /
+  `(:w! writes it anyway)` so the override is named in the message.
 - [ ] **Empty formatter output is an error.** In `format_buffer` (`src/format.rs`), after the
   dispatch, pass the result through `fn reject_empty(source: &str, formatted: String) ->
   Result<String, String>`: `Err("formatter returned no output; buffer left unchanged")` when

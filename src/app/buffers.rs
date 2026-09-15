@@ -481,7 +481,7 @@ impl super::App {
             self.switch_to(idx)?;
             self.refresh_editorconfig();
             let is_config = self.active_is_config();
-            let note = self.save_active()?;
+            let note = self.save_active(false)?;
             if is_config {
                 config_note = note;
             }

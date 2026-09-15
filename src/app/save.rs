@@ -44,7 +44,19 @@ impl super::App {
     /// transforms, then write to disk. Records a `format_status` message that
     /// the caller can surface — this is the only signal the user gets that
     /// the formatter ran or didn't.
-    pub(super) fn save_active(&mut self) -> Result<Option<String>> {
+    ///
+    /// Unless `force` (`:w!`), a write that would destroy something is
+    /// refused before the formatter runs: another program's changes to the
+    /// file, or the bytes of a file that wasn't valid UTF-8.
+    pub(super) fn save_active(&mut self, force: bool) -> Result<Option<String>> {
+        if !force && self.buffer.changed_on_disk() {
+            anyhow::bail!("file changed on disk since it was read (:w! overwrites it)");
+        }
+        if !force && self.buffer.lossy {
+            anyhow::bail!(
+                "file is not valid UTF-8 — writing replaces its invalid bytes (:w! writes it anyway)"
+            );
+        }
         let mut format_note: Option<String> = None;
         if let Some(path) = self.buffer.path.clone() {
             let source = self.buffer.rope.to_string();

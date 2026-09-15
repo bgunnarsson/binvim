@@ -2,6 +2,11 @@
 pub enum ExCommand {
     Write,
     WriteAs(String),
+    /// `:w!` — write even over a file changed on disk, or a file that wasn't
+    /// valid UTF-8.
+    WriteForce,
+    /// `:w! {file}` — `WriteForce`, and over a file that already exists.
+    WriteAsForce(String),
     Quit,
     QuitForce,
     WriteQuit,
@@ -797,6 +802,13 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
                 ExCommand::Write
             } else {
                 ExCommand::WriteAs(rest.to_string())
+            }
+        }
+        "w!" | "write!" => {
+            if rest.is_empty() {
+                ExCommand::WriteForce
+            } else {
+                ExCommand::WriteAsForce(rest.to_string())
             }
         }
         "q" | "quit" => ExCommand::Quit,
@@ -1987,6 +1999,9 @@ mod tests {
         // Plain writes, and commands sharing a first letter, are as they were.
         assert!(matches!(parse("w"), ExCommand::Write));
         assert!(matches!(parse("w out.txt"), ExCommand::WriteAs(p) if p == "out.txt"));
+        assert!(matches!(parse("w!"), ExCommand::WriteForce));
+        assert!(matches!(parse("write!"), ExCommand::WriteForce));
+        assert!(matches!(parse("w! out.txt"), ExCommand::WriteAsForce(p) if p == "out.txt"));
         assert!(matches!(parse("reg"), ExCommand::Registers));
     }
 
