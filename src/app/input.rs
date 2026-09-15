@@ -17,7 +17,7 @@ use crate::parser::{self, ParseCtx, ParseResult};
 use super::pair::{
     detect_open_tag_to_close, is_close_char, is_html_like_buffer, open_pair_for, should_auto_pair,
 };
-use super::state::{self, LastEdit, WhichKeyState};
+use super::state::{self, LastEdit, OverlayPage, WhichKeyState};
 
 /// Characters that should re-fire `textDocument/completion` after being inserted.
 /// Identifier chars catch the typing-a-name case; the symbol set covers the
@@ -389,127 +389,76 @@ impl super::App {
                 // then dismisses via the ExCommand::Quit handler above.
                 // Other keys are swallowed so the user can't
                 // accidentally type into the underlying buffer. The
-                // three overlays share the same scroll bindings — only
-                // the dismiss flag differs. The health dashboard alone
-                // also takes `i`, to install what its SETUP box names.
-                let overlay_active = self.show_health_page
-                    || self.show_messages_page
-                    || self.show_test_results_page
-                    || self.show_list_page;
-                if overlay_active {
+                // overlays share the same scroll bindings, applied to the
+                // page `draw` paints — several flags can be up at once.
+                // The health dashboard alone also takes `i`, to install
+                // what its SETUP box names.
+                let overlay = self
+                    .top_overlay()
+                    .filter(|page| !matches!(page, OverlayPage::Install));
+                if let Some(page) = overlay {
                     let normal = matches!(self.mode, Mode::Normal);
                     let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
-                    let messages = self.show_messages_page;
-                    let test_results = self.show_test_results_page;
-                    let registers = self.show_list_page;
-                    let scroll = |this: &mut Self, delta: isize| {
-                        if test_results {
-                            this.test_results_scroll_by(delta);
-                        } else if messages {
-                            this.messages_scroll_by(delta);
-                        } else if registers {
-                            this.list_scroll_by(delta);
-                        } else {
-                            this.health_scroll_by(delta);
-                        }
-                    };
-                    let dismiss = |this: &mut Self| {
-                        if test_results {
-                            this.show_test_results_page = false;
-                        } else if messages {
-                            this.show_messages_page = false;
-                        } else if registers {
-                            this.show_list_page = false;
-                        } else {
-                            this.show_health_page = false;
-                        }
-                    };
                     match k.code {
                         KeyCode::Esc => {
-                            dismiss(self);
+                            self.overlay_dismiss(page);
                             return Ok(());
                         }
                         KeyCode::Char('q') if normal && no_ctrl => {
-                            dismiss(self);
+                            self.overlay_dismiss(page);
                             return Ok(());
                         }
                         // Scroll the overlay. j/k by one row, Ctrl-D/U
                         // by half a page, PgDn/PgUp by a full page, g/G
                         // to jump to top / bottom.
                         KeyCode::Char('j') | KeyCode::Down if normal && no_ctrl => {
-                            scroll(self, 1);
+                            self.overlay_scroll_by(page, 1);
                             return Ok(());
                         }
                         KeyCode::Char('k') | KeyCode::Up if normal && no_ctrl => {
-                            scroll(self, -1);
+                            self.overlay_scroll_by(page, -1);
                             return Ok(());
                         }
                         KeyCode::Char('d') if normal && ctrl => {
                             let step = (self.buffer_rows() / 2).max(1) as isize;
-                            scroll(self, step);
+                            self.overlay_scroll_by(page, step);
                             return Ok(());
                         }
                         KeyCode::Char('u') if normal && ctrl => {
                             let step = (self.buffer_rows() / 2).max(1) as isize;
-                            scroll(self, -step);
+                            self.overlay_scroll_by(page, -step);
                             return Ok(());
                         }
                         KeyCode::Char('f') if normal && ctrl => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            scroll(self, step);
+                            self.overlay_scroll_by(page, step);
                             return Ok(());
                         }
                         KeyCode::Char('b') if normal && ctrl => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            scroll(self, -step);
+                            self.overlay_scroll_by(page, -step);
                             return Ok(());
                         }
                         KeyCode::PageDown if normal => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            scroll(self, step);
+                            self.overlay_scroll_by(page, step);
                             return Ok(());
                         }
                         KeyCode::PageUp if normal => {
                             let step = self.buffer_rows().saturating_sub(1).max(1) as isize;
-                            scroll(self, -step);
+                            self.overlay_scroll_by(page, -step);
                             return Ok(());
                         }
                         KeyCode::Char('g') | KeyCode::Home if normal && no_ctrl => {
-                            if test_results {
-                                // Jump to the top — explicit "look at
-                                // scrollback", so leave tail mode too.
-                                self.test_results_at_tail = false;
-                                self.test_results_scroll = 0;
-                            } else if messages {
-                                self.messages_scroll = 0;
-                            } else if registers {
-                                self.list_scroll = 0;
-                            } else {
-                                self.health_scroll = 0;
-                            }
+                            self.overlay_scroll_to_top(page);
                             return Ok(());
                         }
                         KeyCode::Char('G') | KeyCode::End if normal => {
-                            if test_results {
-                                // Re-engage tail follow rather than
-                                // freezing at the current bottom —
-                                // matches `tail -f` semantics.
-                                self.test_results_at_tail = true;
-                            } else if messages {
-                                self.messages_scroll = self.messages_max_scroll();
-                            } else if registers {
-                                self.list_scroll = self.list_max_scroll();
-                            } else {
-                                self.health_scroll = self.health_max_scroll();
-                            }
+                            self.overlay_scroll_to_bottom(page);
                             return Ok(());
                         }
-                        // Keyed on the health flag alone, not on the others
-                        // being clear: running `:health` from `:messages`
-                        // leaves that flag set, and `draw` paints health
-                        // over it, SETUP box and all.
-                        KeyCode::Char('i') if normal && no_ctrl && self.show_health_page => {
+                        KeyCode::Char('i') if normal && no_ctrl && page == OverlayPage::Health => {
                             self.health_install();
                             return Ok(());
                         }
@@ -1146,16 +1095,8 @@ impl super::App {
                     if let Some(p) = self.picker.as_mut() {
                         p.move_by(-3);
                     }
-                } else if self.show_health_page {
-                    self.health_scroll_by(-3);
-                } else if self.show_install_page {
-                    self.installer_scroll_by(-3);
-                } else if self.show_messages_page {
-                    self.messages_scroll_by(-3);
-                } else if self.show_list_page {
-                    self.list_scroll_by(-3);
-                } else if self.show_test_results_page {
-                    self.test_results_scroll_by(-3);
+                } else if let Some(page) = self.top_overlay() {
+                    self.overlay_scroll_by(page, -3);
                 } else {
                     self.scroll_view(-3);
                 }
@@ -1168,16 +1109,8 @@ impl super::App {
                     if let Some(p) = self.picker.as_mut() {
                         p.move_by(3);
                     }
-                } else if self.show_health_page {
-                    self.health_scroll_by(3);
-                } else if self.show_install_page {
-                    self.installer_scroll_by(3);
-                } else if self.show_messages_page {
-                    self.messages_scroll_by(3);
-                } else if self.show_list_page {
-                    self.list_scroll_by(3);
-                } else if self.show_test_results_page {
-                    self.test_results_scroll_by(3);
+                } else if let Some(page) = self.top_overlay() {
+                    self.overlay_scroll_by(page, 3);
                 } else {
                     self.scroll_view(3);
                 }
@@ -2620,14 +2553,11 @@ impl super::App {
             ExCommand::WriteAs(p) => self.write_as(p, false),
             ExCommand::WriteAsForce(p) => self.write_as(p, true),
             ExCommand::Quit => {
-                if self.show_health_page {
-                    self.show_health_page = false;
-                } else if self.show_messages_page {
-                    self.show_messages_page = false;
-                } else if self.show_list_page {
-                    self.show_list_page = false;
-                } else if self.show_test_results_page {
-                    self.show_test_results_page = false;
+                let overlay = self
+                    .top_overlay()
+                    .filter(|page| !matches!(page, OverlayPage::Install));
+                if let Some(page) = overlay {
+                    self.overlay_dismiss(page);
                 } else if self.in_history_window() {
                     self.close_history_window();
                 } else if self.buffer.dirty {

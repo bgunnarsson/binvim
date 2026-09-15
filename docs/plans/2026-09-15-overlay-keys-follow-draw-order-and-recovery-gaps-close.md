@@ -90,7 +90,7 @@ Decisions:
   `src/app/state.rs` in draw's order (install, health, messages, list, test-results); `render::draw`
   matches on it. Verify: unit test in `app/state.rs` setting flags in pairs (health + messages,
   install + health, list + test-results) and asserting the page returned; `cargo test state::tests`.
-- [ ] **Overlay keys and the mouse wheel follow `top_overlay()`.** Replace the `scroll` / `dismiss`
+- [x] **Overlay keys and the mouse wheel follow `top_overlay()`.** Replace the `scroll` / `dismiss`
   closures and the `g` / `G` branches with `App` methods taking an `OverlayPage`
   (`overlay_scroll_by`, `overlay_dismiss`, `overlay_scroll_to_top`, `overlay_scroll_to_bottom`,
   beside the existing `*_scroll_by` fns); the key block runs when the top page is one of health /
@@ -99,6 +99,8 @@ Decisions:
   `overlay_dismiss(top)` clears health only, `overlay_scroll_to_bottom(top)` moves `health_scroll`
   and leaves `list_scroll`; then by hand in tmux against a release build: `:registers` → `:health`
   → `G`, `q` (registers still showing), `q` (editor); same from `:messages`.
+  Deviation: `ExCommand::Quit` carried the same flag chain (in draw's order already), so `:q` on an
+  overlay goes through `top_overlay()` / `overlay_dismiss` too, leaving no chain outside `top_overlay`.
 - [ ] **Test the failed-rename fallback.** Split `write_atomic` into a private
   `write_atomic_with(path, bytes, rename: fn(&Path, &Path) -> io::Result<()>)`; `write_atomic`
   passes `std::fs::rename`. Every existing fallback stays as it is. Verify: a `#[cfg(unix)]` test in
