@@ -14,6 +14,8 @@ cargo run -- path/to/file      # debug-build run; `binvim [path]` once installed
 
 The user's `binvim` shell alias points at `target/release/binvim`, so any change you want them to exercise interactively needs a fresh `cargo build --release` — debug-build behaviour will not be picked up by their alias. Mention this in the hand-off if you've only built debug.
 
+Manual checks in tmux wait for the mode line before typing, send `Escape` in its own `send-keys` call (sent with the next key it arrives as Alt+key), and finish with `:q!` rather than `tmux kill-session`, which is a SIGHUP that leaves recovery and session files the next run picks up — see `docs/solutions/tooling/tmux-send-keys-escape-then-a-key-arrives-as-alt.md` and `docs/solutions/runtime/hung-up-tty-leaves-crossterm-poll-spinning.md`.
+
 CI runs `cargo test`, `cargo clippy` (pinned to 1.98.0 with warnings denied — lint with `cargo +1.98.0 clippy --locked --all-targets -- -D warnings`, since a newer local clippy flags different things), `cargo fmt --check`, and `scripts/check-ai-attribution.sh` (`attribution.yml`), which fails on any AI attribution — trailers, bot identities, "generated with …" lines — in any commit in history, the PR title/body, the branch name, or a tracked file. `.githooks/commit-msg` runs the same check on each new commit (enabled per clone with `git config core.hooksPath .githooks`); when it rejects a message, reword it — never `--no-verify`. The fmt gate is configured by `rustfmt.toml` at the repo root: `max_width = 100` + `single_line_let_else_max_width = 100` to preserve compact `let Some(x) = … else { return; };` and single-line method chains. Run `cargo fmt` before pushing — anything that doesn't fit the config will fail CI.
 
 ## Architecture
