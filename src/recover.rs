@@ -81,9 +81,30 @@ fn process_alive(pid: u32) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// No cheap check without a new dependency, so on Windows every dump is
-/// taken to be left by a crash.
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn process_alive(pid: u32) -> bool {
+    std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .is_ok_and(|out| tasklist_lists_pid(&String::from_utf8_lossy(&out.stdout), pid))
+}
+
+/// Whether `tasklist /FO CSV /NH` output has a row for `pid`. Matched on the
+/// row's PID field (`"binvim.exe","1234",…`) rather than the absence of the
+/// "No tasks are running" line, which Windows translates.
+#[cfg(any(windows, test))]
+fn tasklist_lists_pid(stdout: &str, pid: u32) -> bool {
+    let pid = pid.to_string();
+    stdout.lines().any(|line| {
+        // Image names can hold commas but never quotes, so the PID is the
+        // second quoted field.
+        let mut fields = line.trim().split('"').skip(1).step_by(2);
+        fields.nth(1) == Some(pid.as_str())
+    })
+}
+
+#[cfg(not(any(unix, windows)))]
 fn process_alive(_: u32) -> bool {
     false
 }
@@ -178,6 +199,19 @@ mod tests {
         assert_eq!(rec.pid, 0);
         assert!(!held_by_another_process(&rec));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tasklist_output_lists_a_pid_only_in_its_pid_field() {
+        let row = "\"binvim.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n";
+        assert!(tasklist_lists_pid(row, 1234));
+        assert!(!tasklist_lists_pid(row, 123));
+        assert!(!tasklist_lists_pid(row, 1));
+        let comma_name = "\"a,b.exe\",\"77\",\"Console\",\"1\",\"1,024 K\"";
+        assert!(tasklist_lists_pid(comma_name, 77));
+        let none = "INFO: No tasks are running which match the specified criteria.\r\n";
+        assert!(!tasklist_lists_pid(none, 1234));
+        assert!(!tasklist_lists_pid("", 1234));
     }
 
     #[cfg(unix)]

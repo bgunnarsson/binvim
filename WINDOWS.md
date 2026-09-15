@@ -28,6 +28,7 @@ CI proves the binary compiles and unit tests pass on `windows-latest`. None of t
 - [ ] DAP launch — install `netcoredbg.exe`, open a `.NET` project, `<leader>db` to set a breakpoint, `<leader>dr` to run, confirm the breakpoint hits and locals + watches populate.
 - [ ] `:terminal` — confirm `cmd.exe` spawns and `dir` runs. ConPTY requires Windows 10 1809+.
 - [ ] CRLF round-trip — open a file with `\r\n` line endings in a real editor session, edit, `:w`, hex-dump the result to confirm `\r\n` is preserved. Repeat with an `.editorconfig` forcing `end_of_line = lf` to confirm conversion.
+- [ ] Second-instance recovery — open a file in binvim, dirty it and wait 5 s, then open the same file in a second binvim: it must not report recovered changes, and the first binvim's file under `%LOCALAPPDATA%\binvim\recover\` must still be there. Exercises `recover::process_alive`'s `tasklist` call.
 
 If any of these fail, the fix probably belongs in WS1-5; the plan covered the wiring but not the on-host validation.
 

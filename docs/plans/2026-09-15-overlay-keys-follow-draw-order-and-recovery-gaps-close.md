@@ -106,7 +106,7 @@ Decisions:
   passes `std::fs::rename`. Every existing fallback stays as it is. Verify: a `#[cfg(unix)]` test in
   `paths::tests` whose rename returns an error — target holds the new bytes, same inode
   (`MetadataExt::ino`), `leftover_temp_files` empty; `cargo test paths::tests`.
-- [ ] **`process_alive` on Windows.** Replace the `#[cfg(not(unix))]` stub with a `#[cfg(windows)]`
+- [x] **`process_alive` on Windows.** Replace the `#[cfg(not(unix))]` stub with a `#[cfg(windows)]`
   `tasklist` call and a pure `tasklist_lists_pid(stdout, pid)` compiled under
   `#[cfg(any(windows, test))]`; keep a `#[cfg(not(any(unix, windows)))]` `false` fallback. Add a
   manual check line to `WINDOWS.md`'s checklist (second binvim on a dirty file leaves the first's
