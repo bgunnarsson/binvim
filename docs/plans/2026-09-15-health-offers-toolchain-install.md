@@ -108,7 +108,7 @@ None found. The one doc in `docs/solutions` (config reload missing state derived
   `:health` with Rust missing opens `:install` on Rust, and on `:registers` (the list overlay)
   does nothing. `:messages` with nothing logged is a notification, not the overlay, so it was not
   the one used.
-- [ ] **Docs.** README `:health` row (`README.md:446`): add that when the active buffer's language
+- [x] **Docs.** README `:health` row (`README.md:446`): add that when the active buffer's language
   is missing its LSP or formatter, the dashboard names them at the top and `i` opens `:install` on
   that language. CHANGELOG `[Unreleased]` → `### Added` entry in the 0.6.3 style (bold one-line
   summary, short paragraph, noting Manual-only tools are still only reported). Verify by reading

@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`:health` offers to install what the open file is missing.** When the
+  language of the file you're in lacks its language server or formatter, a
+  SETUP box at the top of the dashboard names them, and `i` opens `:install`
+  with that language already checked. Tools binvim can't install for you —
+  OmniSharp, netcoredbg — are still only reported as not installed.
+
 ## [0.6.3] - 2026-09-14
 
 ### Added
