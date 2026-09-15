@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.4]
+## [0.6.4] - 2026-09-15
 
 ### Added
 - **`:health` offers to install what the open file is missing.** When the
