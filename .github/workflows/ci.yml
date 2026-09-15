@@ -73,13 +73,11 @@ jobs:
         with:
           key: ci-clippy-${{ matrix.os }}
 
-      # `-D warnings` would currently break the build on the pre-existing
-      # dead-code warnings the repo carries; lint without escalating so
-      # we still surface drift via the run log. Tighten once the existing
-      # warnings are paid down. Running on all three OSes catches
-      # platform-specific `#[cfg]`-gated unused imports.
+      # Any warning fails the job — clippy lints and rustc's own (dead code,
+      # unused imports) alike. Running on all three OSes catches warnings in
+      # `#[cfg]`-gated code the other platforms never compile.
       - name: cargo clippy
-        run: cargo clippy --locked --all-targets -- -A warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   fmt:
     name: cargo fmt --check

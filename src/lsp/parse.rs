@@ -845,8 +845,8 @@ mod tests {
         let leaf = prop_oneof![
             Just(Value::Null),
             any::<bool>().prop_map(Value::Bool),
-            any::<i64>().prop_map(|n| Value::from(n)),
-            any::<u64>().prop_map(|n| Value::from(n)),
+            any::<i64>().prop_map(Value::from),
+            any::<u64>().prop_map(Value::from),
             // String leaves include both ASCII identifiers and arbitrary
             // unicode so URI-shaped + label-shaped fields are both covered.
             "[a-zA-Z0-9_/.:#-]{0,16}".prop_map(Value::String),

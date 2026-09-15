@@ -850,7 +850,7 @@ pub(crate) fn parse_bounded(parser: &mut Parser, source: &str, deadline: Instant
     let bytes = source.as_bytes();
     let len = bytes.len();
     parser.parse_with_options(
-        &mut |i, _| (i < len).then(|| &bytes[i..]).unwrap_or_default(),
+        &mut |i, _| if i < len { &bytes[i..] } else { &[] },
         None,
         Some(ParseOptions::new().progress_callback(&mut over_budget)),
     )

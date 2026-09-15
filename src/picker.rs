@@ -301,14 +301,14 @@ fn fuzzy_match(query: &str, item: &str) -> Option<(i64, Vec<usize>)> {
     let mut prev_row = vec![NEG; n];
     let mut parent: Vec<Vec<usize>> = Vec::with_capacity(m);
 
-    for i in 0..m {
+    for (i, &qc) in q.iter().enumerate() {
         let mut cur = vec![NEG; n];
         let mut par = vec![usize::MAX; n];
         // Running max of prev_row[k] over k < j, plus its argmax.
         let mut best_prev = NEG;
         let mut best_prev_k = usize::MAX;
         for j in 0..n {
-            if i_chars[j] == q[i] {
+            if i_chars[j] == qc {
                 if i == 0 {
                     cur[j] = pos_bonus(j);
                 } else {
@@ -345,9 +345,9 @@ fn fuzzy_match(query: &str, item: &str) -> Option<(i64, Vec<usize>)> {
     // Pick the best end position for the final query char, then backtrack.
     let mut best = NEG;
     let mut best_j = usize::MAX;
-    for j in 0..n {
-        if prev_row[j] > best {
-            best = prev_row[j];
+    for (j, &score) in prev_row.iter().enumerate() {
+        if score > best {
+            best = score;
             best_j = j;
         }
     }

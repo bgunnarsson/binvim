@@ -1293,12 +1293,12 @@ mod tests {
     fn missing_core_tools_ignores_dap_and_tool_roles() {
         // Whatever's on the test host's PATH, missing_core_tools only ever
         // reports Lsp/Formatter tools — never a Dap adapter or an editor Tool.
-        for i in 0..BUNDLES.len() {
+        for (i, bundle) in BUNDLES.iter().enumerate() {
             for t in missing_core_tools(i) {
                 assert!(
                     matches!(t.role, Role::Lsp | Role::Formatter),
                     "{} surfaced a {:?} tool",
-                    BUNDLES[i].name,
+                    bundle.name,
                     t.role
                 );
             }
@@ -1313,14 +1313,14 @@ mod tests {
         // Razor's only core tool is a Manual LSP with no formatter — so
         // regardless of PATH there is never anything to auto-install.
         assert!(missing_core_tools(razor).is_empty());
-        for i in 0..BUNDLES.len() {
+        for (i, bundle) in BUNDLES.iter().enumerate() {
             for t in missing_core_tools(i) {
                 assert!(
                     t.installers
                         .iter()
                         .any(|inst| !matches!(inst, Installer::Manual(_))),
                     "{} surfaced Manual-only tool {}",
-                    BUNDLES[i].name,
+                    bundle.name,
                     t.bin
                 );
             }

@@ -1667,9 +1667,9 @@ mod tests {
         ];
         let metas = compute_buffer_meta(&lines);
         // All three frontmatter rows styled dim italic.
-        for i in 0..3 {
-            assert!(!metas[i].styles.is_empty(), "row {} should be styled", i);
-            assert!(metas[i].styles[0].italic);
+        for (i, meta) in metas.iter().take(3).enumerate() {
+            assert!(!meta.styles.is_empty(), "row {} should be styled", i);
+            assert!(meta.styles[0].italic);
         }
         // Heading after frontmatter is processed normally.
         assert!(!metas[3].transforms.is_empty());

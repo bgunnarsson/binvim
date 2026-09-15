@@ -315,6 +315,45 @@ fn extract_workspace_folders_supported(init_result: &Value) -> bool {
     }
 }
 
+fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {
+    let uri = params.get("uri")?.as_str()?.to_string();
+    let arr = params.get("diagnostics")?.as_array()?;
+    let mut out = Vec::with_capacity(arr.len());
+    for d in arr {
+        let range = d.get("range")?;
+        let start = range.get("start")?;
+        let end = range.get("end")?;
+        let line = start.get("line")?.as_u64()? as usize;
+        let col = start.get("character")?.as_u64()? as usize;
+        let end_line = end.get("line")?.as_u64()? as usize;
+        let end_col = end.get("character")?.as_u64()? as usize;
+        let severity = match d.get("severity").and_then(|v| v.as_u64()) {
+            Some(1) => Severity::Error,
+            Some(2) => Severity::Warning,
+            Some(3) => Severity::Info,
+            Some(4) => Severity::Hint,
+            _ => Severity::Info,
+        };
+        let message = d
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push(Diagnostic {
+            line,
+            col,
+            end_line,
+            end_col,
+            severity,
+            message,
+        });
+    }
+    Some(DiagnosticsMessage {
+        uri,
+        diagnostics: out,
+    })
+}
+
 #[cfg(test)]
 mod cap_tests {
     use super::*;
@@ -362,8 +401,8 @@ mod cap_tests {
         let leaf = prop_oneof![
             Just(Value::Null),
             any::<bool>().prop_map(Value::Bool),
-            any::<i64>().prop_map(|n| Value::from(n)),
-            any::<u64>().prop_map(|n| Value::from(n)),
+            any::<i64>().prop_map(Value::from),
+            any::<u64>().prop_map(Value::from),
             "[a-zA-Z0-9_/.:#-]{0,16}".prop_map(Value::String),
             "\\PC{0,16}".prop_map(Value::String),
         ];
@@ -405,43 +444,4 @@ mod cap_tests {
             let _ = parse_publish_diagnostics(&v);
         }
     }
-}
-
-fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {
-    let uri = params.get("uri")?.as_str()?.to_string();
-    let arr = params.get("diagnostics")?.as_array()?;
-    let mut out = Vec::with_capacity(arr.len());
-    for d in arr {
-        let range = d.get("range")?;
-        let start = range.get("start")?;
-        let end = range.get("end")?;
-        let line = start.get("line")?.as_u64()? as usize;
-        let col = start.get("character")?.as_u64()? as usize;
-        let end_line = end.get("line")?.as_u64()? as usize;
-        let end_col = end.get("character")?.as_u64()? as usize;
-        let severity = match d.get("severity").and_then(|v| v.as_u64()) {
-            Some(1) => Severity::Error,
-            Some(2) => Severity::Warning,
-            Some(3) => Severity::Info,
-            Some(4) => Severity::Hint,
-            _ => Severity::Info,
-        };
-        let message = d
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        out.push(Diagnostic {
-            line,
-            col,
-            end_line,
-            end_col,
-            severity,
-            message,
-        });
-    }
-    Some(DiagnosticsMessage {
-        uri,
-        diagnostics: out,
-    })
 }

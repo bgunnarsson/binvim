@@ -1,7 +1,7 @@
 ---
 title: A write, a crash or a changed file can no longer lose work, and clippy warnings fail CI
 date: 2026-09-15
-status: draft
+status: in-progress
 ---
 
 ## Context

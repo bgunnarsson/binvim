@@ -2487,178 +2487,6 @@ pub(super) fn indent_continuation_lines(text: &str, stops: &mut [usize], indent:
     out
 }
 
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn local_completion_sources() {
-        use super::{matching_lines, nearby_words, path_entries};
-        let text = "alpha beta\ngamma alpha\nbe";
-        assert_eq!(
-            nearby_words(text, 25, false, "be"),
-            vec!["alpha", "beta", "gamma"]
-        );
-        assert_eq!(
-            nearby_words(text, 25, true, "be"),
-            vec!["alpha", "gamma", "beta"]
-        );
-        assert_eq!(
-            matching_lines("  fn one()\nlet x\n    fn two()\nfn", 3, "fn"),
-            vec!["fn two()", "fn one()"]
-        );
-        let dir = std::env::temp_dir().join(format!("binvim-ctrlxf-{}", std::process::id()));
-        std::fs::create_dir_all(dir.join("sub")).expect("temp dir");
-        std::fs::write(dir.join("main.rs"), "").expect("main.rs");
-        std::fs::write(dir.join("mod.rs"), "").expect("mod.rs");
-        std::fs::write(dir.join(".hidden"), "").expect(".hidden");
-        assert_eq!(path_entries("m", &dir), vec!["main.rs", "mod.rs"]);
-        assert_eq!(path_entries("", &dir), vec!["main.rs", "mod.rs", "sub/"]);
-        let absolute = format!("{}/s", dir.display());
-        assert_eq!(
-            path_entries(&absolute, std::path::Path::new("/")),
-            vec![format!("{}/sub/", dir.display())]
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    use super::{expand_snippet, razor_ref_augment};
-
-    /// Build a fake path under the platform temp dir for tests that only
-    /// care about a path's file extension (they never touch the
-    /// filesystem). Centralising it keeps the boilerplate down and
-    /// works on Windows where `/tmp` isn't a useful root.
-    fn fake_path(name: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(name)
-    }
-
-    #[test]
-    fn ref_augment_cs_buffer_targets_razor_extensions() {
-        let aug = razor_ref_augment(&fake_path("Foo.cs"), Some("Bar".into())).unwrap();
-        assert_eq!(aug.needle, "Bar");
-        assert_eq!(aug.extensions, vec!["cshtml", "razor"]);
-    }
-
-    #[test]
-    fn ref_augment_razor_buffer_includes_cs() {
-        let aug = razor_ref_augment(&fake_path("Index.cshtml"), Some("Model".into())).unwrap();
-        assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
-        let aug = razor_ref_augment(&fake_path("Page.razor"), Some("Model".into())).unwrap();
-        assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
-    }
-
-    #[test]
-    fn ref_augment_skips_unrelated_buffers() {
-        assert!(razor_ref_augment(&fake_path("main.rs"), Some("foo".into())).is_none());
-        assert!(razor_ref_augment(&fake_path("script.ts"), Some("foo".into())).is_none());
-    }
-
-    #[test]
-    fn ref_augment_skips_non_identifier_needles() {
-        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some("=>".into())).is_none());
-        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some("@".into())).is_none());
-        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some(String::new())).is_none());
-        assert!(razor_ref_augment(&fake_path("Foo.cs"), None).is_none());
-    }
-
-    #[test]
-    fn ref_augment_allows_underscore_identifiers() {
-        let aug = razor_ref_augment(&fake_path("Foo.cs"), Some("_private_field".into())).unwrap();
-        assert_eq!(aug.needle, "_private_field");
-    }
-
-    #[test]
-    fn snippet_plain_text_passthrough() {
-        assert_eq!(expand_snippet("hello").0, "hello");
-        assert!(expand_snippet("hello").1.is_empty());
-    }
-
-    #[test]
-    fn snippet_basic_stop() {
-        let (text, stops) = expand_snippet("console.log($1)");
-        assert_eq!(text, "console.log()");
-        assert_eq!(stops, vec![12]); // right between the parens
-    }
-
-    #[test]
-    fn snippet_default_text_expanded() {
-        let (text, stops) = expand_snippet("for (let ${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}");
-        assert_eq!(text, "for (let i = 0; i < n; i++) {\n\t\n}");
-        // $1 at "for (let " (9), $2 at "for (let i = 0; i < " (20), $0 at
-        // "for (let i = 0; i < n; i++) {\n\t" — \n counts as 1 char, so
-        // 9 + 17 + 1 = 27 → +1 tab + 1 newline put $0 at 31.
-        assert_eq!(stops.len(), 3);
-        assert_eq!(stops[0], 9);
-        assert_eq!(stops[1], 20);
-    }
-
-    #[test]
-    fn snippet_zero_stop_used_when_no_one() {
-        let (text, stops) = expand_snippet("return $0;");
-        assert_eq!(text, "return ;");
-        assert_eq!(stops, vec![7]);
-    }
-
-    #[test]
-    fn snippet_escaped_dollar() {
-        let (text, stops) = expand_snippet("\\$keep $1");
-        assert_eq!(text, "$keep ");
-        assert_eq!(stops, vec![6]);
-    }
-
-    #[test]
-    fn snippet_zero_sorts_last_regardless_of_source_order() {
-        // $0 placed before $1 / $2 in the template must still be the
-        // final tab destination.
-        let (_text, stops) = expand_snippet("$0 $2 $1");
-        assert_eq!(stops.len(), 3);
-        // stops returned in order $1 → $2 → $0
-        // offsets in output "  " — wait, $N with no default expands to
-        // empty, so the output is "  " (two spaces between three empty
-        // stops). Positions: $0 at 0, " " 1, $2 at 1, " " 2, $1 at 2.
-        // Ordered by index 1→2→0: [2, 1, 0].
-        assert_eq!(stops, vec![2, 1, 0]);
-    }
-
-    #[test]
-    fn snippet_mirrored_stop_dedups_to_first_occurrence() {
-        // `$1` appears 3 times. Only the first occurrence is a tab stop;
-        // the others are mirrors and should not produce extra stops.
-        let (_text, stops) = expand_snippet("$1.foo($1, $1)");
-        assert_eq!(stops.len(), 1);
-        assert_eq!(stops[0], 0);
-    }
-
-    #[test]
-    fn indent_lines_prepends_after_each_newline_and_shifts_stops() {
-        // Emmet-shape snippet: parent at the cursor's indent, children
-        // already indented one extra level, closing tag at column 0.
-        // The continuation indent should make the closer line up with
-        // the opener.
-        let mut stops = vec![13]; // position of the `$1` inside <li>
-        let out = super::indent_continuation_lines("<ul>\n\t<li>x</li>\n</ul>", &mut stops, "\t");
-        assert_eq!(out, "<ul>\n\t\t<li>x</li>\n\t</ul>");
-        // The stop at original char 13 (the 'x') is after the first
-        // newline, so it shifts by one (the inserted tab).
-        assert_eq!(stops, vec![14]);
-    }
-
-    #[test]
-    fn indent_lines_noop_without_newline() {
-        let mut stops = vec![0];
-        let out = super::indent_continuation_lines("foo", &mut stops, "\t");
-        assert_eq!(out, "foo");
-        assert_eq!(stops, vec![0]);
-    }
-
-    #[test]
-    fn indent_lines_noop_with_empty_indent() {
-        let mut stops = vec![5];
-        let out = super::indent_continuation_lines("a\nb\nc", &mut stops, "");
-        assert_eq!(out, "a\nb\nc");
-        assert_eq!(stops, vec![5]);
-    }
-}
-
 /// `Ctrl-X Ctrl-N` / `Ctrl-P`'s words: every keyword in `text` once, nearest
 /// the cursor at char `at` first — going forward and round the end, or
 /// `backward` — leaving out the one being typed.
@@ -2949,4 +2777,176 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
         return false;
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn local_completion_sources() {
+        use super::{matching_lines, nearby_words, path_entries};
+        let text = "alpha beta\ngamma alpha\nbe";
+        assert_eq!(
+            nearby_words(text, 25, false, "be"),
+            vec!["alpha", "beta", "gamma"]
+        );
+        assert_eq!(
+            nearby_words(text, 25, true, "be"),
+            vec!["alpha", "gamma", "beta"]
+        );
+        assert_eq!(
+            matching_lines("  fn one()\nlet x\n    fn two()\nfn", 3, "fn"),
+            vec!["fn two()", "fn one()"]
+        );
+        let dir = std::env::temp_dir().join(format!("binvim-ctrlxf-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).expect("temp dir");
+        std::fs::write(dir.join("main.rs"), "").expect("main.rs");
+        std::fs::write(dir.join("mod.rs"), "").expect("mod.rs");
+        std::fs::write(dir.join(".hidden"), "").expect(".hidden");
+        assert_eq!(path_entries("m", &dir), vec!["main.rs", "mod.rs"]);
+        assert_eq!(path_entries("", &dir), vec!["main.rs", "mod.rs", "sub/"]);
+        let absolute = format!("{}/s", dir.display());
+        assert_eq!(
+            path_entries(&absolute, std::path::Path::new("/")),
+            vec![format!("{}/sub/", dir.display())]
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    use super::{expand_snippet, razor_ref_augment};
+
+    /// Build a fake path under the platform temp dir for tests that only
+    /// care about a path's file extension (they never touch the
+    /// filesystem). Centralising it keeps the boilerplate down and
+    /// works on Windows where `/tmp` isn't a useful root.
+    fn fake_path(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(name)
+    }
+
+    #[test]
+    fn ref_augment_cs_buffer_targets_razor_extensions() {
+        let aug = razor_ref_augment(&fake_path("Foo.cs"), Some("Bar".into())).unwrap();
+        assert_eq!(aug.needle, "Bar");
+        assert_eq!(aug.extensions, vec!["cshtml", "razor"]);
+    }
+
+    #[test]
+    fn ref_augment_razor_buffer_includes_cs() {
+        let aug = razor_ref_augment(&fake_path("Index.cshtml"), Some("Model".into())).unwrap();
+        assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
+        let aug = razor_ref_augment(&fake_path("Page.razor"), Some("Model".into())).unwrap();
+        assert_eq!(aug.extensions, vec!["cs", "cshtml", "razor"]);
+    }
+
+    #[test]
+    fn ref_augment_skips_unrelated_buffers() {
+        assert!(razor_ref_augment(&fake_path("main.rs"), Some("foo".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("script.ts"), Some("foo".into())).is_none());
+    }
+
+    #[test]
+    fn ref_augment_skips_non_identifier_needles() {
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some("=>".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some("@".into())).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), Some(String::new())).is_none());
+        assert!(razor_ref_augment(&fake_path("Foo.cs"), None).is_none());
+    }
+
+    #[test]
+    fn ref_augment_allows_underscore_identifiers() {
+        let aug = razor_ref_augment(&fake_path("Foo.cs"), Some("_private_field".into())).unwrap();
+        assert_eq!(aug.needle, "_private_field");
+    }
+
+    #[test]
+    fn snippet_plain_text_passthrough() {
+        assert_eq!(expand_snippet("hello").0, "hello");
+        assert!(expand_snippet("hello").1.is_empty());
+    }
+
+    #[test]
+    fn snippet_basic_stop() {
+        let (text, stops) = expand_snippet("console.log($1)");
+        assert_eq!(text, "console.log()");
+        assert_eq!(stops, vec![12]); // right between the parens
+    }
+
+    #[test]
+    fn snippet_default_text_expanded() {
+        let (text, stops) = expand_snippet("for (let ${1:i} = 0; $1 < ${2:n}; $1++) {\n\t$0\n}");
+        assert_eq!(text, "for (let i = 0; i < n; i++) {\n\t\n}");
+        // $1 at "for (let " (9), $2 at "for (let i = 0; i < " (20), $0 at
+        // "for (let i = 0; i < n; i++) {\n\t" — \n counts as 1 char, so
+        // 9 + 17 + 1 = 27 → +1 tab + 1 newline put $0 at 31.
+        assert_eq!(stops.len(), 3);
+        assert_eq!(stops[0], 9);
+        assert_eq!(stops[1], 20);
+    }
+
+    #[test]
+    fn snippet_zero_stop_used_when_no_one() {
+        let (text, stops) = expand_snippet("return $0;");
+        assert_eq!(text, "return ;");
+        assert_eq!(stops, vec![7]);
+    }
+
+    #[test]
+    fn snippet_escaped_dollar() {
+        let (text, stops) = expand_snippet("\\$keep $1");
+        assert_eq!(text, "$keep ");
+        assert_eq!(stops, vec![6]);
+    }
+
+    #[test]
+    fn snippet_zero_sorts_last_regardless_of_source_order() {
+        // $0 placed before $1 / $2 in the template must still be the
+        // final tab destination.
+        let (_text, stops) = expand_snippet("$0 $2 $1");
+        assert_eq!(stops.len(), 3);
+        // stops returned in order $1 → $2 → $0
+        // offsets in output "  " — wait, $N with no default expands to
+        // empty, so the output is "  " (two spaces between three empty
+        // stops). Positions: $0 at 0, " " 1, $2 at 1, " " 2, $1 at 2.
+        // Ordered by index 1→2→0: [2, 1, 0].
+        assert_eq!(stops, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn snippet_mirrored_stop_dedups_to_first_occurrence() {
+        // `$1` appears 3 times. Only the first occurrence is a tab stop;
+        // the others are mirrors and should not produce extra stops.
+        let (_text, stops) = expand_snippet("$1.foo($1, $1)");
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0], 0);
+    }
+
+    #[test]
+    fn indent_lines_prepends_after_each_newline_and_shifts_stops() {
+        // Emmet-shape snippet: parent at the cursor's indent, children
+        // already indented one extra level, closing tag at column 0.
+        // The continuation indent should make the closer line up with
+        // the opener.
+        let mut stops = vec![13]; // position of the `$1` inside <li>
+        let out = super::indent_continuation_lines("<ul>\n\t<li>x</li>\n</ul>", &mut stops, "\t");
+        assert_eq!(out, "<ul>\n\t\t<li>x</li>\n\t</ul>");
+        // The stop at original char 13 (the 'x') is after the first
+        // newline, so it shifts by one (the inserted tab).
+        assert_eq!(stops, vec![14]);
+    }
+
+    #[test]
+    fn indent_lines_noop_without_newline() {
+        let mut stops = vec![0];
+        let out = super::indent_continuation_lines("foo", &mut stops, "\t");
+        assert_eq!(out, "foo");
+        assert_eq!(stops, vec![0]);
+    }
+
+    #[test]
+    fn indent_lines_noop_with_empty_indent() {
+        let mut stops = vec![5];
+        let out = super::indent_continuation_lines("a\nb\nc", &mut stops, "");
+        assert_eq!(out, "a\nb\nc");
+        assert_eq!(stops, vec![5]);
+    }
 }
