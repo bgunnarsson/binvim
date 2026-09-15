@@ -2723,7 +2723,7 @@ export function Page() {
     // input; macOS's range-checked libc hides it. Still present in
     // tree-sitter-md 0.5.3. Restricting to ASCII keeps the byte-offset
     // invariant and every block shape while never feeding a wide codepoint
-    // to `isdigit`. Documented as a known issue in README; drop this if
+    // to `isdigit`. A known issue in KNOWN_ISSUES.md; drop this if
     // upstream fixes the call.
     const MARKDOWN_FUZZ_ALPHABET: &str = "[\t\n -~]{0,400}";
 
