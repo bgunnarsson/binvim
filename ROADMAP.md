@@ -62,8 +62,8 @@ literally.
   as a hardening checklist and marketing.
 - **Performance budget with numbers.** Formalize the render-coalescing win into
   input-latency and startup-time budgets, and a benchmark page (startup + memory
-  vs a Neovim distro like LazyVim). Turn on the clippy gate (currently
-  warnings-allowed) as part of the 1.0 bar.
+  vs a Neovim distro like LazyVim). The clippy gate is on — pinned to 1.98.0,
+  warnings denied — and stays part of the 1.0 bar.
 
 ## Horizon 3 — Adoption proof & reach  (0.8–0.9, in parallel)
 

@@ -1208,7 +1208,7 @@ fn save_recents(list: &[PathBuf]) {
         .map(|p| p.display().to_string())
         .collect::<Vec<_>>()
         .join("\n");
-    let _ = std::fs::write(&p, text);
+    let _ = crate::paths::write_atomic(&p, text.as_bytes());
 }
 
 #[cfg(test)]

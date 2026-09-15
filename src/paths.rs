@@ -172,8 +172,9 @@ pub fn path_key(path: &Path) -> String {
 /// and given its owner and group. Where the rename would still change the file,
 /// it's written in place instead, keeping the inode: other hard links (a rename
 /// would split them), an owner or group this user can't give the temp file
-/// (`sudo binvim` on someone else's file), and a directory the temp file can't
-/// be created in (a file the user may write but not replace). ACLs and extended
+/// (`sudo binvim` on someone else's file), a directory the temp file can't be
+/// created in (a file the user may write but not replace), and a rename that
+/// fails. ACLs and extended
 /// attributes aren't carried over.
 ///
 /// The temp file sits beside the target, possibly in a directory other users
@@ -221,15 +222,22 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             file.set_permissions(meta.permissions())?;
         }
         file.write_all(bytes)?;
-        file.sync_all()?;
-        // Closed before the rename — Windows won't rename an open file.
-        drop(file);
-        std::fs::rename(&tmp, &target)
+        file.sync_all()
+        // Closed here, before the rename — Windows won't rename an open file.
     })();
-    if written.is_err() {
+    if let Err(e) = written {
         let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
-    written
+    if std::fs::rename(&tmp, &target).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        // The bytes all fit, so the disk isn't the problem — the target just
+        // can't be replaced: a file another Windows program holds open, a
+        // single-file bind mount (EBUSY). Writing in place still works there,
+        // as saves always did.
+        return std::fs::write(&target, bytes);
+    }
+    Ok(())
 }
 
 /// Exclusively create a temp file in `target`'s directory, retrying under a
