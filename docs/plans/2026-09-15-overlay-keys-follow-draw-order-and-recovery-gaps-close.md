@@ -113,10 +113,11 @@ Decisions:
   recovery file alone). Verify: parser tests in `recover::tests` (listed pid, pid only as a prefix
   of another, `INFO: No tasks…` line, empty output); `cargo test recover::tests`; the Windows CI jobs
   after push.
-- [ ] **Undo directory is private.** In `UndoHistory::save_to_path` (`src/undo.rs:346`), after
+- [x] **Undo directory is private.** In `UndoHistory::save_to_path` (`src/undo.rs:346`), after
   `create_dir_all`, set the parent to `0700` under `#[cfg(unix)]`, as `recover::write_to` does.
   Verify: `#[cfg(unix)]` test in `undo::tests` saving into a scratch dir and asserting mode `0o700`;
   `cargo test undo::tests`.
+  Deviation: the type is `History`, not `UndoHistory`.
 - [ ] **Prune undo files older than 90 days at startup.** Factor the `<cache>/binvim/undo` lookup out
   of `cache_path_for` into `undo_dir()` (still `None` under test); add
   `prune_older_than(dir, max_age, now) -> usize` removing regular files whose mtime is before

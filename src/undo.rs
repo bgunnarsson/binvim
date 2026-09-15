@@ -352,6 +352,13 @@ impl History {
         };
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
+            // Every snapshot is the file's full text, so the directory is
+            // private for the same reason `recover::write_to`'s is.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
         }
         let serialized = serde_json::to_vec(&stored).map_err(std::io::Error::other)?;
         crate::paths::write_atomic(path, &serialized)
@@ -602,6 +609,24 @@ mod tests {
             text(history.redo(&r("abc"), at_start())).as_deref(),
             Some("abcd")
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_undo_directory_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("binvim-undo-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("undo").join("history.json");
+        let mut history = History::new();
+        history.record(&Rope::from_str("secret"), Cursor::default());
+        history.save_to_path(&path, 1).expect("saves");
+        let mode = std::fs::metadata(path.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
         std::fs::remove_dir_all(&dir).ok();
     }
 
