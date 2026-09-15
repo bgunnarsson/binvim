@@ -74,4 +74,9 @@ Verified by the review's verifiers, one of which reproduced the read-only case i
 - **A new way of writing a user's file is tested for what the old one kept:** a read-only
   target, owner and group, mode, symlink and hard-link targets — not only the contents.
 - **Cache files holding a user's text** (recovery, undo) live in a directory created or narrowed
-  to `0700`; `recover::write_to` is the model.
+  to `0700`; `recover::write_to` is the model. When the directory can already exist, made by an
+  older build that didn't narrow it, it's also narrowed without waiting for a write, as
+  `undo::tidy_history_dir` does at startup (`2be2c5b`). Narrowing only at write time leaves
+  every file already in the directory readable to other users until the next save. A
+  permission change added only to a save path, for a directory earlier releases already
+  created, is a violation.
