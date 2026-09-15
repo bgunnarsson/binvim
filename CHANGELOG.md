@@ -44,6 +44,10 @@ follows [Semantic Versioning](https://semver.org/).
 - **A second binvim on Windows no longer takes over the first's unsaved
   changes.** Whether the other editor is still running is now checked there
   too, as it already was on macOS and Linux.
+- **A Markdown file with very deep nesting no longer kills binvim.** Quotes
+  (`>>>>…`) or lists nested about 255 levels deep overflowed the Markdown
+  grammar's parser state and aborted the editor on open, with no crash log.
+  Such a file now opens without syntax highlighting.
 - **Undo history is private and doesn't pile up.** `~/.cache/binvim/undo` is
   readable only by you, since each file in it holds your text, and history
   for a file not saved in 90 days is removed at startup.
