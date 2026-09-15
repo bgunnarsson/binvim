@@ -64,3 +64,4 @@ same mutex guards the loop's own dumps. A signalled exit doesn't save the sessio
   typed the word once. Checks quit binvim with `:e!` / `:q!` first, or use a fresh file and
   directory per run, and delete only the session files whose `cwd` is that run's own directory.
   A harness that reuses a file after `kill-session` without doing either is a violation.
+- Written into: CLAUDE.md

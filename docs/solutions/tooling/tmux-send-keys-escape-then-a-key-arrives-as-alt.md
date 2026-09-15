@@ -53,3 +53,4 @@ next key. It then passed, and the undo directory was `700`.
 - **Before judging an on-disk result, confirm the action ran:** the file's contents after `:w`,
   or the mode line after Escape. A check that goes straight from sending keys to `stat` or
   `ls` can report the harness's mistake as a bug.
+- Written into: CLAUDE.md
