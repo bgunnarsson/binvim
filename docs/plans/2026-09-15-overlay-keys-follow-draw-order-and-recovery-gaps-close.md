@@ -118,7 +118,7 @@ Decisions:
   Verify: `#[cfg(unix)]` test in `undo::tests` saving into a scratch dir and asserting mode `0o700`;
   `cargo test undo::tests`.
   Deviation: the type is `History`, not `UndoHistory`.
-- [ ] **Prune undo files older than 90 days at startup.** Factor the `<cache>/binvim/undo` lookup out
+- [x] **Prune undo files older than 90 days at startup.** Factor the `<cache>/binvim/undo` lookup out
   of `cache_path_for` into `undo_dir()` (still `None` under test); add
   `prune_older_than(dir, max_age, now) -> usize` removing regular files whose mtime is before
   `now - max_age`, and a `prune_stale_history()` that runs it on `undo_dir()` with

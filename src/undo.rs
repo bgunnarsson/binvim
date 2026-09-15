@@ -427,25 +427,62 @@ pub fn hash_text(text: &str) -> u64 {
     h.finish()
 }
 
-/// Resolve the on-disk persisted-undo file for `target` under
-/// `<cache>/binvim/undo/`. Returns `None` if the cache dir can't be
-/// resolved.
-pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
+/// History is written on `:w`, so a file not saved for this long loses it.
+const UNDO_MAX_AGE: Duration = Duration::from_secs(90 * 24 * 60 * 60);
+
+/// `<cache>/binvim/undo/`, or `None` if the cache dir can't be resolved.
+fn undo_dir() -> Option<PathBuf> {
     // Tests write buffers with `:w`, which persists undo — without this every
     // run left history files for temp paths in the real cache.
     if cfg!(test) {
         return None;
     }
+    let mut p = crate::paths::cache_dir()?;
+    p.push("undo");
+    Some(p)
+}
+
+/// Resolve the on-disk persisted-undo file for `target` under
+/// `<cache>/binvim/undo/`. Returns `None` if the cache dir can't be
+/// resolved.
+pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
     let canon = target
         .canonicalize()
         .unwrap_or_else(|_| target.to_path_buf());
     let mut h = std::collections::hash_map::DefaultHasher::new();
     canon.to_string_lossy().hash(&mut h);
     let id = format!("{:016x}", h.finish());
-    let mut p = crate::paths::cache_dir()?;
-    p.push("undo");
+    let mut p = undo_dir()?;
     p.push(format!("{id}.json"));
     Some(p)
+}
+
+/// Remove history files not written for `UNDO_MAX_AGE`. Files are named by a
+/// hash of their path, so nothing else ever finds one whose file was deleted
+/// or moved.
+pub fn prune_stale_history() {
+    if let Some(dir) = undo_dir() {
+        prune_older_than(&dir, UNDO_MAX_AGE, std::time::SystemTime::now());
+    }
+}
+
+/// Remove the regular files in `dir` last modified before `now - max_age`,
+/// returning how many went.
+fn prune_older_than(dir: &Path, max_age: Duration, now: std::time::SystemTime) -> usize {
+    let Some(cutoff) = now.checked_sub(max_age) else {
+        return 0;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.metadata()
+                .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t < cutoff))
+        })
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
 }
 
 #[cfg(test)]
@@ -627,6 +664,29 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o700);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn only_history_older_than_the_limit_is_pruned() {
+        let dir = std::env::temp_dir().join(format!("binvim-undo-prune-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let now = std::time::SystemTime::now();
+        let day = Duration::from_secs(24 * 60 * 60);
+        let stale = dir.join("stale.json");
+        let fresh = dir.join("fresh.json");
+        std::fs::write(&stale, "{}").unwrap();
+        std::fs::write(&fresh, "{}").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(now - day * 91)
+            .unwrap();
+        assert_eq!(prune_older_than(&dir, day * 90, now), 1);
+        assert!(!stale.exists());
+        assert!(fresh.exists());
         std::fs::remove_dir_all(&dir).ok();
     }
 

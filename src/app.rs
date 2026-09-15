@@ -1192,6 +1192,9 @@ impl App {
         // `[update] check`; a cached answer (the common case) needs no
         // network and lands on the first tick, in time for the start page.
         self.update_spawn_check();
+        // Undo history for files not saved in 90 days. A directory walk, so
+        // off the thread that draws the first frame.
+        std::thread::spawn(crate::undo::prune_stale_history);
         let mut needs_render = true;
         // Set when a PTY drain hit its per-tick byte budget with output
         // still queued. Carried into the next iteration's poll budget so
