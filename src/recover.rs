@@ -83,24 +83,38 @@ fn process_alive(pid: u32) -> bool {
 
 #[cfg(windows)]
 fn process_alive(pid: u32) -> bool {
+    // Matched on the image name too: `tasklist` lists every session's
+    // processes, SYSTEM's included, and Windows hands a dead binvim's pid to
+    // something else quickly, which would hold its dump back for as long as
+    // that process runs. Without a name to match, the dump is taken to be a
+    // crash's, as it was before the check existed.
+    let Some(image) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_name().map(|n| n.to_string_lossy().into_owned()))
+    else {
+        return false;
+    };
     std::process::Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
         .stderr(std::process::Stdio::null())
         .output()
-        .is_ok_and(|out| tasklist_lists_pid(&String::from_utf8_lossy(&out.stdout), pid))
+        .is_ok_and(|out| tasklist_lists(&String::from_utf8_lossy(&out.stdout), &image, pid))
 }
 
-/// Whether `tasklist /FO CSV /NH` output has a row for `pid`. Matched on the
-/// row's PID field (`"binvim.exe","1234",…`) rather than the absence of the
-/// "No tasks are running" line, which Windows translates.
+/// Whether `tasklist /FO CSV /NH` output has a row for `image` running as
+/// `pid` (`"binvim.exe","1234",…`). Matched on the row rather than the absence
+/// of the "No tasks are running" line, which Windows translates.
 #[cfg(any(windows, test))]
-fn tasklist_lists_pid(stdout: &str, pid: u32) -> bool {
+fn tasklist_lists(stdout: &str, image: &str, pid: u32) -> bool {
     let pid = pid.to_string();
     stdout.lines().any(|line| {
-        // Image names can hold commas but never quotes, so the PID is the
-        // second quoted field.
+        // Image names can hold commas but never quotes, so the name and PID
+        // are the first two quoted fields.
         let mut fields = line.trim().split('"').skip(1).step_by(2);
-        fields.nth(1) == Some(pid.as_str())
+        fields
+            .next()
+            .is_some_and(|name| name.eq_ignore_ascii_case(image))
+            && fields.next() == Some(pid.as_str())
     })
 }
 
@@ -202,16 +216,19 @@ mod tests {
     }
 
     #[test]
-    fn tasklist_output_lists_a_pid_only_in_its_pid_field() {
+    fn tasklist_output_lists_binvim_only_under_its_own_pid() {
         let row = "\"binvim.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n";
-        assert!(tasklist_lists_pid(row, 1234));
-        assert!(!tasklist_lists_pid(row, 123));
-        assert!(!tasklist_lists_pid(row, 1));
+        assert!(tasklist_lists(row, "binvim.exe", 1234));
+        assert!(tasklist_lists(row, "BINVIM.EXE", 1234));
+        assert!(!tasklist_lists(row, "binvim.exe", 123));
+        assert!(!tasklist_lists(row, "binvim.exe", 1));
+        let reused = "\"svchost.exe\",\"1234\",\"Services\",\"0\",\"9,120 K\"";
+        assert!(!tasklist_lists(reused, "binvim.exe", 1234));
         let comma_name = "\"a,b.exe\",\"77\",\"Console\",\"1\",\"1,024 K\"";
-        assert!(tasklist_lists_pid(comma_name, 77));
+        assert!(tasklist_lists(comma_name, "a,b.exe", 77));
         let none = "INFO: No tasks are running which match the specified criteria.\r\n";
-        assert!(!tasklist_lists_pid(none, 1234));
-        assert!(!tasklist_lists_pid("", 1234));
+        assert!(!tasklist_lists(none, "binvim.exe", 1234));
+        assert!(!tasklist_lists("", "binvim.exe", 1234));
     }
 
     #[cfg(unix)]
