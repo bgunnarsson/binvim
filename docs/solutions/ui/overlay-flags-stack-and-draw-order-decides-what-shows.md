@@ -64,16 +64,20 @@ and was left as it was.
 `c62a163` and `69530c0` closed the rest. `App::top_overlay()` (`src/app/state.rs`) returns the
 page `draw` paints, and `draw`, the overlay key block, `:q` and the mouse wheel all branch on it;
 the scroll / dismiss / top / bottom logic became `overlay_*` methods on `App`, which unit tests
-reach. The mouse wheel had a mismatch of its own, checking health before install.
+reach. The mouse wheel had a mismatch of its own, checking health before install. Review then
+split the type: `OverlayPage` is `Install` or `Pager(Pager)`, and the `overlay_*` methods take a
+`Pager`, so the install page (its own mode, its own keys) can't be handed to them to do nothing.
 
 ## Prevention
 
 - A handler that acts on the overlay page up asks `App::top_overlay()` — for health,
-  `page == OverlayPage::Health`. Testing `show_*_page` flags for precedence in a handler, a guard
-  written as `!messages && !test_results && !registers`, or any "the other flags are clear" form,
-  is a violation.
-- A new overlay page gets an `OverlayPage` variant placed in `top_overlay()` where `draw` paints
-  it. A new `show_*_page` flag that `top_overlay()` doesn't know is a violation.
+  `Some(OverlayPage::Pager(Pager::Health))`. Testing `show_*_page` flags for precedence in a
+  handler, a guard written as `!messages && !test_results && !registers`, or any "the other flags
+  are clear" form, is a violation.
+- A new overlay page gets a variant placed in `top_overlay()` where `draw` paints it: under
+  `Pager` if the shared overlay keys drive it, beside `Install` if it has a mode of its own. A new
+  `show_*_page` flag that `top_overlay()` doesn't know is a violation, and so is an
+  `OverlayPage::Install => {}` arm in a key helper.
 - A manual check of an overlay key includes opening that overlay from another overlay's `:`
   prompt (`:registers`, then `:health`), because unit tests reach the `overlay_*` methods but not
   the key block that picks which page they get.
