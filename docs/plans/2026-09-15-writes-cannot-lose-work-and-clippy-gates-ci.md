@@ -178,7 +178,7 @@ writes, recovery or clippy.
   Deviation: `Buffer::save` clears `lossy` (rather than `save_active`), so every successful write
   does; `:w! <Tab>` completes paths like `:w <Tab>`. The refusal texts end `(:w! overwrites it)` /
   `(:w! writes it anyway)` so the override is named in the message.
-- [ ] **Empty formatter output is an error.** In `format_buffer` (`src/format.rs`), after the
+- [x] **Empty formatter output is an error.** In `format_buffer` (`src/format.rs`), after the
   dispatch, pass the result through `fn reject_empty(source: &str, formatted: String) ->
   Result<String, String>`: `Err("formatter returned no output; buffer left unchanged")` when
   `formatted.trim()` is empty and `source.trim()` isn't. Verify with `format::tests`: empty output

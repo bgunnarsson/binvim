@@ -15,7 +15,7 @@ use crate::lsp::find_node_modules_bin;
 /// failure (suitable for the status line).
 pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
-    match ext {
+    let formatted = match ext {
         "ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "json" | "jsonc" => run_biome(path, source),
         // csharpier handles .cs cleanly. For .cshtml / .razor csharpier 1.x
         // says "Is an unsupported file type" and exits 0 — try it anyway
@@ -53,7 +53,19 @@ pub fn format_buffer(path: &Path, source: &str) -> Result<String, String> {
         "kt" | "kts" => run_ktfmt(path, source),
         "sql" => run_sql_formatter(source),
         _ => Err(format!("no formatter configured for .{ext}")),
+    }?;
+    reject_empty(source, formatted)
+}
+
+/// Every runner takes a zero exit as success, whatever it printed. A tool
+/// that exits 0 having written nothing — a broken pipe, an invocation it
+/// misread — would otherwise replace the buffer with nothing, and the save
+/// that ran it would write that to disk.
+fn reject_empty(source: &str, formatted: String) -> Result<String, String> {
+    if formatted.trim().is_empty() && !source.trim().is_empty() {
+        return Err("formatter returned no output; buffer left unchanged".into());
     }
+    Ok(formatted)
 }
 
 /// Run a stdin→stdout formatter and return its stdout. Used for the
@@ -842,6 +854,18 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_formatter_output_is_refused_for_a_non_empty_buffer() {
+        assert!(reject_empty("fn main() {}\n", String::new()).is_err());
+        assert!(reject_empty("fn main() {}\n", "\n  \n".into()).is_err());
+        assert_eq!(reject_empty("", String::new()), Ok(String::new()));
+        assert_eq!(reject_empty("  \n", "\n".into()), Ok("\n".into()));
+        assert_eq!(
+            reject_empty("a  =1", "a = 1\n".into()),
+            Ok("a = 1\n".into())
+        );
+    }
 
     /// Build a temp dir with a `.editorconfig` and a target file, return
     /// the file's path. Caller owns the TempDir-like cleanup via the
