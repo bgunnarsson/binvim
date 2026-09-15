@@ -87,6 +87,9 @@ impl super::App {
         }
         self.buffer.save()?;
         self.history.mark_written();
+        if let Some(path) = self.buffer.path.clone() {
+            self.discard_recovery(&path);
+        }
         // Refresh git stripe after a successful write — the index hasn't
         // moved but the working tree just did, so hunks may have grown,
         // shrunk, or disappeared entirely.

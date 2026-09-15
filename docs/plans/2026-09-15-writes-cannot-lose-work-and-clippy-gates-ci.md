@@ -195,7 +195,7 @@ writes, recovery or clippy.
   identical text and `Some` otherwise. `cargo test recover::tests`.
   Deviation: also `now_secs()` for `saved_at`. Its items are unused until the next two tasks, so
   this commit is held back from the push until they land — the clippy gate denies dead code.
-- [ ] **Dirty buffers are dumped, and cleaned up.** App fields `recovery_written: HashMap<PathBuf,
+- [x] **Dirty buffers are dumped, and cleaned up.** App fields `recovery_written: HashMap<PathBuf,
   u64>` (path → version dumped) and `recovery_checked_at: Instant`; `const RECOVERY_INTERVAL:
   Duration = 4s` in `app/state.rs`. New `src/app/recover_glue.rs` (registered in `app.rs`,
   added to CLAUDE.md's app map): `recover_if_due()` — once per interval, for the active buffer and
@@ -207,6 +207,12 @@ writes, recovery or clippy.
   `delete_buffer` of a dirty buffer call it too. After the loop, a normal quit removes the
   recovery file of every open buffer. Verify by hand (`recovery_path` is `None` in tests), in
   Verification step 3; `cargo build --release`.
+  Deviation: `RECOVERY_INTERVAL` lives in `recover_glue.rs`, its only reader, not `state.rs`.
+  `delete_buffer` discards the recovery file on every close, not only a forced one — a buffer
+  undone back to clean before the next tick still has a dump of its dirty text. A clean quit also
+  discards files dumped for buffers already closed (`discard_all_recovery`). Checked in tmux
+  against the release build: an unsaved edit left idle 5.5s was dumped with its text, and `:q!`
+  removed the file.
 - [ ] **Recovery is applied on open.** `apply_recovery()` in `recover_glue.rs`, called in
   `open_buffer` after `switch_to` and in `App::run` for the CLI buffer: load the active path's
   recovery file; `recovered_text` against the rope; `None` → remove the file; `Some(text)` →

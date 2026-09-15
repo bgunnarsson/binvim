@@ -343,6 +343,7 @@ impl super::App {
 
     pub(super) fn force_reload_from_disk(&mut self) -> Option<String> {
         let path = self.buffer.path.clone()?;
+        self.discard_recovery(&path);
         self.reload_buffer_from_disk_inner(&path, None)
     }
 
@@ -621,6 +622,11 @@ impl super::App {
     pub(super) fn delete_buffer(&mut self, force: bool) -> Result<()> {
         if !force && self.buffer.dirty {
             anyhow::bail!("E89: No write since last change (use :bd!)");
+        }
+        // Closed on purpose: `:bd!` discarded the changes, and a buffer undone
+        // back to clean may still have a dump of its dirty text.
+        if let Some(path) = self.buffer.path.clone() {
+            self.discard_recovery(&path);
         }
         if self.buffers.len() == 1 {
             // Last buffer — replace with an empty one and resurface the start page.

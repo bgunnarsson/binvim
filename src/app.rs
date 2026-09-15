@@ -43,6 +43,7 @@ mod package_glue;
 pub(crate) mod pair;
 mod picker_glue;
 mod quickfix;
+mod recover_glue;
 mod registers;
 mod rename_preview;
 mod save;
@@ -406,6 +407,10 @@ pub struct App {
     /// the dashboard re-snapshots resources / LSP-pending counts on a
     /// fixed cadence rather than freezing at the open-time reading.
     pub health_last_refresh: Instant,
+    /// Buffer version last dumped to each path's recovery file, so an
+    /// unchanged buffer isn't rewritten every interval.
+    pub recovery_written: HashMap<PathBuf, u64>,
+    pub recovery_checked_at: Instant,
     /// Number of dashboard rows scrolled off the top while
     /// `show_health_page` is up. Clamped against
     /// `health_content_height` by the input handlers.
@@ -1016,6 +1021,8 @@ impl App {
             show_start_page,
             show_health_page: false,
             health_last_refresh: Instant::now(),
+            recovery_written: HashMap::new(),
+            recovery_checked_at: Instant::now(),
             health_scroll: 0,
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
@@ -1186,6 +1193,7 @@ impl App {
         // see the poll-budget block below.
         let mut pty_backlog = false;
         while !self.should_quit {
+            self.recover_if_due();
             if needs_render {
                 self.maybe_reload_from_disk();
                 self.adjust_viewport();
@@ -1350,6 +1358,12 @@ impl App {
             // when a key is pending, so input stays responsive while the
             // pane catches up across ticks instead of freezing for the
             // whole burst.
+            // Wake for the next recovery dump, so an idle editor still
+            // writes what was typed before it went quiet.
+            poll_dur = poll_dur.min(
+                self.recovery_due_at()
+                    .saturating_duration_since(Instant::now()),
+            );
             if pty_backlog {
                 poll_dur = Duration::from_millis(0);
             }
@@ -1529,6 +1543,7 @@ impl App {
         // history-non-empty still saves: the `<leader>bA` flow shouldn't
         // wipe `:` / `/` recall, and `hydrate_from_session` already
         // tolerates a session whose tracked files have all been deleted.
+        self.discard_all_recovery();
         let session = self.build_session();
         if !session.buffers.is_empty()
             || !session.cmd_history.is_empty()
