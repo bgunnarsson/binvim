@@ -11,6 +11,7 @@ symptoms:
 root_cause: "when the tty hangs up, crossterm::event::poll's unix source keeps reading the dead fd in a loop inside try_read and never returns to the caller; before a SIGHUP handler was installed the default action killed the process, which hid it"
 related:
   - docs/plans/2026-09-15-writes-cannot-lose-work-and-clippy-gates-ci.md
+  - docs/solutions/tooling/tmux-send-keys-escape-then-a-key-arrives-as-alt.md
 ---
 
 ## Problem
@@ -57,3 +58,9 @@ same mutex guards the loop's own dumps. A signalled exit doesn't save the sessio
   handler removes the exit that was hiding whatever the process does next.
 - **A tmux check of a rebuilt binary waits for the UI to draw** (poll `capture-pane` for the mode
   line), never a fixed sleep.
+- **A tmux check that ends with `tmux kill-session` has sent SIGHUP,** which writes recovery files
+  for dirty buffers and, since `20a5dcf`, the session. The next check in the same file or cwd
+  applies that recovery text: a buffer read `delta PANICKED PANICKED` after two runs that each
+  typed the word once. Checks quit binvim with `:e!` / `:q!` first, or use a fresh file and
+  directory per run, and delete only the session files whose `cwd` is that run's own directory.
+  A harness that reuses a file after `kill-session` without doing either is a violation.
