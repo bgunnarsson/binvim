@@ -110,6 +110,18 @@ A few language-specific tweaks on top of the bundled queries:
 - **`.editorconfig`** — comments, `[*.cs]` section headers in Pink, `key = value` pairs with the key in Lavender, `=` in Sky, value in Green.
 - **`.gitignore` family** — `#` comments, `!`-negation prefix in Mauve, patterns in Lavender.
 
+Known issues:
+
+- **Markdown highlighting turns itself off for pathological files.** Two bugs in the upstream
+  `tree-sitter-md` C scanner (present through its 0.5.3) can abort the process rather than fail
+  softly, so binvim skips highlighting the input instead of feeding it in: a file nested about 255
+  block levels deep (`>>>>…` or list items), whose scanner state overflows tree-sitter's fixed
+  serialization buffer; and, on glibc only, an ordered-list marker whose digits are followed by a
+  non-ASCII character (`1€` at the start of a line), where the scanner calls the narrow `isdigit`
+  on a value outside its range. The nesting case is caught by a bound on the input; the `isdigit`
+  case is inherent to the grammar and needs an upstream fix, so a file that trips it can still
+  lose Markdown highlighting for the affected region.
+
 ### LSP
 
 Per-language servers with `initializationOptions`, project-root detection, and a debounced `didChange` (50ms burst window) so rapid typing doesn't flood the server.

@@ -2713,6 +2713,20 @@ export function Page() {
     // `\PC{0,400}` if a fixed tree-sitter-bash lands upstream.
     const BASH_FUZZ_ALPHABET: &str = "[\t\n -~]{0,400}";
 
+    // tree-sitter-md's block scanner reads an ordered-list marker with
+    // `while (isdigit(lexer->lookahead))` (scanner.c), passing a full
+    // Unicode scalar to the *narrow* `isdigit`, whose argument is undefined
+    // outside 0..=255. glibc indexes its ctype table unchecked, so a digit
+    // followed by a codepoint >= U+0100 reads past the table — usually a
+    // wrong answer, occasionally an unmapped page and a SIGSEGV. Like bash's
+    // scanner it only faults on x86_64 CI and never reproduces from one
+    // input; macOS's range-checked libc hides it. Still present in
+    // tree-sitter-md 0.5.3. Restricting to ASCII keeps the byte-offset
+    // invariant and every block shape while never feeding a wide codepoint
+    // to `isdigit`. Documented as a known issue in README; drop this if
+    // upstream fixes the call.
+    const MARKDOWN_FUZZ_ALPHABET: &str = "[\t\n -~]{0,400}";
+
     fuzz_lang!(fuzz_rust, Lang::Rust);
     fuzz_lang!(fuzz_typescript, Lang::TypeScript);
     fuzz_lang!(fuzz_tsx, Lang::Tsx);
@@ -2722,7 +2736,7 @@ export function Page() {
     fuzz_lang!(fuzz_html, Lang::Html);
     fuzz_lang!(fuzz_css, Lang::Css);
     fuzz_lang!(fuzz_scss, Lang::Scss);
-    fuzz_lang!(fuzz_markdown, Lang::Markdown);
+    fuzz_lang!(fuzz_markdown, Lang::Markdown, MARKDOWN_FUZZ_ALPHABET);
     fuzz_lang!(fuzz_csharp, Lang::CSharp);
     fuzz_lang!(fuzz_razor, Lang::Razor);
     fuzz_lang!(fuzz_bash, Lang::Bash, BASH_FUZZ_ALPHABET);

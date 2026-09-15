@@ -56,7 +56,11 @@ literally.
 - **Correctness on hostile input.** Grapheme clusters / wide chars / emoji /
   mixed EOL / very long lines / huge files (a "large file mode" that degrades
   tree-sitter + LSP gracefully rather than stalling). Extend the density of the
-  motion/text-object test suites to rendering and width math.
+  motion/text-object test suites to rendering and width math. Includes the
+  known `tree-sitter-md` scanner crash: a narrow `isdigit` on a Unicode
+  codepoint in an ordered-list marker (`1€` at line start) aborts on glibc.
+  Bounded out of the fuzz suite for now; wants an upstream fix or a vendored
+  grammar to close for real.
 - **Terminal compatibility matrix.** Test + document Ghostty, Kitty, WezTerm,
   Alacritty, tmux, Windows Terminal, and over-SSH. The published matrix doubles
   as a hardening checklist and marketing.
