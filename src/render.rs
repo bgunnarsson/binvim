@@ -1,5 +1,5 @@
 use crate::app::App;
-use crate::app::state::OverlayPage;
+use crate::app::state::{OverlayPage, Pager};
 use crate::lang::Lang;
 use crate::lsp::Severity;
 use crate::mode::Mode;
@@ -87,10 +87,10 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     // "[No Name]" placeholder.
     match app.top_overlay() {
         Some(OverlayPage::Install) => draw_install_page(out, app)?,
-        Some(OverlayPage::Health) => draw_health_page(out, app)?,
-        Some(OverlayPage::Messages) => draw_messages_page(out, app)?,
-        Some(OverlayPage::List) => draw_list_page(out, app)?,
-        Some(OverlayPage::TestResults) => draw_test_results_page(out, app)?,
+        Some(OverlayPage::Pager(Pager::Health)) => draw_health_page(out, app)?,
+        Some(OverlayPage::Pager(Pager::Messages)) => draw_messages_page(out, app)?,
+        Some(OverlayPage::Pager(Pager::List)) => draw_list_page(out, app)?,
+        Some(OverlayPage::Pager(Pager::TestResults)) => draw_test_results_page(out, app)?,
         None if app.show_start_page => draw_start_page(out, app)?,
         None => {
             let editor_rect = app.editor_rect();

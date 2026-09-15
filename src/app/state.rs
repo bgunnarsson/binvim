@@ -1475,7 +1475,16 @@ pub fn is_start_page_passthrough(k: &KeyEvent) -> bool {
 /// ask `App::top_overlay` rather than test the flags itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverlayPage {
+    /// Runs in `Mode::Installer`, whose own key handler closes and moves it.
     Install,
+    Pager(Pager),
+}
+
+/// The overlay pages driven by the shared overlay keys — `q` / `Esc`, `j` /
+/// `k`, `g` / `G` — in `handle_event`. Kept apart from `Install` so a helper
+/// for those keys can't be handed the install page and do nothing with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pager {
     Health,
     Messages,
     List,
@@ -1488,48 +1497,42 @@ impl super::App {
         if self.show_install_page {
             Some(OverlayPage::Install)
         } else if self.show_health_page {
-            Some(OverlayPage::Health)
+            Some(OverlayPage::Pager(Pager::Health))
         } else if self.show_messages_page {
-            Some(OverlayPage::Messages)
+            Some(OverlayPage::Pager(Pager::Messages))
         } else if self.show_list_page {
-            Some(OverlayPage::List)
+            Some(OverlayPage::Pager(Pager::List))
         } else if self.show_test_results_page {
-            Some(OverlayPage::TestResults)
+            Some(OverlayPage::Pager(Pager::TestResults))
         } else {
             None
         }
     }
 
-    pub(super) fn overlay_scroll_by(&mut self, page: OverlayPage, delta: isize) {
+    pub(super) fn overlay_scroll_by(&mut self, page: Pager, delta: isize) {
         match page {
-            OverlayPage::Install => self.installer_scroll_by(delta),
-            OverlayPage::Health => self.health_scroll_by(delta),
-            OverlayPage::Messages => self.messages_scroll_by(delta),
-            OverlayPage::List => self.list_scroll_by(delta),
-            OverlayPage::TestResults => self.test_results_scroll_by(delta),
+            Pager::Health => self.health_scroll_by(delta),
+            Pager::Messages => self.messages_scroll_by(delta),
+            Pager::List => self.list_scroll_by(delta),
+            Pager::TestResults => self.test_results_scroll_by(delta),
         }
     }
 
-    // The install page runs in `Mode::Installer`, whose own key handler
-    // closes and moves it, so the key-driven helpers below leave it alone.
-
-    pub(super) fn overlay_dismiss(&mut self, page: OverlayPage) {
+    pub(super) fn overlay_dismiss(&mut self, page: Pager) {
         match page {
-            OverlayPage::Install => {}
-            OverlayPage::Health => self.show_health_page = false,
-            OverlayPage::Messages => self.show_messages_page = false,
-            OverlayPage::List => self.show_list_page = false,
-            OverlayPage::TestResults => self.show_test_results_page = false,
+            Pager::Health => self.show_health_page = false,
+            Pager::Messages => self.show_messages_page = false,
+            Pager::List => self.show_list_page = false,
+            Pager::TestResults => self.show_test_results_page = false,
         }
     }
 
-    pub(super) fn overlay_scroll_to_top(&mut self, page: OverlayPage) {
+    pub(super) fn overlay_scroll_to_top(&mut self, page: Pager) {
         match page {
-            OverlayPage::Install => {}
-            OverlayPage::Health => self.health_scroll = 0,
-            OverlayPage::Messages => self.messages_scroll = 0,
-            OverlayPage::List => self.list_scroll = 0,
-            OverlayPage::TestResults => {
+            Pager::Health => self.health_scroll = 0,
+            Pager::Messages => self.messages_scroll = 0,
+            Pager::List => self.list_scroll = 0,
+            Pager::TestResults => {
                 // Jump to the top — explicit "look at scrollback", so
                 // leave tail mode too.
                 self.test_results_at_tail = false;
@@ -1538,15 +1541,14 @@ impl super::App {
         }
     }
 
-    pub(super) fn overlay_scroll_to_bottom(&mut self, page: OverlayPage) {
+    pub(super) fn overlay_scroll_to_bottom(&mut self, page: Pager) {
         match page {
-            OverlayPage::Install => {}
-            OverlayPage::Health => self.health_scroll = self.health_max_scroll(),
-            OverlayPage::Messages => self.messages_scroll = self.messages_max_scroll(),
-            OverlayPage::List => self.list_scroll = self.list_max_scroll(),
+            Pager::Health => self.health_scroll = self.health_max_scroll(),
+            Pager::Messages => self.messages_scroll = self.messages_max_scroll(),
+            Pager::List => self.list_scroll = self.list_max_scroll(),
             // Re-engage tail follow rather than freezing at the current
             // bottom — matches `tail -f` semantics.
-            OverlayPage::TestResults => self.test_results_at_tail = true,
+            Pager::TestResults => self.test_results_at_tail = true,
         }
     }
 }
@@ -1562,7 +1564,7 @@ mod tests {
 
         app.show_messages_page = true;
         app.show_health_page = true;
-        assert_eq!(app.top_overlay(), Some(OverlayPage::Health));
+        assert_eq!(app.top_overlay(), Some(OverlayPage::Pager(Pager::Health)));
 
         app.show_messages_page = false;
         app.show_install_page = true;
@@ -1572,7 +1574,7 @@ mod tests {
         app.show_health_page = false;
         app.show_test_results_page = true;
         app.show_list_page = true;
-        assert_eq!(app.top_overlay(), Some(OverlayPage::List));
+        assert_eq!(app.top_overlay(), Some(OverlayPage::Pager(Pager::List)));
     }
 
     #[test]
@@ -1582,7 +1584,9 @@ mod tests {
         app.show_health_page = true;
         app.health_content_height.set(1000);
         app.list_content_height.set(1000);
-        let top = app.top_overlay().expect("an overlay is up");
+        let Some(OverlayPage::Pager(top)) = app.top_overlay() else {
+            panic!("a pager page is up");
+        };
 
         app.overlay_scroll_to_bottom(top);
         assert!(app.health_scroll > 0);
@@ -1591,7 +1595,7 @@ mod tests {
         app.overlay_dismiss(top);
         assert!(!app.show_health_page);
         assert!(app.show_list_page);
-        assert_eq!(app.top_overlay(), Some(OverlayPage::List));
+        assert_eq!(app.top_overlay(), Some(OverlayPage::Pager(Pager::List)));
     }
 
     #[test]

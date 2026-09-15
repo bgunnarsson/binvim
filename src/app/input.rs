@@ -17,7 +17,7 @@ use crate::parser::{self, ParseCtx, ParseResult};
 use super::pair::{
     detect_open_tag_to_close, is_close_char, is_html_like_buffer, open_pair_for, should_auto_pair,
 };
-use super::state::{self, LastEdit, OverlayPage, WhichKeyState};
+use super::state::{self, LastEdit, OverlayPage, Pager, WhichKeyState};
 
 /// Characters that should re-fire `textDocument/completion` after being inserted.
 /// Identifier chars catch the typing-a-name case; the symbol set covers the
@@ -393,10 +393,7 @@ impl super::App {
                 // page `draw` paints — several flags can be up at once.
                 // The health dashboard alone also takes `i`, to install
                 // what its SETUP box names.
-                let overlay = self
-                    .top_overlay()
-                    .filter(|page| !matches!(page, OverlayPage::Install));
-                if let Some(page) = overlay {
+                if let Some(OverlayPage::Pager(page)) = self.top_overlay() {
                     let normal = matches!(self.mode, Mode::Normal);
                     let no_ctrl = !k.modifiers.contains(KeyModifiers::CONTROL);
                     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
@@ -458,7 +455,7 @@ impl super::App {
                             self.overlay_scroll_to_bottom(page);
                             return Ok(());
                         }
-                        KeyCode::Char('i') if normal && no_ctrl && page == OverlayPage::Health => {
+                        KeyCode::Char('i') if normal && no_ctrl && page == Pager::Health => {
                             self.health_install();
                             return Ok(());
                         }
@@ -1096,7 +1093,10 @@ impl super::App {
                         p.move_by(-3);
                     }
                 } else if let Some(page) = self.top_overlay() {
-                    self.overlay_scroll_by(page, -3);
+                    match page {
+                        OverlayPage::Install => self.installer_scroll_by(-3),
+                        OverlayPage::Pager(page) => self.overlay_scroll_by(page, -3),
+                    }
                 } else {
                     self.scroll_view(-3);
                 }
@@ -1110,7 +1110,10 @@ impl super::App {
                         p.move_by(3);
                     }
                 } else if let Some(page) = self.top_overlay() {
-                    self.overlay_scroll_by(page, 3);
+                    match page {
+                        OverlayPage::Install => self.installer_scroll_by(3),
+                        OverlayPage::Pager(page) => self.overlay_scroll_by(page, 3),
+                    }
                 } else {
                     self.scroll_view(3);
                 }
@@ -2553,10 +2556,7 @@ impl super::App {
             ExCommand::WriteAs(p) => self.write_as(p, false),
             ExCommand::WriteAsForce(p) => self.write_as(p, true),
             ExCommand::Quit => {
-                let overlay = self
-                    .top_overlay()
-                    .filter(|page| !matches!(page, OverlayPage::Install));
-                if let Some(page) = overlay {
+                if let Some(OverlayPage::Pager(page)) = self.top_overlay() {
                     self.overlay_dismiss(page);
                 } else if self.in_history_window() {
                     self.close_history_window();
