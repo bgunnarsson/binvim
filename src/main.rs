@@ -30,6 +30,7 @@ mod recover;
 mod render;
 mod session;
 mod spell;
+mod tag;
 mod task;
 mod terminal;
 mod test;

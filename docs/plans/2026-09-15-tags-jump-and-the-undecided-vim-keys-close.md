@@ -1,7 +1,7 @@
 ---
 title: Ctrl-] jumps through a tags file, and the four undecided Vim keys are decided
 date: 2026-09-15
-status: planned
+status: in-progress
 ---
 
 ## Context
@@ -103,7 +103,7 @@ Decisions:
 
 ## Tasks
 
-- [ ] **`src/tag.rs` — the format, as pure functions.** Flat module, per CLAUDE.md's
+- [x] **`src/tag.rs` — the format, as pure functions.** Flat module, per CLAUDE.md's
   "sub-modules only for `app/`, `lsp/`, `dap/`". `Tag { name, path: PathBuf, address, kind:
   Option<String> }` and `TagAddress::{Line(usize), Pattern(String)}`. `parse_tag_line(&str) ->
   Option<Tag>` splits on tabs, skips `!_TAG_` headers, and for an address takes a bare integer as
@@ -186,3 +186,26 @@ Decisions:
 - [ ] **Gates.** `cargo fmt`, then `cargo test -- --test-threads=1` and
   `cargo +1.98.0 clippy --locked --all-targets -- -D warnings`. `cargo build --release` before
   handing back, since the user's `binvim` alias runs the release binary.
+
+## Files
+
+- `src/tag.rs` (new): `Tag`, `TagAddress`, `parse_tag_line`, `find_tags_file`, `TagIndex`,
+  `resolve_address`. The upward walk mirrors `package::find_root_by_marker`.
+- `src/app/tag_glue.rs` (new): `tag_jump`, `tag_pop`, `tag_goto_match`, `tag_select`, `cmd_tags`.
+  Opens files through `open_buffer` and lists through `show_listing`, as `cmd_jumps` does.
+- `src/app.rs`, `src/app/state.rs`: `App.tagstack`, `App.tag_index`, the pending picker matches.
+- `src/parser.rs`: `Action::TagJump` / `TagPop` / `TagSelect`, `Ctrl-]` / `Ctrl-T`, `g]`,
+  Visual `K`.
+- `src/command.rs`, `src/app/input.rs`: the eight `:` commands and their dispatch.
+- `src/picker.rs`, `src/app/picker_glue.rs`: `PickerKind::Tags`.
+- `README.md`, `KNOWN_ISSUES.md`, `CHANGELOG.md`.
+
+## Verification
+
+- `cargo test -- --test-threads=1`, `cargo +1.98.0 clippy --locked --all-targets -- -D warnings`,
+  `cargo fmt --check`, `scripts/check-ai-attribution.sh`.
+- `cargo build --release`, then in tmux against `target/release/binvim`, in a scratch directory
+  with two source files and a hand-written `tags` file holding a line-number tag, a pattern tag
+  and a name with three matches: `Ctrl-]` and `Ctrl-T` across files, `Ctrl-]` → `:bd` → `Ctrl-T`,
+  `:tnext` / `:tlast` / `:tnext` (`E428`), `g]` on a unique name, `:tags`, and `:registers` →
+  `:tags` → `q`. Each run ends with `:q!`.
