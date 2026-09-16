@@ -195,6 +195,21 @@ impl super::App {
         }
     }
 
+    /// The text `apply_recovery` will give `path`'s buffer when it's opened,
+    /// when that isn't what's on disk — for a caller that has to read the
+    /// text before opening the file.
+    pub(super) fn recovered_text_for(&self, path: &Path) -> Option<String> {
+        if self.recovery_written.contains_key(path) {
+            return None;
+        }
+        let rec = recovery_path(path).and_then(|dest| load_from(&dest))?;
+        if held_by_another_process(&rec) {
+            return None;
+        }
+        let disk = std::fs::read_to_string(path).ok()?;
+        recovered_text(&rec, &disk).map(str::to_string)
+    }
+
     /// Remove `path`'s recovery file, if it's this session's — written or
     /// applied here. One a crash left for a file not opened yet, or one
     /// another binvim is still writing, isn't this session's to remove.

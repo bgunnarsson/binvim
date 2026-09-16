@@ -52,16 +52,13 @@ impl super::App {
     /// Opens match `idx` and, only once that has worked, records where the
     /// jump was made from.
     fn tag_push_and_open(&mut self, name: String, matches: Vec<Tag>, idx: usize) {
-        let Some(origin) = self.buffer.path.clone() else {
-            self.status_msg = "E32: No file name".into();
-            return;
-        };
+        let origin = self.buffer.path.clone();
         let (line, col) = (self.window.cursor.line, self.window.cursor.col);
         if let Err(e) = self.tag_open(&matches[idx]) {
             self.status_msg = e;
             return;
         }
-        if matches.len() > 1 {
+        if matches.len() > 1 && self.status_msg.is_empty() {
             self.status_msg = format!("tag {} of {}", idx + 1, matches.len());
         }
         self.tagstack.push(TagStackEntry {
@@ -76,9 +73,12 @@ impl super::App {
 
     /// The buffer and cursor moved to `tag`, or nothing moved at all. The
     /// address is resolved before the buffer is switched, so a pattern that
-    /// no longer matches leaves the view where it was.
+    /// no longer matches leaves the view where it was. The status line is
+    /// cleared on success, so a notice `open_buffer` leaves — recovered text,
+    /// another binvim editing the file — isn't then covered by `tag 2 of 3`.
     fn tag_open(&mut self, tag: &Tag) -> Result<(), String> {
         let line = self.tag_line(tag)?;
+        self.status_msg.clear();
         self.push_jump();
         self.open_buffer(tag.path.clone())
             .map_err(|e| format!("error: {e}"))?;
@@ -93,8 +93,9 @@ impl super::App {
         Ok(())
     }
 
-    /// The line `tag` names, read from the open buffer when there is one —
-    /// its unsaved text is what the cursor will land in.
+    /// The line `tag` names in the text the cursor will land in: the open
+    /// buffer's, or for a file not open yet, the text a recovery file will
+    /// give it, else the disk's.
     fn tag_line(&self, tag: &Tag) -> Result<usize, String> {
         let open = std::iter::once(&self.buffer)
             .chain(
@@ -109,8 +110,14 @@ impl super::App {
         let buffer = match open {
             Some(b) => b,
             None if tag.path.is_file() => {
-                read = crate::buffer::Buffer::from_path(tag.path.clone())
-                    .map_err(|e| format!("error: {e}"))?;
+                read = match self.recovered_text_for(&tag.path) {
+                    Some(text) => crate::buffer::Buffer {
+                        rope: ropey::Rope::from_str(&text),
+                        ..Default::default()
+                    },
+                    None => crate::buffer::Buffer::from_path(tag.path.clone())
+                        .map_err(|e| format!("error: {e}"))?,
+                };
                 &read
             }
             None => {
@@ -130,10 +137,21 @@ impl super::App {
             self.status_msg = "E73: Tag stack empty".into();
             return;
         };
-        if let Err(e) = self.open_buffer(entry.path.clone()) {
-            self.status_msg = format!("error: {e}");
-            self.tagstack.push(entry);
-            return;
+        match &entry.path {
+            Some(path) => {
+                if let Err(e) = self.open_buffer(path.clone()) {
+                    self.status_msg = format!("error: {e}");
+                    self.tagstack.push(entry);
+                    return;
+                }
+            }
+            None => {
+                if !self.switch_to_unnamed() {
+                    self.status_msg =
+                        "E86: The unnamed buffer this tag was jumped from is closed".into();
+                    return;
+                }
+            }
         }
         self.window.cursor.line = entry.line;
         self.window.cursor.col = entry.col;
@@ -141,8 +159,19 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
+    /// A jump made from a buffer with no file goes back to one: the first,
+    /// since nothing tells two of them apart once the jump has left.
+    fn switch_to_unnamed(&mut self) -> bool {
+        if self.buffer.path.is_none() {
+            return true;
+        }
+        let unnamed = (0..self.buffers.len())
+            .find(|&i| i != self.active && self.buffers[i].buffer.path.is_none());
+        unnamed.is_some_and(|i| self.switch_to(i).is_ok())
+    }
+
     /// `:tnext` / `:tprevious` / `:tfirst` / `:tlast`. A move past either
-    /// end stops at it and reports the error, as Vim does. The stack's depth
+    /// end goes to that end and reports the error, as Vim does. The stack's depth
     /// doesn't change, so one `Ctrl-T` still returns to the origin.
     pub(super) fn tag_goto_match(&mut self, how: TagMove) {
         let Some(entry) = self.tagstack.last() else {
@@ -160,26 +189,29 @@ impl super::App {
             TagMove::First => (0, None),
             TagMove::Last => (last, None),
         };
-        self.tag_goto_index(idx);
-        if let Some(err) = err {
+        if let (true, Some(err)) = (self.tag_goto_index(idx), err) {
             self.status_msg = err.into();
         }
     }
 
-    fn tag_goto_index(&mut self, idx: usize) {
+    /// False when the match couldn't be opened; the status line says why.
+    fn tag_goto_index(&mut self, idx: usize) -> bool {
         let Some(entry) = self.tagstack.last() else {
-            return;
+            return false;
         };
         let tag = entry.matches[idx].clone();
         let total = entry.matches.len();
         if let Err(e) = self.tag_open(&tag) {
             self.status_msg = e;
-            return;
+            return false;
         }
         if let Some(entry) = self.tagstack.last_mut() {
             entry.match_idx = idx;
         }
-        self.status_msg = format!("tag {} of {total}", idx + 1);
+        if self.status_msg.is_empty() {
+            self.status_msg = format!("tag {} of {total}", idx + 1);
+        }
+        true
     }
 
     /// `g]` and `:tselect [name]` — the matches in a picker, however many
@@ -271,8 +303,15 @@ impl super::App {
                     e.tag,
                     e.line + 1
                 );
-                let path = e.path.strip_prefix(&cwd).unwrap_or(&e.path);
-                (label, path.display().to_string())
+                let file = match &e.path {
+                    Some(path) => path
+                        .strip_prefix(&cwd)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string(),
+                    None => "[No Name]".into(),
+                };
+                (label, file)
             })
             .collect();
         self.show_listing(super::state::Listing {
@@ -464,6 +503,37 @@ mod tests {
             "{:?}",
             listing.rows
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_jump_from_an_unnamed_buffer_comes_back_to_it() {
+        let dir = scratch("unnamed");
+        let mut app = app_in(&dir);
+        let matches = app.tag_matches("target").unwrap();
+        app.open_empty_buffer().unwrap();
+        app.buffer.rope = ropey::Rope::from_str("scratch\ntext\n");
+        app.window.cursor.line = 1;
+        app.tag_push_and_open("target".into(), matches, 0);
+        assert_eq!(at(&app), spot("b.txt", 1, 0));
+        app.exec_command("tags");
+        assert_eq!(app.listing.as_ref().unwrap().rows[0].1, "[No Name]");
+        app.replay_key(ctrl('t'));
+        assert_eq!(app.buffer.path, None);
+        assert_eq!(app.window.cursor.line, 1);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_failed_move_past_the_end_reports_its_own_error() {
+        let dir = scratch("gone-end");
+        let mut app = app_in(&dir);
+        app.tag_jump(Some("dup".into()));
+        std::fs::remove_file(dir.join("d.txt")).unwrap();
+        app.exec_command("3tnext");
+        assert!(app.status_msg.starts_with("E429"), "{}", app.status_msg);
+        assert_eq!(at(&app), spot("b.txt", 0, 0));
+        assert_eq!(app.tagstack[0].match_idx, 0);
         std::fs::remove_dir_all(&dir).ok();
     }
 }

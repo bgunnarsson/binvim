@@ -220,7 +220,8 @@ pub struct QuickfixState {
 #[derive(Debug, Clone)]
 pub struct TagStackEntry {
     pub tag: String,
-    pub path: std::path::PathBuf,
+    /// `None` for a jump made from a buffer with no file.
+    pub path: Option<std::path::PathBuf>,
     pub line: usize,
     pub col: usize,
     pub matches: Vec<crate::tag::Tag>,

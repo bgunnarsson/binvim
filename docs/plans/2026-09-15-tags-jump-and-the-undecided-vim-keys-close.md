@@ -161,8 +161,10 @@ Decisions:
   the open-and-resolve half of `tag_jump` and leaving the stack depth alone, so walking matches is
   not a second entry to pop back through. `Ctrl-]` reports `tag 1 of {n}` when `n > 1` and stays
   silent when the name is unique.
-  Deviation: a move past either end stops at the end and reports the error, as Vim's `tag.c`
-  does, so `E428` from the last match moves nothing.
+  Deviation: a move past either end jumps to that end and reports the error, as Vim's `tag.c`
+  does, so `E428` from the last match puts the cursor back on it; when that jump fails, its own
+  error is shown instead. A jump from a buffer with no file records no path, and `Ctrl-T` returns
+  to the first unnamed buffer.
   Verify: tests for `:tnext` past the end (`E428`, no move), `:tprevious` past the start (`E425`),
   `:tfirst` / `:tlast` from the middle, and that four `:tnext`s followed by one `Ctrl-T` land back
   at the original origin rather than three matches deep. `cargo test tag`.

@@ -2865,6 +2865,8 @@ impl super::App {
             ExCommand::UndoList => self.cmd_undolist(),
             ExCommand::Marks => self.cmd_marks(),
             ExCommand::Jumps => self.cmd_jumps(),
+            // Vim's bare `:tag` goes forward to a newer stack entry. binvim's
+            // stack is only ever popped, so there's never one to go to.
             ExCommand::Tag(name) if name.is_empty() => {
                 self.status_msg = "E556: At top of tag stack".into();
             }

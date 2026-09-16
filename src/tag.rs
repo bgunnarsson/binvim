@@ -64,7 +64,24 @@ pub fn find_tags_file(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
         .map(|dir| dir.join("tags"))
-        .find(|p| p.is_file())
+        .find(|p| p.is_file() && !writable_by_others(p))
+}
+
+/// A `tags` file chooses what a jump opens, and opening a file starts its
+/// language server, which may build the project. The search climbs out of
+/// the project, so a `tags` file that any user can rewrite, or that sits in a
+/// directory any user can write to (`/tmp`), could be another user's plant.
+#[cfg(unix)]
+fn writable_by_others(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.permissions().mode());
+    let dir = path.parent().unwrap_or(Path::new("/"));
+    (mode(path) | mode(dir)) & 0o002 != 0
+}
+
+#[cfg(not(unix))]
+fn writable_by_others(_: &Path) -> bool {
+    false
 }
 
 /// A parsed `tags` file, kept while the file's mtime and length stay put —
@@ -282,6 +299,28 @@ mod tests {
         assert_ne!(find_tags_file(&deep), Some(root.join("tags")));
         std::fs::write(root.join("tags"), "").unwrap();
         assert_eq!(find_tags_file(&deep), Some(root.join("tags")));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tags_files_others_can_write_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("shared");
+        let open = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(root.join("tags"), "").unwrap();
+        std::fs::write(root.join("shared/tags"), "").unwrap();
+        open(&root.join("shared"), 0o777);
+        assert_eq!(find_tags_file(&project), Some(root.join("tags")));
+        std::fs::write(project.join("tags"), "").unwrap();
+        open(&project.join("tags"), 0o666);
+        assert_eq!(find_tags_file(&project), Some(root.join("tags")));
+        open(&project.join("tags"), 0o644);
+        assert_eq!(find_tags_file(&project), Some(project.join("tags")));
         std::fs::remove_dir_all(&root).ok();
     }
 
