@@ -113,7 +113,7 @@ Decisions:
   Verify: unit tests in `tag::tests` for a line-number address, a pattern address, a pattern
   containing an escaped slash, a header line, an extended-format line with `kind:` fields, an
   old-format line with a bare kind letter, and a truncated line with one tab. `cargo test tag::tests`.
-- [ ] **Finding and caching the file.** `find_tags_file(start: &Path) -> Option<PathBuf>` walks up
+- [x] **Finding and caching the file.** `find_tags_file(start: &Path) -> Option<PathBuf>` walks up
   from the buffer's directory to the filesystem root looking for `tags`, as `package::workspace_root`
   walks for manifests. `TagIndex { path, mtime, len, tags: Vec<Tag> }` on `App`, reloaded when the
   file's mtime or length has moved and reused otherwise. Every `Tag.path` is resolved against the
@@ -123,6 +123,9 @@ Decisions:
   returns `None`, a relative `../src/main.rs` resolves against the tags file's directory and comes
   back absolute; a second lookup with the file untouched does not re-read it (assert on a parse
   counter), and touching it does. `cargo test tag::tests`.
+  Deviation: `std::path::absolute` keeps `..` on Unix, so `resolve_path` also folds `..` away —
+  otherwise `sub/../src/main.rs` opens a second buffer beside `src/main.rs`. "None anywhere" is
+  tested from `/`, since a scratch directory can't rule out a `tags` file above it.
 - [ ] **Resolving an address to a line.** `resolve_address(&TagAddress, &Buffer) -> Option<usize>`:
   `Line(n)` clamps to the buffer's length; `Pattern(p)` strips `^` / `$` anchors and finds the first
   line equal to the anchored text, or containing it when unanchored. Vim's tag patterns are literal
