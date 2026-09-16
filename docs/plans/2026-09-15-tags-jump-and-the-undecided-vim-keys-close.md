@@ -30,6 +30,11 @@ Decisions:
   `g]`, `:tag`, `:tags`, `:tselect`, `:pop`, and a tag stack. No `:ctags` command and no
   universal-ctags row in the install catalog — that can follow if the read half proves itself, and
   adding it later costs nothing that building it now saves.
+- **The match list follows Vim exactly** (chosen by the user). `:tselect` and `g]` always show the
+  list, one match or twenty; `Ctrl-]` takes the first match and says `tag 1 of 3` when there are
+  more; `:tnext` / `:tprevious` / `:tfirst` / `:tlast` walk them. That means a tag stack entry
+  carries its own match list and position in it, as Vim's does, rather than the list being
+  thrown away once the picker closes.
 - **Visual `S` stays surround** (chosen by the user), and the bullet moves to *Where binvim differs
   on purpose*. The reason on record is the asymmetry of being wrong, not habit: `S` expecting a
   linewise change leaves the parser pending on a pair character, which `Esc` cancels with nothing
@@ -74,8 +79,12 @@ Decisions:
   buffer has been `:bd`-ed.
 - A tag whose address is a search pattern (`/^fn main()$/`) lands on the line matching it, not on
   line 1. A pattern that no longer matches reports `E434` and does not move the cursor.
-- A name with three matches: `Ctrl-]` takes the first, `g]` and `:tselect` open the picker, and a
-  name with one match jumps straight through from `g]` without a one-row picker.
+- A name with three matches: `Ctrl-]` takes the first and reports `tag 1 of 3`; `:tnext` moves to
+  the second and reports `tag 2 of 3`; `:tprevious` goes back; `:tlast` reaches the third and
+  `:tnext` there reports `E428: at last match`, with `:tfirst` / `E425` the mirror of it.
+- `g]` and `:tselect` show the list whatever its length — a one-match name still gets a one-row
+  picker, as Vim shows a one-row prompt. Picking a row makes it the current match, so `:tnext`
+  from there moves to the row below it.
 - `:tag {name}` jumps by name with no cursor word involved; `:tags` lists the stack with `>` at the
   current entry; `:pop` and `Ctrl-T` do the same thing.
 - `Ctrl-]` with no `tags` file anywhere above the buffer says so and changes nothing. A tag naming
@@ -131,17 +140,30 @@ Decisions:
   hand in tmux against a release build, per CLAUDE.md's manual-check rules: `Ctrl-]`, `Ctrl-T`,
   and `Ctrl-]` → `:bd` the origin → `Ctrl-T`, finishing with `:q!`. Confirm the terminal actually
   delivers `Ctrl-]` as `Char(']')` with CONTROL — some send `\x1d` — and record which it was.
-- [ ] **`g]`, `:tag`, `:tags`, `:tselect`, `:pop`.** `PickerKind::Tags` with
-  `PickerPayload::Location`, which already carries `{ path, line, col }` and is already opened by
-  `picker_glue.rs:181`; rows are `name`, kind and the file:line. `g]` and `:tselect` open it when a
-  name has more than one match and jump straight through when it has one. `g]` goes in the `g`-prefix
-  block beside `gd` (`parser.rs:1897`). `ExCommand::{Tag(String), Tags, TSelect(Option<String>), Pop}`
-  in `command.rs` with `tag` / `ta`, `tags`, `tselect` / `ts`, `pop` / `po` aliases, dispatched in
-  `app/input.rs`. `:tags` builds its rows through `show_listing`, as `cmd_jumps` does — no new
-  `show_*_page` flag, per the lore.
-  Verify: `command::tests` for each alias and its argument; a `tag_glue` test that a two-match name
-  opens a picker with two rows and a one-match name opens none; by hand, `:tags` from inside
-  `:registers` to confirm the stacked-overlay keys still act on the top page.
+- [ ] **The match list, and walking it.** A tag stack entry gains `matches: Vec<Tag>` and
+  `match_idx: usize`, as Vim's stack entries carry theirs — without them `:tnext` after a `Ctrl-]`
+  has nothing to step through. `tag_goto_match(n)` moves within the current entry's list, reusing
+  the open-and-resolve half of `tag_jump` and leaving the stack depth alone, so walking matches is
+  not a second entry to pop back through. `Ctrl-]` reports `tag 1 of {n}` when `n > 1` and stays
+  silent when the name is unique.
+  Verify: tests for `:tnext` past the end (`E428`, no move), `:tprevious` past the start (`E425`),
+  `:tfirst` / `:tlast` from the middle, and that four `:tnext`s followed by one `Ctrl-T` land back
+  at the original origin rather than three matches deep. `cargo test tag`.
+- [ ] **`g]`, `:tag`, `:tags`, `:tselect`, `:pop`, `:tnext` / `:tprevious` / `:tfirst` / `:tlast`.**
+  `PickerKind::Tags` with `PickerPayload::Location`, which already carries `{ path, line, col }` and
+  is already opened by `picker_glue.rs:181`; rows are `name`, kind and the file:line. `g]` and
+  `:tselect` open it at any length, Vim showing a one-row prompt for a unique name rather than
+  skipping it; accepting a row sets `match_idx` so `:tnext` continues from there. `g]` goes in the
+  `g`-prefix block beside `gd` (`parser.rs:1897`). `ExCommand::{Tag(String), Tags,
+  TSelect(Option<String>), Pop, TNext(usize), TPrev(usize), TFirst, TLast}` in `command.rs` with
+  Vim's aliases — `tag` / `ta`, `tags`, `tselect` / `ts`, `pop` / `po`, `tnext` / `tn`,
+  `tprevious` / `tp` / `tN`, `tfirst` / `tr`, `tlast` / `tl` — dispatched in `app/input.rs`.
+  `:tnext` and `:tprevious` take a count, as Vim's do. `:tags` builds its rows through
+  `show_listing`, as `cmd_jumps` does — no new `show_*_page` flag, per the lore.
+  Verify: `command::tests` for each alias, its argument and its count; a `tag_glue` test that a
+  one-match name still opens a one-row picker and that accepting row 2 of 3 makes `:tnext` go to
+  row 3; by hand, `:tags` from inside `:registers` to confirm the stacked-overlay keys still act on
+  the top page.
 - [ ] **Visual `K` hovers at the selection's start.** In the Visual arm of `parse_key`, `K` →
   `Action::LspHover`; in `lsp_request_hover` (`app/lsp_glue.rs:1435`) take the position from the
   earlier of cursor and `visual_anchor` when the mode is Visual, and leave Visual before requesting.
@@ -150,7 +172,7 @@ Decisions:
 - [ ] **README, KNOWN_ISSUES, CHANGELOG.** Delete *Different from Vim, not yet decided*. Move Visual
   `S`, Visual `K` and Visual `I` / `A` into *Where binvim differs on purpose*, each with the reason
   from Decisions above — including that Visual `K` hovers at the selection's start because the
-  protocol takes a position. Add `Ctrl-]` / `Ctrl-T` / `g]` and the four `:` commands to *What's
+  protocol takes a position. Add `Ctrl-]` / `Ctrl-T` / `g]` and the eight `:` commands to *What's
   supported* and the Ex-commands table, saying plainly that binvim reads a `tags` file and does not
   write one. Rewrite `KNOWN_ISSUES.md`'s Vim-compatibility section, which currently points at the
   deleted section. CHANGELOG Unreleased entries for tags and for Visual `K`.
@@ -158,12 +180,3 @@ Decisions:
 - [ ] **Gates.** `cargo fmt`, then `cargo test -- --test-threads=1` and
   `cargo +1.98.0 clippy --locked --all-targets -- -D warnings`. `cargo build --release` before
   handing back, since the user's `binvim` alias runs the release binary.
-
-## Open questions
-
-- **Does `:tselect` deserve the picker when a name has one match?** Vim lists it and waits. The
-  plan jumps straight through, which is what `g]` should do and is probably what `:tselect` should
-  do too, but a Vim user who types `:ts` to *see* the list will find it gone. Revisit if it annoys.
-- **`:tnext` / `:tprev` / `:tfirst` / `:tlast` are not in this plan.** They need a "current match
-  list and position in it" that nothing else here has to carry. The picker covers the same ground
-  for now; add them if the picker proves to be the wrong shape for walking matches.
