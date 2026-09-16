@@ -43,11 +43,14 @@ Decisions:
   not — so the tie is broken by which mistake is recoverable. binvim's whole surround family
   (`ys` / `yss` / `yS` / `ds` / `cs`) is vim-surround's grammar with no plugin system to opt out
   of, and `S` is where that choice meets a built-in key.
-- **Visual `K` is LSP hover on the selection** (chosen by the user), not `keywordprg`. `K` then
-  means one thing in both modes, and no new configuration surface appears — the same objection
-  that keeps abbreviations in README's *Left out*. `textDocument/hover` takes a position, not a
-  range, so Visual `K` hovers at the **selection's start** and leaves Visual. That is a real
-  limitation of the protocol, not an approximation to paper over: say it in the README line.
+- **Visual `K` is LSP hover at the cursor** (chosen by the user), not `keywordprg`. `K` then means
+  one thing in both modes, and no new configuration surface appears — the same objection that keeps
+  abbreviations in README's *Left out*. `textDocument/hover` takes a position rather than a range,
+  but that costs nothing here: a server resolves a position to the symbol enclosing it, so any
+  point inside a symbol answers for the whole of it. **The cursor** is the point to send — it is
+  one end of the selection by definition, and it is where the user already is. The selection's
+  *start* would be the wrong choice: `V` on an indented line starts at column 0, so a line-wise
+  `K` would hand the server whitespace and get nothing back.
 - **Visual `I` / `A` keep Vim's documented rule** (chosen by the user). Vim's undocumented corners
   stay unmatched and the bullet moves to *differs on purpose*. No measurement task, no code change.
 - **The tag stack is global, not per window** (made here). Vim's is per window. binvim's jump list
@@ -89,8 +92,9 @@ Decisions:
   current entry; `:pop` and `Ctrl-T` do the same thing.
 - `Ctrl-]` with no `tags` file anywhere above the buffer says so and changes nothing. A tag naming
   a file that has been deleted reports it rather than opening an empty buffer.
-- Visual `K` shows hover for the symbol at the selection's start and leaves Visual; with no server
-  attached it reports that, as Normal `K` does.
+- Visual `K` shows hover for the symbol under the cursor and leaves Visual, from a `v` selection
+  made in either direction and from a `V` one on an indented line — the case that sending the
+  selection's start would break. With no server attached it reports that, as Normal `K` does.
 - README's *not yet decided* section is gone. Visual `S`, Visual `K` and Visual `I` / `A` are in
   *differs on purpose* with their reasons; `Ctrl-]` is in *What's supported*.
 - `KNOWN_ISSUES.md`'s Vim-compatibility section no longer points at a section that does not exist.
@@ -164,15 +168,17 @@ Decisions:
   one-match name still opens a one-row picker and that accepting row 2 of 3 makes `:tnext` go to
   row 3; by hand, `:tags` from inside `:registers` to confirm the stacked-overlay keys still act on
   the top page.
-- [ ] **Visual `K` hovers at the selection's start.** In the Visual arm of `parse_key`, `K` →
-  `Action::LspHover`; in `lsp_request_hover` (`app/lsp_glue.rs:1435`) take the position from the
-  earlier of cursor and `visual_anchor` when the mode is Visual, and leave Visual before requesting.
-  Verify: a parser test that Visual `K` yields `LspHover`; by hand on a `.rs` buffer, select a symbol
-  from both directions and confirm the popup is the same one Normal `K` gives on its first character.
+- [ ] **Visual `K` hovers at the cursor.** In the Visual arm of `parse_key`, `K` →
+  `Action::LspHover`. `lsp_request_hover` (`app/lsp_glue.rs:1435`) already reads
+  `self.window.cursor`, so it needs no change at all — the work is leaving Visual before the
+  request so the popup isn't drawn over a live selection.
+  Verify: a parser test that Visual `K` yields `LspHover`; by hand on a `.ts` buffer, `viw` over a
+  typed symbol from both directions and `V` on an indented line holding one, confirming all three
+  give the same popup Normal `K` gives and that none of them comes back empty.
 - [ ] **README, KNOWN_ISSUES, CHANGELOG.** Delete *Different from Vim, not yet decided*. Move Visual
   `S`, Visual `K` and Visual `I` / `A` into *Where binvim differs on purpose*, each with the reason
-  from Decisions above — including that Visual `K` hovers at the selection's start because the
-  protocol takes a position. Add `Ctrl-]` / `Ctrl-T` / `g]` and the eight `:` commands to *What's
+  from Decisions above — Visual `K` hovering at the cursor, which is what makes it the same lookup
+  Normal `K` does. Add `Ctrl-]` / `Ctrl-T` / `g]` and the eight `:` commands to *What's
   supported* and the Ex-commands table, saying plainly that binvim reads a `tags` file and does not
   write one. Rewrite `KNOWN_ISSUES.md`'s Vim-compatibility section, which currently points at the
   deleted section. CHANGELOG Unreleased entries for tags and for Visual `K`.
