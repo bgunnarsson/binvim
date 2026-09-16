@@ -126,7 +126,7 @@ Decisions:
   Deviation: `std::path::absolute` keeps `..` on Unix, so `resolve_path` also folds `..` away —
   otherwise `sub/../src/main.rs` opens a second buffer beside `src/main.rs`. "None anywhere" is
   tested from `/`, since a scratch directory can't rule out a `tags` file above it.
-- [ ] **Resolving an address to a line.** `resolve_address(&TagAddress, &Buffer) -> Option<usize>`:
+- [x] **Resolving an address to a line.** `resolve_address(&TagAddress, &Buffer) -> Option<usize>`:
   `Line(n)` clamps to the buffer's length; `Pattern(p)` strips `^` / `$` anchors and finds the first
   line equal to the anchored text, or containing it when unanchored. Vim's tag patterns are literal
   apart from the anchors — treating them as regex would misfire on any tag whose line holds `.` or
@@ -134,6 +134,8 @@ Decisions:
   Verify: tests for an anchored pattern matching one line of several similar ones, an unanchored
   one, a pattern that matches nothing (`None`), and a line number past the end of the file.
   `cargo test tag::tests`.
+  Deviation: a pattern anchored at one end only matches as a prefix or suffix rather than
+  anywhere — ctags truncates long lines and drops the `$` when it does.
 - [ ] **The jump, the stack, and `Ctrl-T`.** `App.tagstack: Vec<TagStackEntry>` where an entry is
   the *origin* — `{ tag: String, path: PathBuf, line: usize, col: usize }` — captured **before**
   `open_buffer`, unlike the `PickerPayload::Location` arm in `picker_glue.rs:181`, which pushes its

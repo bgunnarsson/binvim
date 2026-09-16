@@ -5,6 +5,8 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::buffer::Buffer;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Tag {
     pub name: String,
@@ -112,6 +114,37 @@ impl TagIndex {
             .cloned()
             .collect()
     }
+}
+
+/// The 0-based line `address` names in `buffer`. A line number past the end
+/// is the last line; a pattern that matches nothing is `None`.
+///
+/// Patterns are literal apart from their `^` / `$` anchors, as ctags writes
+/// them — read as a regex, the `.` and `*` most source lines hold would
+/// misfire.
+pub fn resolve_address(address: &TagAddress, buffer: &Buffer) -> Option<usize> {
+    let pattern = match address {
+        TagAddress::Line(n) => return Some(n.saturating_sub(1).min(buffer.line_count() - 1)),
+        TagAddress::Pattern(p) => p.as_str(),
+    };
+    let (start, pattern) = match pattern.strip_prefix('^') {
+        Some(rest) => (true, rest),
+        None => (false, pattern),
+    };
+    let (end, pattern) = match pattern.strip_suffix('$') {
+        Some(rest) => (true, rest),
+        None => (false, pattern),
+    };
+    (0..buffer.line_count()).find(|&i| {
+        let line = buffer.rope.line(i).to_string();
+        let line = line.trim_end_matches('\n');
+        match (start, end) {
+            (true, true) => line == pattern,
+            (true, false) => line.starts_with(pattern),
+            (false, true) => line.ends_with(pattern),
+            (false, false) => line.contains(pattern),
+        }
+    })
 }
 
 /// A tag's file, which the tags file names relative to its own directory,
@@ -296,5 +329,46 @@ mod tests {
         let index = TagIndex::load(Some(index), &tags).unwrap();
         assert_eq!(index.matches("two").len(), 1);
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    fn buffer(text: &str) -> Buffer {
+        Buffer {
+            rope: ropey::Rope::from_str(text),
+            ..Buffer::default()
+        }
+    }
+
+    fn pattern(p: &str) -> TagAddress {
+        TagAddress::Pattern(p.into())
+    }
+
+    #[test]
+    fn anchored_pattern_matches_the_whole_line() {
+        let buf = buffer("fn main_loop() {}\n// fn main() {\nfn main() {\n}\n");
+        assert_eq!(resolve_address(&pattern("^fn main() {$"), &buf), Some(2));
+    }
+
+    #[test]
+    fn unanchored_and_half_anchored_patterns() {
+        let buf = buffer("int a = 1;\nint *b.c = 2;\n");
+        assert_eq!(resolve_address(&pattern("*b.c"), &buf), Some(1));
+        assert_eq!(resolve_address(&pattern("^int *b"), &buf), Some(1));
+        assert_eq!(resolve_address(&pattern("= 2;$"), &buf), Some(1));
+    }
+
+    #[test]
+    fn pattern_matching_nothing_is_none() {
+        let buf = buffer("fn other() {}\n");
+        assert_eq!(resolve_address(&pattern("^fn main() {$"), &buf), None);
+        // `.` is literal, not "any character".
+        assert_eq!(resolve_address(&pattern("fn.other"), &buf), None);
+    }
+
+    #[test]
+    fn line_number_is_clamped_to_the_buffer() {
+        let buf = buffer("a\nb\nc");
+        assert_eq!(resolve_address(&TagAddress::Line(2), &buf), Some(1));
+        assert_eq!(resolve_address(&TagAddress::Line(99), &buf), Some(2));
+        assert_eq!(resolve_address(&TagAddress::Line(0), &buf), Some(0));
     }
 }
