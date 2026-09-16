@@ -203,6 +203,7 @@ binvim speaks Vim's grammar: counts, registers, operators over motions and text 
 - **Registers and the command line** — numbered `"1`–`"9`, `"-`, the read-only `".` / `"%` / `":` / `"/` / `"#`, `"A`–`"Z` append, `"=` arithmetic, `@:`, `Ctrl-R` / `Ctrl-W` / `Ctrl-U` / `Ctrl-B` / `Ctrl-E` / `Ctrl-P` / `Ctrl-N` in the `:` and `/` prompts, and the `q:` / `q/` / `q?` window.
 - **Visual mode** — block `I` / `A` / `$A`, `O`, line-wise `D` / `X` / `Y` / `C` / `R`, `*` / `#`, char and line `I` / `A`, and `Ctrl-C`.
 - **Undo** — an undo tree with `g-` / `g+`, `:earlier` / `:later` by steps, time or writes, and `:undolist`.
+- **Tags** — `Ctrl-]`, `Ctrl-T`, `g]`, `:tag`, `:tags`, `:tselect`, `:pop` and `:tnext` / `:tprevious` / `:tfirst` / `:tlast` over a ctags `tags` file, the nearest one above the buffer. binvim reads the file and never writes one: run `ctags -R` yourself. Useful where no language server gives `gd` a definition.
 - **Folds, scrolling and info** — `zj` / `zk` / `zv` / `zO` / `zC` / `zA` / `zr` / `zm` / `zx`, `z<CR>` / `z.` / `z-` / `zs` / `ze`, `Ctrl-G`, `g Ctrl-G`, `ga`, `gx`, `gf` / `<C-w>f`, `gI` and `Ctrl-L`.
 
 ### Where binvim differs on purpose
@@ -216,13 +217,9 @@ These are binvim's own keys, and they stay:
 - **Insert `Ctrl-N` / `Ctrl-P` open LSP completion**, the better list when a server is attached. Vim's keyword completion is `Ctrl-X Ctrl-N` / `Ctrl-X Ctrl-P`.
 - **`Ctrl-J` / `Ctrl-K` move the current line down / up.** In Vim, `Ctrl-J` is a second `j` and `Ctrl-K` does nothing in Normal mode.
 - **`:update` upgrades the toolchain** ([`binvim-install`](#binvim-install--set-up-lsps-formatters-and-dap-adapters)), the partner of `:install`. `:w` writes, and `:x` writes only when there are changes.
-
-### Different from Vim, not yet decided
-
-- Visual `S` wraps the selection in a surround; in Vim it changes the lines, like `R`.
-- Visual `K` isn't bound; in Vim it looks up the selection with `keywordprg`. binvim's `K` is LSP hover, in Normal mode only.
-- `Ctrl-]` isn't bound, since there are no tags; `gd` goes to the definition through LSP.
-- Char- and line-wise Visual `I` / `A` follow Vim's documented rules. Vim's own behaviour in the undocumented corners (`VjA` from column 0, `vkI` going backwards) differs.
+- **Visual `S` wraps the selection in a pair**, as vim-surround's does; Vim's built-in `S` changes the lines. binvim's `ys` / `cs` / `ds` family is vim-surround's grammar, and the tie goes to the mistake that's recoverable: `S` typed expecting a line change waits for a pair character, which `Esc` cancels, while `S)` typed expecting surround would delete the selection.
+- **Visual `K` is LSP hover at the cursor**, the same lookup as Normal `K`, and leaves Visual. Vim looks the selection up with `keywordprg`, which would be a second meaning and new configuration. A server answers a position for the whole symbol around it, so the cursor is the point sent — the selection's start could be the indentation `V` begins at.
+- **Char- and line-wise Visual `I` / `A` follow Vim's documented rules.** Vim's own behaviour in the corners its help doesn't cover (`VjA` from column 0, `vkI` going backwards) differs, and isn't copied.
 
 ### Left out
 
@@ -482,6 +479,8 @@ Beyond the standard `:w`, `:q`, `:e <path>`, `:bd`, `:s/pat/repl/g`, etc.:
 | `:set opt` / `noopt` / `opt!` / `opt=n` / `opt?` | Change or show an option for the session: `ic`, `scs`, `ws`, `hls`, `is`, `tw`, `rnu`, `list`, and `et` / `sw` / `ts` over `.editorconfig`'s. `:set` alone lists them. |
 | `:reg[isters]`            | List every register with its contents — named, numbered, read-only and clipboard alike. `:display` works too. |
 | `:marks` / `:jumps` / `:changes` | List the buffer's marks, the jump list, or the change list. |
+| `:ta[g] {name}` / `:ts[elect] [name]` | Jump to the first match for `name` in the nearest `tags` file (as `Ctrl-]` does for the word under the cursor), or list every match in a picker (as `g]` does). With several matches, `:[N]tn[ext]` / `:[N]tp[revious]` (`:tN`) / `:tf[irst]` (`:tr`) / `:tl[ast]` move between them. binvim reads `tags`, never `TAGS`, and doesn't generate either. |
+| `:tags` / `:po[p]`         | List the tag stack, `>` on the newest entry, or go back down it as `Ctrl-T` does. One stack for the editor, so `Ctrl-T` reopens a buffer that has since been closed. |
 | `:earlier` / `:later` `[N]` | Walk the undo tree by steps, by file writes (`3f`) or by time (`10s`, `5m`, `1h`). `:undolist` lists its branches. |
 | `:digraphs`               | List the built-in RFC 1345 digraph set that Insert's `Ctrl-K {a}{b}` enters. |
 | `:debug` / `:dap`         | Start a debug session. `:dapstop`, `:dapc`, `:dapn`, `:dapi`, `:dapo`, `:dapb`, `:dapclear`, `:dappane` cover the rest of the surface. `:dapb` accepts arg forms: `:dapb if <expr>` for a conditional breakpoint, `:dapb hit <expr>` for hit-count, `:dapb plain` to strip both. Conditional breakpoints render as `◆` in the gutter; the breakpoints pane lists each row's expression inline. |

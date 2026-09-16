@@ -192,7 +192,7 @@ Decisions:
   Verify: a parser test that Visual `K` yields `LspHover`; by hand on a `.ts` buffer, `viw` over a
   typed symbol from both directions and `V` on an indented line holding one, confirming all three
   give the same popup Normal `K` gives and that none of them comes back empty.
-- [ ] **README, KNOWN_ISSUES, CHANGELOG.** Delete *Different from Vim, not yet decided*. Move Visual
+- [x] **README, KNOWN_ISSUES, CHANGELOG.** Delete *Different from Vim, not yet decided*. Move Visual
   `S`, Visual `K` and Visual `I` / `A` into *Where binvim differs on purpose*, each with the reason
   from Decisions above — Visual `K` hovering at the cursor, which is what makes it the same lookup
   Normal `K` does. Add `Ctrl-]` / `Ctrl-T` / `g]` and the eight `:` commands to *What's
@@ -200,6 +200,8 @@ Decisions:
   write one. Rewrite `KNOWN_ISSUES.md`'s Vim-compatibility section, which currently points at the
   deleted section. CHANGELOG Unreleased entries for tags and for Visual `K`.
   Verify: read the sections back; `scripts/check-ai-attribution.sh`.
+  Deviation: CHANGELOG also records `:tn` / `:tf` / `:tl` moving from the test runner to tags,
+  under Changed.
 - [ ] **Gates.** `cargo fmt`, then `cargo test -- --test-threads=1` and
   `cargo +1.98.0 clippy --locked --all-targets -- -D warnings`. `cargo build --release` before
   handing back, since the user's `binvim` alias runs the release binary.

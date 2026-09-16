@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Tag jumps.** `Ctrl-]` jumps to the word under the cursor through a ctags
+  `tags` file, the nearest one above the file you're in, and `Ctrl-T` comes
+  back — to a closed buffer too. `g]` and `:tselect` list every match;
+  `:tnext` / `:tprevious` / `:tfirst` / `:tlast` step through them; `:tag`,
+  `:tags` and `:pop` round it out. binvim reads the file and doesn't write it:
+  run `ctags -R`. It gives a definition jump where no language server does.
+- **Visual `K` shows LSP hover** for the symbol under the cursor, as Normal
+  `K` does, and leaves Visual.
+
+### Changed
+- **`:tn`, `:tf` and `:tl` are tag moves**, as in Vim. They were short for
+  `:testnearest`, `:testfile` and `:testlast`, which `:testn`, `:testf` and
+  `:testl` still are.
+
 ## [0.6.4] - 2026-09-15
 
 ### Added

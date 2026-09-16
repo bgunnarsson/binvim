@@ -100,8 +100,6 @@ not evidence of anything.
 
 ## Vim compatibility
 
-Four keys behave unlike Vim without that having been decided either way — Visual
-`S`, Visual `K`, `Ctrl-]`, and Visual `I` / `A` in Vim's undocumented corners.
-They are listed under *Different from Vim, not yet decided* in `README.md`,
-alongside the divergences that are deliberate, and stay there rather than being
-copied here.
+No key is left undecided. Where binvim departs from Vim on purpose, and what it
+leaves out, is listed under *Where binvim differs on purpose* and *Left out* in
+`README.md`, and stays there rather than being copied here.
