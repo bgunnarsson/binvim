@@ -214,6 +214,29 @@ pub struct QuickfixState {
     pub current: usize,
 }
 
+/// One `Ctrl-]` / `:tag` / `g]` jump: where it was made from, and the list
+/// of matches for its name with the one currently shown, so `:tnext` has
+/// something to step through — as Vim's stack entries carry theirs.
+#[derive(Debug, Clone)]
+pub struct TagStackEntry {
+    pub tag: String,
+    pub path: std::path::PathBuf,
+    pub line: usize,
+    pub col: usize,
+    pub matches: Vec<crate::tag::Tag>,
+    pub match_idx: usize,
+}
+
+/// The matches a `g]` / `:tselect` picker is showing. `push` is false when
+/// the list is the top stack entry's own (`:tselect` with no name), so a
+/// pick moves within that entry instead of adding one.
+#[derive(Debug, Clone)]
+pub struct TagSelect {
+    pub tag: String,
+    pub matches: Vec<crate::tag::Tag>,
+    pub push: bool,
+}
+
 /// The `q:` / `q/` window: its pane, and whether its lines are searches
 /// (and which way) rather than command lines.
 #[derive(Debug, Clone, Copy)]

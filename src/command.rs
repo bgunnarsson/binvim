@@ -217,6 +217,21 @@ pub enum ExCommand {
     Marks,
     /// `:jumps` — the jump list in the list overlay.
     Jumps,
+    /// `:tag {name}` — to the first match for `name`, as a new stack entry.
+    /// Empty when no name was given.
+    Tag(String),
+    /// `:tags` — the tag stack in the list overlay.
+    Tags,
+    /// `:tselect [name]` — the matches in a picker; with no name, the top
+    /// stack entry's.
+    TSelect(Option<String>),
+    /// `:pop` — `Ctrl-T`.
+    Pop,
+    /// `:[count]tnext` / `:[count]tprevious` — through the top entry's matches.
+    TNext(usize),
+    TPrev(usize),
+    TFirst,
+    TLast,
     /// `:codelens` — dump the active buffer's code-lens cache to the
     /// status line. Diagnostic aid for when the lens row isn't
     /// showing up: surfaces whether lenses were received, what lines
@@ -769,6 +784,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
     if let Some(command) = parse_line_command(range, rest) {
         return command;
     }
+    if let Some(command) = parse_tag_command(range, rest) {
+        return command;
+    }
 
     // A range and nothing after it goes to its last line, as `:'a` does.
     if rest.is_empty() {
@@ -923,9 +941,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "spell" | "spelltoggle" => ExCommand::SpellToggle,
         "debugtest" | "dt" | "dapdt" => ExCommand::DebugTestNearest,
         "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
-        "testnearest" | "testn" | "tn" => ExCommand::Test(TestSubCmd::Nearest),
-        "testfile" | "testf" | "tf" => ExCommand::Test(TestSubCmd::File),
-        "testlast" | "testl" | "tl" => ExCommand::Test(TestSubCmd::Last),
+        "testnearest" | "testn" => ExCommand::Test(TestSubCmd::Nearest),
+        "testfile" | "testf" => ExCommand::Test(TestSubCmd::File),
+        "testlast" | "testl" => ExCommand::Test(TestSubCmd::Last),
         "testcancel" | "testq" => ExCommand::Test(TestSubCmd::Cancel),
         "testresults" | "testr" => ExCommand::Test(TestSubCmd::Results),
         _ => ExCommand::Unknown(line.to_string()),
@@ -1052,6 +1070,56 @@ fn parse_undo_amount(text: &str) -> Option<UndoAmount> {
 /// way Vim abbreviates command names.
 fn abbreviates(name: &str, full: &str, min: usize) -> bool {
     name.len() >= min && full.starts_with(name)
+}
+
+/// `:ta[g] {name}`, `:tags`, `:ts[elect] [name]`, `:po[p]`, and the moves
+/// through a tag's matches: `:[count]tn[ext]`, `:[count]tp[revious]` /
+/// `:[count]tN[ext]`, `:tf[irst]` / `:tr[ewind]` and `:tl[ast]`. A count is
+/// written before the name, as Vim's is, so it arrives as the range.
+fn parse_tag_command(range: ExRange, rest: &str) -> Option<ExCommand> {
+    let name_end = rest
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(rest.len());
+    let (name, args) = rest.split_at(name_end);
+    let args = args.trim();
+    let takes_count = abbreviates(name, "tnext", 2)
+        || abbreviates(name, "tprevious", 2)
+        || abbreviates(name, "tNext", 2);
+    let count = match range {
+        ExRange::Implicit => 1,
+        ExRange::Single(0) if takes_count => {
+            return Some(ExCommand::Invalid("E939: Positive count required".into()));
+        }
+        ExRange::Single(n) if takes_count => n,
+        _ => return None,
+    };
+    let bare = |command: ExCommand| {
+        if args.is_empty() {
+            command
+        } else {
+            ExCommand::Invalid(format!("E488: Trailing characters: {args}"))
+        }
+    };
+    let command = if name == "tags" {
+        bare(ExCommand::Tags)
+    } else if abbreviates(name, "tag", 2) {
+        ExCommand::Tag(args.to_string())
+    } else if abbreviates(name, "tselect", 2) {
+        ExCommand::TSelect((!args.is_empty()).then(|| args.to_string()))
+    } else if abbreviates(name, "pop", 2) {
+        bare(ExCommand::Pop)
+    } else if abbreviates(name, "tnext", 2) {
+        bare(ExCommand::TNext(count))
+    } else if takes_count {
+        bare(ExCommand::TPrev(count))
+    } else if abbreviates(name, "tfirst", 2) || abbreviates(name, "trewind", 2) {
+        bare(ExCommand::TFirst)
+    } else if abbreviates(name, "tlast", 2) {
+        bare(ExCommand::TLast)
+    } else {
+        return None;
+    };
+    Some(command)
 }
 
 /// `:sp` / `:vs` / `:new` / `:vne[w]` `[file]`, `:on[ly]` and `:clo[se]`.
@@ -2252,5 +2320,61 @@ mod tests {
             ExCommand::Filter { range: ExRange::Single(3), cmd } if cmd == "tr a b"
         ));
         assert!(!matches!(parse("!ls"), ExCommand::Filter { .. }));
+    }
+
+    #[test]
+    fn tag_commands_and_their_aliases() {
+        for name in ["ta foo", "tag foo"] {
+            assert!(
+                matches!(parse(name), ExCommand::Tag(n) if n == "foo"),
+                "{name}"
+            );
+        }
+        assert!(matches!(parse("tag"), ExCommand::Tag(n) if n.is_empty()));
+        assert!(matches!(parse("tags"), ExCommand::Tags));
+        assert!(matches!(parse("tags x"), ExCommand::Invalid(e) if e.contains("E488")));
+        for name in ["ts", "tsel", "tselect"] {
+            assert!(matches!(parse(name), ExCommand::TSelect(None)), "{name}");
+        }
+        assert!(matches!(parse("ts foo"), ExCommand::TSelect(Some(n)) if n == "foo"));
+        for name in ["po", "pop"] {
+            assert!(matches!(parse(name), ExCommand::Pop), "{name}");
+        }
+        for name in ["tn", "tnext"] {
+            assert!(matches!(parse(name), ExCommand::TNext(1)), "{name}");
+        }
+        for name in ["tp", "tprevious", "tN", "tNext"] {
+            assert!(matches!(parse(name), ExCommand::TPrev(1)), "{name}");
+        }
+        for name in ["tf", "tfirst", "tr", "trewind"] {
+            assert!(matches!(parse(name), ExCommand::TFirst), "{name}");
+        }
+        for name in ["tl", "tlast"] {
+            assert!(matches!(parse(name), ExCommand::TLast), "{name}");
+        }
+    }
+
+    #[test]
+    fn tag_moves_take_a_count_before_the_name() {
+        assert!(matches!(parse("3tnext"), ExCommand::TNext(3)));
+        assert!(matches!(parse("2tp"), ExCommand::TPrev(2)));
+        assert!(matches!(parse("0tn"), ExCommand::Invalid(e) if e.contains("E939")));
+        assert!(matches!(parse("tn 3"), ExCommand::Invalid(e) if e.contains("E488")));
+        assert!(matches!(parse("3tlast"), ExCommand::Unknown(_)));
+        // The test runner keeps its longer names; `:tn` / `:tf` / `:tl` are
+        // Vim's tag moves.
+        assert!(matches!(
+            parse("testn"),
+            ExCommand::Test(TestSubCmd::Nearest)
+        ));
+        assert!(matches!(parse("testf"), ExCommand::Test(TestSubCmd::File)));
+        assert!(matches!(parse("testl"), ExCommand::Test(TestSubCmd::Last)));
+        // `:t` is still copy, and `:tasks` / `:trun` still the task runner.
+        assert!(matches!(
+            parse("t."),
+            ExCommand::MoveLines { copy: true, .. }
+        ));
+        assert!(matches!(parse("tasks"), ExCommand::TaskPicker));
+        assert!(matches!(parse("trun"), ExCommand::TaskLast));
     }
 }

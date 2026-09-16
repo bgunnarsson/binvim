@@ -252,6 +252,7 @@ impl super::App {
                         PickerPayload::InstallToolchain { bundle_idx } => {
                             self.open_installer_for_bundle(bundle_idx);
                         }
+                        PickerPayload::TagMatch(idx) => self.tag_pick(idx),
                     }
                 }
             }
@@ -346,7 +347,8 @@ impl super::App {
             | PickerKind::AndroidSystemImage
             | PickerKind::AndroidDevice
             // Missing-toolchain rows are a short static list — filter locally.
-            | PickerKind::InstallToolchain => picker.refilter(),
+            | PickerKind::InstallToolchain
+            | PickerKind::Tags => picker.refilter(),
             PickerKind::PackageSearch => {
                 // Network search — don't filter locally. Mark the query dirty;
                 // the debounced `pkg_search_tick` fires the request.

@@ -425,7 +425,19 @@ impl super::App {
                 self.surround_visual(ch);
             }
             Action::Fold(op) => self.apply_fold_op(op),
-            Action::LspHover => self.lsp_request_hover(),
+            Action::LspHover => {
+                // Visual `K`: the popup isn't drawn over a live selection.
+                if matches!(self.mode, Mode::Visual(_)) {
+                    self.exit_visual();
+                }
+                self.lsp_request_hover();
+            }
+            Action::TagJump => self.tag_jump(None),
+            Action::TagPop => self.tag_pop(),
+            Action::TagSelect => match self.word_under_cursor() {
+                Some(word) => self.tag_select(Some(word)),
+                None => self.status_msg = "E349: No identifier under cursor".into(),
+            },
             Action::EnterVisual(kind) => {
                 self.mode = Mode::Visual(kind);
                 self.window.visual_anchor = Some(self.window.cursor);

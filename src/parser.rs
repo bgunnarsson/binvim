@@ -341,6 +341,12 @@ pub enum Action {
     },
     OpenFileExplorer,
     LspGotoDefinition,
+    /// `Ctrl-]` — to the tag under the cursor, through the `tags` file.
+    TagJump,
+    /// `Ctrl-T` — back down the tag stack.
+    TagPop,
+    /// `g]` — every match for the tag under the cursor, in a picker.
+    TagSelect,
     LspFindReferences,
     LspRename,
     /// `<leader>l` — execute the `textDocument/codeLens` command(s)
@@ -1169,6 +1175,16 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 state.reset();
                 ParseResult::Action(Action::Redraw)
             }
+            // `Ctrl-]` — terminals send `0x1d`, which arrives as `5` with Ctrl
+            // held, unless they report the `]` key itself.
+            ']' | '5' if matches!(ctx, ParseCtx::Normal) => {
+                state.reset();
+                ParseResult::Action(Action::TagJump)
+            }
+            't' | 'T' if matches!(ctx, ParseCtx::Normal) => {
+                state.reset();
+                ParseResult::Action(Action::TagPop)
+            }
             _ => ParseResult::Pending,
         };
     }
@@ -1899,6 +1915,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.reset();
             return ParseResult::Action(Action::LspGotoDefinition);
         }
+        if ch == ']' && ctx == ParseCtx::Normal && state.operator.is_none() {
+            state.reset();
+            return ParseResult::Action(Action::TagSelect);
+        }
         // gr — find references via LSP. Opens a picker.
         if ch == 'r' && ctx == ParseCtx::Normal && state.operator.is_none() {
             state.reset();
@@ -2110,6 +2130,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'O' => {
                 state.reset();
                 return ParseResult::Action(Action::VisualSwapCorner);
+            }
+            'K' => {
+                state.reset();
+                return ParseResult::Action(Action::LspHover);
             }
             // `*` / `#` search from Visual too; the selection follows the cursor.
             '*' | '#' => {
@@ -2945,6 +2969,32 @@ mod tests {
         assert!(matches!(
             parse(&mut state, key('w'), ParseCtx::Normal),
             ParseResult::Action(Action::Move { .. })
+        ));
+    }
+
+    #[test]
+    fn tag_keys_and_visual_k_parse() {
+        let ctrl = |c| KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL);
+        let one = |k: KeyEvent, ctx: ParseCtx| parse(&mut PendingCmd::default(), k, ctx);
+        // `Ctrl-]` as the `]` key, and as the `0x1d` byte crossterm reads as `5`.
+        for c in [']', '5'] {
+            assert!(matches!(
+                one(ctrl(c), ParseCtx::Normal),
+                ParseResult::Action(Action::TagJump)
+            ));
+        }
+        assert!(matches!(
+            one(ctrl('t'), ParseCtx::Normal),
+            ParseResult::Action(Action::TagPop)
+        ));
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            drive(&mut state, &keys("g]")),
+            ParseResult::Action(Action::TagSelect)
+        ));
+        assert!(matches!(
+            one(key('K'), ParseCtx::Visual),
+            ParseResult::Action(Action::LspHover)
         ));
     }
 

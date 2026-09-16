@@ -18,6 +18,7 @@ use super::pair::{
     detect_open_tag_to_close, is_close_char, is_html_like_buffer, open_pair_for, should_auto_pair,
 };
 use super::state::{self, LastEdit, OverlayPage, Pager, WhichKeyState};
+use super::tag_glue::TagMove;
 
 /// Characters that should re-fire `textDocument/completion` after being inserted.
 /// Identifier chars catch the typing-a-name case; the symbol set covers the
@@ -2864,6 +2865,17 @@ impl super::App {
             ExCommand::UndoList => self.cmd_undolist(),
             ExCommand::Marks => self.cmd_marks(),
             ExCommand::Jumps => self.cmd_jumps(),
+            ExCommand::Tag(name) if name.is_empty() => {
+                self.status_msg = "E556: At top of tag stack".into();
+            }
+            ExCommand::Tag(name) => self.tag_jump(Some(name)),
+            ExCommand::Tags => self.cmd_tags(),
+            ExCommand::TSelect(name) => self.tag_select(name),
+            ExCommand::Pop => self.tag_pop(),
+            ExCommand::TNext(n) => self.tag_goto_match(TagMove::Next(n)),
+            ExCommand::TPrev(n) => self.tag_goto_match(TagMove::Prev(n)),
+            ExCommand::TFirst => self.tag_goto_match(TagMove::First),
+            ExCommand::TLast => self.tag_goto_match(TagMove::Last),
             ExCommand::CodeLensStatus => self.cmd_code_lens_status(),
             ExCommand::Workspaces => self.cmd_workspaces(),
             ExCommand::Terminal(cmd) => self.cmd_open_terminal(cmd),

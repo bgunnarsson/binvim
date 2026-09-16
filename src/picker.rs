@@ -66,6 +66,9 @@ pub enum PickerKind {
     /// than a status-line notification) so a competing notice — Copilot
     /// sign-in, an LSP message — can't paint over it.
     InstallToolchain,
+    /// `g]` / `:tselect` — every match for a tag name, shown even when there
+    /// is one, as Vim's prompt is.
+    Tags,
 }
 
 pub struct PickerState {
@@ -183,6 +186,10 @@ pub enum PickerPayload {
     InstallToolchain {
         bundle_idx: usize,
     },
+    /// Index into `App.tag_select`'s matches. Not a `Location`: a pattern
+    /// address has no line until its file is read, and a `Location` pick
+    /// would replace the quickfix list.
+    TagMatch(usize),
 }
 
 impl PickerState {

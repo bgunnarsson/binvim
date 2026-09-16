@@ -136,7 +136,7 @@ Decisions:
   `cargo test tag::tests`.
   Deviation: a pattern anchored at one end only matches as a prefix or suffix rather than
   anywhere — ctags truncates long lines and drops the `$` when it does.
-- [ ] **The jump, the stack, and `Ctrl-T`.** `App.tagstack: Vec<TagStackEntry>` where an entry is
+- [x] **The jump, the stack, and `Ctrl-T`.** `App.tagstack: Vec<TagStackEntry>` where an entry is
   the *origin* — `{ tag: String, path: PathBuf, line: usize, col: usize }` — captured **before**
   `open_buffer`, unlike the `PickerPayload::Location` arm in `picker_glue.rs:181`, which pushes its
   jump after the buffer has changed. `tag_jump(name)` in a new `app/tag_glue.rs`: look the name up,
@@ -149,16 +149,22 @@ Decisions:
   hand in tmux against a release build, per CLAUDE.md's manual-check rules: `Ctrl-]`, `Ctrl-T`,
   and `Ctrl-]` → `:bd` the origin → `Ctrl-T`, finishing with `:q!`. Confirm the terminal actually
   delivers `Ctrl-]` as `Char(']')` with CONTROL — some send `\x1d` — and record which it was.
-- [ ] **The match list, and walking it.** A tag stack entry gains `matches: Vec<Tag>` and
+  Deviation: crossterm reads the `0x1d` byte as `Char('5')` with CONTROL (as it reads `Ctrl-^`
+  as `6`), so both `]` and `5` are bound. The address is resolved before the buffer switches, so
+  `E434` moves nothing. Tasks 4–6 share the stack entry and landed as one commit; the tmux
+  checks run in Finish.
+- [x] **The match list, and walking it.** A tag stack entry gains `matches: Vec<Tag>` and
   `match_idx: usize`, as Vim's stack entries carry theirs — without them `:tnext` after a `Ctrl-]`
   has nothing to step through. `tag_goto_match(n)` moves within the current entry's list, reusing
   the open-and-resolve half of `tag_jump` and leaving the stack depth alone, so walking matches is
   not a second entry to pop back through. `Ctrl-]` reports `tag 1 of {n}` when `n > 1` and stays
   silent when the name is unique.
+  Deviation: a move past either end stops at the end and reports the error, as Vim's `tag.c`
+  does, so `E428` from the last match moves nothing.
   Verify: tests for `:tnext` past the end (`E428`, no move), `:tprevious` past the start (`E425`),
   `:tfirst` / `:tlast` from the middle, and that four `:tnext`s followed by one `Ctrl-T` land back
   at the original origin rather than three matches deep. `cargo test tag`.
-- [ ] **`g]`, `:tag`, `:tags`, `:tselect`, `:pop`, `:tnext` / `:tprevious` / `:tfirst` / `:tlast`.**
+- [x] **`g]`, `:tag`, `:tags`, `:tselect`, `:pop`, `:tnext` / `:tprevious` / `:tfirst` / `:tlast`.**
   `PickerKind::Tags` with `PickerPayload::Location`, which already carries `{ path, line, col }` and
   is already opened by `picker_glue.rs:181`; rows are `name`, kind and the file:line. `g]` and
   `:tselect` open it at any length, Vim showing a one-row prompt for a unique name rather than
@@ -169,6 +175,12 @@ Decisions:
   `tprevious` / `tp` / `tN`, `tfirst` / `tr`, `tlast` / `tl` — dispatched in `app/input.rs`.
   `:tnext` and `:tprevious` take a count, as Vim's do. `:tags` builds its rows through
   `show_listing`, as `cmd_jumps` does — no new `show_*_page` flag, per the lore.
+  Deviation: the picker payload is `PickerPayload::TagMatch(idx)` into `App.tag_select`, not
+  `Location` — a pattern address has no line until its file is read, and a `Location` accept
+  replaces the quickfix list. `:tn`, `:tf` and `:tl` were undocumented short forms of
+  `:testnearest` / `:testfile` / `:testlast`; they are Vim's tag moves now, and `:testn` /
+  `:testf` / `:testl` remain. `:tag` with no name reports `E556`, since binvim's stack has no
+  newer entry to go forward to.
   Verify: `command::tests` for each alias, its argument and its count; a `tag_glue` test that a
   one-match name still opens a one-row picker and that accepting row 2 of 3 makes `:tnext` go to
   row 3; by hand, `:tags` from inside `:registers` to confirm the stacked-overlay keys still act on

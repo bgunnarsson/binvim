@@ -51,6 +51,7 @@ mod search;
 mod side_terminal_glue;
 mod spell_glue;
 pub(crate) mod state;
+mod tag_glue;
 mod task_glue;
 mod terminal_glue;
 mod test_glue;
@@ -596,6 +597,14 @@ pub struct App {
     /// Loaded from grep, LSP references, or diagnostics; `None` when
     /// nothing has been populated yet.
     pub quickfix: Option<crate::app::state::QuickfixState>,
+    /// The tag stack. One list for the editor, not one per window or
+    /// buffer: it exists to get back to a buffer that was left, which `:bd`
+    /// may since have closed.
+    pub tagstack: Vec<crate::app::state::TagStackEntry>,
+    /// The last `tags` file read, reused while it's unchanged on disk.
+    pub tag_index: Option<crate::tag::TagIndex>,
+    /// What an open `g]` / `:tselect` picker's rows index into.
+    pub tag_select: Option<crate::app::state::TagSelect>,
     /// Additional Visual-char selection ranges (start, end exclusive).
     /// Populated by `Ctrl-N` while a Visual-char selection is active;
     /// `d`/`c`/`y` then operates on every range plus the primary one.
@@ -1081,6 +1090,9 @@ impl App {
             previous_dir: None,
             file_marks: HashMap::new(),
             quickfix: None,
+            tagstack: Vec::new(),
+            tag_index: None,
+            tag_select: None,
             additional_selections: Vec::new(),
             replaying_macro: false,
             expanding_keymap: false,
