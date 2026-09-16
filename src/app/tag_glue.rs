@@ -79,9 +79,26 @@ impl super::App {
     fn tag_open(&mut self, tag: &Tag) -> Result<(), String> {
         let line = self.tag_line(tag)?;
         self.status_msg.clear();
+        // `push_jump` has to run while the origin buffer is active, since
+        // the jump list and `'` mark are its own. An open that still fails —
+        // the file unreadable since `tag_line` read it — fails before the
+        // buffer is switched, so they're put back as they were.
+        let saved = (
+            self.jumplist.clone(),
+            self.jump_idx,
+            self.buffer.marks.get(&'\'').copied(),
+        );
         self.push_jump();
-        self.open_buffer(tag.path.clone())
-            .map_err(|e| format!("error: {e}"))?;
+        if let Err(e) = self.open_buffer(tag.path.clone()) {
+            let (jumplist, jump_idx, mark) = saved;
+            self.jumplist = jumplist;
+            self.jump_idx = jump_idx;
+            match mark {
+                Some(idx) => self.buffer.marks.insert('\'', idx),
+                None => self.buffer.marks.remove(&'\''),
+            };
+            return Err(format!("error: {e}"));
+        }
         let col = match tag.address {
             TagAddress::Line(_) => self.first_non_blank_col(line),
             TagAddress::Pattern(_) => 0,
