@@ -152,7 +152,9 @@ Decisions:
   Deviation: crossterm reads the `0x1d` byte as `Char('5')` with CONTROL (as it reads `Ctrl-^`
   as `6`), so both `]` and `5` are bound. The address is resolved before the buffer switches, so
   `E434` moves nothing. Tasks 4–6 share the stack entry and landed as one commit; the tmux
-  checks run in Finish.
+  checks ran against the release build: `Ctrl-]` → `Ctrl-T` returned to column 7, and did again
+  after `:bd` of the origin; tmux sends `Ctrl-]` as `0x1d`, so the `5` binding is the one that
+  fired.
 - [x] **The match list, and walking it.** A tag stack entry gains `matches: Vec<Tag>` and
   `match_idx: usize`, as Vim's stack entries carry theirs — without them `:tnext` after a `Ctrl-]`
   has nothing to step through. `tag_goto_match(n)` moves within the current entry's list, reusing
@@ -185,13 +187,18 @@ Decisions:
   one-match name still opens a one-row picker and that accepting row 2 of 3 makes `:tnext` go to
   row 3; by hand, `:tags` from inside `:registers` to confirm the stacked-overlay keys still act on
   the top page.
-- [ ] **Visual `K` hovers at the cursor.** In the Visual arm of `parse_key`, `K` →
+- [x] **Visual `K` hovers at the cursor.** In the Visual arm of `parse_key`, `K` →
   `Action::LspHover`. `lsp_request_hover` (`app/lsp_glue.rs:1435`) already reads
   `self.window.cursor`, so it needs no change at all — the work is leaving Visual before the
   request so the popup isn't drawn over a live selection.
   Verify: a parser test that Visual `K` yields `LspHover`; by hand on a `.ts` buffer, `viw` over a
   typed symbol from both directions and `V` on an indented line holding one, confirming all three
   give the same popup Normal `K` gives and that none of them comes back empty.
+  Deviation: the parser arm and the `exit_visual` in `dispatch` landed in `cef2557` with tasks 4–6.
+  Checked in tmux on the release build: `viw K`, `viw o K` and `V K` from column 5 of an indented
+  line each showed `function describeCount(count: number): string` and left Visual, and `v K` on a
+  `.txt` buffer reported `LSP: not active for this buffer`. typescript-language-server needed a
+  Node with the `typescript` package on `PATH` (v22.19.0 here) before Normal `K` showed anything.
 - [x] **README, KNOWN_ISSUES, CHANGELOG.** Delete *Different from Vim, not yet decided*. Move Visual
   `S`, Visual `K` and Visual `I` / `A` into *Where binvim differs on purpose*, each with the reason
   from Decisions above — Visual `K` hovering at the cursor, which is what makes it the same lookup
