@@ -71,3 +71,4 @@ ownership. A group-writable directory is still trusted.
 - **The test for such a search includes a world-writable ancestor holding the file,** and asserts
   that the search goes past it. A test that only covers "found two levels up" and "found nowhere"
   misses this.
+- Written into: CLAUDE.md
