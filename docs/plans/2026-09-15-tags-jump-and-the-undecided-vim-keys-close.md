@@ -1,7 +1,7 @@
 ---
 title: Ctrl-] jumps through a tags file, and the four undecided Vim keys are decided
 date: 2026-09-15
-status: in-progress
+status: done
 ---
 
 ## Context
@@ -209,7 +209,7 @@ Decisions:
   Verify: read the sections back; `scripts/check-ai-attribution.sh`.
   Deviation: CHANGELOG also records `:tn` / `:tf` / `:tl` moving from the test runner to tags,
   under Changed.
-- [ ] **Gates.** `cargo fmt`, then `cargo test -- --test-threads=1` and
+- [x] **Gates.** `cargo fmt`, then `cargo test -- --test-threads=1` and
   `cargo +1.98.0 clippy --locked --all-targets -- -D warnings`. `cargo build --release` before
   handing back, since the user's `binvim` alias runs the release binary.
 
