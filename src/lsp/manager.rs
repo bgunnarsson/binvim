@@ -111,6 +111,10 @@ pub struct LspManager {
     /// The directory `ensure_for_path` last refused to start a server in,
     /// because other users can write it — kept for the status line.
     pub skipped_root: Option<PathBuf>,
+    /// Servers whose process exited without being asked, as `(key, exit
+    /// code)` — kept for `:health`, and cleared per key when the server
+    /// respawns.
+    pub crashed: Vec<(String, i32)>,
 }
 
 /// Sign-in state for the Copilot LSP. Surfaced in the status line +
@@ -148,6 +152,7 @@ impl LspManager {
             copilot_enabled: false,
             copilot_status: CopilotStatus::NotStarted,
             skipped_root: None,
+            crashed: Vec::new(),
         }
     }
 
@@ -227,6 +232,7 @@ impl LspManager {
             };
             if let Some(client) = LspClient::spawn_spec(spec, &root) {
                 let key = spec.key.clone();
+                self.crashed.retain(|(k, _)| k != &key);
                 self.clients.insert(key.clone(), client);
                 // First time Copilot's client comes up, kick a checkStatus
                 // request so we know whether to show "signed in" / "not
@@ -415,6 +421,7 @@ impl LspManager {
         let mut diagnostics_changed = false;
         let mut processed = 0usize;
         let mut more = false;
+        let mut exited: Vec<(String, i32)> = Vec::new();
         for (client_key, client) in self.clients.iter() {
             while processed < MAX_PER_CALL {
                 let Ok(msg) = client.incoming_rx.try_recv() else {
@@ -487,6 +494,25 @@ impl LspManager {
                 more = true;
                 break;
             }
+            // Reaching here means this client's channel is drained, so an
+            // exited child has nothing more to say — safe to declare it dead
+            // without losing buffered messages.
+            if let Some(code) = client.try_exit_status() {
+                exited.push((client_key.clone(), code));
+            }
+        }
+        for (key, code) in exited {
+            // Dropping the entry is what lets `ensure_for_path` respawn the
+            // server on the next attach instead of writing into a broken pipe
+            // forever; the pending entries would otherwise never resolve.
+            self.clients.remove(&key);
+            self.pending.retain(|(k, _), _| k != &key);
+            self.crashed.retain(|(k, _)| k != &key);
+            self.crashed.push((key.clone(), code));
+            events.push(LspEvent::ServerExited {
+                client_key: key,
+                exit_code: code,
+            });
         }
         if diagnostics_changed {
             events.push(LspEvent::DiagnosticsUpdated);

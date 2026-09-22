@@ -27,7 +27,7 @@ pub(super) enum InitState {
 pub struct LspClient {
     #[allow(dead_code)]
     pub name: String,
-    _child: Child,
+    child: Mutex<Child>,
     stdin: Arc<Mutex<ChildStdin>>,
     pub incoming_rx: Receiver<LspIncoming>,
     next_id: Arc<Mutex<u64>>,
@@ -150,7 +150,7 @@ impl LspClient {
         let root_uri = path_to_uri(root);
         let client = Self {
             name: spec.key.clone(),
-            _child: child,
+            child: Mutex::new(child),
             stdin,
             incoming_rx: in_rx,
             next_id: Arc::new(Mutex::new(1)),
@@ -333,6 +333,19 @@ impl LspClient {
 
     pub fn supports_workspace_folders(&self) -> bool {
         *self.workspace_folders_supported.lock().unwrap()
+    }
+
+    /// Has the server process exited? Non-blocking — `Some(code)` once the
+    /// child reaps, `None` while it's still alive. The manager polls this on
+    /// `drain` so a crashed server (a rust-analyzer panic, an OOM kill) is
+    /// noticed and replaced instead of its dead entry swallowing every
+    /// request for the rest of the session.
+    pub fn try_exit_status(&self) -> Option<i32> {
+        let mut child = self.child.lock().ok()?;
+        match child.try_wait() {
+            Ok(Some(status)) => Some(status.code().unwrap_or(-1)),
+            _ => None,
+        }
     }
 
     pub fn alloc_id(&self) -> u64 {

@@ -190,6 +190,14 @@ pub enum LspEvent {
         edit: Value,
     },
     DiagnosticsUpdated,
+    /// A server's process exited on its own — crash, OOM kill, a panic.
+    /// The manager has already dropped the client and its pending
+    /// requests; the App clears its per-path request bookkeeping so
+    /// features re-fire against the respawned server.
+    ServerExited {
+        client_key: String,
+        exit_code: i32,
+    },
     /// `textDocument/inlayHint` results for `path` — the App stores them
     /// per-buffer and the renderer pulls them on draw.
     InlayHints {

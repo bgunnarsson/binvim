@@ -124,7 +124,10 @@ Decisions made here, from the code and the lore:
   (keep the `&Path` call working), apply it to `task.program` and each of `task.args` in
   `task_kickoff`'s launcher. Unit tests in `app/task_glue.rs`'s `mod tests` for `$(…)`, backticks,
   spaces, quotes. Verify: new tests + tmux run of a crafted npm script name showing literal text.
-- [ ] **A2 — Detect LSP child death.** `try_exit_status` on `LspClient` (model:
+- [x] **A2 — Detect LSP child death.**
+  Deviation: no unit test — `LspClient` has no test harness (only parsers are
+  unit-tested, same as the DAP side, whose `try_exit_status` is also untested);
+  verified by build + the manual `kill -9` check in Verification. `try_exit_status` on `LspClient` (model:
   `dap/client.rs:113-121`; `_child` becomes mutably pollable), polled in `LspManager::drain`;
   on death remove the entry, emit an event the glue uses to clear the four `*_in_flight` sets,
   set the status line, record in `health_summary` (`LspHealth` gains the field), and re-attach the

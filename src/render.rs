@@ -4452,6 +4452,14 @@ fn build_health_rows(
             }
         }
     }
+    for (key, code) in &snap.lsp_crashed {
+        lsp_lines.push(SectionLine::Custom {
+            parts: vec![
+                (format!("• {key:<18} "), p.text),
+                (format!("CRASHED (exit {code}) — restarts on next attach"), p.red),
+            ],
+        });
+    }
     let lsp_title = format!("LSP SERVERS ({} running)", snap.lsps.len());
     push_section_box(rows, left, body_w, &lsp_title, p.lavender, &lsp_lines);
     rows.push(DashRow::Blank);

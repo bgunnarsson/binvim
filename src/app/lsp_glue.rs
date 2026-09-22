@@ -303,6 +303,27 @@ impl super::App {
                         });
                     }
                 }
+                LspEvent::ServerExited {
+                    client_key,
+                    exit_code,
+                } => {
+                    // The in-flight guards and per-version anchors were set
+                    // for requests that died with the server; left in place
+                    // they'd suppress every retry for the same buffer version
+                    // and the features would stay dark for the session. The
+                    // sets aren't keyed by server, so clear them whole — a
+                    // duplicate request against a live server is harmless.
+                    self.inlay_hints_in_flight.clear();
+                    self.semantic_tokens_in_flight.clear();
+                    self.code_lens_in_flight.clear();
+                    self.document_highlight_in_flight.clear();
+                    self.last_inlay_request_version.clear();
+                    self.last_semantic_tokens_request_version.clear();
+                    self.last_code_lens_request_version.clear();
+                    self.last_copilot_request_version.clear();
+                    self.status_msg = format!("lsp: {client_key} exited ({exit_code}) — restarting");
+                    self.lsp_attach_active();
+                }
                 LspEvent::RequestFailed { kind, path } => {
                     if let Some(p) = path {
                         match kind {

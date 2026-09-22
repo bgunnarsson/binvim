@@ -33,6 +33,10 @@ pub struct HealthSnapshot {
     pub ram_mb: Option<f64>,
     pub buffers: Vec<HealthBuffer>,
     pub lsps: Vec<LspHealth>,
+    /// Servers whose process exited on its own, as `(key, exit code)` —
+    /// shown so a crashed server doesn't just silently vanish from the
+    /// running list.
+    pub lsp_crashed: Vec<(String, i32)>,
     pub active_buffer: Option<HealthActiveBuffer>,
     /// What the active buffer's language is missing that `i` can install.
     /// `None` when nothing is, or when nothing missing is auto-installable.
@@ -262,6 +266,7 @@ impl super::App {
             .collect();
 
         let lsps = self.lsp.health_summary();
+        let lsp_crashed = self.lsp.crashed.clone();
 
         let active_buffer = self.buffer.path.as_ref().map(|p| {
             let display_path = p
@@ -420,6 +425,7 @@ impl super::App {
             ram_mb,
             buffers,
             lsps,
+            lsp_crashed,
             active_buffer,
             setup: self.health_setup(),
             tailwind,
