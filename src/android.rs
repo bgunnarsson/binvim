@@ -318,9 +318,21 @@ pub fn prepare_debug(project_root: &Path, local_port: u16) -> Result<DebugPrep, 
 
     let pkg =
         read_application_id(project_root).ok_or("could not find applicationId in build.gradle")?;
+    // `adb shell` joins its arguments and hands them to the device's sh,
+    // and the id was read out of the project's build.gradle — not ours to
+    // trust. Anything outside a well-formed component name is refused
+    // rather than escaped.
+    if !valid_component(&pkg, false) {
+        return Err(format!("applicationId {pkg:?} is not a valid package name"));
+    }
     let activity = resolve_launch_activity(&serial, &pkg)?;
+    if !valid_component(&activity, true) {
+        return Err(format!("launch activity {activity:?} is not a valid class name"));
+    }
 
-    // `-D` makes the app halt at startup until a debugger attaches.
+    // `-D` makes the app halt at startup until a debugger attaches. The
+    // component is single-quoted for the device shell: `$` is legal in an
+    // inner-class activity name and must reach `am` literally.
     let mut start = adb(&serial)?;
     start.args([
         "shell",
@@ -328,7 +340,7 @@ pub fn prepare_debug(project_root: &Path, local_port: u16) -> Result<DebugPrep, 
         "start",
         "-D",
         "-n",
-        &format!("{pkg}/{activity}"),
+        &format!("'{pkg}/{activity}'"),
     ]);
     run_capture(start, "adb am start")?;
 
@@ -413,6 +425,18 @@ fn read_application_id(root: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// A well-formed Java-style component name: letters, digits, `.` and `_`,
+/// plus `$` for the inner-class spelling when `allow_dollar`. Everything
+/// that reaches `adb shell` is held to this, because the device's sh
+/// parses the joined arguments — backticks, `$( )`, quotes or `;` in a
+/// value would execute there.
+fn valid_component(s: &str, allow_dollar: bool) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '_') || (allow_dollar && c == '$')
+        })
 }
 
 // ─── parsers (tested) ───────────────────────────────────────────────────────
@@ -543,6 +567,19 @@ pub fn parse_resolve_activity(out: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn component_names_refuse_shell_metacharacters() {
+        assert!(valid_component("com.example.app", false));
+        assert!(valid_component("com.example.debug_2", false));
+        assert!(valid_component("com.example.MainActivity$Inner", true));
+        assert!(!valid_component("com.example.MainActivity$Inner", false));
+        assert!(!valid_component("", false));
+        assert!(!valid_component("com.example;rm -rf /", false));
+        assert!(!valid_component("com.example.$(reboot)", true));
+        assert!(!valid_component("com.example.`id`", true));
+        assert!(!valid_component("com.example'\''", true));
+    }
 
     #[test]
     fn avd_list_keeps_names_drops_noise() {
