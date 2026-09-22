@@ -4,7 +4,7 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.5]
 
 ### Added
 - **Tag jumps.** `Ctrl-]` jumps to the word under the cursor through a ctags
@@ -20,6 +20,40 @@ follows [Semantic Versioning](https://semver.org/).
 - **`:tn`, `:tf` and `:tl` are tag moves**, as in Vim. They were short for
   `:testnearest`, `:testfile` and `:testlast`, which `:testn`, `:testf` and
   `:testl` still are.
+- **Quitting shuts down what binvim started.** `:q` stops a running test
+  process, disconnects the debugger, and tells each language server to exit
+  instead of leaving it to notice a closed pipe.
+
+### Fixed
+- **A language server that crashes is restarted.** A crashed server used to
+  stay listed as running while hints, semantic highlighting, code lens and
+  symbol highlighting went dark for the rest of the session. It is now
+  dropped and started again on the next attach, and `:health` shows the crash
+  and its exit code. A server that dies three times straight after starting
+  is given up on, and `:health` says so.
+- **Nothing another user can write is trusted by an upward search.** Language
+  server roots, formatters and servers under `node_modules`, the gutter diff,
+  debug targets, tasks, test runs, the package manager and tag files skip
+  project markers in directories other users own or can write, such as
+  `/tmp`. A file whose only root is such a directory gets no language server,
+  and the status line says why.
+- **Task names are quoted.** A script or recipe name from `package.json`, a
+  justfile or `.cargo/config.toml` could run `$(…)` or break on spaces. Text
+  you type after `:make` still keeps its shell meaning.
+- **Formatters that need a temp file can't be redirected.** csharpier, ktfmt
+  and php-cs-fixer no longer write through a symlink planted at their temp
+  file's name, and the temp copy keeps the original file's permissions.
+- **Private files stay private.** The cache directory and saved sessions,
+  which hold command history and macros, are readable only by you, and the
+  yazi file chooser's handoff file moved out of the shared temp directory.
+- **Multi-cursor `d` / `c` over overlapping selections** no longer deletes the
+  shared text twice and scatters the cursors.
+- **Large and deeply indented files stay responsive.** Folds are computed in
+  one pass and are skipped on large files, as is `if` / `af` / `ic` / `ac`,
+  and a flood of test output no longer stalls input.
+- **Windows opens debug-console URLs containing `&` or `%` correctly**, and
+  Android package and activity names are checked before they reach
+  `adb shell`.
 
 ## [0.6.4] - 2026-09-15
 
