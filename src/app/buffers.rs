@@ -26,12 +26,9 @@ pub(super) fn loaded_buf_state(buf: &Buffer) -> (History, Cursor) {
     if let Some(path) = buf.path.as_deref() {
         let hash = crate::undo::hash_text(&buf.rope.to_string());
         if let Some(cache) = crate::undo::cache_path_for(path) {
-            let mut result = crate::undo::History::load_from_path(&cache, hash).unwrap_or_default();
-            // Prefer the nvim-style cursor cache (written on leave/quit,
-            // independent of `:w`), and fall back to the undo file's own
-            // stored position for a file that was saved.
-            result.1 = crate::cursor_cache::load(path, hash).unwrap_or(result.1);
-            return result;
+            let history = crate::undo::History::load_from_path(&cache, hash).unwrap_or_default();
+            let cursor = crate::cursor_cache::load(path, hash).unwrap_or_default();
+            return (history, cursor);
         }
     }
     (History::default(), Cursor::default())

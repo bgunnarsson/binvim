@@ -107,7 +107,7 @@ impl super::App {
             if let Some(cache) = crate::undo::cache_path_for(path) {
                 let hash = crate::undo::hash_text(&self.buffer.rope.to_string());
                 let cursor = persist_cursor.unwrap_or(self.window.cursor);
-                let _ = self.history.save_to_path(&cache, hash, cursor);
+                let _ = self.history.save_to_path(&cache, hash);
                 // A `:w` also refreshes the nvim-style cursor cache, so a
                 // file saved then left (without a buffer switch) is current.
                 crate::cursor_cache::save(path, hash, cursor);

@@ -144,7 +144,7 @@ Decisions made in this plan:
   path. Message: `Merge PR #12: a last-cursor cache restores your place on reopen`.
   Verify: `cargo build` and `cargo test -- --test-threads=1` pass on the
   merge commit; `git log --oneline main..pr-12` is empty.
-- [ ] **Revert the undo-file half.** `git checkout 7e1b1d6 -- src/undo.rs`, then
+- [x] **Revert the undo-file half.** `git checkout 7e1b1d6 -- src/undo.rs`, then
   drop the `cursor` argument from `save_to_path` in `src/app/save.rs` and the
   tuple destructure in `loaded_buf_state`. Verify: `git diff 7e1b1d6 --
   src/undo.rs` is empty; `cargo test undo::tests`.
