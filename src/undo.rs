@@ -342,13 +342,17 @@ impl History {
     /// Persist the current branch to `path` along with `file_hash`. We store
     /// the hash so a subsequent load can reject undo state that was recorded
     /// against a different version of the underlying file (someone edited it
-    /// externally between sessions).
-    pub fn save_to_path(&self, path: &Path, file_hash: u64) -> std::io::Result<()> {
+    /// externally between sessions). `cursor` is the position captured at
+    /// save time — later re-opens of this file restore it as "where I was
+    /// last" under the same staleness rule (`file_hash`) that gates undo.
+    pub fn save_to_path(&self, path: &Path, file_hash: u64, cursor: Cursor) -> std::io::Result<()> {
         let (past, future) = self.branch();
         let stored = StoredHistory {
             file_hash,
             past: past.into_iter().map(StoredSnapshot::from).collect(),
             future: future.into_iter().map(StoredSnapshot::from).collect(),
+            last_line: cursor.line,
+            last_col: cursor.col,
         };
         if let Some(parent) = path.parent() {
             // Every snapshot is the file's full text, so the directory is
@@ -360,8 +364,12 @@ impl History {
     }
 
     /// Inverse of `save_to_path`. Returns `None` if the file is missing,
-    /// malformed, or stamped with a different `file_hash`.
-    pub fn load_from_path(path: &Path, expected_hash: u64) -> Option<Self> {
+    /// malformed, or stamped with a different `file_hash` — i.e. it tells
+    /// the caller the file was touched externally since its last save, so
+    /// nothing (the undo tree, and per the same rule the last cursor) is
+    /// trusted. The second element is the cursor persisted at save time,
+    /// defaulting to the top when older files lack it.
+    pub fn load_from_path(path: &Path, expected_hash: u64) -> Option<(Self, Cursor)> {
         let mut f = std::fs::File::open(path).ok()?;
         let mut buf = Vec::new();
         f.read_to_end(&mut buf).ok()?;
@@ -369,9 +377,17 @@ impl History {
         if stored.file_hash != expected_hash {
             return None;
         }
-        Some(Self::from_linear(
-            stored.past.iter().map(Snapshot::from).collect(),
-            stored.future.iter().map(Snapshot::from).collect(),
+        let last = Cursor {
+            line: stored.last_line,
+            col: stored.last_col,
+            want_col: stored.last_col,
+        };
+        Some((
+            Self::from_linear(
+                stored.past.iter().map(Snapshot::from).collect(),
+                stored.future.iter().map(Snapshot::from).collect(),
+            ),
+            last,
         ))
     }
 }
@@ -381,6 +397,13 @@ struct StoredHistory {
     file_hash: u64,
     past: Vec<StoredSnapshot>,
     future: Vec<StoredSnapshot>,
+    /// The cursor captured at save time, so a later open can land where the
+    /// user left off. Defaulted so old cache files keep parsing — a missing
+    /// entry means "top of file".
+    #[serde(default)]
+    last_line: usize,
+    #[serde(default)]
+    last_col: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -617,15 +640,25 @@ mod tests {
             file_hash: 7,
             past: vec![snap("a"), snap("ab")],
             future: vec![snap("abcd"), snap("abc")],
+            last_line: 3,
+            last_col: 2,
         };
         let bytes = serde_json::to_vec(&stored).expect("json");
         let dir = std::env::temp_dir().join(format!("binvim-undo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp dir");
         let path = dir.join("history.json");
         std::fs::write(&path, &bytes).expect("write");
-        let mut history = History::load_from_path(&path, 7).expect("loads");
+        let (mut history, last) = History::load_from_path(&path, 7).expect("loads");
+        assert_eq!(
+            last,
+            Cursor {
+                line: 3,
+                col: 2,
+                want_col: 2
+            }
+        );
         assert_eq!(history.depth(), 2);
-        history.save_to_path(&path, 7).expect("saves");
+        history.save_to_path(&path, 7, last).expect("saves");
         assert_eq!(std::fs::read(&path).expect("read"), bytes);
         let r = Rope::from_str;
         assert_eq!(
@@ -656,7 +689,9 @@ mod tests {
         let path = dir.join("undo").join("history.json");
         let mut history = History::new();
         history.record(&Rope::from_str("secret"), Cursor::default());
-        history.save_to_path(&path, 1).expect("saves");
+        history
+            .save_to_path(&path, 1, Cursor::default())
+            .expect("saves");
         let mode = std::fs::metadata(path.parent().unwrap())
             .unwrap()
             .permissions()

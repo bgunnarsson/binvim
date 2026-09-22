@@ -51,6 +51,11 @@ impl super::App {
         if target == self.active_window {
             return;
         }
+        // This window still shows its own buffer with its own cursor (pairing is
+        // correct here), so remember where we are before App.window is replaced
+        // with the incoming view — otherwise the later snapshot/persist would
+        // write this buffer's path against the incoming window's cursor.
+        self.persist_active_cursor();
         let old_id = self.active_window;
         // Stash current live window state into the slot for the outgoing window.
         let outgoing = std::mem::take(&mut self.window);
@@ -101,6 +106,9 @@ impl super::App {
             self.status_msg = "E444: cannot close last window".into();
             return;
         };
+        // The window being closed still holds its own buffer's cursor (see
+        // `focus_window`) — persist it before App.window is swapped.
+        self.persist_active_cursor();
         // Stash slot for the closed window is no longer reachable.
         self.windows.remove(&target);
         // The new-focus window's stash holds its view state — swap it

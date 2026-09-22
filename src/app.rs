@@ -420,6 +420,12 @@ pub struct App {
     /// dumps, for the signal thread to save. `None` until the first refresh,
     /// so a signal that early leaves the last session on disk alone.
     pub session_snapshot: std::sync::Arc<std::sync::Mutex<Option<crate::session::Session>>>,
+    /// The active buffer's (path, clean-content hash, cursor), refreshed with
+    /// the recovery dumps so a signal can persist it before dying. Only set
+    /// for a clean buffer — a dirty one's cursor is never restorable, and the
+    /// cache's hash gate would reject it anyway (`None` otherwise).
+    pub cursor_snapshot:
+        std::sync::Arc<std::sync::Mutex<Option<(PathBuf, u64, crate::cursor::Cursor)>>>,
     /// Number of dashboard rows scrolled off the top while
     /// `show_health_page` is up. Clamped against
     /// `health_content_height` by the input handlers.
@@ -1042,6 +1048,7 @@ impl App {
             recovery_checked_at: Instant::now(),
             recovery_snapshot: Default::default(),
             session_snapshot: Default::default(),
+            cursor_snapshot: Default::default(),
             health_scroll: 0,
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
@@ -1176,6 +1183,16 @@ impl App {
                 this.hydrate_from_session(s);
             }
         }
+        // A file passed on the CLI bypasses `open_buffer`, so give it the same
+        // persisted undo + last-cursor restore a picker / `:e` reopen gets:
+        // `binvim foo.rs` can still `u`, and it lands where the user last left
+        // off. (Session hydrate never runs on this path — a path arg means
+        // single-file launch.)
+        if path.is_some() {
+            let (history, last) = buffers::loaded_buf_state(&this.buffer);
+            this.history = history;
+            this.place_cursor(last);
+        }
         Ok(this)
     }
 
@@ -1216,9 +1233,10 @@ impl App {
         if let Some(cache) = crate::paths::cache_dir() {
             let _ = crate::paths::create_private_dir(&cache);
         }
-        // Undo history for files not saved in 90 days. A directory walk, so
-        // off the thread that draws the first frame.
+        // Undo history and cursor cache for files not touched in 90 days. A
+        // directory walk, so off the thread that draws the first frame.
         std::thread::spawn(crate::undo::prune_stale_history);
+        std::thread::spawn(crate::cursor_cache::prune_stale);
         let mut needs_render = true;
         // Set when a PTY drain hit its per-tick byte budget with output
         // still queued. Carried into the next iteration's poll budget so
@@ -1229,7 +1247,10 @@ impl App {
         self.spawn_signal_recovery();
         while !self.should_quit {
             #[cfg(unix)]
-            self.refresh_recovery_snapshot();
+            {
+                self.refresh_recovery_snapshot();
+                self.refresh_cursor_snapshot();
+            }
             self.recover_if_due();
             if needs_render {
                 self.maybe_reload_from_disk();
@@ -1587,6 +1608,10 @@ impl App {
             self.dap.stop_session_blocking(Duration::from_millis(500));
         }
         self.lsp.shutdown_all();
+        // Remember the active buffer's cursor nvim-style. Open, move, quit
+        // without a save — the next open still comes back here (the content
+        // hash gates it against changed content).
+        self.persist_active_cursor();
         self.discard_all_recovery();
         // Held through the save and emptied, so a signal arriving mid-quit
         // can't write its older snapshot over this one.

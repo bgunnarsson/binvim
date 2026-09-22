@@ -16,8 +16,65 @@ use super::state::BufferStash;
 pub(super) const RECENTS_CAP: usize = 100;
 pub(super) const DISK_CHECK_INTERVAL: Duration = Duration::from_millis(1000);
 
+/// Load the persisted undo history + last cursor for a freshly read file
+/// `buf`, gated on the cache's `file_hash` matching the current text so an
+/// external edit invalidates both together (the same rule that already vets
+/// the undo tree). Defaults when there's no cache or it was stamped for a
+/// different version. Used both by `open_buffer` and by session-less relaunch
+/// of an explicit CLI path, which bypasses `open_buffer`.
+pub(super) fn loaded_buf_state(buf: &Buffer) -> (History, Cursor) {
+    if let Some(path) = buf.path.as_deref() {
+        let hash = crate::undo::hash_text(&buf.rope.to_string());
+        if let Some(cache) = crate::undo::cache_path_for(path) {
+            let mut result = crate::undo::History::load_from_path(&cache, hash).unwrap_or_default();
+            // Prefer the nvim-style cursor cache (written on leave/quit,
+            // independent of `:w`), and fall back to the undo file's own
+            // stored position for a file that was saved.
+            result.1 = crate::cursor_cache::load(path, hash).unwrap_or(result.1);
+            return result;
+        }
+    }
+    (History::default(), Cursor::default())
+}
+
+/// Clamp a previously-saved cursor to a file that may have changed since,
+/// mirroring how `hydrate_from_session` clamps a restored session cursor.
+/// `line_len` is the character length of the clamped line (excluding the
+/// trailing newline), so the column is bounded against the line the cursor
+/// actually lands on.
+fn restored_cursor(last: Cursor, line_count: usize, line_len: impl Fn(usize) -> usize) -> Cursor {
+    let line = last.line.min(line_count.saturating_sub(1));
+    let len = line_len(line);
+    // The end-of-line cell (saved, say, while inserting past the last char)
+    // isn't a legal Normal-mode position (`clamp_cursor_normal` bounds col to
+    // `len - 1`), so clamp to the last character. `want_col` is only a
+    // horizontal anchor for `j`/`k` — it isn't used for rendering — so it
+    // survives unclamped (like nvim's curswant) instead of being flattened to
+    // the clamped column.
+    let col = last.col.min(len.saturating_sub(1));
+    Cursor {
+        line,
+        col,
+        want_col: last.want_col,
+    }
+}
+
+impl super::App {
+    /// Move the cursor to a persisted position, clamped to the buffer's
+    /// bounds, and bring that line into view. Called when a re-opened file
+    /// has a remembered last position to come back to.
+    pub(super) fn place_cursor(&mut self, last: Cursor) {
+        self.window.cursor =
+            restored_cursor(last, self.buffer.line_count(), |l| self.buffer.line_len(l));
+        self.window.view_top = self.window.cursor.line;
+    }
+}
+
 impl super::App {
     pub(super) fn snapshot_active(&mut self) -> BufferStash {
+        // Leaving this buffer — remember its cursor before we fold it away,
+        // so a later open (even without a save) comes back here.
+        self.persist_active_cursor();
         BufferStash {
             buffer: std::mem::take(&mut self.buffer),
             // Window-level fields are `Copy` — read them instead of
@@ -161,10 +218,18 @@ impl super::App {
                 }
                 _ => {
                     let (l, root) = crate::layout::Layout::new();
+                    // First activation of this buffer as a tab: seed the new
+                    // window with the buffer's last-known cursor / viewport
+                    // (step 5 then promotes this window whole), so a restored
+                    // or switch-away cursor isn't dropped to (0,0) — which
+                    // would also let a later `:w` overwrite the persisted
+                    // position with the origin.
                     incoming_windows.insert(
                         root,
                         crate::window::Window {
                             buffer_idx: idx,
+                            cursor: self.buffers[idx].cursor,
+                            view_top: self.buffers[idx].view_top,
                             ..Default::default()
                         },
                     );
@@ -230,23 +295,20 @@ impl super::App {
             }
         }
         let buf = Buffer::from_path(path)?;
-        // Restore persisted undo if the cached snapshot matches the file
-        // content on disk — no point reusing history recorded against a
-        // different version.
-        let history = buf
-            .path
-            .as_deref()
-            .and_then(crate::undo::cache_path_for)
-            .and_then(|p| {
-                let hash = crate::undo::hash_text(&buf.rope.to_string());
-                crate::undo::History::load_from_path(&p, hash)
-            })
-            .unwrap_or_default();
+        // Restore persisted undo + last cursor if the cached snapshot matches
+        // the file content on disk — no point reusing state recorded against
+        // a different version. The cursor lives on the stash so a later
+        // switch-away/back keeps it. (Session hydrate overrides with the more
+        // precise shutdown cursor right after.)
+        let (history, last_cursor) = loaded_buf_state(&buf);
+        let cursor = restored_cursor(last_cursor, buf.line_count(), |l| buf.line_len(l));
         let large = buf.is_large();
         let lossy = buf.lossy;
         let stash = BufferStash {
             buffer: buf,
             history,
+            cursor,
+            view_top: cursor.line,
             ..Default::default()
         };
         self.buffers.push(stash);
@@ -490,7 +552,7 @@ impl super::App {
             self.switch_to(idx)?;
             self.refresh_editorconfig();
             let is_config = self.active_is_config();
-            let note = self.save_active(false)?;
+            let note = self.save_active(false, None)?;
             if is_config {
                 config_note = note;
             }
@@ -627,10 +689,32 @@ impl super::App {
         }
     }
 
+    /// Write the active buffer's cursor to the nvim-style cursor cache, keyed
+    /// by its current content hash (so a later open won't put it back on
+    /// changed content). Called on buffer leave and quit.
+    pub(super) fn persist_active_cursor(&self) {
+        // Only write when the position is actually restorable. A dirty buffer's
+        // content hash never matches what's on disk, so persisting it would
+        // clobber the last good position with one that can't be restored. And
+        // during a focus swap App.window already holds the *incoming* window's
+        // cursor, which doesn't pair with this buffer's path — the window code
+        // persists the outgoing buffer itself while the pairing is still right.
+        if self.buffer.dirty || self.window.buffer_idx != self.active {
+            return;
+        }
+        if let Some(path) = self.buffer.path.as_deref() {
+            let hash = crate::undo::hash_text(&self.buffer.rope.to_string());
+            crate::cursor_cache::save(path, hash, self.window.cursor);
+        }
+    }
+
     pub(super) fn delete_buffer(&mut self, force: bool) -> Result<()> {
         if !force && self.buffer.dirty {
             anyhow::bail!("E89: No write since last change (use :bd!)");
         }
+        // Closing this buffer (both the last-buffer branch below and the
+        // switch_tab path) should still remember where we were in it.
+        self.persist_active_cursor();
         // Closed on purpose: `:bd!` discarded the changes, and a buffer undone
         // back to clean may still have a dump of its dirty text.
         if let Some(path) = self.buffer.path.clone() {
@@ -714,6 +798,9 @@ impl super::App {
                 }
             }
         }
+        // Remember the active buffer's position before its stash is wiped below
+        // (`delete_buffer` does the same for a single close).
+        self.persist_active_cursor();
         let closed: Vec<PathBuf> = (0..self.buffers.len())
             .filter_map(|i| {
                 if i == self.active {
@@ -1214,5 +1301,127 @@ mod tests {
             Some(("src/app.rs".to_string(), None))
         );
         assert_eq!(word_count("one two  three\n"), 3);
+    }
+
+    #[test]
+    fn restored_cursor_clamps_to_the_buffer() {
+        use crate::cursor::Cursor;
+        // In-bounds pass through unchanged, keeping the saved anchor.
+        let c = restored_cursor(
+            Cursor {
+                line: 2,
+                col: 3,
+                want_col: 5,
+            },
+            10,
+            |_| 80,
+        );
+        assert_eq!(
+            c,
+            Cursor {
+                line: 2,
+                col: 3,
+                want_col: 5
+            }
+        );
+        // A file that shrank since the position was saved clamps to the new
+        // bounds; the column is bounded to the last character of the line it
+        // actually lands on, while the saved anchor survives unclamped.
+        let c = restored_cursor(
+            Cursor {
+                line: 40,
+                col: 100,
+                want_col: 120,
+            },
+            3,
+            |_| 5,
+        );
+        assert_eq!(
+            c,
+            Cursor {
+                line: 2,
+                col: 4,
+                want_col: 120
+            }
+        );
+        // Degenerate line_count 0 (a Buffer's real line_count is `.max(1)`, so
+        // this only exercises the private fn directly) still clamps to line 0.
+        let c = restored_cursor(Cursor::default(), 0, |_| 0);
+        assert_eq!(c, Cursor::default());
+        // The column clamp consults the landed line's own length.
+        let c = restored_cursor(
+            Cursor {
+                line: 1,
+                col: 9,
+                want_col: 9,
+            },
+            2,
+            |l| if l == 1 { 3 } else { 10 },
+        );
+        assert_eq!(
+            c,
+            Cursor {
+                line: 1,
+                col: 2,
+                want_col: 9
+            }
+        );
+        // Saved exactly at line_count - 1 / line_len - 1 passes through
+        // unchanged (a cursor legally at the last cell isn't nudged).
+        let c = restored_cursor(
+            Cursor {
+                line: 4,
+                col: 9,
+                want_col: 9,
+            },
+            5,
+            |_| 10,
+        );
+        assert_eq!(
+            c,
+            Cursor {
+                line: 4,
+                col: 9,
+                want_col: 9
+            }
+        );
+        // Single-line buffer clamps any deeper line to 0, keeping the column.
+        let c = restored_cursor(
+            Cursor {
+                line: 3,
+                col: 2,
+                want_col: 2,
+            },
+            1,
+            |_| 4,
+        );
+        assert_eq!(
+            c,
+            Cursor {
+                line: 0,
+                col: 2,
+                want_col: 2
+            }
+        );
+        // col == line_len (saved while in insert mode, one past the last
+        // char) clamps to the last character for Normal mode, but keeps the
+        // anchor.
+        let c = restored_cursor(
+            Cursor {
+                line: 0,
+                col: 5,
+                want_col: 5,
+            },
+            1,
+            |_| 5,
+        );
+        assert_eq!(
+            c,
+            Cursor {
+                line: 0,
+                col: 4,
+                want_col: 5
+            }
+        );
     }
 }

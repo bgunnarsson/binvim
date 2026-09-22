@@ -1,7 +1,7 @@
 ---
 title: A reopened file comes back to where you left it, and PR #12 is merged
 date: 2026-09-22
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -136,7 +136,7 @@ Decisions made in this plan:
 
 ## Tasks
 
-- [ ] **Merge PR #12.** `git merge --no-ff pr-12`. Resolve `src/buffer.rs` by
+- [x] **Merge PR #12.** `git merge --no-ff pr-12`. Resolve `src/buffer.rs` by
   keeping main's `..Self::empty()` literals and adding `cursor_hash_cache` to
   `Buffer::empty` (it is deleted again in task 4). Resolve `src/app.rs` by
   keeping both the `create_private_dir` block and the prune spawn at startup,
