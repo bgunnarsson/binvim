@@ -1010,6 +1010,18 @@ fn g_operator(ch: char) -> Option<Operator> {
     }
 }
 
+/// Finish a leader sub-menu: reset the pending state and turn the matched
+/// action into a result — an unmapped key cancels the chord. Every
+/// `awaiting_*_leader` block ends here, so a new sub-menu can't forget
+/// the reset.
+fn finish_leader(state: &mut PendingCmd, action: Option<Action>) -> ParseResult {
+    state.reset();
+    match action {
+        Some(a) => ParseResult::Action(a),
+        None => ParseResult::Cancelled,
+    }
+}
+
 fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResult {
     // `Ctrl-C` leaves the way `Esc` does: a pending count or operator, and
     // Visual.
@@ -1625,11 +1637,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'p' => Some(Action::BufferPrev),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Debugger-prefix dispatch (after `<leader>d`). `o` and `S` host the
@@ -1694,11 +1702,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Git-hunk prefix dispatch (after `<leader>h`).
@@ -1711,11 +1715,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'r' => Some(Action::HunkReset),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Git prefix dispatch (after `<leader>g`). Today only `gg` is
@@ -1727,11 +1727,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'g' => Some(Action::Lazygit),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Task-runner prefix dispatch (after `<leader>m`). `m` for picker
@@ -1744,11 +1740,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'l' => Some(Action::TaskLast),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Terminal prefix dispatch (after `<leader>t`).
@@ -1761,11 +1753,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'p' => Some(Action::TerminalToggle),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Package-manager prefix dispatch (after `<leader>p`). `i` manages
@@ -1779,11 +1767,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             's' => Some(Action::PackageSearch),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Android prefix dispatch (after `<leader>A`).
@@ -1796,11 +1780,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'b' => Some(Action::AndroidDebug),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // Test-runner prefix dispatch (after `<leader>s`).
@@ -1815,11 +1795,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'r' => Some(Action::TestResults),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     // AI-assistant prefix dispatch (after `<leader>j`). Mnemonic:
@@ -1850,11 +1826,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'q' => Some(Action::AiClose),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     if state.awaiting_debug_leader {
@@ -1878,11 +1850,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             }),
             _ => None,
         };
-        state.reset();
-        return match action {
-            Some(a) => ParseResult::Action(a),
-            None => ParseResult::Cancelled,
-        };
+        return finish_leader(state, action);
     }
 
     if state.awaiting_g {

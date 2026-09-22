@@ -188,7 +188,7 @@ Decisions made here, from the code and the lore:
   its box-strip around it, take counts preserved per site); `run_gofmt` becomes a
   `run_stdin_pipe` call; `android::run_capture` merges with `package::run_capture` only if
   signatures align. Verify: existing formatter/package/android parser tests unchanged.
-- [ ] **C3 — Parser leader tail.** One `finish(state, action)` helper for the ten
+- [x] **C3 — Parser leader tail.** One `finish(state, action)` helper for the ten
   `awaiting_*_leader` blocks. Verify: existing parser tests.
 - [ ] **C4 — Shared page chrome.** Footer-hint match and the clear/scroll/paint boilerplate of the
   four scrollable pages factor into one painter; nothing tests sibling overlay flags
