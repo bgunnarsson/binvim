@@ -185,7 +185,8 @@ impl super::App {
             }
             // A signal is a clean-ish exit for the cursor: the editor's view
             // state is still intact, so remember where we last were just like
-            // a `:q`. The snapshot is at most a recovery interval old.
+            // a `:q`. The snapshot is the last write, or at most a recovery
+            // interval old.
             if let Some((path, hash, cursor)) = cursor_snap
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())

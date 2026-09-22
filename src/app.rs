@@ -421,8 +421,9 @@ pub struct App {
     /// so a signal that early leaves the last session on disk alone.
     pub session_snapshot: std::sync::Arc<std::sync::Mutex<Option<crate::session::Session>>>,
     /// The active buffer's (path, hash of its text on disk, cursor) as
-    /// `persist_active_cursor` would write it, refreshed with the session
-    /// snapshot for the signal thread. `None` when there's nothing to write.
+    /// `persist_active_cursor` would write it, for the signal thread:
+    /// refreshed with the session snapshot, and set to what was written by
+    /// every write. `None` when there's nothing to write.
     pub cursor_snapshot:
         std::sync::Arc<std::sync::Mutex<Option<(PathBuf, u64, crate::cursor::Cursor)>>>,
     /// Whether a frame has been drawn since the active buffer became active.
@@ -1196,7 +1197,10 @@ impl App {
         if path.is_some() {
             let (history, last) = buffers::loaded_buf_state(&this.buffer);
             this.history = history;
-            this.place_cursor(last);
+            this.window.cursor = buffers::restored_cursor(last, this.buffer.line_count(), |l| {
+                this.buffer.line_len(l)
+            });
+            this.window.view_top = this.window.cursor.line;
         }
         Ok(this)
     }
@@ -1615,12 +1619,7 @@ impl App {
         self.lsp.shutdown_all();
         // Remember the active buffer's cursor nvim-style. Open, move, quit
         // without a save — the next open still comes back here (the content
-        // hash gates it against changed content). Emptied first, so a signal
-        // arriving mid-quit can't write its older snapshot over this one.
-        *self
-            .cursor_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
+        // hash gates it against changed content).
         self.persist_active_cursor();
         self.discard_all_recovery();
         // Held through the save and emptied, so a signal arriving mid-quit

@@ -23,23 +23,9 @@ const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(90 * 24 * 60
 #[derive(Serialize, Deserialize)]
 struct CursorFile {
     file_hash: u64,
-    #[serde(default)]
     line: usize,
-    #[serde(default)]
     col: usize,
-    #[serde(default)]
     want_col: usize,
-}
-
-impl CursorFile {
-    fn from_cursor(file_hash: u64, cursor: Cursor) -> Self {
-        CursorFile {
-            file_hash,
-            line: cursor.line,
-            col: cursor.col,
-            want_col: cursor.want_col,
-        }
-    }
 }
 
 /// `<cache>/binvim/cursor/`, or `None` under tests (like `undo_dir`, so a test
@@ -76,7 +62,12 @@ fn save_to(path: &Path, file_hash: u64, cursor: Cursor) {
     if crate::paths::create_private_dir(dir).is_err() {
         return;
     }
-    let cf = CursorFile::from_cursor(file_hash, cursor);
+    let cf = CursorFile {
+        file_hash,
+        line: cursor.line,
+        col: cursor.col,
+        want_col: cursor.want_col,
+    };
     let Ok(bytes) = serde_json::to_vec(&cf) else { return };
     let _ = crate::paths::write_atomic(path, &bytes);
 }
@@ -145,18 +136,6 @@ mod tests {
         assert_eq!(load_from(&p, 123), Some(c));
         // No cache file at all ⇒ None, never a panic/default.
         assert_eq!(load_from(&dir.join("missing.json"), 123), None);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn missing_fields_default_to_zero() {
-        let dir = scratch("fields");
-        let p = dir.join("a.json");
-        // An older/corrupt entry with only the hash parses and keeps it, but
-        // the optional position fields fall back to 0.
-        std::fs::write(&p, br#"{"file_hash":7}"#).unwrap();
-        let got = load_from(&p, 7).unwrap();
-        assert_eq!((got.line, got.col, got.want_col), (0, 0, 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -125,7 +125,8 @@ Decisions made in this plan:
 - Run a project-wide `:S` over three files while looking at a fourth, then
   open one of the three: no cursor cache entry for it matches (it opens at
   the top), and the fourth file's saved position is unchanged.
-- `src/undo.rs` is byte-identical to main before the merge.
+- `src/undo.rs` differs from main before the merge only by task 7: the tidy
+  moved to `paths.rs`. Nothing of the undo-file cursor copy remains.
 - `grep -rn cursor_hash_cache src` and `grep -rn persist_cursor src` return
   nothing; `grep -rn 'fn tidy' src/undo.rs` returns nothing.
 - `cargo test -- --test-threads=1`, `cargo fmt --check` and

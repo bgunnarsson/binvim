@@ -38,7 +38,11 @@ pub(super) fn loaded_buf_state(buf: &Buffer) -> (History, Cursor) {
 /// `line_len` is the character length of the clamped line (excluding the
 /// trailing newline), so the column is bounded against the line the cursor
 /// actually lands on.
-fn restored_cursor(last: Cursor, line_count: usize, line_len: impl Fn(usize) -> usize) -> Cursor {
+pub(super) fn restored_cursor(
+    last: Cursor,
+    line_count: usize,
+    line_len: impl Fn(usize) -> usize,
+) -> Cursor {
     let line = last.line.min(line_count.saturating_sub(1));
     let len = line_len(line);
     // The end-of-line cell (saved, say, while inserting past the last char)
@@ -52,17 +56,6 @@ fn restored_cursor(last: Cursor, line_count: usize, line_len: impl Fn(usize) -> 
         line,
         col,
         want_col: last.want_col,
-    }
-}
-
-impl super::App {
-    /// Move the cursor to a persisted position, clamped to the buffer's
-    /// bounds, and bring that line into view. Called when a re-opened file
-    /// has a remembered last position to come back to.
-    pub(super) fn place_cursor(&mut self, last: Cursor) {
-        self.window.cursor =
-            restored_cursor(last, self.buffer.line_count(), |l| self.buffer.line_len(l));
-        self.window.view_top = self.window.cursor.line;
     }
 }
 
@@ -428,6 +421,7 @@ impl super::App {
         let meta = std::fs::metadata(path).ok();
         self.buffer.disk_mtime = disk_mtime.or_else(|| meta.as_ref()?.modified().ok());
         self.buffer.disk_len = meta.map(|m| m.len());
+        self.buffer.clean_hash = Some(crate::undo::hash_text(&text));
         self.buffer.dirty = false;
         let last = self.buffer.line_count().saturating_sub(1);
         if self.window.cursor.line > last {
@@ -694,9 +688,17 @@ impl super::App {
         if !self.active_shown {
             return;
         }
-        if let (Some(path), Some(hash)) = (self.buffer.path.as_deref(), self.buffer.clean_hash) {
-            crate::cursor_cache::save(path, hash, self.window.cursor);
-        }
+        let (Some(path), Some(hash)) = (self.buffer.path.as_deref(), self.buffer.clean_hash) else {
+            return;
+        };
+        crate::cursor_cache::save(path, hash, self.window.cursor);
+        // The signal thread writes whatever it holds, so an entry it took
+        // before this write must not go over it.
+        *self
+            .cursor_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) =
+            Some((path.to_path_buf(), hash, self.window.cursor));
     }
 
     pub(super) fn delete_buffer(&mut self, force: bool) -> Result<()> {
