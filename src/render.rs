@@ -1230,7 +1230,7 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         under.to_string()
     };
     let used = 3 + before_w + 1 + after_trim.chars().count(); // prompt + before + cursor + after
-    let pad = inner_w.saturating_sub(used + 1).saturating_sub(0); // -1 for the right border
+    let pad = inner_w.saturating_sub(used + 1); // +1 keeps the right border's column clear
     queue!(
         out,
         MoveTo(left as u16, (top + 1) as u16),
@@ -1650,7 +1650,6 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
     let input_fg = app.config.theme_fg();
     let path_fg = app.config.theme_dim();
     let name_fg = app.config.theme_fg();
-    let dim_fg = app.config.theme_dim();
     let sel_bg = app.config.theme_surface();
     let sel_accent = app.config.theme_emphasis();
     let hint_fg = app.config.theme_dim();
@@ -1794,7 +1793,6 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
                 selected,
                 path_fg,
                 name_fg,
-                dim_fg,
                 app.config.theme_warning(),
                 show_icon,
                 positions,
@@ -1917,7 +1915,6 @@ fn paint_picker_row(
     selected: bool,
     path_fg: Color,
     name_fg: Color,
-    dim_fg: Color,
     highlight_fg: Color,
     show_icon: bool,
     matched: &[usize],
@@ -1974,7 +1971,6 @@ fn paint_picker_row(
         (d, name_chars.as_slice())
     };
 
-    let _ = dim_fg;
     let dir_color = if selected { name_fg } else { path_fg };
     let name_color = name_fg;
     let highlight = highlight_fg;
@@ -6639,14 +6635,9 @@ fn draw_line_with_selection(
     // one column of slack so any width-miscount can't push past the row edge
     // and force the terminal to wrap onto the next row — which would clobber
     // the next line's render with the diagnostic's tail.
-    let diags = if let Some(path) = bs.buffer.path.as_deref() {
-        app.line_diagnostics_for(path, line_idx)
-    } else {
-        Vec::new()
-    };
-    let has_diag = !diags.is_empty();
+    let has_diag = !line_diags.is_empty();
     if !dim {
-        if let Some(diag) = diags.first() {
+        if let Some(diag) = line_diags.first() {
             use unicode_width::UnicodeWidthChar;
             let remaining = avail.saturating_sub(visual_used);
             let icon = match diag.severity {

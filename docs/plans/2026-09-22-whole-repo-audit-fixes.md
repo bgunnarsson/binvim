@@ -171,7 +171,7 @@ Decisions made here, from the code and the lore:
 - [x] **B3 — Cap `TestManager::drain`.** Count-bound per call like `lsp/manager.rs`'s
   `MAX_PER_CALL`, returning a "more pending" signal consistent with how the run loop re-polls.
   Unit test: a burst larger than the cap drains across calls without loss.
-- [ ] **B4 — Render nits.** Reuse the `line_diags` binding in `draw_line_with_selection` (both
+- [x] **B4 — Render nits.** Reuse the `line_diags` binding in `draw_line_with_selection` (both
   sites), drop the dead `dim_fg` parameter, remove the `.saturating_sub(0)` and fix its comment.
   Verify: `cargo test` + visual tmux smoke.
 - [ ] **C1 — `paths::find_marker_root`.** Shared walk (+`has_any_marker`/`dir_contains_extension`)
