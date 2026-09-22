@@ -163,28 +163,67 @@ pub fn path_key(path: &Path) -> String {
 }
 
 /// True when another user could have put `dir.join(rel)` there: `dir`, or
-/// any path from it down to the candidate, is writable by others. A search
-/// that climbs out of the project reaches directories like `/tmp`, and what
-/// it finds chooses a file to open, a command to run or the root a language
-/// server builds in. Every step is checked, not only the candidate's parent,
-/// because another user can create `/tmp/node_modules` mode `0755` and all
-/// of it would look trusted. Mode bits rather than ownership: binvim has no
-/// uid API.
+/// any path from it down to the candidate, is owned by someone else, or is
+/// root's and writable by others (`/tmp`). A search that climbs out of the
+/// project reaches such directories, and what it finds chooses a file to
+/// open, a command to run or the root a language server builds in. Every
+/// step is checked, not only the candidate's parent, because another user can
+/// create `/tmp/share` mode `0755` and all of it would look trusted. Owner
+/// first, bits second: mounts like WSL's `/mnt/c` report everything as
+/// `0777`, and the user's own project there is still theirs.
 #[cfg(unix)]
 pub fn others_can_plant(dir: &Path, rel: impl AsRef<Path>) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let open = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o002 != 0);
+    let (me, system) = trusted_owners();
     let mut path = dir.to_path_buf();
-    open(&path)
+    !owned_safely(&path, me, system)
         || rel.as_ref().components().any(|c| {
             path.push(c);
-            open(&path)
+            !owned_safely(&path, me, system)
         })
 }
 
 #[cfg(not(unix))]
 pub fn others_can_plant(_: &Path, _: impl AsRef<Path>) -> bool {
     false
+}
+
+/// A path that doesn't exist is safe here: the searches check existence
+/// themselves, and nothing is planted at a path that isn't there.
+#[cfg(unix)]
+fn owned_safely(path: &Path, me: Option<u32>, system: u32) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(link) = std::fs::symlink_metadata(path) else { return true };
+    // A symlink's own mode means nothing (Linux reports `0777`), but whoever
+    // owns it chose where it points.
+    if link.file_type().is_symlink() && !trusted_owner(link.uid(), 0, me, system) {
+        return false;
+    }
+    std::fs::metadata(path).map_or(true, |m| trusted_owner(m.uid(), m.mode(), me, system))
+}
+
+#[cfg(unix)]
+fn trusted_owner(owner: u32, mode: u32, me: Option<u32>, system: u32) -> bool {
+    Some(owner) == me || (owner == system && mode & 0o002 == 0)
+}
+
+/// This user's uid, read off `$HOME` (std has no `getuid`), and root's.
+/// Tests can't make files owned by root or by another user, so under test
+/// the files they make stand in for root's: trusted unless others can write
+/// them, which is the case the search tests set up with `chmod`.
+#[cfg(unix)]
+fn trusted_owners() -> (Option<u32>, u32) {
+    use std::os::unix::fs::MetadataExt;
+    if cfg!(test) {
+        let exe = std::env::current_exe().and_then(std::fs::metadata);
+        return (None, exe.map_or(0, |m| m.uid()));
+    }
+    static ME: std::sync::OnceLock<Option<u32>> = std::sync::OnceLock::new();
+    let me = *ME.get_or_init(|| {
+        home_dir()
+            .and_then(|h| std::fs::metadata(h).ok())
+            .map(|m| m.uid())
+    });
+    (me, 0)
 }
 
 /// Write `bytes` to `path` so that a write failing partway — a full disk, a
@@ -557,5 +596,25 @@ mod tests {
             "group-writable is still trusted"
         );
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trusted_owner_takes_the_owner_before_the_bits() {
+        let (me, root, other) = (Some(501), 0, 502);
+        assert!(
+            trusted_owner(501, 0o777, me, root),
+            "the user's own 0777 mount"
+        );
+        assert!(trusted_owner(root, 0o755, me, root));
+        assert!(!trusted_owner(root, 0o1777, me, root), "/tmp");
+        assert!(
+            !trusted_owner(other, 0o755, me, root),
+            "another user's 0755 directory"
+        );
+        assert!(
+            !trusted_owner(501, 0o755, None, root),
+            "no uid for this user"
+        );
     }
 }
