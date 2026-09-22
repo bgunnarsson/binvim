@@ -918,23 +918,20 @@ fn which_in_path(name: &str) -> Option<String> {
     crate::paths::find_on_path(name).map(|p| p.to_string_lossy().to_string())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
     /// A fresh directory per test, canonical so it compares with what the
     /// searches return (`/var` is a symlink on macOS).
-    #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
         crate::paths::test_scratch_dir("specs", name)
     }
 
-    #[cfg(unix)]
     fn set_mode(p: &Path, mode: u32) {
         crate::paths::test_set_mode(p, mode);
     }
 
-    #[cfg(unix)]
     #[test]
     fn node_modules_bins_others_could_plant_are_passed_over() {
         let root = scratch("node-bin");
@@ -963,7 +960,6 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    #[cfg(unix)]
     #[test]
     fn workspace_markers_others_could_plant_are_passed_over() {
         let root = scratch("root");
@@ -984,7 +980,6 @@ mod tests {
         std::fs::remove_dir_all(&root).ok();
     }
 
-    #[cfg(unix)]
     #[test]
     fn tailwind_configs_others_could_plant_are_passed_over() {
         let root = scratch("tailwind");

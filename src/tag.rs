@@ -319,11 +319,13 @@ mod tests {
         let root = scratch("resolve");
         let tags = root.join("sub/tags");
         std::fs::create_dir_all(root.join("sub")).unwrap();
-        std::fs::write(&tags, "main\t../src/main.rs\t1\nabs\t/etc/hosts\t1\n").unwrap();
+        let abs = root.join("abs.rs");
+        let lines = format!("main\t../src/main.rs\t1\nabs\t{}\t1\n", abs.display());
+        std::fs::write(&tags, lines).unwrap();
         let index = TagIndex::load(None, &tags).unwrap();
         assert_eq!(index.matches("main")[0].path, root.join("src/main.rs"));
         assert!(index.matches("main")[0].path.is_absolute());
-        assert_eq!(index.matches("abs")[0].path, PathBuf::from("/etc/hosts"));
+        assert_eq!(index.matches("abs")[0].path, abs);
         assert!(index.matches("missing").is_empty());
         std::fs::remove_dir_all(&root).ok();
     }
