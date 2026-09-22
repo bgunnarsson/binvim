@@ -226,6 +226,23 @@ fn trusted_owners() -> (Option<u32>, u32) {
     (me, 0)
 }
 
+/// Create `dir` (and its parents) and narrow it to `0700`. For every
+/// directory that holds user text or paths the editor acts on — what's
+/// inside may be a private file's contents, so only this user may look,
+/// and a directory nobody else can enter is one nobody else can plant
+/// files in. Narrowed on every call, not only on first create, so a
+/// directory an older build made at `0755` is tightened the next time
+/// it's used.
+pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 /// Write `bytes` to `path` so that a write failing partway — a full disk, a
 /// dropped mount — leaves the old file whole rather than truncated: the bytes
 /// go to a temp file beside the target, are synced, and are renamed over it.

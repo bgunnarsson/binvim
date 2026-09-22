@@ -145,7 +145,9 @@ Decisions made here, from the code and the lore:
 - [x] **A5 — Formatter temp files through exclusive create, once.** Expose a `pub(crate)` wrapper
   over `create_temp_beside` in `paths.rs`; factor the csharpier/ktfmt/php-cs-fixer temp-file dance
   into one `format.rs` helper built on it. Unit test: pre-planted path forces a different name.
-- [ ] **A6 — Yazi chooser out of the shared temp dir.** `open_yazi` writes its chooser file under
+- [x] **A6 — Yazi chooser out of the shared temp dir.**
+  Deviation: verified by build + code reading (the fn doesn't split cleanly
+  for a unit test); the yazi open/pick flow is in the manual Verification pass. `open_yazi` writes its chooser file under
   `paths::cache_dir()` (0700-narrowed like `undo.rs`) with the existing unpredictable-name
   machinery. Verify: manual yazi open/pick still works; path asserted in a unit test if the fn
   splits cleanly, else by reading the code in review.

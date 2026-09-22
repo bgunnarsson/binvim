@@ -391,7 +391,24 @@ impl super::App {
             .filter(|p| p.is_dir())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        let chooser = std::env::temp_dir().join(format!("binvim-yazi-{}.txt", std::process::id()));
+        // The chooser file names a path that gets opened (and LSP-attached),
+        // so it lives in the user's private cache — a predictable name in
+        // the shared temp dir is a file another user can pre-plant or swap
+        // between yazi writing it and us reading it.
+        let Some(cache) = crate::paths::cache_dir() else {
+            self.status_msg = "yazi: no cache directory".into();
+            return;
+        };
+        let chooser_dir = cache.join("yazi");
+        if let Err(e) = crate::paths::create_private_dir(&chooser_dir) {
+            self.status_msg = format!("yazi: {e}");
+            return;
+        }
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos())
+            .unwrap_or(0);
+        let chooser = chooser_dir.join(format!("chooser-{}-{nanos:08x}.txt", std::process::id()));
         let _ = std::fs::remove_file(&chooser);
 
         let mut stdout = io::stdout();
