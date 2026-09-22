@@ -162,7 +162,7 @@ Decisions made here, from the code and the lore:
   neutralized by single-quoting the `-n` component for the device shell. Reject `applicationId`/activity not matching
   `[A-Za-z0-9._]+` before any `adb shell` interpolation, with a status message. Unit tests beside
   `parse_application_id`.
-- [ ] **B1 — Gate and flatten folds.** `ensure_folds` gates on `buffer.is_large()` like
+- [x] **B1 — Gate and flatten folds.** `ensure_folds` gates on `buffer.is_large()` like
   `ensure_highlights`; `compute_indent_folds` becomes a single stack-based pass. Unit tests: fold
   results unchanged on existing fixtures; a deep-indent fixture computes in one pass; large buffer
   skips.

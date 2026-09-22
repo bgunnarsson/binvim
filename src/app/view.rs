@@ -636,9 +636,17 @@ impl super::App {
     }
 
     /// Recompute fold ranges if the buffer's version moved past the
-    /// cached snapshot. Cheap on small buffers (single linear pass).
+    /// cached snapshot. Single linear pass, and gated like
+    /// `ensure_highlights`: this runs on every edit keystroke, so a
+    /// multi-MB buffer just goes foldless.
     pub(super) fn ensure_folds(&mut self) {
         if self.folds_version == self.buffer.version {
+            return;
+        }
+        if self.buffer.is_large() {
+            self.folds.clear();
+            self.closed_folds.clear();
+            self.folds_version = self.buffer.version;
             return;
         }
         self.folds = compute_indent_folds(&self.buffer);
@@ -1129,53 +1137,105 @@ pub fn compute_indent_folds(buf: &Buffer) -> Vec<FoldRange> {
     if count == 0 {
         return Vec::new();
     }
-    let levels: Vec<i32> = (0..count)
-        .map(|i| {
-            let line = buf.rope.line(i);
-            let mut n = 0i32;
-            for c in line.chars() {
-                match c {
-                    ' ' => n += 1,
-                    '\t' => n += crate::render::TAB_WIDTH as i32,
-                    '\n' | '\r' => return -1,
-                    _ => return n,
-                }
+    let level_of = |i: usize| -> i32 {
+        let line = buf.rope.line(i);
+        let mut n = 0i32;
+        for c in line.chars() {
+            match c {
+                ' ' => n += 1,
+                '\t' => n += crate::render::TAB_WIDTH as i32,
+                '\n' | '\r' => return -1,
+                _ => return n,
             }
-            -1
-        })
-        .collect();
+        }
+        -1
+    };
+    // One pass with a stack of open folds `(start_line, level)`: a
+    // non-blank line at level L closes every open fold at level >= L
+    // (ending on the line before it, so trailing blanks stay inside),
+    // and opens one at the previous non-blank line when L is deeper.
+    // A naive walk-forward per fold start is quadratic on files whose
+    // indent keeps climbing — deep JSON, long match arms.
     let mut folds = Vec::new();
+    let mut open: Vec<(usize, i32)> = Vec::new();
+    let mut prev_nonblank: Option<(usize, i32)> = None;
     for i in 0..count {
-        if levels[i] < 0 {
+        let level = level_of(i);
+        if level < 0 {
             continue;
         }
-        // Find next non-blank line.
-        let mut next = i + 1;
-        while next < count && levels[next] < 0 {
-            next += 1;
-        }
-        if next >= count {
-            continue;
-        }
-        if levels[next] <= levels[i] {
-            continue;
-        }
-        // Walk forward until indent drops back to <= levels[i].
-        let mut end = i + 1;
-        while end < count {
-            if levels[end] >= 0 && levels[end] <= levels[i] {
+        while let Some(&(start, l)) = open.last() {
+            if l < level {
                 break;
             }
-            end += 1;
-        }
-        // `end` now points one past the last folded line.
-        let last = end.saturating_sub(1);
-        if last > i {
+            open.pop();
             folds.push(FoldRange {
-                start_line: i,
-                end_line: last,
+                start_line: start,
+                end_line: i - 1,
             });
         }
+        if let Some((p, pl)) = prev_nonblank {
+            if level > pl {
+                open.push((p, pl));
+            }
+        }
+        prev_nonblank = Some((i, level));
     }
+    for (start, _) in open {
+        folds.push(FoldRange {
+            start_line: start,
+            end_line: count - 1,
+        });
+    }
+    folds.sort_by_key(|f| (f.start_line, f.end_line));
     folds
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn buf(text: &str) -> Buffer {
+        Buffer {
+            rope: ropey::Rope::from_str(text),
+            ..Buffer::default()
+        }
+    }
+
+    fn ranges(text: &str) -> Vec<(usize, usize)> {
+        compute_indent_folds(&buf(text))
+            .into_iter()
+            .map(|f| (f.start_line, f.end_line))
+            .collect()
+    }
+
+    #[test]
+    fn nested_folds_and_a_trailing_fold() {
+        assert_eq!(
+            ranges("a\n  b\n    c\n  d\ne\n  f\n"),
+            vec![(0, 3), (1, 2), (4, 6)]
+        );
+    }
+
+    #[test]
+    fn monotonically_deepening_indent_folds_at_every_level() {
+        assert_eq!(ranges("a\n b\n  c\n   d\n"), vec![(0, 4), (1, 4), (2, 4)]);
+    }
+
+    #[test]
+    fn blank_lines_stay_inside_their_fold() {
+        assert_eq!(ranges("a\n  b\n\n  c\nd\n"), vec![(0, 3)]);
+    }
+
+    #[test]
+    fn a_large_buffer_goes_foldless() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer = buf(&"a\n  b\n".repeat(crate::buffer::LARGE_FILE_LINES / 2 + 1));
+        app.buffer.version = 7;
+        app.closed_folds.insert(0);
+        app.ensure_folds();
+        assert!(app.folds.is_empty());
+        assert!(app.closed_folds.is_empty());
+        assert_eq!(app.folds_version, 7);
+    }
 }
