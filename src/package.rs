@@ -204,10 +204,11 @@ fn find_root_by_marker(start: &Path, marker: &str) -> PathBuf {
     let mut dir: &Path = canon.as_path();
     let mut nearest: Option<PathBuf> = None;
     loop {
-        if nearest.is_none() && dir.join(marker).is_file() {
+        let planted = |rel| crate::paths::others_can_plant(dir, rel);
+        if nearest.is_none() && dir.join(marker).is_file() && !planted(marker) {
             nearest = Some(dir.to_path_buf());
         }
-        if dir.join(".git").exists() {
+        if dir.join(".git").exists() && !planted(".git") {
             return dir.to_path_buf();
         }
         match dir.parent() {
@@ -1850,5 +1851,29 @@ require github.com/baz/qux v2.0.0
             eco_from_extension(Some(Path::new("/proj/requirements.txt"))),
             Some(PackageEcosystem::Pip)
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn roots_others_could_plant_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let root = std::env::temp_dir().join(format!("binvim-pkg-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        let root = root.canonicalize().unwrap();
+        for dir in [&root, &root.join("shared")] {
+            std::fs::create_dir_all(dir.join(".git")).unwrap();
+            std::fs::write(dir.join("package.json"), "{}").unwrap();
+        }
+        set(&root, 0o755);
+        set(&root.join("shared"), 0o777);
+        assert_eq!(find_root_by_marker(&project, "package.json"), root);
+        std::fs::remove_dir_all(root.join(".git")).unwrap();
+        assert_eq!(find_root_by_marker(&project, "package.json"), root);
+        std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -101,7 +101,7 @@ Decisions (made here, from the code and the rule):
 - [x] `dap::find_workspace_root` (through `has_any_marker`), `find_dotnet_workspace_root` (the
   `.sln` / `.git` pass) and `find_cargo_target_dir` skip planted candidates. One test each.
   Verify: `cargo test dap::specs::tests`.
-- [ ] `package::find_root_by_marker` ignores a planted marker for `nearest` and a planted `.git`
+- [x] `package::find_root_by_marker` ignores a planted marker for `nearest` and a planted `.git`
   for the early stop. Test covering both. Verify: `cargo test package::tests`.
 - [ ] `git::find_repo_root` skips a planted `.git`. Test. Verify: `cargo test git::tests`.
 - [ ] Full gate and the tmux check in Verification; `cargo build --release`.
