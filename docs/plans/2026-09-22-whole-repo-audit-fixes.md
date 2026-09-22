@@ -1,7 +1,7 @@
 ---
 title: The whole-repo audit's findings are fixed — quoting, crash detection, quit teardown, large-file gates, and the drifted duplicates consolidated
 date: 2026-09-22
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -120,7 +120,7 @@ Decisions made here, from the code and the lore:
 
 ## Tasks
 
-- [ ] **A1 — Quote task argv into the shell string.** Widen `shell_quote` to accept `&str`
+- [x] **A1 — Quote task argv into the shell string.** Widen `shell_quote` to accept `&str`
   (keep the `&Path` call working), apply it to `task.program` and each of `task.args` in
   `task_kickoff`'s launcher. Unit tests in `app/task_glue.rs`'s `mod tests` for `$(…)`, backticks,
   spaces, quotes. Verify: new tests + tmux run of a crafted npm script name showing literal text.

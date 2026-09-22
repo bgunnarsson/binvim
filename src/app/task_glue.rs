@@ -183,8 +183,13 @@ impl super::App {
         // prefix on the shell command. Cleaner than mutating
         // std::env::current_dir() (which is process-global) — the
         // child shell does the cd, the parent stays put.
-        let cwd_arg = shell_quote(&task.cwd);
-        let launcher = format!("cd {cwd_arg} && exec {command_line}");
+        let cwd_arg = shell_quote(&task.cwd.to_string_lossy());
+        let mut exec_line = shell_quote(&task.program);
+        for arg in &task.args {
+            exec_line.push(' ');
+            exec_line.push_str(&shell_quote(arg));
+        }
+        let launcher = format!("cd {cwd_arg} && exec {exec_line}");
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(term) => {
                 term.set_label(Some(label.clone()));
@@ -425,12 +430,14 @@ fn resolve_path(s: &str, cwd: &std::path::Path) -> std::path::PathBuf {
     if p.is_absolute() { p } else { cwd.join(p) }
 }
 
-/// Single-quote a path for safe embedding in a shell command line.
+/// Single-quote a string for safe embedding in a shell command line.
 /// Replaces any embedded `'` with `'\''` (close-quote, escaped-quote,
-/// reopen-quote) — the standard POSIX trick. Used to build the `cd ...`
-/// prefix without inviting injection from a weird project path.
-fn shell_quote(path: &std::path::Path) -> String {
-    let s = path.to_string_lossy();
+/// reopen-quote) — the standard POSIX trick. Applied to the `cd ...`
+/// prefix and to every word of the task command, because script and
+/// recipe names come verbatim out of project files (`package.json`,
+/// justfiles, `.cargo/config.toml`) and may hold `$(…)`, backticks or
+/// spaces.
+fn shell_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() {
@@ -450,14 +457,23 @@ mod tests {
 
     #[test]
     fn shell_quote_wraps_in_single_quotes() {
-        let q = shell_quote(std::path::Path::new("/tmp/x y"));
+        let q = shell_quote("/tmp/x y");
         assert_eq!(q, "'/tmp/x y'");
     }
 
     #[test]
     fn shell_quote_escapes_embedded_single_quote() {
-        let q = shell_quote(std::path::Path::new("/tmp/it's"));
+        let q = shell_quote("/tmp/it's");
         assert_eq!(q, "'/tmp/it'\\''s'");
+    }
+
+    #[test]
+    fn shell_quote_neutralizes_command_substitution() {
+        // Inside single quotes the shell expands nothing, so `$(…)` and
+        // backticks arrive as literal text.
+        assert_eq!(shell_quote("dev$(date)"), "'dev$(date)'");
+        assert_eq!(shell_quote("x`date`"), "'x`date`'");
+        assert_eq!(shell_quote("a;rm -rf b"), "'a;rm -rf b'");
     }
 
     #[test]
