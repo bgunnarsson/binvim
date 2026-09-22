@@ -27,6 +27,7 @@ symptoms:
 root_cause: "upward searches took the first match, checked at most the file and its parent by mode bits, and fell back to the buffer's own directory, so a file another user planted under /tmp, or in a 0755 directory they own, was run, opened or used as a server root"
 related:
   - docs/solutions/runtime/open-buffer-runs-for-batch-edits-nobody-sees.md
+  - docs/solutions/security/a-word-quoted-for-one-shell-is-parsed-again-by-the-next.md
   - docs/solutions/security/an-upward-file-search-trusts-files-other-users-can-plant.md
 ---
 
