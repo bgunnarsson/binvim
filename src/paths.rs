@@ -493,6 +493,23 @@ fn has_other_links(_: &std::fs::Metadata) -> bool {
     false
 }
 
+/// Test support shared by the specs modules' upward-search tests: a fresh
+/// canonical scratch directory, unique per prefix + name + pid so parallel
+/// runs don't share files.
+#[cfg(test)]
+pub(crate) fn test_scratch_dir(prefix: &str, name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("binvim-{prefix}-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    dir.canonicalize().unwrap()
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn test_set_mode(p: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

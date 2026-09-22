@@ -926,16 +926,12 @@ mod tests {
     /// searches return (`/var` is a symlink on macOS).
     #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("binvim-specs-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        crate::paths::test_scratch_dir("specs", name)
     }
 
     #[cfg(unix)]
     fn set_mode(p: &Path, mode: u32) {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        crate::paths::test_set_mode(p, mode);
     }
 
     #[cfg(unix)]

@@ -208,7 +208,10 @@ Decisions made here, from the code and the lore:
   (clamping `.col` too), `adopt_window_buffer`, `strip_phantom_seed_if_unused` — verifying first
   that both copies of each really match the audit's description. Unit tests where the helpers are
   pure (indent label, clamp); existing window/buffer tests for the rest.
-- [ ] **D1 — Small cleanups, batch 1.** `apply_history_snapshot` helper (edit.rs ×4);
+- [x] **D1 — Small cleanups, batch 1.**
+  Deviation: `undo_time` keeps applying rope/cursor inside its loop (each
+  iteration's history call reads the buffer), so three of the four snapshot
+  sites go through the helper. `apply_history_snapshot` helper (edit.rs ×4);
   `Buffer` constructors via `..Self::empty()`; picker page-move helper; spell.rs dead closure
   removed; lsp/dap specs share one `#[cfg(test)]` scratch helper (home: `paths.rs`'s existing
   test-support). Verify: `cargo test`.

@@ -1324,17 +1324,20 @@ impl super::App {
         }
     }
 
+    /// Adopt a history snapshot as the live buffer state. Replacing the
+    /// rope wholesale is still a mutation — the version bump is what tells
+    /// the highlight cache and LSP didChange to recompute.
+    fn apply_history_snapshot(&mut self, snap: crate::undo::Snapshot) {
+        self.buffer.rope = snap.rope;
+        self.window.cursor = snap.cursor;
+        self.buffer.dirty = true;
+        self.buffer.version = self.buffer.version.wrapping_add(1);
+        self.clamp_cursor_normal();
+    }
+
     pub(super) fn undo(&mut self) {
         if let Some(snap) = self.history.undo(&self.buffer.rope, self.window.cursor) {
-            self.buffer.rope = snap.rope;
-            self.window.cursor = snap.cursor;
-            self.buffer.dirty = true;
-            // Bump version so the highlight cache and LSP didChange know
-            // to recompute — replacing the rope wholesale is still a
-            // mutation, even if it goes through `buffer.rope = …` rather
-            // than the per-edit helpers.
-            self.buffer.version = self.buffer.version.wrapping_add(1);
-            self.clamp_cursor_normal();
+            self.apply_history_snapshot(snap);
         } else {
             self.status_msg = "Already at oldest change".into();
         }
@@ -1342,11 +1345,7 @@ impl super::App {
 
     pub(super) fn redo(&mut self) {
         if let Some(snap) = self.history.redo(&self.buffer.rope, self.window.cursor) {
-            self.buffer.rope = snap.rope;
-            self.window.cursor = snap.cursor;
-            self.buffer.dirty = true;
-            self.buffer.version = self.buffer.version.wrapping_add(1);
-            self.clamp_cursor_normal();
+            self.apply_history_snapshot(snap);
         } else {
             self.status_msg = "Already at newest change".into();
         }
@@ -1401,11 +1400,7 @@ impl super::App {
             self.status_msg = format!("Already at {end} change");
             return;
         };
-        self.buffer.rope = snap.rope;
-        self.window.cursor = snap.cursor;
-        self.buffer.dirty = true;
-        self.buffer.version = self.buffer.version.wrapping_add(1);
-        self.clamp_cursor_normal();
+        self.apply_history_snapshot(snap);
     }
 
     /// `:undolist` — each undo branch's last state: its number, how many

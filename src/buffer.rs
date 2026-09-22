@@ -208,35 +208,16 @@ impl Buffer {
             Ok(Self {
                 rope,
                 path: Some(path),
-                dirty: false,
-                version: 0,
                 disk_mtime: mtime,
                 disk_len,
                 lossy,
-                display_name: None,
                 line_ending,
-                marks: HashMap::new(),
-                change_open: false,
-                last_visual: None,
-                changes: Vec::new(),
-                change_idx: 0,
+                ..Self::empty()
             })
         } else {
             Ok(Self {
-                rope: Rope::new(),
                 path: Some(path),
-                dirty: false,
-                version: 0,
-                disk_mtime: None,
-                disk_len: None,
-                lossy: false,
-                display_name: None,
-                line_ending: LineEnding::platform_default(),
-                marks: HashMap::new(),
-                change_open: false,
-                last_visual: None,
-                changes: Vec::new(),
-                change_idx: 0,
+                ..Self::empty()
             })
         }
     }

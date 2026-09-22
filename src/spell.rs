@@ -220,13 +220,7 @@ fn split_identifier(token: &str) -> Vec<String> {
                 && prev.is_uppercase()
                 && cur.is_uppercase()
                 && chars[i + 1].is_lowercase();
-            let is_acronym_end_combined = prev.is_uppercase() && cur.is_uppercase() && {
-                // Apply when the next char is lowercase — caught
-                // above — OR when we're at the last position. The
-                // above arm handles it.
-                false
-            };
-            if is_camel_boundary || is_acronym_end || is_acronym_end_combined {
+            if is_camel_boundary || is_acronym_end {
                 out.push(chars[start..i].iter().collect());
                 start = i;
             }

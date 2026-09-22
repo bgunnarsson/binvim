@@ -270,35 +270,15 @@ impl super::App {
                     self.pkg_toggle_prerelease();
                 }
             }
-            KeyCode::PageUp => {
-                let page = crate::render::picker_visible_rows(self).max(1) as i64;
-                if let Some(p) = self.picker.as_mut() {
-                    p.move_by(-page);
-                }
-            }
-            KeyCode::PageDown => {
-                let page = crate::render::picker_visible_rows(self).max(1) as i64;
-                if let Some(p) = self.picker.as_mut() {
-                    p.move_by(page);
-                }
-            }
+            KeyCode::PageUp => self.picker_page_move(1, -1),
+            KeyCode::PageDown => self.picker_page_move(1, 1),
             KeyCode::Home => picker.move_by(i64::MIN / 2),
             KeyCode::End => picker.move_by(i64::MAX / 2),
             KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) => match c {
                 'j' => picker.move_down(),
                 'k' => picker.move_up(),
-                'd' | 'D' => {
-                    let half = (crate::render::picker_visible_rows(self) / 2).max(1) as i64;
-                    if let Some(p) = self.picker.as_mut() {
-                        p.move_by(half);
-                    }
-                }
-                'u' | 'U' => {
-                    let half = (crate::render::picker_visible_rows(self) / 2).max(1) as i64;
-                    if let Some(p) = self.picker.as_mut() {
-                        p.move_by(-half);
-                    }
-                }
+                'd' | 'D' => self.picker_page_move(2, 1),
+                'u' | 'U' => self.picker_page_move(2, -1),
                 'g' => picker.move_by(i64::MIN / 2),
                 'G' => picker.move_by(i64::MAX / 2),
                 _ => {}
@@ -317,6 +297,18 @@ impl super::App {
                 _ => {}
             },
             _ => {}
+        }
+    }
+
+    /// Move the picker selection by a page (`fraction` 1) or half-page
+    /// (`fraction` 2) in `sign`'s direction. Measuring the visible rows
+    /// borrows `self` immutably, so the picker is re-borrowed after —
+    /// which is why the key arms can't just call `move_by` on their
+    /// existing borrow.
+    fn picker_page_move(&mut self, fraction: usize, sign: i64) {
+        let rows = (crate::render::picker_visible_rows(self) / fraction).max(1) as i64;
+        if let Some(p) = self.picker.as_mut() {
+            p.move_by(sign * rows);
         }
     }
 
