@@ -129,6 +129,8 @@ impl super::App {
         // into the launcher (its values come from project files), while
         // this is the user's own typed text and keeps its shell meaning —
         // `:make CFLAGS="-O2 -g"` still reaches make as one argument.
+        // Under cmd.exe that meaning stops short of `%VAR%`, which isn't
+        // expanded (see `terminal::shell_launch`).
         if !args.trim().is_empty() {
             task.shell_tail = Some(args.trim().to_string());
         }
@@ -447,18 +449,18 @@ mod tests {
             label: ":make".into(),
             source: crate::task::TaskSource::Makefile,
             cwd: std::path::PathBuf::from("/p"),
-            program: "make".into(),
+            program: "/usr/bin/make".into(),
             args: vec!["all$(boom)".into()],
             description: None,
             shell_tail: Some("CFLAGS=\"-O2 -g\" src/*.c".into()),
         };
         assert_eq!(
             task_launch("/bin/sh", &task).unwrap().args[3],
-            "cd '/p' && exec 'make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
+            "cd '/p' && exec '/usr/bin/make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
         );
         assert_eq!(
             task_launch("cmd.exe", &task).unwrap().env[0].1,
-            "\"make\" \"all$(boom)\" CFLAGS=\"-O2 -g\" src/*.c"
+            "\"/usr/bin/make\" \"all$(boom)\" CFLAGS=\"-O2 -g\" src/*.c"
         );
     }
 

@@ -1598,6 +1598,7 @@ pub fn default_shell() -> String {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ShellKind {
     Posix,
+    Fish,
     Cmd,
     PowerShell,
 }
@@ -1608,9 +1609,13 @@ impl ShellKind {
         // treat `\` as one off Windows, and `$COMSPEC` is a Windows path.
         let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
         let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
-        match stem.to_ascii_lowercase().as_str() {
+        let stem = stem.to_ascii_lowercase();
+        match stem.as_str() {
             "cmd" => ShellKind::Cmd,
-            "pwsh" | "powershell" => ShellKind::PowerShell,
+            "fish" => ShellKind::Fish,
+            // `pwsh-preview`, and `pwsh-7.4` whose stem reads `pwsh-7`.
+            "powershell" => ShellKind::PowerShell,
+            _ if stem.starts_with("pwsh") => ShellKind::PowerShell,
             _ => ShellKind::Posix,
         }
     }
@@ -1636,13 +1641,31 @@ pub(crate) fn shell_quote(s: &str) -> String {
     out
 }
 
+/// Single-quote a word for fish, which unlike POSIX shells reads `\'`
+/// and `\\` as escapes inside single quotes — so `shell_quote`'s `'\''`
+/// lets a word holding `\'` close its quote early.
+pub(crate) fn fish_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if matches!(ch, '\'' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out.push('\'');
+    out
+}
+
 /// Double-quote a word for a cmd.exe line, inside which `& | < > ^ ( )`
 /// are text. Trailing backslashes are doubled so the program's own argv
 /// parser doesn't read the closing `\"` as a literal quote. cmd has no
 /// escape for `"` inside quotes, and a line break ends the command, so
-/// a word holding either can't be passed and gets `None`.
+/// a word holding either can't be passed and gets `None`. Nor can a NUL:
+/// the line travels in an environment variable, and a NUL would end it
+/// and start another variable in the child's environment block.
 pub(crate) fn cmd_quote(s: &str) -> Option<String> {
-    if s.contains(['"', '\r', '\n']) {
+    if s.contains(['"', '\r', '\n', '\0']) {
         return None;
     }
     let trailing = s.len() - s.trim_end_matches('\\').len();
@@ -1658,6 +1681,12 @@ pub(crate) fn cmd_quote(s: &str) -> Option<String> {
 /// expands and a quote is escaped by doubling it. PowerShell also reads
 /// the typographic single quotes (U+2018–U+201B) as quote characters,
 /// so those are doubled too.
+///
+/// That protects the word from PowerShell only. For a `.cmd` / `.bat`
+/// target (npm.cmd, yarn.cmd) PowerShell rebuilds the command line,
+/// quoting only words with whitespace and escaping no `"`, and cmd.exe
+/// parses the result — so `shell_launch` refuses a word holding anything
+/// cmd would act on (`PWSH_REFUSED`) rather than guess the target.
 pub(crate) fn pwsh_quote(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
@@ -1684,14 +1713,34 @@ pub struct Launch {
 /// The environment variable a cmd.exe launch carries its line in.
 const CMD_LAUNCH_VAR: &str = "BINVIM_LAUNCH";
 
+/// What a PowerShell launch won't pass in a word — see `pwsh_quote`.
+const PWSH_REFUSED: [char; 13] = [
+    '&', '|', '<', '>', '^', '%', '!', '(', ')', '"', '\r', '\n', '\0',
+];
+
+/// The program cmd.exe should run for `word`: a bare name resolved
+/// through `PATH` here, because cmd.exe looks in its current directory
+/// first, and that's the project — a cloned repo's `claude.cmd` would run
+/// in place of the real one. A name not on `PATH` isn't run at all.
+fn cmd_program(word: &str) -> Result<String, String> {
+    if word.contains(['/', '\\']) {
+        return Ok(word.to_string());
+    }
+    crate::paths::find_on_path(word)
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or_else(|| format!("{word} isn't on PATH"))
+}
+
 /// Run `words` (each quoted, since they come out of project files) and
 /// then `tail` (the user's own typed text, appended as-is) through
 /// `shell`, in `cwd`.
 ///
-/// A POSIX shell gets `-l -i -c "cd … && exec …"` so its rc files load —
-/// that's where nvm / asdf / direnv shims live. PowerShell gets
+/// A POSIX shell or fish gets `-l -i -c "cd … && exec …"` so its rc files
+/// load — that's where nvm / asdf / direnv shims live. PowerShell gets
 /// `-Command "& …"` and cmd.exe `/C`, both with the directory set on the
-/// spawn and their profile / AutoRun left to run the same way.
+/// spawn and their profile / AutoRun left to run the same way — except a
+/// UNC directory, which cmd.exe won't start in (it falls back to
+/// `C:\Windows`), so its line `pushd`es there instead.
 ///
 /// cmd.exe's line travels in `BINVIM_LAUNCH` rather than as the `/C`
 /// argument: portable-pty escapes a `"` inside an argument as `\"`,
@@ -1714,34 +1763,63 @@ pub(crate) fn shell_launch(
     };
     let kind = ShellKind::of(shell);
     let (args, env, cwd) = match kind {
-        ShellKind::Posix => {
+        ShellKind::Posix | ShellKind::Fish => {
+            let quote = match kind {
+                ShellKind::Fish => fish_quote,
+                _ => shell_quote,
+            };
             let mut line = String::new();
             if let Some(dir) = cwd {
                 line.push_str("cd ");
-                line.push_str(&shell_quote(&dir.to_string_lossy()));
+                line.push_str(&quote(&dir.to_string_lossy()));
                 line.push_str(" && ");
             }
             line.push_str("exec ");
-            let quoted: Vec<String> = words.iter().map(|w| shell_quote(w)).collect();
+            let quoted: Vec<String> = words.iter().map(|w| quote(w)).collect();
             line.push_str(&quoted.join(" "));
             let args = vec!["-l".into(), "-i".into(), "-c".into(), with_tail(line)];
             (args, Vec::new(), None)
         }
         ShellKind::Cmd => {
+            let refused = |word: &str| {
+                format!(
+                    "cmd.exe can't be handed {word:?}: it holds a double quote, a line break or a NUL"
+                )
+            };
             let mut quoted = Vec::with_capacity(words.len());
-            for word in words {
-                let Some(q) = cmd_quote(word) else {
-                    return Err(format!(
-                        "cmd.exe can't be handed {word:?}: it holds a double quote or a line break"
-                    ));
+            for (i, word) in words.iter().enumerate() {
+                let word = if i == 0 {
+                    cmd_program(word)?
+                } else {
+                    word.to_string()
+                };
+                let Some(q) = cmd_quote(&word) else {
+                    return Err(refused(&word));
                 };
                 quoted.push(q);
             }
+            let mut line = String::new();
+            let mut spawn_cwd = cwd.map(Path::to_path_buf);
+            if let Some(dir) = cwd.filter(|d| d.to_string_lossy().starts_with(r"\\")) {
+                let dir = dir.to_string_lossy();
+                let Some(q) = cmd_quote(&dir) else {
+                    return Err(refused(&dir));
+                };
+                line.push_str(&format!("pushd {q} && "));
+                spawn_cwd = None;
+            }
+            line.push_str(&quoted.join(" "));
             let args = vec!["/V:OFF".into(), "/C".into(), format!("%{CMD_LAUNCH_VAR}%")];
-            let env = vec![(CMD_LAUNCH_VAR.to_string(), with_tail(quoted.join(" ")))];
-            (args, env, cwd.map(Path::to_path_buf))
+            let env = vec![(CMD_LAUNCH_VAR.to_string(), with_tail(line))];
+            (args, env, spawn_cwd)
         }
         ShellKind::PowerShell => {
+            if let Some(word) = words.iter().find(|w| w.contains(PWSH_REFUSED)) {
+                return Err(format!(
+                    "PowerShell can't safely hand {word:?} to a program: \
+                     it holds a character cmd.exe would act on"
+                ));
+            }
             let quoted: Vec<String> = words.iter().map(|w| pwsh_quote(w)).collect();
             let line = with_tail(format!("& {}", quoted.join(" ")));
             let args = vec!["-NoLogo".into(), "-Command".into(), line];
@@ -1791,6 +1869,12 @@ mod tests {
             ShellKind::of(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
             ShellKind::PowerShell
         );
+        assert_eq!(ShellKind::of("pwsh-preview"), ShellKind::PowerShell);
+        assert_eq!(
+            ShellKind::of("/opt/microsoft/pwsh-7.4"),
+            ShellKind::PowerShell
+        );
+        assert_eq!(ShellKind::of("/opt/homebrew/bin/fish"), ShellKind::Fish);
         assert_eq!(ShellKind::of("/bin/zsh"), ShellKind::Posix);
         assert_eq!(
             ShellKind::of(r"C:\Program Files\Git\bin\bash.exe"),
@@ -1820,6 +1904,16 @@ mod tests {
     }
 
     #[test]
+    fn fish_quote_escapes_backslash_and_quote() {
+        // The word `shell_quote` would let out of its quotes under fish.
+        assert_eq!(
+            fish_quote(r"x\'(touch /tmp/pwned)\'"),
+            r"'x\\\'(touch /tmp/pwned)\\\''"
+        );
+        assert_eq!(fish_quote("it's $x (y)"), r"'it\'s $x (y)'");
+    }
+
+    #[test]
     fn cmd_quote_leaves_metacharacters_inside_the_quotes() {
         assert_eq!(
             cmd_quote("a&echo pwned").as_deref(),
@@ -1845,6 +1939,7 @@ mod tests {
         assert_eq!(cmd_quote("say \"hi\""), None);
         assert_eq!(cmd_quote("a\nb"), None);
         assert_eq!(cmd_quote("a\rb"), None);
+        assert_eq!(cmd_quote("build\0NODE_OPTIONS=x"), None);
     }
 
     #[test]
@@ -1886,12 +1981,21 @@ mod tests {
     }
 
     #[test]
+    fn fish_launch_quotes_for_fish() {
+        let launch = shell_launch("fish", Some(Path::new("/p")), &["npm", r"x\'y"], None).unwrap();
+        assert_eq!(
+            launch.args,
+            ["-l", "-i", "-c", r"cd '/p' && exec 'npm' 'x\\\'y'"]
+        );
+    }
+
+    #[test]
     fn cmd_launch_carries_its_line_in_the_environment() {
         let dir = Path::new(r"C:\my project");
         let launch = shell_launch(
             r"C:\Windows\system32\cmd.exe",
             Some(dir),
-            &["npm", "run", "a&echo pwned"],
+            &[r"C:\nodejs\npm.cmd", "run", "a&echo pwned"],
             Some("-- --watch"),
         )
         .unwrap();
@@ -1900,7 +2004,7 @@ mod tests {
             launch.env,
             [(
                 "BINVIM_LAUNCH".to_string(),
-                r#""npm" "run" "a&echo pwned" -- --watch"#.to_string()
+                r#""C:\nodejs\npm.cmd" "run" "a&echo pwned" -- --watch"#.to_string()
             )]
         );
         assert_eq!(launch.cwd.as_deref(), Some(dir));
@@ -1908,8 +2012,29 @@ mod tests {
 
     #[test]
     fn cmd_launch_refuses_a_word_it_cannot_quote() {
-        let err = shell_launch("cmd.exe", None, &["npm", "run", "say \"hi\""], None).unwrap_err();
+        let words = [r"C:\nodejs\npm.cmd", "run", "say \"hi\""];
+        let err = shell_launch("cmd.exe", None, &words, None).unwrap_err();
         assert!(err.contains("double quote"), "{err}");
+    }
+
+    #[test]
+    fn cmd_launch_runs_nothing_that_is_not_on_path() {
+        // cmd.exe would look in the project directory for a bare name.
+        let words = ["binvim-no-such-program-anywhere"];
+        let err = shell_launch("cmd.exe", Some(Path::new("/p")), &words, None).unwrap_err();
+        assert!(err.contains("isn't on PATH"), "{err}");
+    }
+
+    #[test]
+    fn cmd_launch_pushes_into_a_unc_directory() {
+        let dir = Path::new(r"\\server\share\app");
+        let words = [r"C:\nodejs\npm.cmd", "run", "build"];
+        let launch = shell_launch("cmd.exe", Some(dir), &words, None).unwrap();
+        assert_eq!(launch.cwd, None);
+        assert_eq!(
+            launch.env[0].1,
+            r#"pushd "\\server\share\app" && "C:\nodejs\npm.cmd" "run" "build""#
+        );
     }
 
     #[test]
@@ -1918,16 +2043,24 @@ mod tests {
         let launch = shell_launch(
             "pwsh",
             Some(dir),
-            &["npm", "run", "it's&$x"],
+            &["npm", "run", "it's $x"],
             Some("-- --watch"),
         )
         .unwrap();
         assert_eq!(
             launch.args,
-            ["-NoLogo", "-Command", "& 'npm' 'run' 'it''s&$x' -- --watch"]
+            ["-NoLogo", "-Command", "& 'npm' 'run' 'it''s $x' -- --watch"]
         );
         assert!(launch.env.is_empty());
         assert_eq!(launch.cwd.as_deref(), Some(dir));
+    }
+
+    #[test]
+    fn powershell_launch_refuses_what_a_batch_shim_would_act_on() {
+        for word in ["x&calc", "a|b", "x\" & calc & \"", "%PATH%", "a\0b"] {
+            let err = shell_launch("pwsh", None, &["yarn", "run", word], None).unwrap_err();
+            assert!(err.contains("PowerShell"), "{word:?}: {err}");
+        }
     }
 
     /// Run a `Launch` the way the PTY spawn does — same argv, env and cwd —
