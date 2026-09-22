@@ -321,7 +321,8 @@ impl super::App {
                     self.last_semantic_tokens_request_version.clear();
                     self.last_code_lens_request_version.clear();
                     self.last_copilot_request_version.clear();
-                    self.status_msg = format!("lsp: {client_key} exited ({exit_code}) — restarting");
+                    self.status_msg =
+                        format!("lsp: {client_key} exited ({exit_code}) — restarting");
                     self.lsp_attach_active();
                 }
                 LspEvent::RequestFailed { kind, path } => {
@@ -1771,8 +1772,10 @@ impl super::App {
                 grouped.push((e.path.clone(), vec![e]));
             }
         }
-        // Checked for every file before any is touched, so a rename is applied
-        // whole or not at all.
+        // The recovery precondition is checked for every file before any is
+        // touched. That is the only whole-batch guarantee: a save failing
+        // partway (disk full, permissions) still leaves the files before it
+        // written, since there's no rollback of already-saved buffers.
         if let Some((path, _)) = grouped.iter().find(|(p, _)| self.pending_recovery(p)) {
             anyhow::bail!(
                 "{} has recovered unsaved changes — open it to review them, then try again",

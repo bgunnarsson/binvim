@@ -714,6 +714,76 @@ impl super::App {
             }
         }
     }
+
+    /// Mouse events inside the file-tree pane: clicks land focus, body
+    /// clicks pick a row, a double-click opens the entry. Everything
+    /// inside the pane is swallowed so editor windows behind don't also
+    /// fire. Returns whether the event landed inside the pane.
+    pub(super) fn handle_file_tree_mouse_event(
+        &mut self,
+        ev: &crossterm::event::MouseEvent,
+        row: usize,
+        col: usize,
+    ) -> bool {
+        use crate::mode::Mode;
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if !(self.file_tree.is_some()
+            && self.file_tree_cols() > 0
+            && col < self.file_tree_cols()
+            && row >= self.buffer_top()
+            && row < self.buffer_top() + self.buffer_rows())
+        {
+            return false;
+        }
+        if matches!(
+            ev.kind,
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+        ) {
+            self.mode = Mode::FileTree;
+            // Pane layout: chip row | spacer row | body…
+            // Body therefore starts at `buffer_top + 2`.
+            let body_start = self.buffer_top() + 2;
+            let mut clicked_entry: Option<usize> = None;
+            if row >= body_start {
+                let body_row = row - body_start;
+                let body_rows = self.buffer_rows().saturating_sub(2);
+                if let Some(state) = self.file_tree.as_mut() {
+                    let scroll = if body_rows == 0 || state.entries.len() <= body_rows {
+                        0
+                    } else {
+                        let half = body_rows / 2;
+                        let max_scroll = state.entries.len().saturating_sub(body_rows);
+                        state.cursor.saturating_sub(half).min(max_scroll)
+                    };
+                    let target = scroll + body_row;
+                    if target < state.entries.len() {
+                        state.cursor = target;
+                        clicked_entry = Some(target);
+                    }
+                }
+            }
+            // Double-click detection: a second click on the same
+            // entry inside DOUBLE_CLICK_WINDOW opens the file (or
+            // toggles the folder), matching the buffer-area click
+            // convention.
+            if let Some(idx) = clicked_entry {
+                let now = std::time::Instant::now();
+                let is_double = self
+                    .last_tree_click
+                    .filter(|(t, i)| {
+                        now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW && *i == idx
+                    })
+                    .is_some();
+                if is_double {
+                    self.last_tree_click = None;
+                    self.file_tree_activate_cursor();
+                } else {
+                    self.last_tree_click = Some((now, idx));
+                }
+            }
+        }
+        true
+    }
 }
 
 fn seed_cursor_on_path(state: &mut FileTreeState, target: &Path) {

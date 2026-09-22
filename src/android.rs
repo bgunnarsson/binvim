@@ -314,7 +314,9 @@ pub fn prepare_debug(project_root: &Path, local_port: u16) -> Result<DebugPrep, 
     }
     let activity = resolve_launch_activity(&serial, &pkg)?;
     if !valid_component(&activity, true) {
-        return Err(format!("launch activity {activity:?} is not a valid class name"));
+        return Err(format!(
+            "launch activity {activity:?} is not a valid class name"
+        ));
     }
 
     // `-D` makes the app halt at startup until a debugger attaches. The

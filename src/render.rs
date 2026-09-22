@@ -157,6 +157,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
 /// popups aren't `DashboardPalette` consumers the way the dashboard pages
 /// are. Popups whose border carries extra segments (the hover scroll
 /// label, the picker's match count) lay their top out themselves.
+#[allow(clippy::too_many_arguments)]
 fn popup_box_top(
     out: &mut impl Write,
     left: u16,
@@ -334,7 +335,14 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
         Print('│'),
     )?;
 
-    popup_box_bottom(out, left as u16, (footer_row + 1) as u16, content_w, border, bg)?;
+    popup_box_bottom(
+        out,
+        left as u16,
+        (footer_row + 1) as u16,
+        content_w,
+        border,
+        bg,
+    )?;
     Ok(())
 }
 
@@ -673,7 +681,16 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     let active_fg = app.config.theme_chip_fg();
     let active_bg = app.config.theme_warning();
 
-    popup_box_top(out, left_col as u16, top_row as u16, inner_w, "", text_fg, border, bg)?;
+    popup_box_top(
+        out,
+        left_col as u16,
+        top_row as u16,
+        inner_w,
+        "",
+        text_fg,
+        border,
+        bg,
+    )?;
     queue!(
         out,
         MoveTo(left_col as u16, (top_row + 1) as u16),
@@ -1075,7 +1092,16 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     let bg = app.config.chrome_bg();
     let text_fg = app.config.theme_fg();
 
-    popup_box_top(out, left as u16, top as u16, inner_w, "", text_fg, level, bg)?;
+    popup_box_top(
+        out,
+        left as u16,
+        top as u16,
+        inner_w,
+        "",
+        text_fg,
+        level,
+        bg,
+    )?;
 
     // Content rows
     for (i, line) in wrapped.iter().enumerate() {
@@ -1272,7 +1298,16 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
     let text_fg = app.config.theme_fg();
     let dim_fg = app.config.theme_dim();
 
-    popup_box_top(out, left as u16, top as u16, inner_w, " Delete ", title_fg, border, bg)?;
+    popup_box_top(
+        out,
+        left as u16,
+        top as u16,
+        inner_w,
+        " Delete ",
+        title_fg,
+        border,
+        bg,
+    )?;
 
     // Body row. Layout matches the cmdline: `│ ! <target>  <hint> │`
     // with the prompt glyph in the accent error colour so it reads
@@ -3577,7 +3612,7 @@ fn draw_list_page(out: &mut impl Write, app: &App) -> Result<()> {
     let mut lines: Vec<MessageRow> = Vec::new();
 
     if let Some(listing) = &app.listing {
-        listing_rows(&mut lines, listing, &p);
+        listing_rows(&mut lines, listing, p);
     } else {
         // Yank registers — Vim's `:reg` order is `"`, `0`, `1`-`9`,
         // then named (`a`-`z`), then `-`, `*`, `+`, then the read-only
@@ -4256,7 +4291,10 @@ fn build_health_rows(
         lsp_lines.push(SectionLine::Custom {
             parts: vec![
                 (format!("• {key:<18} "), p.text),
-                (format!("CRASHED (exit {code}) — restarts on next attach"), p.red),
+                (
+                    format!("CRASHED (exit {code}) — restarts on next attach"),
+                    p.red,
+                ),
             ],
         });
     }

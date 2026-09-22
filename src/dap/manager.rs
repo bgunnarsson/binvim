@@ -1381,7 +1381,15 @@ impl DapManager {
         let Some(session) = self.session.as_ref() else {
             return;
         };
-        if matches!(session.state, SessionState::Terminated) {
+        // While the adapter hasn't answered `initialize` yet, a
+        // setBreakpoints would go on the wire ahead of `launch` — the
+        // `initialized` event's full push covers whatever is toggled in
+        // that window. (The LSP client buffers pre-init frames for the
+        // same ordering reason; DAP requests are rare enough to skip.)
+        if matches!(
+            session.state,
+            SessionState::Terminated | SessionState::Initializing
+        ) {
             return;
         }
         let list = self.breakpoints.get(path).cloned().unwrap_or_default();

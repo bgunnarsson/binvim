@@ -468,9 +468,11 @@ mod tests {
 
     #[test]
     fn indent_label_names_the_width_for_both_styles() {
-        let mut cfg = crate::editorconfig::EditorConfig::default();
-        cfg.indent_style = crate::editorconfig::IndentStyle::Spaces;
-        cfg.indent_size = 2;
+        let mut cfg = crate::editorconfig::EditorConfig {
+            indent_style: crate::editorconfig::IndentStyle::Spaces,
+            indent_size: 2,
+            ..Default::default()
+        };
         assert_eq!(indent_label(&cfg), "spaces × 2");
         cfg.indent_style = crate::editorconfig::IndentStyle::Tabs;
         cfg.tab_width = 8;

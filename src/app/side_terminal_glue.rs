@@ -557,6 +557,293 @@ impl super::App {
             }
         }
     }
+
+    /// Mouse events inside the side pane: header-row clicks switch tabs,
+    /// plain left-drag is binvim's own selection gesture, and everything
+    /// else reaches the PTY when the embedded program tracks the mouse.
+    /// Returns whether the event landed inside the pane (and was consumed).
+    pub(super) fn handle_side_terminal_mouse_event(
+        &mut self,
+        ev: &crossterm::event::MouseEvent,
+        row: usize,
+        col: usize,
+    ) -> bool {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
+        if !(self.side_terminal_pane_open
+            && self.side_pane_cols() > 0
+            && col >= self.side_pane_left()
+            && row >= self.buffer_top()
+            && row < self.buffer_top() + self.buffer_rows())
+        {
+            return false;
+        }
+        // Header row = the first row of the pane. Same row the
+        // tab strip sits on.
+        let header_row = self.buffer_top();
+        if row == header_row
+            && matches!(
+                ev.kind,
+                MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+            )
+        {
+            let hits = self.side_terminal_tab_hitboxes.take();
+            let mut clicked: Option<usize> = None;
+            for (idx, x_start, x_end) in &hits {
+                if (col as u16) >= *x_start && (col as u16) < *x_end {
+                    clicked = Some(*idx);
+                    break;
+                }
+            }
+            self.side_terminal_tab_hitboxes.set(hits);
+            if let Some(idx) = clicked {
+                if idx < self.side_terminals.len() && idx != self.active_side_terminal_idx {
+                    self.active_side_terminal_idx = idx;
+                    // Drag selection is scoped to a single tab —
+                    // dropping it on tab switch keeps the highlight
+                    // from leaking into a grid the user didn't drag
+                    // across.
+                    self.side_terminal_selection = None;
+                }
+            }
+            self.terminal_focus = crate::app::TerminalFocus::Side;
+            self.mode = Mode::Terminal;
+            return true;
+        }
+        // Body: handle pane-scoped mouse-drag selection first
+        // (binvim's own, not forwarded to the PTY) — the host
+        // terminal's Shift+drag selects the whole window and has
+        // no awareness of where the side pane ends, so the user
+        // needs an inside-pane gesture to grab just the embedded
+        // tool's output. Plain left-drag (no modifier) is the
+        // selection gesture; it's intercepted before the PTY
+        // forward arm below. Click (`Down` → `Up` at same pos)
+        // still reaches the PTY so AI tools' clickable buttons
+        // keep working. Coords below are 0-based grid-local for
+        // selection storage; the xterm forward uses 1-based.
+        let content_left = self.side_pane_content_left();
+        let body_top = header_row + 1;
+        if row >= body_top && col >= content_left {
+            let active_idx = self.active_side_terminal_idx;
+            let (grid_row, grid_col, grid_rows, grid_cols) = {
+                let mut grow = row - body_top;
+                let mut gcol = col - content_left;
+                let (gr, gc) = if let Some(term) = self.active_side_terminal() {
+                    let inner = term.grid();
+                    let g = &inner.handler.grid;
+                    (g.rows, g.cols)
+                } else {
+                    (0, 0)
+                };
+                if gr > 0 {
+                    grow = grow.min(gr - 1);
+                }
+                if gc > 0 {
+                    gcol = gcol.min(gc - 1);
+                }
+                (grow, gcol, gr, gc)
+            };
+            let _ = (grid_rows, grid_cols);
+            match ev.kind {
+                // Mouse wheel for a program that does NOT track the
+                // mouse. opencode enables DECSET mouse tracking, so
+                // its wheel events fall through the guard to the
+                // xterm-forward arm below and it scrolls its own
+                // view. claude / codex don't — they render on the
+                // normal screen via in-place repaint, with their
+                // committed history scrolling into binvim's own
+                // grid scrollback. There's nothing downstream to
+                // forward to, so we page that scrollback ourselves
+                // — the same fallback the bottom `:terminal` pane
+                // already has, which the side pane was missing. A
+                // hypothetical alt-screen pager without tracking
+                // gets the wheel translated to arrow keys (xterm
+                // "alternate scroll") since alt-screen has no
+                // scrollback to page.
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+                    if self
+                        .active_side_terminal()
+                        .map(|t| !t.mouse_state().any)
+                        .unwrap_or(false) =>
+                {
+                    let up = matches!(ev.kind, MouseEventKind::ScrollUp);
+                    if let Some(term) = self.active_side_terminal() {
+                        if term.alt_screen_active() {
+                            let seq: &[u8] = if up {
+                                b"\x1b[A\x1b[A\x1b[A"
+                            } else {
+                                b"\x1b[B\x1b[B\x1b[B"
+                            };
+                            let _ = term.write_bytes(seq);
+                        } else {
+                            term.scroll_view_by(if up { 3 } else { -3 });
+                        }
+                    }
+                    return true;
+                }
+                MouseEventKind::Drag(MouseButton::Left)
+                    if !ev.modifiers.contains(KeyModifiers::SHIFT) =>
+                {
+                    // Start a fresh selection on the first drag
+                    // sample, or extend an in-flight one. After a
+                    // double-click the drag grows word-by-word.
+                    // Don't forward to the PTY — drag is "ours".
+                    if let Some(origin) = self.side_click.word_drag {
+                        let dword = self.side_word_at(grid_row, grid_col);
+                        let (lo, hi) =
+                            crate::app::word_drag_span(origin, grid_row, grid_col, dword);
+                        self.side_terminal_selection = Some(crate::app::SideSelection {
+                            tab_idx: active_idx,
+                            anchor: lo,
+                            head: hi,
+                            dragging: true,
+                        });
+                    } else {
+                        let sel = self.side_terminal_selection.take();
+                        let new_sel = match sel {
+                            Some(mut s) if s.tab_idx == active_idx => {
+                                s.head = (grid_row, grid_col);
+                                s.dragging = true;
+                                s
+                            }
+                            _ => crate::app::SideSelection {
+                                tab_idx: active_idx,
+                                anchor: (grid_row, grid_col),
+                                head: (grid_row, grid_col),
+                                dragging: true,
+                            },
+                        };
+                        self.side_terminal_selection = Some(new_sel);
+                    }
+                    if !matches!(self.mode, Mode::Terminal) {
+                        self.mode = Mode::Terminal;
+                        self.terminal_focus = crate::app::TerminalFocus::Side;
+                    }
+                    return true;
+                }
+                MouseEventKind::Up(MouseButton::Left) => {
+                    // If a drag selection just ended, copy the
+                    // covered cells to the system clipboard and
+                    // hold the highlight until the next click.
+                    if let Some(mut s) = self.side_terminal_selection.take() {
+                        if s.tab_idx == active_idx && s.dragging {
+                            s.dragging = false;
+                            let copied = if let Some(term) = self.active_side_terminal() {
+                                let inner = term.grid();
+                                // `visible_row`-based so a selection
+                                // made while scrolled back copies the
+                                // history the user actually sees.
+                                crate::app::extract_visible_selection_text(&inner.handler.grid, &s)
+                            } else {
+                                String::new()
+                            };
+                            self.side_terminal_selection = Some(s);
+                            if !copied.is_empty() {
+                                super::registers::set_system_clipboard(
+                                    &copied,
+                                    self.config.clipboard.osc52,
+                                );
+                                let n = copied.chars().count();
+                                self.status_msg = format!("ai: copied {n} chars");
+                            }
+                            return true;
+                        }
+                        // Wasn't our drag — put it back so the
+                        // next render still sees it.
+                        self.side_terminal_selection = Some(s);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Double-click selects the word under the cursor
+                    // (and copies it), arming word-granular drag —
+                    // it's "ours", so it returns without forwarding.
+                    // A single click drops any held-over selection
+                    // and falls through to the PTY so the embedded
+                    // tool's clickable buttons keep working.
+                    let now = std::time::Instant::now();
+                    let is_double = self
+                        .side_click
+                        .last
+                        .filter(|(t, r, c)| {
+                            now.duration_since(*t) <= crate::app::DOUBLE_CLICK_WINDOW
+                                && *r == grid_row
+                                && *c == grid_col
+                        })
+                        .is_some();
+                    if is_double {
+                        if let Some((s, e)) = self.side_word_at(grid_row, grid_col) {
+                            let sel = crate::app::SideSelection {
+                                tab_idx: active_idx,
+                                anchor: (grid_row, s),
+                                head: (grid_row, e.saturating_sub(1).max(s)),
+                                dragging: false,
+                            };
+                            let copied = if let Some(term) = self.active_side_terminal() {
+                                let inner = term.grid();
+                                crate::app::extract_visible_selection_text(
+                                    &inner.handler.grid,
+                                    &sel,
+                                )
+                            } else {
+                                String::new()
+                            };
+                            self.side_terminal_selection = Some(sel);
+                            self.side_click.word_drag = Some((grid_row, s, e));
+                            if !copied.is_empty() {
+                                super::registers::set_system_clipboard(
+                                    &copied,
+                                    self.config.clipboard.osc52,
+                                );
+                                let n = copied.chars().count();
+                                self.status_msg = format!("ai: copied {n} chars");
+                            }
+                        } else {
+                            self.side_terminal_selection = None;
+                            self.side_click.word_drag = None;
+                        }
+                        self.side_click.last = None;
+                        self.terminal_focus = crate::app::TerminalFocus::Side;
+                        self.mode = Mode::Terminal;
+                        return true;
+                    }
+                    self.side_terminal_selection = None;
+                    self.side_click.word_drag = None;
+                    self.side_click.last = Some((now, grid_row, grid_col));
+                }
+                MouseEventKind::Down(MouseButton::Right) => {
+                    self.side_terminal_selection = None;
+                    self.side_click.word_drag = None;
+                }
+                _ => {}
+            }
+            let pane_row = grid_row + 1;
+            let pane_col = grid_col + 1;
+            if let Some(term) = self.active_side_terminal() {
+                let mouse = term.mouse_state();
+                if mouse.any {
+                    if let Some(bytes) = super::terminal_glue::encode_mouse_event_for_pty(
+                        ev, pane_row, pane_col, mouse,
+                    ) {
+                        let _ = term.write_bytes(&bytes);
+                    }
+                    if matches!(ev.kind, MouseEventKind::Down(_))
+                        && !matches!(self.mode, Mode::Terminal)
+                    {
+                        self.mode = Mode::Terminal;
+                        self.terminal_focus = crate::app::TerminalFocus::Side;
+                    }
+                    return true;
+                }
+            }
+        }
+        if matches!(
+            ev.kind,
+            MouseEventKind::Down(MouseButton::Left | MouseButton::Middle)
+        ) {
+            self.terminal_focus = crate::app::TerminalFocus::Side;
+            self.mode = Mode::Terminal;
+        }
+        true
+    }
 }
 
 /// True while the side terminal `s` is still settling — show the

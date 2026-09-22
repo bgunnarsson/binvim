@@ -297,7 +297,9 @@ mod tests {
     #[test]
     fn drain_caps_events_per_call_without_losing_any() {
         let child = if cfg!(windows) {
-            std::process::Command::new("cmd").args(["/C", "exit"]).spawn()
+            std::process::Command::new("cmd")
+                .args(["/C", "exit"])
+                .spawn()
         } else {
             std::process::Command::new("true").spawn()
         }

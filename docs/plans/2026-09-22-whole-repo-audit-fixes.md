@@ -215,7 +215,7 @@ Decisions made here, from the code and the lore:
   `Buffer` constructors via `..Self::empty()`; picker page-move helper; spell.rs dead closure
   removed; lsp/dap specs share one `#[cfg(test)]` scratch helper (home: `paths.rs`'s existing
   test-support). Verify: `cargo test`.
-- [ ] **D2 — Small cleanups, batch 2.** Extract `handle_side_terminal_mouse_event` and
+- [x] **D2 — Small cleanups, batch 2.** Extract `handle_side_terminal_mouse_event` and
   `handle_file_tree_mouse_event` per the existing extraction pattern; narrow the
   `apply_concrete_edits` comment to the recovery-precondition guarantee; gate
   `resend_breakpoints_for` while DAP `state == Initializing`. Verify: `cargo test` + tmux mouse
