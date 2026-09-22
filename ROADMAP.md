@@ -96,7 +96,8 @@ same zero-config IDE a macOS developer does." Three tiers, the first done:
   second-instance recovery all passed on a real Windows machine.
 - **Feature parity (0.7).** Ship the flows that assume a POSIX shell: per-shell
   dispatch for the **task runner** and **AI side panes** (`/C` for cmd.exe,
-  `-Command` for pwsh, untouched for bash), the cmd.exe variant of `shell_quote`,
+  `-Command` for pwsh, untouched for bash) and the cmd.exe variant of
+  `shell_quote` — done, through `terminal::shell_launch` — then
   native **winget / scoop / choco** support in `binvim-install` + `:install`
   (three `Installer` variants + `detect_managers` probes), and full SCSS
   highlighting once `tree-sitter-scss` cuts a release with the MSVC fix.

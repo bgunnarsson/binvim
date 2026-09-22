@@ -109,11 +109,17 @@ Decisions:
 - [x] Route `open_side_terminal` through `shell_launch` with `[command]` and no cwd, and update the
   comment above it that describes the POSIX-only launcher. Verify with `cargo build` and the manual
   AI-pane check below.
-- [ ] Add `#[cfg(windows)]` tests in `terminal::tests` that run a `Launch` through
+- [x] Add `#[cfg(windows)]` tests in `terminal::tests` that run a `Launch` through
   `std::process::Command` (same argv, env and cwd). For `cmd.exe`, words `["cmd.exe", "/D", "/C",
   "exit 7"]` exit 7, and `["cmd.exe", "/D", "/C", "cd"]` in a temp dir prints that dir. The same
   exit test runs under `powershell.exe`. Verify it on the `windows-latest` CI job.
-- [ ] Update docs: tick the three `WINDOWS.md` section 2 items, note the progress under
+  Deviation: the program run inside the cmd.exe launch is `powershell.exe`, not a second `cmd.exe`.
+  cmd reads its own raw command line and finds `/C` inside a quoted `"/C"`, so the first CI run
+  failed with `'"exit 7&exit 9' is not recognized` from the inner cmd while the outer launch was
+  right. The `&` check is `exit 7 #&exit 9` (a PowerShell comment), and the PowerShell test checks
+  the directory rather than an exit code, which Windows PowerShell 5.1 doesn't reliably pass
+  through. Directories are compared canonicalized, since the runner's `temp_dir()` is an 8.3 path.
+- [x] Update docs: tick the three `WINDOWS.md` section 2 items, note the progress under
   `ROADMAP.md` "Feature parity (0.7)", fix `default_shell`'s doc comment, and add an Unreleased
   `### Fixed` entry to `CHANGELOG.md`. Verify by reading the diff.
 

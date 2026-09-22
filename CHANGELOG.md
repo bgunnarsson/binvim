@@ -4,6 +4,15 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Tasks and AI side panes start under cmd.exe and PowerShell.** `:make`,
+  `:task` and the AI panes handed every shell POSIX flags (`-l -i -c`), so on
+  Windows — or with `pwsh` as your shell anywhere — nothing ran. Each shell now
+  gets its own launch, and a task's script name is quoted for that shell, so a
+  name like `a&echo pwned` is passed to the task instead of being run.
+
 ## [0.6.6] - 2026-09-22
 
 ### Added
