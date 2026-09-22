@@ -306,6 +306,7 @@ impl super::App {
                 LspEvent::ServerExited {
                     client_key,
                     exit_code,
+                    gave_up,
                 } => {
                     // The in-flight guards and per-version anchors were set
                     // for requests that died with the server; left in place
@@ -321,9 +322,18 @@ impl super::App {
                     self.last_semantic_tokens_request_version.clear();
                     self.last_code_lens_request_version.clear();
                     self.last_copilot_request_version.clear();
-                    self.status_msg =
-                        format!("lsp: {client_key} exited ({exit_code}) — restarting");
-                    self.lsp_attach_active();
+                    // Re-attaching a key that keeps dying at spawn is a
+                    // ~10-spawns-a-second loop; past the cap the manager
+                    // refuses the key, so don't kick it again either.
+                    if gave_up {
+                        self.status_msg = format!(
+                            "lsp: {client_key} exited ({exit_code}) — not restarting (crashed repeatedly, see :health)"
+                        );
+                    } else {
+                        self.status_msg =
+                            format!("lsp: {client_key} exited ({exit_code}) — restarting");
+                        self.lsp_attach_active();
+                    }
                 }
                 LspEvent::RequestFailed { kind, path } => {
                     if let Some(p) = path {

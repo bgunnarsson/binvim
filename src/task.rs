@@ -63,6 +63,7 @@ mod tests {
             program: source.tag().into(),
             args: vec![label.into()],
             description: None,
+            shell_tail: None,
         }
     }
 

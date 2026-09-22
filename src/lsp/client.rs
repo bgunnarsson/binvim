@@ -28,6 +28,9 @@ pub struct LspClient {
     #[allow(dead_code)]
     pub name: String,
     child: Mutex<Child>,
+    /// When the process was spawned — the manager reads it on exit to
+    /// tell a quick startup death from a long-lived server crashing.
+    pub spawned_at: std::time::Instant,
     stdin: Arc<Mutex<ChildStdin>>,
     pub incoming_rx: Receiver<LspIncoming>,
     next_id: Arc<Mutex<u64>>,
@@ -151,6 +154,7 @@ impl LspClient {
         let client = Self {
             name: spec.key.clone(),
             child: Mutex::new(child),
+            spawned_at: std::time::Instant::now(),
             stdin,
             incoming_rx: in_rx,
             next_id: Arc::new(Mutex::new(1)),

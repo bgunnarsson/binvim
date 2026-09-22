@@ -115,7 +115,21 @@ pub struct LspManager {
     /// code)` — kept for `:health`, and cleared per key when the server
     /// respawns.
     pub crashed: Vec<(String, i32)>,
+    /// Consecutive quick exits per server key. A server that dies within
+    /// `QUICK_EXIT_WINDOW` of spawning bumps its count; one that ran
+    /// longer resets it to 1 (a long-lived server crashing deserves a
+    /// fresh chance). At `MAX_QUICK_EXITS` the key stops respawning —
+    /// without the cap, a binary that execs and exits turned the
+    /// exit-detect → re-attach cycle into ~10 spawns a second, forever.
+    crash_counts: HashMap<String, u32>,
 }
+
+/// How long a server must survive for its next crash to count as fresh
+/// rather than consecutive.
+const QUICK_EXIT_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+/// Consecutive quick exits after which a server key is given up on for
+/// the session.
+const MAX_QUICK_EXITS: u32 = 3;
 
 /// Sign-in state for the Copilot LSP. Surfaced in the status line +
 /// `:health` so the user knows whether suggestions are actually
@@ -153,7 +167,14 @@ impl LspManager {
             copilot_status: CopilotStatus::NotStarted,
             skipped_root: None,
             crashed: Vec::new(),
+            crash_counts: HashMap::new(),
         }
+    }
+
+    /// True when `key` has died quickly `MAX_QUICK_EXITS` times in a row
+    /// and won't be respawned again this session. Surfaced by `:health`.
+    pub fn gave_up_on(&self, key: &str) -> bool {
+        self.crash_counts.get(key).copied().unwrap_or(0) >= MAX_QUICK_EXITS
     }
 
     /// Wraps the path-only `specs_for_path` and conditionally adds the
@@ -185,6 +206,12 @@ impl LspManager {
             return false;
         }
         for spec in &specs {
+            // A key that keeps dying right after spawn is done for the
+            // session — respawning it here is what made a crash a spawn
+            // storm.
+            if self.gave_up_on(&spec.key) {
+                continue;
+            }
             let start = path
                 .parent()
                 .map(|p| p.to_path_buf())
@@ -421,7 +448,7 @@ impl LspManager {
         let mut diagnostics_changed = false;
         let mut processed = 0usize;
         let mut more = false;
-        let mut exited: Vec<(String, i32)> = Vec::new();
+        let mut exited: Vec<(String, i32, bool)> = Vec::new();
         for (client_key, client) in self.clients.iter() {
             while processed < MAX_PER_CALL {
                 let Ok(msg) = client.incoming_rx.try_recv() else {
@@ -498,10 +525,11 @@ impl LspManager {
             // exited child has nothing more to say — safe to declare it dead
             // without losing buffered messages.
             if let Some(code) = client.try_exit_status() {
-                exited.push((client_key.clone(), code));
+                let quick = client.spawned_at.elapsed() < QUICK_EXIT_WINDOW;
+                exited.push((client_key.clone(), code, quick));
             }
         }
-        for (key, code) in exited {
+        for (key, code, quick) in exited {
             // Dropping the entry is what lets `ensure_for_path` respawn the
             // server on the next attach instead of writing into a broken pipe
             // forever; the pending entries would otherwise never resolve.
@@ -509,9 +537,16 @@ impl LspManager {
             self.pending.retain(|(k, _), _| k != &key);
             self.crashed.retain(|(k, _)| k != &key);
             self.crashed.push((key.clone(), code));
+            let count = self.crash_counts.entry(key.clone()).or_insert(0);
+            if quick {
+                *count += 1;
+            } else {
+                *count = 1;
+            }
             events.push(LspEvent::ServerExited {
                 client_key: key,
                 exit_code: code,
+                gave_up: *count >= MAX_QUICK_EXITS,
             });
         }
         if diagnostics_changed {

@@ -36,6 +36,7 @@ pub fn discover(root: &Path) -> Vec<Task> {
             program: pm.program().to_string(),
             args: pm.args_for_script(&name),
             description: Some(body),
+            shell_tail: None,
         })
         .collect()
 }

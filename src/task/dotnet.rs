@@ -34,6 +34,7 @@ pub fn discover(root: &Path) -> Vec<Task> {
             program: "dotnet".to_string(),
             args: vec![(*verb).to_string()],
             description: Some((*desc).to_string()),
+            shell_tail: None,
         })
         .collect()
 }

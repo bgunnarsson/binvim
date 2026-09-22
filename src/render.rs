@@ -4287,14 +4287,16 @@ fn build_health_rows(
             }
         }
     }
-    for (key, code) in &snap.lsp_crashed {
+    for (key, code, gave_up) in &snap.lsp_crashed {
+        let note = if *gave_up {
+            "gave up after repeated crashes"
+        } else {
+            "restarts on next attach"
+        };
         lsp_lines.push(SectionLine::Custom {
             parts: vec![
                 (format!("• {key:<18} "), p.text),
-                (
-                    format!("CRASHED (exit {code}) — restarts on next attach"),
-                    p.red,
-                ),
+                (format!("CRASHED (exit {code}) — {note}"), p.red),
             ],
         });
     }

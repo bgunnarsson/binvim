@@ -125,8 +125,13 @@ impl super::App {
             self.status_msg = "make: no build found (npm / just / cargo / make / dotnet)".into();
             return;
         };
-        task.args
-            .extend(args.split_whitespace().map(str::to_string));
+        // The tail rides beside `args`, not in it: `args` gets quoted
+        // into the launcher (its values come from project files), while
+        // this is the user's own typed text and keeps its shell meaning —
+        // `:make CFLAGS="-O2 -g"` still reaches make as one argument.
+        if !args.trim().is_empty() {
+            task.shell_tail = Some(args.trim().to_string());
+        }
         task.label = ":make".into();
         let tabs = self.terminals.len();
         self.task_kickoff(task);
@@ -184,11 +189,7 @@ impl super::App {
         // std::env::current_dir() (which is process-global) — the
         // child shell does the cd, the parent stays put.
         let cwd_arg = shell_quote(&task.cwd.to_string_lossy());
-        let mut exec_line = shell_quote(&task.program);
-        for arg in &task.args {
-            exec_line.push(' ');
-            exec_line.push_str(&shell_quote(arg));
-        }
+        let exec_line = launcher_exec_line(&task);
         let launcher = format!("cd {cwd_arg} && exec {exec_line}");
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
             Ok(term) => {
@@ -430,6 +431,23 @@ fn resolve_path(s: &str, cwd: &std::path::Path) -> std::path::PathBuf {
     if p.is_absolute() { p } else { cwd.join(p) }
 }
 
+/// The `exec …` half of a task's shell launcher: the program and every
+/// discovered arg single-quoted (they come verbatim out of project
+/// files), the `:make` tail appended as typed so the user's shell still
+/// word-splits, globs and expands their own text.
+fn launcher_exec_line(task: &crate::task::Task) -> String {
+    let mut out = shell_quote(&task.program);
+    for arg in &task.args {
+        out.push(' ');
+        out.push_str(&shell_quote(arg));
+    }
+    if let Some(tail) = &task.shell_tail {
+        out.push(' ');
+        out.push_str(tail);
+    }
+    out
+}
+
 /// Single-quote a string for safe embedding in a shell command line.
 /// Replaces any embedded `'` with `'\''` (close-quote, escaped-quote,
 /// reopen-quote) — the standard POSIX trick. Applied to the `cd ...`
@@ -465,6 +483,23 @@ mod tests {
     fn shell_quote_escapes_embedded_single_quote() {
         let q = shell_quote("/tmp/it's");
         assert_eq!(q, "'/tmp/it'\\''s'");
+    }
+
+    #[test]
+    fn launcher_quotes_discovered_args_but_not_the_make_tail() {
+        let task = crate::task::Task {
+            label: ":make".into(),
+            source: crate::task::TaskSource::Makefile,
+            cwd: std::path::PathBuf::from("/p"),
+            program: "make".into(),
+            args: vec!["all$(boom)".into()],
+            description: None,
+            shell_tail: Some("CFLAGS=\"-O2 -g\" src/*.c".into()),
+        };
+        assert_eq!(
+            launcher_exec_line(&task),
+            "'make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
+        );
     }
 
     #[test]
@@ -559,6 +594,7 @@ src/baz.rs:1:1: error: c";
             program: "pnpm".into(),
             args: vec!["dev".into()],
             description: None,
+            shell_tail: None,
         };
         assert!(t.is_long_running());
     }
@@ -572,6 +608,7 @@ src/baz.rs:1:1: error: c";
             program: "pnpm".into(),
             args: vec!["build".into()],
             description: None,
+            shell_tail: None,
         };
         assert!(!t.is_long_running());
     }
@@ -587,6 +624,7 @@ src/baz.rs:1:1: error: c";
             program: "pnpm".into(),
             args: vec![],
             description: None,
+            shell_tail: None,
         };
         assert!(
             !t.is_long_running(),

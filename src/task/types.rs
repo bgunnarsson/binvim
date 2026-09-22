@@ -30,6 +30,13 @@ pub struct Task {
     /// it's the underlying command. `None` when nothing useful is
     /// available.
     pub description: Option<String>,
+    /// `:make`'s free-form tail, exactly as the user typed it. Kept
+    /// apart from `args` because the launcher quotes every `args`
+    /// element (they come out of project files), while this text is the
+    /// user's own — appended unquoted so their shell still word-splits,
+    /// globs and expands it, as `:make CFLAGS="-O2 -g"` expects. `None`
+    /// for every discovered task.
+    pub shell_tail: Option<String>,
 }
 
 impl Task {
@@ -37,11 +44,16 @@ impl Task {
     /// here so call sites that want to display or hand the command to
     /// a PTY don't have to re-stitch it.
     pub fn command_line(&self) -> String {
-        if self.args.is_empty() {
+        let mut out = if self.args.is_empty() {
             self.program.clone()
         } else {
             format!("{} {}", self.program, self.args.join(" "))
+        };
+        if let Some(tail) = &self.shell_tail {
+            out.push(' ');
+            out.push_str(tail);
         }
+        out
     }
 
     /// Heuristic: this task likely runs until the user kills it

@@ -41,6 +41,7 @@ pub fn discover(root: &Path) -> Vec<Task> {
             program: "cargo".to_string(),
             args: vec![name.clone()],
             description: Some(format!("cargo {} = {}", name, expansion)),
+            shell_tail: None,
         });
     }
     for (verb, desc) in BUILTIN_VERBS {
@@ -54,6 +55,7 @@ pub fn discover(root: &Path) -> Vec<Task> {
             program: "cargo".to_string(),
             args: vec![(*verb).to_string()],
             description: Some((*desc).to_string()),
+            shell_tail: None,
         });
     }
     out

@@ -193,10 +193,13 @@ pub enum LspEvent {
     /// A server's process exited on its own — crash, OOM kill, a panic.
     /// The manager has already dropped the client and its pending
     /// requests; the App clears its per-path request bookkeeping so
-    /// features re-fire against the respawned server.
+    /// features re-fire against the respawned server. `gave_up` means
+    /// the key hit its consecutive-quick-exit cap and won't respawn
+    /// again this session — the App must not re-attach then.
     ServerExited {
         client_key: String,
         exit_code: i32,
+        gave_up: bool,
     },
     /// `textDocument/inlayHint` results for `path` — the App stores them
     /// per-buffer and the renderer pulls them on draw.

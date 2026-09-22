@@ -36,6 +36,7 @@ pub fn discover(root: &Path) -> Vec<Task> {
             program: "just".to_string(),
             args: vec![name],
             description,
+            shell_tail: None,
         })
         .collect()
 }
