@@ -1,7 +1,7 @@
 ---
 title: Every upward search that picks a command, a server root or a program skips what other users can plant
 date: 2026-09-22
-status: in-progress
+status: done
 ---
 
 ## Context
@@ -104,7 +104,9 @@ Decisions (made here, from the code and the rule):
 - [x] `package::find_root_by_marker` ignores a planted marker for `nearest` and a planted `.git`
   for the early stop. Test covering both. Verify: `cargo test package::tests`.
 - [x] `git::find_repo_root` skips a planted `.git`. Test. Verify: `cargo test git::tests`.
-- [ ] Full gate and the tmux check in Verification; `cargo build --release`.
+- [x] Full gate and the tmux check in Verification; `cargo build --release`.
+  Deviation: with no prettier on `$PATH`, opening `a.md` pops the install-toolchain picker, which
+  takes the first keys; the harness dismisses it with `Escape` before typing.
 
 ## Files
 
