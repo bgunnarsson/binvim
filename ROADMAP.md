@@ -27,7 +27,7 @@ makes it visible** — all without opening the binary up.
 
 ---
 
-## Horizon 1 — "Nothing bounces on first run"  (target: 0.6)
+## Horizon 1 — "Nothing bounces on first run"  (shipped in 0.6)
 
 The biggest adoption leak for a closed IDE: someone `brew install`s it, opens a
 file, and completion / highlighting / format isn't there because the toolchain
@@ -89,12 +89,11 @@ runs on `x86_64-pc-windows-msvc`, and CI exercises every push against
 `windows-latest` alongside ubuntu + macos. The detailed tracker lives in
 [`WINDOWS.md`](WINDOWS.md); the roadmap-level commitment is to close the gap
 between "compiles and unit-tests pass in CI" and "a Windows developer gets the
-same zero-config IDE a macOS developer does." Three tiers of remaining work:
+same zero-config IDE a macOS developer does." Three tiers, the first done:
 
-- **On-device verification (0.6).** CI proves compilation, not behaviour. Exercise
-  `install.ps1` end-to-end on a fresh Windows 10/11 VM, then LSP discovery, DAP
-  launch, `:terminal` (ConPTY), and CRLF round-trip on real hardware. Anything
-  that fails here is a first-run bounce on the second-biggest developer platform.
+- **On-device verification (0.6) — done.** `install.ps1` end-to-end, LSP
+  discovery, DAP launch, `:terminal` (ConPTY), CRLF round-trip and
+  second-instance recovery all passed on a real Windows machine.
 - **Feature parity (0.7).** Ship the flows that assume a POSIX shell: per-shell
   dispatch for the **task runner** and **AI side panes** (`/C` for cmd.exe,
   `-Command` for pwsh, untouched for bash), the cmd.exe variant of `shell_quote`,
@@ -134,7 +133,7 @@ Windows reaches feature parity (see the Windows workstream above).
 
 | Version | Theme | Ships when |
 |---------|-------|------------|
-| 0.6 | First-run setup | Contextual toolchain install, prescriptive `:health`, `:config` live-reload + validation; Windows on-device verification |
+| 0.6 (shipped) | First-run setup | Contextual toolchain install, prescriptive `:health`, `:config` live-reload + validation; Windows on-device verification |
 | 0.7 | Hardening | Crash/data-loss audit clean, correctness suite green, terminal matrix documented; Windows feature parity (task runner, AI panes, winget/scoop/choco) |
 | 0.8–0.9 | Perf & proof | Published benchmarks, demo assets, migration guides, `winget`/AUR/apt; winget submission + Windows code-signing |
 | 1.0 | Quality bar | Zero-config first run, no data-loss path, matrices green, perf budget met, clippy gated, Windows at parity |

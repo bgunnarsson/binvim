@@ -17,20 +17,18 @@ Plus followups: tree-sitter-scss cfg-gated off MSVC (upstream master has the fix
 
 ## What's left
 
-Three categories of unfinished work, ordered by how visible they are to a user trying binvim on Windows.
+Three categories, ordered by how visible they are to a user trying binvim on Windows. The first is done; the other two are what is left.
 
 ### 1. On-device verification
 
-CI proves the binary compiles and unit tests pass on `windows-latest`. None of the following has been exercised on a real Windows machine:
+CI proves the binary compiles and unit tests pass on `windows-latest`. Each of the following was exercised on a real Windows machine on 2026-09-22 and passed:
 
-- [ ] `install.ps1` end-to-end on a fresh Windows 10/11 VM — confirm the zip downloads, extracts to `%LOCALAPPDATA%\binvim\bin\`, the PATH hint prints, and `binvim --version` works.
-- [ ] LSP discovery — drop `rust-analyzer.exe` on PATH (or under `~/.cargo/bin`), open a `.rs` file, confirm diagnostics + hover + goto-def arrive. Repeat with one `.exe`-suffixed tool (`gopls.exe`) and one that should resolve via the tilde-expansion path (`csharp-ls` from `.dotnet/tools`).
-- [ ] DAP launch — install `netcoredbg.exe`, open a `.NET` project, `<leader>db` to set a breakpoint, `<leader>dr` to run, confirm the breakpoint hits and locals + watches populate.
-- [ ] `:terminal` — confirm `cmd.exe` spawns and `dir` runs. ConPTY requires Windows 10 1809+.
-- [ ] CRLF round-trip — open a file with `\r\n` line endings in a real editor session, edit, `:w`, hex-dump the result to confirm `\r\n` is preserved. Repeat with an `.editorconfig` forcing `end_of_line = lf` to confirm conversion.
-- [ ] Second-instance recovery — open a file in binvim, dirty it and wait 5 s, then open the same file in a second binvim: it must not report recovered changes, and the first binvim's file under `%LOCALAPPDATA%\binvim\recover\` must still be there. Exercises `recover::process_alive`'s `tasklist` call.
-
-If any of these fail, the fix probably belongs in WS1-5; the plan covered the wiring but not the on-host validation.
+- [x] `install.ps1` end-to-end on a fresh Windows 10/11 VM — confirm the zip downloads, extracts to `%LOCALAPPDATA%\binvim\bin\`, the PATH hint prints, and `binvim --version` works.
+- [x] LSP discovery — drop `rust-analyzer.exe` on PATH (or under `~/.cargo/bin`), open a `.rs` file, confirm diagnostics + hover + goto-def arrive. Repeat with one `.exe`-suffixed tool (`gopls.exe`) and one that should resolve via the tilde-expansion path (`csharp-ls` from `.dotnet/tools`).
+- [x] DAP launch — install `netcoredbg.exe`, open a `.NET` project, `<leader>db` to set a breakpoint, `<leader>dr` to run, confirm the breakpoint hits and locals + watches populate.
+- [x] `:terminal` — confirm `cmd.exe` spawns and `dir` runs. ConPTY requires Windows 10 1809+.
+- [x] CRLF round-trip — open a file with `\r\n` line endings in a real editor session, edit, `:w`, hex-dump the result to confirm `\r\n` is preserved. Repeat with an `.editorconfig` forcing `end_of_line = lf` to confirm conversion.
+- [x] Second-instance recovery — open a file in binvim, dirty it and wait 5 s, then open the same file in a second binvim: it must not report recovered changes, and the first binvim's file under `%LOCALAPPDATA%\binvim\recover\` must still be there. Exercises `recover::process_alive`'s `tasklist` call.
 
 ### 2. Features that don't work on Windows yet (out of WS1-8 scope but real)
 
