@@ -190,10 +190,10 @@ pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
 fn has_any_marker(dir: &Path, markers: &[String]) -> bool {
     for marker in markers {
         if let Some(ext) = marker.strip_prefix("*.") {
-            if dir_contains_extension(dir, ext) {
+            if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
                 return true;
             }
-        } else if dir.join(marker).exists() {
+        } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
             return true;
         }
     }
@@ -240,5 +240,27 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
         assert!(adapter_for_workspace(&tmp).is_none());
         fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_roots_others_could_plant_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |p: &Path, mode| {
+            fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let root = std::env::temp_dir().join(format!("binvim-test-root-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("shared/project");
+        fs::create_dir_all(&project).unwrap();
+        let root = root.canonicalize().unwrap();
+        fs::write(root.join("shared/Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        set(&root, 0o755);
+        set(&root.join("shared"), 0o777);
+        assert!(adapter_for_workspace(&project).is_none());
+        fs::write(root.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        let (_, found) = adapter_for_workspace(&project).unwrap();
+        assert_eq!(found, root);
+        fs::remove_dir_all(&root).ok();
     }
 }

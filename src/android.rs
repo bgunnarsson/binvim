@@ -295,7 +295,8 @@ pub fn find_gradle_root(start: &Path) -> Option<PathBuf> {
     ];
     let mut dir = Some(start);
     while let Some(d) = dir {
-        if markers.iter().any(|m| d.join(m).exists()) {
+        let marked = |m: &&str| d.join(m).exists() && !crate::paths::others_can_plant(d, m);
+        if markers.iter().any(marked) {
             return Some(d.to_path_buf());
         }
         dir = d.parent();
@@ -646,5 +647,24 @@ Available Packages:
             parse_resolve_activity(fq).as_deref(),
             Some("com.example.app.ui.MainActivity")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn gradle_roots_others_could_plant_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let root = std::env::temp_dir().join(format!("binvim-gradle-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("shared/app");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(root.join("settings.gradle"), "").unwrap();
+        std::fs::write(root.join("shared/gradlew"), "").unwrap();
+        set(&root, 0o755);
+        set(&root.join("shared"), 0o777);
+        assert_eq!(find_gradle_root(&app), Some(root.clone()));
+        std::fs::remove_dir_all(&root).ok();
     }
 }

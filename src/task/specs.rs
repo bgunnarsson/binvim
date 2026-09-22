@@ -61,10 +61,10 @@ fn find_root(start: &Path, markers: &[&str]) -> Option<PathBuf> {
 fn has_any_marker(dir: &Path, markers: &[&str]) -> bool {
     for marker in markers {
         if let Some(ext) = marker.strip_prefix("*.") {
-            if dir_contains_extension(dir, ext) {
+            if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
                 return true;
             }
-        } else if dir.join(marker).exists() {
+        } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
             return true;
         }
     }
@@ -112,5 +112,27 @@ mod tests {
                 .any(|t| t.label == "build" && t.program == "cargo")
         );
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn task_roots_others_could_plant_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |p: &Path, mode| {
+            fs::set_permissions(p, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let root = std::env::temp_dir().join(format!("binvim-task-root-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let project = root.join("shared/project");
+        fs::create_dir_all(&project).unwrap();
+        let root = root.canonicalize().unwrap();
+        fs::write(root.join("Makefile"), "").unwrap();
+        fs::write(root.join("shared/Makefile"), "").unwrap();
+        set(&root, 0o755);
+        set(&root.join("shared"), 0o777);
+        assert_eq!(find_root(&project, &["Makefile"]), Some(root.clone()));
+        fs::remove_file(root.join("Makefile")).unwrap();
+        assert_eq!(find_root(&project, &["Makefile"]), None);
+        fs::remove_dir_all(&root).ok();
     }
 }
