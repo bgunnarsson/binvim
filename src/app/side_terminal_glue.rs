@@ -282,16 +282,18 @@ impl super::App {
         self.side_terminal_pane_open = true;
         let cols = self.side_pane_content_cols().max(8) as u16;
         let rows = (self.buffer_rows()).saturating_sub(1).max(4) as u16;
-        // Launch the user's `$SHELL` as a login + interactive shell
-        // so it sources `.zprofile` + `.zshrc` (and equivalents on
-        // bash). That's where nvm / asdf / direnv / homebrew shims
-        // live — without them, a plain `spawn(codex)` would fail to
-        // resolve a `#!/usr/bin/env node` shebang script's
-        // interpreter. `-c "exec {command}"` runs the launcher and
-        // replaces the shell process with the AI tool, so the user
-        // never sees a residual shell prompt.
-        let shell = crate::terminal::default_shell();
-        let launcher = format!("exec {command}");
+        // Launch through the user's shell so its rc files or profile
+        // load (`.zprofile` + `.zshrc` and equivalents). That's where
+        // nvm / asdf / direnv / homebrew shims live — without them, a
+        // plain `spawn(codex)` would fail to resolve a `#!/usr/bin/env
+        // node` shebang script's interpreter. A POSIX shell `exec`s
+        // into the tool, so the user never sees a residual prompt.
+        let launch = crate::terminal::shell_launch(
+            &crate::terminal::default_shell(),
+            None,
+            &[command],
+            None,
+        );
         // Compute the `@<path> ` prefix on the spawn path only — the
         // re-focus branch above returns early so an ongoing
         // conversation never gets `@path` re-stuffed into it. Honour
@@ -305,14 +307,10 @@ impl super::App {
         } else {
             None
         };
-        match Terminal::spawn_program(
-            rows,
-            cols,
-            &shell,
-            &["-l", "-i", "-c", &launcher],
-            None,
-            &[],
-        ) {
+        match launch
+            .map_err(anyhow::Error::msg)
+            .and_then(|launch| Terminal::spawn_launch(rows, cols, &launch))
+        {
             Ok(t) => {
                 let now = Instant::now();
                 self.side_terminals.push(SideTerminal {

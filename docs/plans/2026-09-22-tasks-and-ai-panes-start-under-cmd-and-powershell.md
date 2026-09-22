@@ -106,7 +106,7 @@ Decisions:
   `shell_launch`. Verify with `cargo test task_glue::tests` and `cargo test terminal::tests`.
   Deviation: the task-to-words step is a small `task_launch` helper in `task_glue.rs`, so its test
   stays there and checks the POSIX line and the cmd.exe `BINVIM_LAUNCH` value for the same task.
-- [ ] Route `open_side_terminal` through `shell_launch` with `[command]` and no cwd, and update the
+- [x] Route `open_side_terminal` through `shell_launch` with `[command]` and no cwd, and update the
   comment above it that describes the POSIX-only launcher. Verify with `cargo build` and the manual
   AI-pane check below.
 - [ ] Add `#[cfg(windows)]` tests in `terminal::tests` that run a `Launch` through
