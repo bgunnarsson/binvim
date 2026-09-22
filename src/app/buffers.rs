@@ -692,11 +692,8 @@ impl super::App {
     pub(super) fn persist_active_cursor(&self) {
         // Only write when the position is actually restorable. A dirty buffer's
         // content hash never matches what's on disk, so persisting it would
-        // clobber the last good position with one that can't be restored. And
-        // during a focus swap App.window already holds the *incoming* window's
-        // cursor, which doesn't pair with this buffer's path — the window code
-        // persists the outgoing buffer itself while the pairing is still right.
-        if self.buffer.dirty || self.window.buffer_idx != self.active {
+        // clobber the last good position with one that can't be restored.
+        if self.buffer.dirty {
             return;
         }
         if let Some(path) = self.buffer.path.as_deref() {

@@ -148,7 +148,7 @@ Decisions made in this plan:
   drop the `cursor` argument from `save_to_path` in `src/app/save.rs` and the
   tuple destructure in `loaded_buf_state`. Verify: `git diff 7e1b1d6 --
   src/undo.rs` is empty; `cargo test undo::tests`.
-- [ ] **Switch the buffer before the outgoing window leaves `App.window`.** In
+- [x] **Switch the buffer before the outgoing window leaves `App.window`.** In
   `adopt_window`, call `switch_to(incoming.buffer_idx)` first, while
   `self.window` is still the window that showed the outgoing buffer, then
   assign `self.window = incoming`; the cache-and-reapply of cursor, viewport

@@ -51,15 +51,10 @@ impl super::App {
         if target == self.active_window {
             return;
         }
-        // This window still shows its own buffer with its own cursor (pairing is
-        // correct here), so remember where we are before App.window is replaced
-        // with the incoming view — otherwise the later snapshot/persist would
-        // write this buffer's path against the incoming window's cursor.
-        self.persist_active_cursor();
         let old_id = self.active_window;
-        // Stash current live window state into the slot for the outgoing window.
-        let outgoing = std::mem::take(&mut self.window);
-        self.windows.insert(old_id, outgoing);
+        // A copy into the outgoing window's slot: `App.window` stays live
+        // through the buffer switch in `adopt_window`, which reads it.
+        self.windows.insert(old_id, self.window.clone());
         // Pull in the incoming window's stash and adopt it as the live one.
         let incoming = self
             .windows
@@ -69,29 +64,21 @@ impl super::App {
     }
 
     /// Adopt a stashed window as the live one, swapping the active buffer
-    /// to its `buffer_idx` when that differs. `switch_to` handles the
-    /// snapshot/load dance and resets `window.buffer_idx` — but it would
-    /// overwrite the freshly-pulled cursor/viewport too, so they're cached
-    /// and reapplied after. Shared by focus and close: a field added to
-    /// the reapply list lands in both.
+    /// to its `buffer_idx` when that differs. The buffer switch comes first,
+    /// while `App.window` is still the window that showed the outgoing
+    /// buffer: `switch_to` snapshots that window's cursor into the buffer's
+    /// stash, and with the incoming window already in place the stash would
+    /// get a cursor from a different, possibly shorter, file. Shared by
+    /// focus and close.
     fn adopt_window(&mut self, id: crate::layout::WindowId, incoming: crate::window::Window) {
-        let target_buffer = incoming.buffer_idx;
-        self.window = incoming;
-        self.active_window = id;
-        if target_buffer != self.active {
-            let cursor = self.window.cursor;
-            let view_top = self.window.view_top;
-            let view_left = self.window.view_left;
-            let visual_anchor = self.window.visual_anchor;
-            if let Err(e) = self.switch_to(target_buffer) {
+        if incoming.buffer_idx != self.active {
+            if let Err(e) = self.switch_to(incoming.buffer_idx) {
                 self.status_msg = format!("error: {e}");
                 return;
             }
-            self.window.cursor = cursor;
-            self.window.view_top = view_top;
-            self.window.view_left = view_left;
-            self.window.visual_anchor = visual_anchor;
         }
+        self.window = incoming;
+        self.active_window = id;
     }
 
     /// `<C-w>q` / `<C-w>c` — close the active window. Refuses if it's
@@ -106,9 +93,6 @@ impl super::App {
             self.status_msg = "E444: cannot close last window".into();
             return;
         };
-        // The window being closed still holds its own buffer's cursor (see
-        // `focus_window`) — persist it before App.window is swapped.
-        self.persist_active_cursor();
         // Stash slot for the closed window is no longer reachable.
         self.windows.remove(&target);
         // The new-focus window's stash holds its view state — swap it
