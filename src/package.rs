@@ -540,22 +540,9 @@ fn run_capture(
         .output()
         .map_err(|e| format!("failed to run {bin}: {e}"))?;
     if !output.status.success() {
-        let pick = |bytes: &[u8]| -> String {
-            String::from_utf8_lossy(bytes)
-                .lines()
-                .map(|l| l.trim())
-                .filter(|l| !l.is_empty())
-                .take(4)
-                .collect::<Vec<_>>()
-                .join(" / ")
-        };
-        let mut msg = pick(&output.stderr);
-        if msg.is_empty() {
-            msg = pick(&output.stdout);
-        }
-        if msg.is_empty() {
-            msg = "(no output)".to_string();
-        }
+        let msg = clip_lines(&output.stderr, 4)
+            .or_else(|| clip_lines(&output.stdout, 4))
+            .unwrap_or_else(|| "(no output)".to_string());
         let code = output
             .status
             .code()
@@ -564,6 +551,26 @@ fn run_capture(
         return Err(format!("{bin} exit {code}: {msg}"));
     }
     String::from_utf8(output.stdout).map_err(|e| format!("{bin} stdout not utf-8: {e}"))
+}
+
+/// Trim each line, drop blanks, keep the first `take` and join with
+/// `" / "` — the one shape every subprocess error path uses to fit a
+/// tool's diagnostics on the status line. `None` when nothing survives,
+/// so each caller picks its own "(no output)" wording. Shared here the
+/// way `http_get` is: every backend that shells out already leans on
+/// this module.
+pub(crate) fn clip_lines(bytes: &[u8], take: usize) -> Option<String> {
+    let cleaned: Vec<String> = String::from_utf8_lossy(bytes)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .take(take)
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned.join(" / "))
+    }
 }
 
 /// Fetch `url` over HTTPS and return the body. We shell out to `curl` rather

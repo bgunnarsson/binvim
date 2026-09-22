@@ -94,18 +94,8 @@ fn run_stdin_pipe(bin: &Path, args: &[&str], source: &str, label: &str) -> Resul
         .wait_with_output()
         .map_err(|e| format!("{label} wait: {e}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let cleaned: Vec<String> = stderr
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .take(4)
-            .collect();
-        let msg = if cleaned.is_empty() {
-            "(no error output)".to_string()
-        } else {
-            cleaned.join(" / ")
-        };
+        let msg = crate::package::clip_lines(&output.stderr, 4)
+            .unwrap_or_else(|| "(no error output)".to_string());
         let code = output
             .status
             .code()
@@ -396,24 +386,19 @@ fn run_biome(path: &Path, source: &str) -> Result<String, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // biome wraps real diagnostics in box-drawing chrome and prints the
-        // file path on the first line. Strip that chrome and join the
-        // payload lines so the user actually sees what's wrong.
-        let cleaned: Vec<String> = stderr
+        // file path on the first line. Strip that chrome first, then clip
+        // like every other tool (six lines — biome's payload is wordier).
+        let stripped: String = stderr
             .lines()
             .map(|l| {
                 l.trim_matches(|c: char| {
                     c.is_whitespace() || matches!(c, '━' | '│' | '╭' | '╮' | '╯' | '╰' | '┃')
                 })
-                .to_string()
             })
-            .filter(|l| !l.is_empty())
-            .take(6)
-            .collect();
-        let msg = if cleaned.is_empty() {
-            "(no error output)".to_string()
-        } else {
-            cleaned.join(" / ")
-        };
+            .collect::<Vec<_>>()
+            .join("\n");
+        let msg = crate::package::clip_lines(stripped.as_bytes(), 6)
+            .unwrap_or_else(|| "(no error output)".to_string());
         let code = output
             .status
             .code()
@@ -557,48 +542,7 @@ fn run_gofmt(source: &str) -> Result<String, String> {
                 .into(),
         );
     };
-
-    let mut child = Command::new(&bin)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("failed to spawn {label}: {e}"))?;
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("{label} stdin missing"))?;
-        stdin
-            .write_all(source.as_bytes())
-            .map_err(|e| format!("write to {label} stdin: {e}"))?;
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("{label} wait: {e}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        // gofmt's error format: `<stdin>:LINE:COL: message` — keep the
-        // first few lines so the user sees what's wrong.
-        let cleaned: Vec<String> = stderr
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .take(4)
-            .collect();
-        let msg = if cleaned.is_empty() {
-            "(no error output)".to_string()
-        } else {
-            cleaned.join(" / ")
-        };
-        let code = output
-            .status
-            .code()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "?".into());
-        return Err(format!("{label} exit {code}: {msg}"));
-    }
-    String::from_utf8(output.stdout).map_err(|e| format!("{label} stdout not utf-8: {e}"))
+    run_stdin_pipe(&bin, &[], source, label)
 }
 
 /// What `format_buffer` would do for `path`'s extension: which tool
@@ -754,18 +698,8 @@ fn run_tool_on_file(bin: &Path, args: &[&str], file: &Path, label: &str) -> Resu
     match result {
         Ok(o) if o.status.success() => Ok(()),
         Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let cleaned: Vec<String> = stderr
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .take(4)
-                .collect();
-            let msg = if cleaned.is_empty() {
-                "(no error output)".to_string()
-            } else {
-                cleaned.join(" / ")
-            };
+            let msg = crate::package::clip_lines(&o.stderr, 4)
+                .unwrap_or_else(|| "(no error output)".to_string());
             let code = o
                 .status
                 .code()
@@ -797,18 +731,11 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOu
     }
     let status = child.wait().map_err(|e| format!("csharpier wait: {e}"))?;
     if !status.success() {
-        let cleaned: Vec<String> = stderr_buf
-            .lines()
-            .chain(stdout_buf.lines())
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .take(4)
-            .collect();
-        let msg = if cleaned.is_empty() {
-            "(no error output)".to_string()
-        } else {
-            cleaned.join(" / ")
-        };
+        // stderr first, then stdout in the same clip — csharpier splits
+        // its diagnostics across both.
+        let combined = format!("{stderr_buf}\n{stdout_buf}");
+        let msg = crate::package::clip_lines(combined.as_bytes(), 4)
+            .unwrap_or_else(|| "(no error output)".to_string());
         let code = status
             .code()
             .map(|c| c.to_string())

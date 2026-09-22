@@ -181,7 +181,10 @@ Decisions made here, from the code and the lore:
   in `paths.rs` with Option and fallback variants; `lsp/dap/test/task` specs call it; their walk
   tests collapse into `paths.rs` (nested-candidate planting per the lore); the per-module callers
   keep only integration-shaped tests. Verify: the lore's grep accounting plus full test suite.
-- [ ] **C2 — One stderr clip.** `clip_lines` in `package.rs`; all eight sites call it (biome keeps
+- [x] **C2 — One stderr clip.**
+  Deviation: `android::run_capture` keeps its own signature (it takes a
+  prebuilt `Command` and label — not a match for `package::run_capture`'s
+  bin/args/cwd/env shape); only the clip is shared. `clip_lines` in `package.rs`; all eight sites call it (biome keeps
   its box-strip around it, take counts preserved per site); `run_gofmt` becomes a
   `run_stdin_pipe` call; `android::run_capture` merges with `package::run_capture` only if
   signatures align. Verify: existing formatter/package/android parser tests unchanged.

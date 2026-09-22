@@ -153,22 +153,9 @@ fn run_capture(mut cmd: Command, label: &str) -> Result<String, String> {
         .output()
         .map_err(|e| format!("failed to run {label}: {e}"))?;
     if !output.status.success() {
-        let pick = |bytes: &[u8]| -> String {
-            String::from_utf8_lossy(bytes)
-                .lines()
-                .map(|l| l.trim())
-                .filter(|l| !l.is_empty())
-                .take(4)
-                .collect::<Vec<_>>()
-                .join(" / ")
-        };
-        let mut msg = pick(&output.stderr);
-        if msg.is_empty() {
-            msg = pick(&output.stdout);
-        }
-        if msg.is_empty() {
-            msg = "(no output)".to_string();
-        }
+        let msg = crate::package::clip_lines(&output.stderr, 4)
+            .or_else(|| crate::package::clip_lines(&output.stdout, 4))
+            .unwrap_or_else(|| "(no output)".to_string());
         return Err(format!("{label}: {msg}"));
     }
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
