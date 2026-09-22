@@ -1,7 +1,7 @@
 ---
 title: Every upward search that picks a command, a server root or a program skips what other users can plant
 date: 2026-09-22
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -86,7 +86,7 @@ Decisions (made here, from the code and the rule):
 
 ## Tasks
 
-- [ ] Add `paths::others_can_plant(dir, rel)` (`#[cfg(unix)]` / `#[cfg(not(unix))]` split, the
+- [x] Add `paths::others_can_plant(dir, rel)` (`#[cfg(unix)]` / `#[cfg(not(unix))]` split, the
   why-comment moved from `tag.rs` and widened to name commands and server roots), with tests in
   `paths.rs` for: clean tree → false; `0o777` `dir` → true; `0o777` intermediate directory → true;
   `0o666` candidate → true. Switch `find_tags_file` to it and delete `tag.rs`'s

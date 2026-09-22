@@ -162,6 +162,31 @@ pub fn path_key(path: &Path) -> String {
     format!("{h:016x}")
 }
 
+/// True when another user could have put `dir.join(rel)` there: `dir`, or
+/// any path from it down to the candidate, is writable by others. A search
+/// that climbs out of the project reaches directories like `/tmp`, and what
+/// it finds chooses a file to open, a command to run or the root a language
+/// server builds in. Every step is checked, not only the candidate's parent,
+/// because another user can create `/tmp/node_modules` mode `0755` and all
+/// of it would look trusted. Mode bits rather than ownership: binvim has no
+/// uid API.
+#[cfg(unix)]
+pub fn others_can_plant(dir: &Path, rel: impl AsRef<Path>) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let open = |p: &Path| std::fs::metadata(p).is_ok_and(|m| m.permissions().mode() & 0o002 != 0);
+    let mut path = dir.to_path_buf();
+    open(&path)
+        || rel.as_ref().components().any(|c| {
+            path.push(c);
+            open(&path)
+        })
+}
+
+#[cfg(not(unix))]
+pub fn others_can_plant(_: &Path, _: impl AsRef<Path>) -> bool {
+    false
+}
+
 /// Write `bytes` to `path` so that a write failing partway — a full disk, a
 /// dropped mount — leaves the old file whole rather than truncated: the bytes
 /// go to a temp file beside the target, are synced, and are renamed over it.
@@ -500,5 +525,37 @@ mod tests {
         result.unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"new");
         assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn others_can_plant_checks_every_step_down_to_the_candidate() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("plant");
+        let set = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let bin = dir.join("node_modules/.bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("tool"), "").unwrap();
+        for p in [&dir, &dir.join("node_modules"), &bin, &bin.join("tool")] {
+            set(p, 0o755);
+        }
+        let rel = "node_modules/.bin/tool";
+        assert!(!others_can_plant(&dir, rel));
+        set(&dir, 0o777);
+        assert!(others_can_plant(&dir, rel));
+        set(&dir, 0o755);
+        set(&dir.join("node_modules"), 0o777);
+        assert!(others_can_plant(&dir, rel));
+        set(&dir.join("node_modules"), 0o755);
+        set(&bin.join("tool"), 0o757);
+        assert!(others_can_plant(&dir, rel));
+        set(&bin.join("tool"), 0o775);
+        assert!(
+            !others_can_plant(&dir, rel),
+            "group-writable is still trusted"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

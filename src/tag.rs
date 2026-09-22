@@ -63,25 +63,8 @@ pub fn find_tags_file(start: &Path) -> Option<PathBuf> {
     let start = std::path::absolute(start).ok()?;
     start
         .ancestors()
+        .find(|dir| dir.join("tags").is_file() && !crate::paths::others_can_plant(dir, "tags"))
         .map(|dir| dir.join("tags"))
-        .find(|p| p.is_file() && !writable_by_others(p))
-}
-
-/// A `tags` file chooses what a jump opens, and opening a file starts its
-/// language server, which may build the project. The search climbs out of
-/// the project, so a `tags` file that any user can rewrite, or that sits in a
-/// directory any user can write to (`/tmp`), could be another user's plant.
-#[cfg(unix)]
-fn writable_by_others(path: &Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = |p: &Path| std::fs::metadata(p).map_or(0, |m| m.permissions().mode());
-    let dir = path.parent().unwrap_or(Path::new("/"));
-    (mode(path) | mode(dir)) & 0o002 != 0
-}
-
-#[cfg(not(unix))]
-fn writable_by_others(_: &Path) -> bool {
-    false
 }
 
 /// A parsed `tags` file, kept while the file's mtime and length stay put —
