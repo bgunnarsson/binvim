@@ -699,7 +699,7 @@ fn find_cargo_target_dir(start: &Path) -> Option<PathBuf> {
     let mut dir: &Path = canon.as_path();
     loop {
         let candidate = dir.join("target");
-        if candidate.is_dir() {
+        if candidate.is_dir() && !crate::paths::others_can_plant(dir, "target") {
             return Some(candidate);
         }
         match dir.parent() {
@@ -727,10 +727,11 @@ pub fn find_dotnet_workspace_root(start: &Path) -> PathBuf {
     // `.slnx` is the .NET 10 XML solution format (alongside the classic `.sln`).
     let mut dir: &Path = canon.as_path();
     loop {
-        if dir_contains_extension(dir, "sln") || dir_contains_extension(dir, "slnx") {
+        let solution = dir_contains_extension(dir, "sln") || dir_contains_extension(dir, "slnx");
+        if solution && !crate::paths::others_can_plant(dir, "") {
             return dir.to_path_buf();
         }
-        if dir.join(".git").exists() {
+        if dir.join(".git").exists() && !crate::paths::others_can_plant(dir, ".git") {
             return dir.to_path_buf();
         }
         match dir.parent() {
@@ -935,10 +936,10 @@ pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
 fn has_any_marker(dir: &Path, markers: &[String]) -> bool {
     for marker in markers {
         if let Some(ext) = marker.strip_prefix("*.") {
-            if dir_contains_extension(dir, ext) {
+            if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
                 return true;
             }
-        } else if dir.join(marker).exists() {
+        } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
             return true;
         }
     }
@@ -1230,5 +1231,68 @@ mod tests {
             "fall back to all projects when none runnable"
         );
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    /// A fresh directory per test, canonical so it compares with what the
+    /// searches return (`/var` is a symlink on macOS).
+    #[cfg(unix)]
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("binvim-dap-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[cfg(unix)]
+    fn set_mode(p: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn debug_roots_others_could_plant_are_passed_over() {
+        let root = scratch("root");
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(root.join("go.mod"), "").unwrap();
+        std::fs::write(root.join("shared/go.mod"), "").unwrap();
+        set_mode(&root, 0o755);
+        set_mode(&root.join("shared"), 0o777);
+        let markers = ["go.mod".to_string()];
+        assert_eq!(find_workspace_root(&project, &markers), root);
+        std::fs::write(project.join("go.mod"), "").unwrap();
+        set_mode(&project.join("go.mod"), 0o666);
+        assert!(!has_any_marker(&project, &markers));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dotnet_roots_others_could_plant_are_passed_over() {
+        let root = scratch("dotnet");
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("shared/.git")).unwrap();
+        std::fs::write(root.join("shared/App.sln"), "").unwrap();
+        set_mode(&root, 0o755);
+        set_mode(&root.join("shared"), 0o777);
+        assert_eq!(find_dotnet_workspace_root(&project), root);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cargo_target_dirs_others_could_plant_are_passed_over() {
+        let root = scratch("target");
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::create_dir_all(root.join("shared/target")).unwrap();
+        set_mode(&root, 0o755);
+        set_mode(&root.join("shared"), 0o777);
+        assert_eq!(find_cargo_target_dir(&project), Some(root.join("target")));
+        std::fs::remove_dir_all(&root).ok();
     }
 }

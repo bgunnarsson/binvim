@@ -98,7 +98,7 @@ Decisions (made here, from the code and the rule):
 - [x] `lsp::find_workspace_root` skips a marker when `others_can_plant(dir, marker)` (dir only for
   `*.` markers); `find_tailwind_config` skips a config or `package.json` the same way. One test
   each. Verify: `cargo test lsp::specs::tests`.
-- [ ] `dap::find_workspace_root` (through `has_any_marker`), `find_dotnet_workspace_root` (the
+- [x] `dap::find_workspace_root` (through `has_any_marker`), `find_dotnet_workspace_root` (the
   `.sln` / `.git` pass) and `find_cargo_target_dir` skip planted candidates. One test each.
   Verify: `cargo test dap::specs::tests`.
 - [ ] `package::find_root_by_marker` ignores a planted marker for `nearest` and a planted `.git`
