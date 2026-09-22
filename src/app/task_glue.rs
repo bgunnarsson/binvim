@@ -188,7 +188,7 @@ impl super::App {
         // prefix on the shell command. Cleaner than mutating
         // std::env::current_dir() (which is process-global) — the
         // child shell does the cd, the parent stays put.
-        let cwd_arg = shell_quote(&task.cwd.to_string_lossy());
+        let cwd_arg = crate::terminal::shell_quote(&task.cwd.to_string_lossy());
         let exec_line = launcher_exec_line(&task);
         let launcher = format!("cd {cwd_arg} && exec {exec_line}");
         match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
@@ -436,6 +436,7 @@ fn resolve_path(s: &str, cwd: &std::path::Path) -> std::path::PathBuf {
 /// files), the `:make` tail appended as typed so the user's shell still
 /// word-splits, globs and expands their own text.
 fn launcher_exec_line(task: &crate::task::Task) -> String {
+    use crate::terminal::shell_quote;
     let mut out = shell_quote(&task.program);
     for arg in &task.args {
         out.push(' ');
@@ -448,42 +449,9 @@ fn launcher_exec_line(task: &crate::task::Task) -> String {
     out
 }
 
-/// Single-quote a string for safe embedding in a shell command line.
-/// Replaces any embedded `'` with `'\''` (close-quote, escaped-quote,
-/// reopen-quote) — the standard POSIX trick. Applied to the `cd ...`
-/// prefix and to every word of the task command, because script and
-/// recipe names come verbatim out of project files (`package.json`,
-/// justfiles, `.cargo/config.toml`) and may hold `$(…)`, backticks or
-/// spaces.
-fn shell_quote(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('\'');
-    for ch in s.chars() {
-        if ch == '\'' {
-            out.push_str("'\\''");
-        } else {
-            out.push(ch);
-        }
-    }
-    out.push('\'');
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn shell_quote_wraps_in_single_quotes() {
-        let q = shell_quote("/tmp/x y");
-        assert_eq!(q, "'/tmp/x y'");
-    }
-
-    #[test]
-    fn shell_quote_escapes_embedded_single_quote() {
-        let q = shell_quote("/tmp/it's");
-        assert_eq!(q, "'/tmp/it'\\''s'");
-    }
 
     #[test]
     fn launcher_quotes_discovered_args_but_not_the_make_tail() {
@@ -500,15 +468,6 @@ mod tests {
             launcher_exec_line(&task),
             "'make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
         );
-    }
-
-    #[test]
-    fn shell_quote_neutralizes_command_substitution() {
-        // Inside single quotes the shell expands nothing, so `$(…)` and
-        // backticks arrive as literal text.
-        assert_eq!(shell_quote("dev$(date)"), "'dev$(date)'");
-        assert_eq!(shell_quote("x`date`"), "'x`date`'");
-        assert_eq!(shell_quote("a;rm -rf b"), "'a;rm -rf b'");
     }
 
     #[test]

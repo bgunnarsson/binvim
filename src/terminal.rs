@@ -1566,6 +1566,85 @@ pub fn default_shell() -> String {
     }
 }
 
+/// Which command-line dialect a shell speaks, read off its file name.
+/// Decided by the shell rather than the platform: `pwsh` is a login
+/// shell on macOS too, and Git Bash's `bash.exe` is POSIX on Windows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ShellKind {
+    Posix,
+    Cmd,
+    PowerShell,
+}
+
+impl ShellKind {
+    pub(crate) fn of(shell: &str) -> Self {
+        // Split on both separators by hand: `Path::file_stem` doesn't
+        // treat `\` as one off Windows, and `$COMSPEC` is a Windows path.
+        let name = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+        let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
+        match stem.to_ascii_lowercase().as_str() {
+            "cmd" => ShellKind::Cmd,
+            "pwsh" | "powershell" => ShellKind::PowerShell,
+            _ => ShellKind::Posix,
+        }
+    }
+}
+
+/// Single-quote a string for safe embedding in a POSIX shell command
+/// line. Replaces any embedded `'` with `'\''` (close-quote,
+/// escaped-quote, reopen-quote) — the standard POSIX trick. Script and
+/// recipe names come verbatim out of project files (`package.json`,
+/// justfiles, `.cargo/config.toml`) and may hold `$(…)`, backticks or
+/// spaces.
+pub(crate) fn shell_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+/// Double-quote a word for a cmd.exe line, inside which `& | < > ^ ( )`
+/// are text. Trailing backslashes are doubled so the program's own argv
+/// parser doesn't read the closing `\"` as a literal quote. cmd has no
+/// escape for `"` inside quotes, and a line break ends the command, so
+/// a word holding either can't be passed and gets `None`.
+pub(crate) fn cmd_quote(s: &str) -> Option<String> {
+    if s.contains(['"', '\r', '\n']) {
+        return None;
+    }
+    let trailing = s.len() - s.trim_end_matches('\\').len();
+    let mut out = String::with_capacity(s.len() + trailing + 2);
+    out.push('"');
+    out.push_str(s);
+    out.extend(std::iter::repeat_n('\\', trailing));
+    out.push('"');
+    Some(out)
+}
+
+/// Single-quote a word for PowerShell, where nothing inside `'…'`
+/// expands and a quote is escaped by doubling it. PowerShell also reads
+/// the typographic single quotes (U+2018–U+201B) as quote characters,
+/// so those are doubled too.
+pub(crate) fn pwsh_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201A}' | '\u{201B}') {
+            out.push(ch);
+        }
+        out.push(ch);
+    }
+    out.push('\'');
+    out
+}
+
 fn spawn_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Vec<u8>>) {
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -1587,6 +1666,84 @@ fn spawn_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Vec<u8>>) {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn shell_kind_reads_the_file_stem_on_either_separator() {
+        assert_eq!(
+            ShellKind::of(r"C:\Windows\System32\cmd.exe"),
+            ShellKind::Cmd
+        );
+        assert_eq!(ShellKind::of("CMD.EXE"), ShellKind::Cmd);
+        assert_eq!(ShellKind::of("pwsh"), ShellKind::PowerShell);
+        assert_eq!(ShellKind::of("/usr/local/bin/pwsh"), ShellKind::PowerShell);
+        assert_eq!(
+            ShellKind::of(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"),
+            ShellKind::PowerShell
+        );
+        assert_eq!(ShellKind::of("/bin/zsh"), ShellKind::Posix);
+        assert_eq!(
+            ShellKind::of(r"C:\Program Files\Git\bin\bash.exe"),
+            ShellKind::Posix
+        );
+    }
+
+    #[test]
+    fn shell_quote_wraps_in_single_quotes() {
+        let q = shell_quote("/tmp/x y");
+        assert_eq!(q, "'/tmp/x y'");
+    }
+
+    #[test]
+    fn shell_quote_escapes_embedded_single_quote() {
+        let q = shell_quote("/tmp/it's");
+        assert_eq!(q, "'/tmp/it'\\''s'");
+    }
+
+    #[test]
+    fn shell_quote_neutralizes_command_substitution() {
+        // Inside single quotes the shell expands nothing, so `$(…)` and
+        // backticks arrive as literal text.
+        assert_eq!(shell_quote("dev$(date)"), "'dev$(date)'");
+        assert_eq!(shell_quote("x`date`"), "'x`date`'");
+        assert_eq!(shell_quote("a;rm -rf b"), "'a;rm -rf b'");
+    }
+
+    #[test]
+    fn cmd_quote_leaves_metacharacters_inside_the_quotes() {
+        assert_eq!(
+            cmd_quote("a&echo pwned").as_deref(),
+            Some("\"a&echo pwned\"")
+        );
+        assert_eq!(cmd_quote("x|y<z>w^(v)").as_deref(), Some("\"x|y<z>w^(v)\""));
+        assert_eq!(cmd_quote("%PATH%!x!").as_deref(), Some("\"%PATH%!x!\""));
+        assert_eq!(cmd_quote("it's").as_deref(), Some("\"it's\""));
+        assert_eq!(cmd_quote("").as_deref(), Some("\"\""));
+    }
+
+    #[test]
+    fn cmd_quote_doubles_only_trailing_backslashes() {
+        assert_eq!(
+            cmd_quote(r"C:\dir with space\").as_deref(),
+            Some(r#""C:\dir with space\\""#)
+        );
+        assert_eq!(cmd_quote(r"a\b").as_deref(), Some(r#""a\b""#));
+    }
+
+    #[test]
+    fn cmd_quote_refuses_a_quote_or_a_line_break() {
+        assert_eq!(cmd_quote("say \"hi\""), None);
+        assert_eq!(cmd_quote("a\nb"), None);
+        assert_eq!(cmd_quote("a\rb"), None);
+    }
+
+    #[test]
+    fn pwsh_quote_doubles_every_single_quote_form() {
+        assert_eq!(pwsh_quote("a b&c|d"), "'a b&c|d'");
+        assert_eq!(pwsh_quote("$env:PATH`n$(x)"), "'$env:PATH`n$(x)'");
+        assert_eq!(pwsh_quote("it's"), "'it''s'");
+        assert_eq!(pwsh_quote("it\u{2019}s"), "'it\u{2019}\u{2019}s'");
+        assert_eq!(pwsh_quote(r"C:\dir\"), r"'C:\dir\'");
+    }
 
     /// Drives a fresh parser+handler over a byte slice without the
     /// PTY round-trip — pure model test, no external processes.

@@ -1,7 +1,7 @@
 ---
 title: Tasks and AI side panes start under cmd.exe and PowerShell, not only a POSIX shell
 date: 2026-09-22
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -91,7 +91,7 @@ Decisions:
 
 ## Tasks
 
-- [ ] Add `ShellKind` + `ShellKind::of` and the three word quoters (POSIX `shell_quote` moved from
+- [x] Add `ShellKind` + `ShellKind::of` and the three word quoters (POSIX `shell_quote` moved from
   `task_glue.rs` with its tests, `cmd_quote` returning `None` for `"` / CR / LF, `pwsh_quote`) to
   `src/terminal.rs`. Verify with unit tests: stem classification (`C:\Windows\System32\cmd.exe`,
   `CMD.EXE`, `pwsh`, `/usr/local/bin/pwsh`, `powershell.exe`, `/bin/zsh`, `bash.exe`), each quoter
