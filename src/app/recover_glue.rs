@@ -136,6 +136,45 @@ impl super::App {
             .unwrap_or_else(|e| e.into_inner()) = dirty;
     }
 
+    /// Refresh the signal thread's view of the active buffer's cursor. Only a
+    /// clean buffer, shown by its own live window, is captured — the same rule
+    /// as `persist_active_cursor`, so a signal never writes a dirty buffer's
+    /// un-restorable cursor or a focus-swapped path↔cursor mismatch to disk.
+    #[cfg(unix)]
+    pub(super) fn refresh_cursor_snapshot(&mut self) {
+        let snap = if self.buffer.dirty || self.window.buffer_idx != self.active {
+            // A dirty or focus-swapped buffer's cursor is never restorable, and
+            // a pathless one (start page, `[Health]`) has nowhere to write —
+            // clear the snapshot either way rather than carry a stale entry.
+            None
+        } else {
+            match &self.buffer.path {
+                None => None,
+                Some(path) => {
+                    // An idle clean buffer mustn't re-copy and re-hash its
+                    // whole text on every loop tick; reuse the hash memoized on
+                    // the buffer while it's unchanged (by version). The memo
+                    // lives on the `Buffer` so a fresh instance for an
+                    // externally-rewritten file can't reuse a prior one's stale
+                    // hash.
+                    let hash = match &self.buffer.cursor_hash_cache {
+                        Some((v, h)) if *v == self.buffer.version => *h,
+                        _ => {
+                            let h = crate::undo::hash_text(&self.buffer.rope.to_string());
+                            self.buffer.cursor_hash_cache = Some((self.buffer.version, h));
+                            h
+                        }
+                    };
+                    Some((path.clone(), hash, self.window.cursor))
+                }
+            }
+        };
+        *self
+            .cursor_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = snap;
+    }
+
     /// SIGTERM and SIGHUP end the process on the spot by default. They're
     /// caught on a thread of their own rather than by a flag the loop checks:
     /// a closed terminal leaves crossterm's poll spinning in `read` on the dead
@@ -157,6 +196,7 @@ impl super::App {
         };
         let snapshot = self.recovery_snapshot.clone();
         let session = self.session_snapshot.clone();
+        let cursor_snap = self.cursor_snapshot.clone();
         std::thread::spawn(move || {
             let Some(signal) = signals.forever().next() else {
                 return;
@@ -169,6 +209,16 @@ impl super::App {
             }
             if let Some(session) = session.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
                 let _ = crate::session::save_or_clear(session);
+            }
+            // A signal is a clean-ish exit for the cursor: the editor's view
+            // state is still intact, so remember where we last were just like
+            // a `:q`. `refresh_cursor_snapshot` may be a loop-iteration old.
+            if let Some((path, hash, cursor)) = cursor_snap
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+            {
+                crate::cursor_cache::save(path, *hash, *cursor);
             }
             crate::crash::restore_terminal_best_effort();
             std::process::exit(128 + signal);

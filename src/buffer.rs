@@ -110,6 +110,12 @@ pub struct Buffer {
     pub dirty: bool,
     /// Bumped on every mutation; used to invalidate the syntax-highlight cache.
     pub version: u64,
+    /// Cache of the clean active buffer's `(version, content hash)` for the
+    /// loop's per-tick cursor snapshot, so an idle clean buffer isn't
+    /// re-copied and re-hashed on every event-loop tick. Dies with the
+    /// instance: a fresh `Buffer` for an externally-rewritten file starts at
+    /// `version == 0` but must not reuse a prior instance's stale hash.
+    pub cursor_hash_cache: Option<(u64, u64)>,
     /// File mtime captured at the most-recent on-disk load or save. Drives
     /// the auto-reload watcher — if the file's current mtime is newer and
     /// the buffer isn't dirty, the watcher reloads from disk.
@@ -170,6 +176,7 @@ impl Buffer {
             path: None,
             dirty: false,
             version: 0,
+            cursor_hash_cache: None,
             disk_mtime: None,
             disk_len: None,
             lossy: false,
@@ -210,6 +217,7 @@ impl Buffer {
                 path: Some(path),
                 dirty: false,
                 version: 0,
+                cursor_hash_cache: None,
                 disk_mtime: mtime,
                 disk_len,
                 lossy,
@@ -227,6 +235,7 @@ impl Buffer {
                 path: Some(path),
                 dirty: false,
                 version: 0,
+                cursor_hash_cache: None,
                 disk_mtime: None,
                 disk_len: None,
                 lossy: false,

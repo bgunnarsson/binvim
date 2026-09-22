@@ -11,6 +11,7 @@ mod command;
 mod config;
 mod crash;
 mod cursor;
+mod cursor_cache;
 mod dap;
 mod editorconfig;
 mod format;
