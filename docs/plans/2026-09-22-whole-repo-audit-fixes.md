@@ -166,7 +166,7 @@ Decisions made here, from the code and the lore:
   `ensure_highlights`; `compute_indent_folds` becomes a single stack-based pass. Unit tests: fold
   results unchanged on existing fixtures; a deep-indent fixture computes in one pass; large buffer
   skips.
-- [ ] **B2 — Gate `syntax_object`.** Early-return `None` on `is_large()` inside `syntax_object`
+- [x] **B2 — Gate `syntax_object`.** Early-return `None` on `is_large()` inside `syntax_object`
   (covers all three callers). Unit test with an over-threshold buffer.
 - [ ] **B3 — Cap `TestManager::drain`.** Count-bound per call like `lsp/manager.rs`'s
   `MAX_PER_CALL`, returning a "more pending" signal consistent with how the run loop re-polls.

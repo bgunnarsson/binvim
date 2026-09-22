@@ -347,6 +347,13 @@ fn syntax_object(
     inner: bool,
     count: usize,
 ) -> Option<TextRange> {
+    // Same large-file gate as the highlight cache: this parses the whole
+    // buffer from scratch with a fresh parser, and even budgeted it would
+    // block the main thread for the budget's full length on a multi-MB
+    // file — plus a full String copy of the rope.
+    if buf.is_large() {
+        return None;
+    }
     let lang = buf.path.as_deref().and_then(crate::lang::Lang::detect)?;
     let (functions, classes) = syntax_kinds(lang)?;
     let kinds = if class { classes } else { functions };
@@ -1550,5 +1557,19 @@ mod tests {
                 .contains("no class objects")
         );
         assert_eq!(syntax_object_hint(&b, F_IN), None);
+    }
+
+    #[test]
+    fn syntax_objects_skip_a_large_buffer() {
+        let src = "fn a() { let x = 1; }\n".repeat(crate::buffer::LARGE_FILE_LINES + 1);
+        let mut b = buf(&src);
+        b.path = Some(std::path::PathBuf::from("x.rs"));
+        assert!(b.is_large());
+        let cur = Cursor {
+            line: 0,
+            col: 10,
+            want_col: 10,
+        };
+        assert!(syntax_object(&b, cur, false, false, 1).is_none());
     }
 }
