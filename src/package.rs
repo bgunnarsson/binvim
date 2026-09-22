@@ -98,7 +98,7 @@ pub struct SearchHit {
 /// the rest of the flow walks for manifests.
 pub fn detect(buffer_path: Option<&Path>, start_dir: &Path) -> Option<(PackageEcosystem, PathBuf)> {
     if let Some(eco) = eco_from_extension(buffer_path) {
-        return Some((eco, workspace_root(eco, start_dir)));
+        return workspace_root(eco, start_dir).map(|root| (eco, root));
     }
     // Marker fallback: pick the first ecosystem that has a manifest somewhere
     // above `start_dir`. .NET is probed before the rest so a mixed repo (an
@@ -111,7 +111,7 @@ pub fn detect(buffer_path: Option<&Path>, start_dir: &Path) -> Option<(PackageEc
         PackageEcosystem::Go,
         PackageEcosystem::Pip,
     ] {
-        let root = workspace_root(eco, start_dir);
+        let Some(root) = workspace_root(eco, start_dir) else { continue };
         if !find_manifests(eco, &root).is_empty() {
             return Some((eco, root));
         }
@@ -160,14 +160,18 @@ fn eco_from_extension(buffer_path: Option<&Path>) -> Option<PackageEcosystem> {
 }
 
 /// Walk up from `start_dir` to the workspace root appropriate for `eco`.
-pub fn workspace_root(eco: PackageEcosystem, start_dir: &Path) -> PathBuf {
-    match eco {
+/// `None` when the walk found nothing trusted and fell back to a directory
+/// other users can write (a buffer directly in `/tmp`): the manifests found
+/// under it would be theirs, and `npm` / `dotnet` would run them.
+pub fn workspace_root(eco: PackageEcosystem, start_dir: &Path) -> Option<PathBuf> {
+    let root = match eco {
         PackageEcosystem::DotNet => crate::dap::find_dotnet_workspace_root(start_dir),
         PackageEcosystem::Npm => find_root_by_marker(start_dir, "package.json"),
         PackageEcosystem::Cargo => find_root_by_marker(start_dir, "Cargo.toml"),
         PackageEcosystem::Go => find_root_by_marker(start_dir, "go.mod"),
         PackageEcosystem::Pip => find_root_by_marker(start_dir, "requirements.txt"),
-    }
+    };
+    (!crate::paths::others_can_plant(&root, "")).then_some(root)
 }
 
 /// Enumerate the dependency manifests under `workspace_root` for `eco`.
@@ -1874,6 +1878,9 @@ require github.com/baz/qux v2.0.0
         assert_eq!(find_root_by_marker(&project, "package.json"), root);
         std::fs::remove_dir_all(root.join(".git")).unwrap();
         assert_eq!(find_root_by_marker(&project, "package.json"), root);
+        std::fs::remove_file(root.join("package.json")).unwrap();
+        let shared = root.join("shared");
+        assert_eq!(workspace_root(PackageEcosystem::Npm, &shared), None);
         std::fs::remove_dir_all(&root).ok();
     }
 }
