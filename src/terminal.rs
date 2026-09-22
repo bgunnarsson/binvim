@@ -1983,14 +1983,27 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn cmd_launch_runs_in_its_directory_and_keeps_an_ampersand_quoted() {
+        // The program run is PowerShell, not a second cmd.exe: cmd reads
+        // its own raw command line and finds `/C` inside `"/C"`, so a
+        // quoted switch would garble the inner run rather than the outer.
         let dir = windows_scratch_dir("cmd");
-        // Inside the quotes the outer cmd.exe leaves `&` alone, and the
-        // inner one runs `exit 7&exit 9` and stops at 7. An outer split
-        // would end the line with its own `exit 9"`.
-        let words = ["cmd.exe", "/D", "/C", "exit 7&exit 9"];
+        // Inside the quotes the outer cmd.exe leaves `&` alone, and
+        // PowerShell reads `exit 7 #&exit 9` as `exit 7` plus a comment.
+        // An outer split would end the line with its own `exit 9"`.
+        let words = [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            "exit 7 #&exit 9",
+        ];
         let exit = run_launch(&shell_launch("cmd.exe", Some(&dir), &words, None).unwrap());
         assert_eq!(exit.status.code(), Some(7), "{}", report(&exit));
-        let words = ["cmd.exe", "/D", "/C", "cd"];
+        let words = [
+            "powershell.exe",
+            "-NoProfile",
+            "-Command",
+            "(Get-Location).Path",
+        ];
         let cd = run_launch(&shell_launch("cmd.exe", Some(&dir), &words, None).unwrap());
         assert_printed_dir(&cd, &dir);
         let _ = std::fs::remove_dir_all(&dir);
