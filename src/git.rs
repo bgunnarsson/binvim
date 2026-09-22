@@ -108,7 +108,7 @@ fn parse_count(s: &str) -> usize {
 pub fn find_repo_root(start: &Path) -> Option<PathBuf> {
     let mut dir = start.canonicalize().ok()?;
     loop {
-        if dir.join(".git").exists() {
+        if dir.join(".git").exists() && !crate::paths::others_can_plant(&dir, ".git") {
             return Some(dir);
         }
         let parent = dir.parent()?.to_path_buf();
@@ -587,5 +587,25 @@ index 1..2 100644
         assert!(matches!(h[0].kind, GitHunkKind::Added));
         assert!(matches!(h[1].kind, GitHunkKind::Deleted));
         assert!(matches!(h[2].kind, GitHunkKind::Modified));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn repos_others_could_plant_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |p: &Path, mode| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let root = std::env::temp_dir().join(format!("binvim-git-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        let root = root.canonicalize().unwrap();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("shared/.git")).unwrap();
+        set(&root, 0o755);
+        set(&root.join("shared"), 0o777);
+        assert_eq!(find_repo_root(&project), Some(root.clone()));
+        std::fs::remove_dir_all(&root).ok();
     }
 }

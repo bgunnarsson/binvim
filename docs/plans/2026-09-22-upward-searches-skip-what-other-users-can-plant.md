@@ -103,7 +103,7 @@ Decisions (made here, from the code and the rule):
   Verify: `cargo test dap::specs::tests`.
 - [x] `package::find_root_by_marker` ignores a planted marker for `nearest` and a planted `.git`
   for the early stop. Test covering both. Verify: `cargo test package::tests`.
-- [ ] `git::find_repo_root` skips a planted `.git`. Test. Verify: `cargo test git::tests`.
+- [x] `git::find_repo_root` skips a planted `.git`. Test. Verify: `cargo test git::tests`.
 - [ ] Full gate and the tmux check in Verification; `cargo build --release`.
 
 ## Files
