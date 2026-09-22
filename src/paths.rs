@@ -305,6 +305,34 @@ pub fn create_private_dir(dir: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Make `dir` private, then remove the regular files in it last modified before
+/// `now - max_age`, returning how many went. For the per-file caches (undo
+/// history, cursor positions), whose files are named by a hash of their path,
+/// so nothing else ever finds one whose file was deleted or moved. Narrowed
+/// here as well as on save: a directory an older binvim made is `0755`, and
+/// would stay that way until the next write.
+pub(crate) fn tidy_private_dir(
+    dir: &Path,
+    max_age: std::time::Duration,
+    now: std::time::SystemTime,
+) -> usize {
+    let _ = create_private_dir(dir);
+    let Some(cutoff) = now.checked_sub(max_age) else {
+        return 0;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.metadata()
+                .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t < cutoff))
+        })
+        .filter(|e| std::fs::remove_file(e.path()).is_ok())
+        .count()
+}
+
 /// Write `bytes` to `path` so that a write failing partway — a full disk, a
 /// dropped mount — leaves the old file whole rather than truncated: the bytes
 /// go to a temp file beside the target, are synced, and are renamed over it.
@@ -513,6 +541,33 @@ pub(crate) fn test_set_mode(p: &Path, mode: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tidying_prunes_only_stale_files_and_makes_the_directory_private() {
+        let dir = scratch("tidy");
+        let now = std::time::SystemTime::now();
+        let day = std::time::Duration::from_secs(24 * 60 * 60);
+        let stale = dir.join("stale.json");
+        let fresh = dir.join("fresh.json");
+        std::fs::write(&stale, "{}").unwrap();
+        std::fs::write(&fresh, "{}").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(now - day * 91)
+            .unwrap();
+        assert_eq!(tidy_private_dir(&dir, day * 90, now), 1);
+        assert!(!stale.exists());
+        assert!(fresh.exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     /// A fresh directory per test, so parallel runs don't share files.
     fn scratch(name: &str) -> PathBuf {

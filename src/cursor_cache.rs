@@ -73,15 +73,8 @@ pub fn cache_path_for(target: &Path) -> Option<std::path::PathBuf> {
 /// failures are silently dropped rather than surfacing in the TUI.
 fn save_to(path: &Path, file_hash: u64, cursor: Cursor) {
     let Some(dir) = path.parent() else { return };
-    if std::fs::create_dir_all(dir).is_err() {
+    if crate::paths::create_private_dir(dir).is_err() {
         return;
-    }
-    // Every entry is tiny but this is a user-private cache dir — keep it
-    // owner-only like the undo dir, not whatever the umask happens to make.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
     let cf = CursorFile::from_cursor(file_hash, cursor);
     let Ok(bytes) = serde_json::to_vec(&cf) else { return };
@@ -120,28 +113,10 @@ pub fn load(target: &Path, expected_hash: u64) -> Option<Cursor> {
 }
 
 /// Narrow the cursor directory to its owner and drop entries not written for
-/// `MAX_AGE`. Mirror of the undo-dir tidy, so the cache doesn't grow forever.
+/// `MAX_AGE`, so the cache doesn't grow forever.
 pub fn prune_stale() {
-    let Some(dir) = cursor_dir() else { return };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
-    }
-    let now = std::time::SystemTime::now();
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let Ok(meta) = entry.metadata() else { continue };
-        if meta.is_file() {
-            let stale = meta
-                .modified()
-                .ok()
-                .and_then(|m| now.duration_since(m).ok())
-                .map(|age| age > MAX_AGE)
-                .unwrap_or(false);
-            if stale {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
+    if let Some(dir) = cursor_dir() {
+        crate::paths::tidy_private_dir(&dir, MAX_AGE, std::time::SystemTime::now());
     }
 }
 
@@ -149,11 +124,8 @@ pub fn prune_stale() {
 mod tests {
     use super::*;
 
-    /// A throwaway dir unique per test process, so parallel runs don't collide.
-    fn scratch(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("binvim-cc-{tag}-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        dir
+    fn scratch(name: &str) -> std::path::PathBuf {
+        crate::paths::test_scratch_dir("cursor", name)
     }
 
     #[test]

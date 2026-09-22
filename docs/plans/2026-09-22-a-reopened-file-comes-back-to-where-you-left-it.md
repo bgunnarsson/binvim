@@ -187,7 +187,7 @@ Decisions made in this plan:
   `session_snapshot`. Verify: `cargo +1.98.0 clippy --locked --all-targets --
   -D warnings`; in tmux, open a file, `30G`, `kill -TERM <pid>` from another
   pane, reopen: cursor on line 30.
-- [ ] **One tidy for both caches.** Move `tidy_history_dir` to `src/paths.rs`
+- [x] **One tidy for both caches.** Move `tidy_history_dir` to `src/paths.rs`
   as `pub(crate) fn tidy_private_dir`, keeping its signature and doc, called
   by `undo::prune_stale_history` and `cursor_cache::prune_stale`. Spawn both
   from one thread in `run`. `cursor_cache`'s tests use

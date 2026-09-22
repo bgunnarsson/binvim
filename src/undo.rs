@@ -453,34 +453,11 @@ pub fn cache_path_for(target: &Path) -> Option<PathBuf> {
 }
 
 /// Narrow the history directory to its owner and remove files not written for
-/// `UNDO_MAX_AGE`. Files are named by a hash of their path, so nothing else
-/// ever finds one whose file was deleted or moved.
+/// `UNDO_MAX_AGE`.
 pub fn prune_stale_history() {
     if let Some(dir) = undo_dir() {
-        tidy_history_dir(&dir, UNDO_MAX_AGE, std::time::SystemTime::now());
+        crate::paths::tidy_private_dir(&dir, UNDO_MAX_AGE, std::time::SystemTime::now());
     }
-}
-
-/// Make `dir` private, then remove the regular files in it last modified before
-/// `now - max_age`, returning how many went. Narrowed here as well as on save:
-/// a directory an older binvim made is `0755`, and would stay that way until
-/// the next `:w`.
-fn tidy_history_dir(dir: &Path, max_age: Duration, now: std::time::SystemTime) -> usize {
-    let _ = crate::paths::create_private_dir(dir);
-    let Some(cutoff) = now.checked_sub(max_age) else {
-        return 0;
-    };
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    entries
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.metadata()
-                .is_ok_and(|m| m.is_file() && m.modified().is_ok_and(|t| t < cutoff))
-        })
-        .filter(|e| std::fs::remove_file(e.path()).is_ok())
-        .count()
 }
 
 #[cfg(test)]
@@ -662,35 +639,6 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o700);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn tidying_prunes_only_stale_history_and_makes_the_directory_private() {
-        let dir = std::env::temp_dir().join(format!("binvim-undo-prune-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).expect("temp dir");
-        let now = std::time::SystemTime::now();
-        let day = Duration::from_secs(24 * 60 * 60);
-        let stale = dir.join("stale.json");
-        let fresh = dir.join("fresh.json");
-        std::fs::write(&stale, "{}").unwrap();
-        std::fs::write(&fresh, "{}").unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&stale)
-            .unwrap()
-            .set_modified(now - day * 91)
-            .unwrap();
-        assert_eq!(tidy_history_dir(&dir, day * 90, now), 1);
-        assert!(!stale.exists());
-        assert!(fresh.exists());
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&dir).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o700);
-        }
         std::fs::remove_dir_all(&dir).ok();
     }
 

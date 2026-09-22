@@ -1240,8 +1240,10 @@ impl App {
         }
         // Undo history and cursor cache for files not touched in 90 days. A
         // directory walk, so off the thread that draws the first frame.
-        std::thread::spawn(crate::undo::prune_stale_history);
-        std::thread::spawn(crate::cursor_cache::prune_stale);
+        std::thread::spawn(|| {
+            crate::undo::prune_stale_history();
+            crate::cursor_cache::prune_stale();
+        });
         let mut needs_render = true;
         // Set when a PTY drain hit its per-tick byte budget with output
         // still queued. Carried into the next iteration's poll budget so
