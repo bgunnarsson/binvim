@@ -33,6 +33,18 @@ impl super::App {
                 .session_snapshot
                 .lock()
                 .unwrap_or_else(|e| e.into_inner()) = Some(session);
+            // What a quit would write for the active buffer, under the same
+            // rules as `persist_active_cursor`.
+            let cursor = match (&self.buffer.path, self.buffer.clean_hash) {
+                (Some(path), Some(hash)) if self.active_shown => {
+                    Some((path.clone(), hash, self.window.cursor))
+                }
+                _ => None,
+            };
+            *self
+                .cursor_snapshot
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = cursor;
         }
     }
 
@@ -136,23 +148,6 @@ impl super::App {
             .unwrap_or_else(|e| e.into_inner()) = dirty;
     }
 
-    /// Refresh the signal thread's view of the active buffer's cursor, keyed
-    /// like `persist_active_cursor` — by the hash of its text on disk.
-    #[cfg(unix)]
-    pub(super) fn refresh_cursor_snapshot(&mut self) {
-        // A pathless buffer (start page, `[Health]`) has nowhere to write, and
-        // one not yet on disk nothing to key on — clear the snapshot rather
-        // than carry a stale entry.
-        let snap = match (&self.buffer.path, self.buffer.clean_hash) {
-            (Some(path), Some(hash)) => Some((path.clone(), hash, self.window.cursor)),
-            _ => None,
-        };
-        *self
-            .cursor_snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = snap;
-    }
-
     /// SIGTERM and SIGHUP end the process on the spot by default. They're
     /// caught on a thread of their own rather than by a flag the loop checks:
     /// a closed terminal leaves crossterm's poll spinning in `read` on the dead
@@ -190,7 +185,7 @@ impl super::App {
             }
             // A signal is a clean-ish exit for the cursor: the editor's view
             // state is still intact, so remember where we last were just like
-            // a `:q`. `refresh_cursor_snapshot` may be a loop-iteration old.
+            // a `:q`. The snapshot is at most a recovery interval old.
             if let Some((path, hash, cursor)) = cursor_snap
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())

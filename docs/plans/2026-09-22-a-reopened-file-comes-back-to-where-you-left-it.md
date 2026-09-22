@@ -178,7 +178,7 @@ Decisions made in this plan:
   last-buffer branch). `save_active` calls `persist_active_cursor` instead of
   writing the cache itself. Verify: `grep -rn persist_cursor src` empty; the
   `:S` acceptance sequence in tmux; `cargo test`.
-- [ ] **The signal thread's snapshot is refreshed on the interval and cleared
+- [x] **The signal thread's snapshot is refreshed on the interval and cleared
   on quit.** Move the cursor snapshot refresh into `recover_if_due`'s
   `#[cfg(unix)]` block beside the session snapshot, as `(path, clean_hash,
   cursor)` of the active buffer when `active_shown`. Delete the per-tick

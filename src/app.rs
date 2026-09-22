@@ -420,10 +420,9 @@ pub struct App {
     /// dumps, for the signal thread to save. `None` until the first refresh,
     /// so a signal that early leaves the last session on disk alone.
     pub session_snapshot: std::sync::Arc<std::sync::Mutex<Option<crate::session::Session>>>,
-    /// The active buffer's (path, clean-content hash, cursor), refreshed with
-    /// the recovery dumps so a signal can persist it before dying. Only set
-    /// for a clean buffer — a dirty one's cursor is never restorable, and the
-    /// cache's hash gate would reject it anyway (`None` otherwise).
+    /// The active buffer's (path, hash of its text on disk, cursor) as
+    /// `persist_active_cursor` would write it, refreshed with the session
+    /// snapshot for the signal thread. `None` when there's nothing to write.
     pub cursor_snapshot:
         std::sync::Arc<std::sync::Mutex<Option<(PathBuf, u64, crate::cursor::Cursor)>>>,
     /// Whether a frame has been drawn since the active buffer became active.
@@ -1253,10 +1252,7 @@ impl App {
         self.spawn_signal_recovery();
         while !self.should_quit {
             #[cfg(unix)]
-            {
-                self.refresh_recovery_snapshot();
-                self.refresh_cursor_snapshot();
-            }
+            self.refresh_recovery_snapshot();
             self.recover_if_due();
             if needs_render {
                 self.maybe_reload_from_disk();
@@ -1617,7 +1613,12 @@ impl App {
         self.lsp.shutdown_all();
         // Remember the active buffer's cursor nvim-style. Open, move, quit
         // without a save — the next open still comes back here (the content
-        // hash gates it against changed content).
+        // hash gates it against changed content). Emptied first, so a signal
+        // arriving mid-quit can't write its older snapshot over this one.
+        *self
+            .cursor_snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
         self.persist_active_cursor();
         self.discard_all_recovery();
         // Held through the save and emptied, so a signal arriving mid-quit
