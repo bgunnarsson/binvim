@@ -199,7 +199,12 @@ Decisions made here, from the code and the lore:
   carry right-aligned segments — scroll label, match count); the helper took
   the seven bottoms and the five centred/plain tops. `popup_box_top/bottom` taking colors directly; the seven
   popups adopt it. Verify: tmux visual check of whichkey, hover, picker, rename preview.
-- [ ] **C6 — Drifted pairs.** `indent_label` (with width, both panels), `apply_formatted_replace`
+- [x] **C6 — Drifted pairs.**
+  Deviation: the audit's "missing `.col` clamp" claim was wrong —
+  `clamp_cursor_normal` clamps both line and col, so the explicit line-clamp
+  in both copies was redundant and the helper simply drops it. No unit test
+  for `apply_formatted` (needs a formatter binary on PATH); covered by the
+  existing save tests plus the indent-label test. `indent_label` (with width, both panels), `apply_formatted_replace`
   (clamping `.col` too), `adopt_window_buffer`, `strip_phantom_seed_if_unused` — verifying first
   that both copies of each really match the audit's description. Unit tests where the helpers are
   pure (indent label, clamp); existing window/buffer tests for the rest.

@@ -276,14 +276,7 @@ impl super::App {
                 .unwrap_or_else(|| p.display().to_string());
             let language = crate::lang::Lang::detect(p).map(|l| format!("{l:?}").to_lowercase());
             let lines = self.buffer.line_count();
-            let indent = match self.editorconfig.indent_style {
-                crate::editorconfig::IndentStyle::Spaces => {
-                    format!("spaces × {}", self.editorconfig.indent_size)
-                }
-                crate::editorconfig::IndentStyle::Tabs => {
-                    format!("tabs (width {})", self.editorconfig.tab_width)
-                }
-            };
+            let indent = indent_label(&self.editorconfig);
             let cursor_line = self.window.cursor.line + 1;
             let cursor_col = self.window.cursor.col + 1;
             let statuses = self.lsp.active_buffer_status(p);
@@ -348,12 +341,7 @@ impl super::App {
             .clone()
             .unwrap_or_else(|| cwd_path.join("__binvim_probe__"));
         let ec_sources = crate::editorconfig::EditorConfig::sources(&ec_probe);
-        let indent = match self.editorconfig.indent_style {
-            crate::editorconfig::IndentStyle::Spaces => {
-                format!("spaces × {}", self.editorconfig.indent_size)
-            }
-            crate::editorconfig::IndentStyle::Tabs => "tabs".into(),
-        };
+        let indent = indent_label(&self.editorconfig);
         let editorconfig = HealthEditorConfig {
             indent,
             tab_width: self.editorconfig.tab_width,
@@ -463,11 +451,31 @@ fn read_process_stats(pid: u32) -> (Option<f64>, Option<f64>, Option<f64>) {
     (cpu, mem, rss_mb)
 }
 
+/// One spelling for the effective indent, shared by the ACTIVE BUFFER and
+/// EDITORCONFIG panels — the two once phrased tabs differently and drifted.
+fn indent_label(cfg: &crate::editorconfig::EditorConfig) -> String {
+    match cfg.indent_style {
+        crate::editorconfig::IndentStyle::Spaces => format!("spaces × {}", cfg.indent_size),
+        crate::editorconfig::IndentStyle::Tabs => format!("tabs (width {})", cfg.tab_width),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use binvim::install::bundle_index_by_name;
     use std::path::PathBuf;
+
+    #[test]
+    fn indent_label_names_the_width_for_both_styles() {
+        let mut cfg = crate::editorconfig::EditorConfig::default();
+        cfg.indent_style = crate::editorconfig::IndentStyle::Spaces;
+        cfg.indent_size = 2;
+        assert_eq!(indent_label(&cfg), "spaces × 2");
+        cfg.indent_style = crate::editorconfig::IndentStyle::Tabs;
+        cfg.tab_width = 8;
+        assert_eq!(indent_label(&cfg), "tabs (width 8)");
+    }
 
     #[test]
     fn nothing_missing_offers_no_setup() {

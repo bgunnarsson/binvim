@@ -270,13 +270,18 @@ impl super::App {
         }
         // Last, so its notice is the one left showing.
         self.apply_recovery();
-        // Strip the phantom `[No Name]` seed that App::new() seeds at
-        // index 0 — only on the transition from "fresh launch" (one
-        // empty no-path buffer) to a first real file. Skip the strip
-        // if any inactive window is still showing the phantom: that
-        // pane was opened deliberately (via `<C-w>v` / `<C-w>s` while
-        // on the start page) and dragging it onto the freshly-opened
-        // file would erase what the user explicitly split for.
+        self.strip_phantom_seed_if_unused();
+        Ok(())
+    }
+
+    /// Drop the phantom `[No Name]` seed at index 0 once a real file is
+    /// active: no path, still empty, and no inactive window showing it (a
+    /// pane split off the start page was opened deliberately, and dragging
+    /// it onto the freshly-opened file would erase what the user split
+    /// for). Every window's `buffer_idx` and every `tabs` entry shifts
+    /// down to match. Shared by `open_buffer` and session hydration — the
+    /// phantom-detection condition must not drift between them.
+    fn strip_phantom_seed_if_unused(&mut self) {
         let phantom_in_use = self.windows.values().any(|w| w.buffer_idx == 0);
         if self.buffers.len() > 1
             && self.active != 0
@@ -287,9 +292,6 @@ impl super::App {
             self.buffers.remove(0);
             self.active = self.active.saturating_sub(1);
             self.active_tab = self.active_tab.saturating_sub(1);
-            // Phantom `[No Name]` at index 0 just got stripped — every
-            // Window's `buffer_idx` and every entry in `tabs` shifts
-            // down to match.
             self.tabs = self
                 .tabs
                 .iter()
@@ -297,7 +299,6 @@ impl super::App {
                 .collect();
             self.remap_windows_after_remove(0);
         }
-        Ok(())
     }
 
     /// Watcher: if the active buffer's file has been modified on disk
@@ -834,28 +835,7 @@ impl super::App {
         if !opened_any {
             return;
         }
-        // App::new() pre-seeded buffers[0] with a default empty stash —
-        // strip it so the restored session isn't polluted by a phantom
-        // `[No Name]` slot. Index 0's stash has no path AND a fresh
-        // (empty) buffer, distinguishing it from anything we just
-        // restored.
-        let phantom_in_use = self.windows.values().any(|w| w.buffer_idx == 0);
-        if self.buffers.len() > 1
-            && self.active != 0
-            && self.buffers[0].buffer.path.is_none()
-            && self.buffers[0].buffer.rope.len_chars() == 0
-            && !phantom_in_use
-        {
-            self.buffers.remove(0);
-            self.active = self.active.saturating_sub(1);
-            self.active_tab = self.active_tab.saturating_sub(1);
-            self.tabs = self
-                .tabs
-                .iter()
-                .filter_map(|&i| if i == 0 { None } else { Some(i - 1) })
-                .collect();
-            self.remap_windows_after_remove(0);
-        }
+        self.strip_phantom_seed_if_unused();
         // Honour the session's `active` index — clamp to whatever we
         // actually managed to open.
         let target = session.active.min(self.buffers.len().saturating_sub(1));

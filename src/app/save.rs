@@ -25,19 +25,23 @@ impl super::App {
                     self.status_msg = "already formatted".into();
                     return;
                 }
-                self.history.record(&self.buffer.rope, self.window.cursor);
-                self.buffer.replace_all(&formatted);
-                let last_line = self.buffer.line_count().saturating_sub(1);
-                if self.window.cursor.line > last_line {
-                    self.window.cursor.line = last_line;
-                }
-                self.clamp_cursor_normal();
+                self.apply_formatted(&formatted);
                 self.status_msg = "formatted".into();
             }
             Err(msg) => {
                 self.status_msg = format!("format: {msg}");
             }
         }
+    }
+
+    /// Replace the buffer with the formatter's output as one undo step and
+    /// re-seat the cursor inside the (possibly shorter) result. Shared by
+    /// `:format` and the on-save path — the undo/replace/clamp sequence is
+    /// load-bearing and must not drift between them.
+    fn apply_formatted(&mut self, formatted: &str) {
+        self.history.record(&self.buffer.rope, self.window.cursor);
+        self.buffer.replace_all(formatted);
+        self.clamp_cursor_normal();
     }
 
     /// Run the configured formatter (if any), apply .editorconfig on-save
@@ -62,13 +66,7 @@ impl super::App {
             let source = self.buffer.rope.to_string();
             match crate::format::format_buffer(&path, &source) {
                 Ok(formatted) if formatted != source => {
-                    self.history.record(&self.buffer.rope, self.window.cursor);
-                    self.buffer.replace_all(&formatted);
-                    let last_line = self.buffer.line_count().saturating_sub(1);
-                    if self.window.cursor.line > last_line {
-                        self.window.cursor.line = last_line;
-                    }
-                    self.clamp_cursor_normal();
+                    self.apply_formatted(&formatted);
                     format_note = Some("formatted".into());
                 }
                 Ok(_) => {} // already formatted — quiet

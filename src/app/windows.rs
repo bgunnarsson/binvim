@@ -60,13 +60,19 @@ impl super::App {
             .windows
             .remove(&target)
             .expect("focus target has no stashed window");
+        self.adopt_window(target, incoming);
+    }
+
+    /// Adopt a stashed window as the live one, swapping the active buffer
+    /// to its `buffer_idx` when that differs. `switch_to` handles the
+    /// snapshot/load dance and resets `window.buffer_idx` — but it would
+    /// overwrite the freshly-pulled cursor/viewport too, so they're cached
+    /// and reapplied after. Shared by focus and close: a field added to
+    /// the reapply list lands in both.
+    fn adopt_window(&mut self, id: crate::layout::WindowId, incoming: crate::window::Window) {
         let target_buffer = incoming.buffer_idx;
         self.window = incoming;
-        self.active_window = target;
-        // If the new focus shows a different buffer, swap live buffer
-        // state. `switch_to` handles the snapshot/load dance and resets
-        // window.buffer_idx — but it would overwrite the freshly-pulled
-        // cursor/viewport too, so first cache them and reapply after.
+        self.active_window = id;
         if target_buffer != self.active {
             let cursor = self.window.cursor;
             let view_top = self.window.view_top;
@@ -104,23 +110,7 @@ impl super::App {
             .windows
             .remove(&new_focus)
             .expect("post-close focus has no stashed window");
-        let target_buffer = incoming.buffer_idx;
-        self.window = incoming;
-        self.active_window = new_focus;
-        if target_buffer != self.active {
-            let cursor = self.window.cursor;
-            let view_top = self.window.view_top;
-            let view_left = self.window.view_left;
-            let visual_anchor = self.window.visual_anchor;
-            if let Err(e) = self.switch_to(target_buffer) {
-                self.status_msg = format!("error: {e}");
-                return;
-            }
-            self.window.cursor = cursor;
-            self.window.view_top = view_top;
-            self.window.view_left = view_left;
-            self.window.visual_anchor = visual_anchor;
-        }
+        self.adopt_window(new_focus, incoming);
     }
 
     /// `<C-w>T` — promote the focused pane's buffer to a real tab.
