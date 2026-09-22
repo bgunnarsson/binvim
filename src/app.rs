@@ -1568,6 +1568,18 @@ impl App {
         }
         // Clean shutdown — persist the session so the next launch in this
         // cwd can restore it. Best-effort: errors don't block exit.
+        // Children first: an in-flight test run and a live debug adapter
+        // would otherwise outlive the editor fully detached (a pipe-spawned
+        // runner gets no PTY hangup, and nothing else ever sends the
+        // adapter a disconnect). LSP servers get the shutdown/exit
+        // handshake; dropping the manager then closes their stdin for the
+        // ones that ignore it. The signal path deliberately does none of
+        // this — it must stay minimal enough to run on the signal thread.
+        self.test.cancel();
+        if self.dap.is_active() {
+            self.dap.stop_session_blocking(Duration::from_millis(500));
+        }
+        self.lsp.shutdown_all();
         self.discard_all_recovery();
         // Held through the save and emptied, so a signal arriving mid-quit
         // can't write its older snapshot over this one.

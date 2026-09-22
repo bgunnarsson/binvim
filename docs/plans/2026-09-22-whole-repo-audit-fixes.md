@@ -133,7 +133,7 @@ Decisions made here, from the code and the lore:
   set the status line, record in `health_summary` (`LspHealth` gains the field), and re-attach the
   active buffer. Verify: unit test with a client whose child exits; manual `kill -9` check per
   acceptance criteria.
-- [ ] **A3 — Quit-time teardown.** In `App::run`'s exit block: `self.test.cancel()`,
+- [x] **A3 — Quit-time teardown.** In `App::run`'s exit block: `self.test.cancel()`,
   `self.dap.stop_session_blocking(..)` when active, new `LspManager::shutdown_all` (best-effort
   `shutdown` request + `exit` notification per client). Verify: tmux checks per acceptance
   criteria; no unit-testable surface beyond `shutdown_all` sending the two messages

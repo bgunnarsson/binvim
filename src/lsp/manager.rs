@@ -520,6 +520,19 @@ impl LspManager {
         (events, more)
     }
 
+    /// Best-effort clean goodbye to every server, for the editor's exit
+    /// path: the spec's `shutdown` request followed by `exit`. No reply is
+    /// awaited — dropping the clients right after closes their stdin, which
+    /// is the fallback signal for servers that ignore the handshake.
+    pub fn shutdown_all(&mut self) {
+        for client in self.clients.values() {
+            let id = client.alloc_id();
+            let _ = client.send_request(id, "shutdown", Value::Null);
+            let _ = client.send_notification("exit", Value::Null);
+        }
+        self.clients.clear();
+    }
+
     pub fn diagnostics_for(&self, path: &Path) -> Option<&Vec<Diagnostic>> {
         if let Some(d) = self.diagnostics.get(path) {
             return Some(d);
