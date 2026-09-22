@@ -789,8 +789,9 @@ pub fn find_node_modules_bin(start: &Path, name: &str) -> Option<String> {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     let mut dir: &Path = canon.as_path();
     loop {
-        let candidate = dir.join("node_modules").join(".bin").join(name);
-        if candidate.is_file() {
+        let rel = Path::new("node_modules").join(".bin").join(name);
+        let candidate = dir.join(&rel);
+        if candidate.is_file() && !crate::paths::others_can_plant(dir, &rel) {
             return Some(candidate.to_string_lossy().to_string());
         }
         match dir.parent() {
@@ -943,4 +944,53 @@ fn looks_like_path(s: &str) -> bool {
 
 fn which_in_path(name: &str) -> Option<String> {
     crate::paths::find_on_path(name).map(|p| p.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh directory per test, canonical so it compares with what the
+    /// searches return (`/var` is a symlink on macOS).
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("binvim-specs-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[cfg(unix)]
+    fn set_mode(p: &Path, mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn node_modules_bins_others_could_plant_are_passed_over() {
+        let root = scratch("node-bin");
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        for dir in [&root, &root.join("shared")] {
+            let bin = dir.join("node_modules/.bin");
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join("tool"), "").unwrap();
+        }
+        set_mode(&root, 0o755);
+        set_mode(&root.join("shared"), 0o777);
+        let trusted = root
+            .join("node_modules/.bin/tool")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(find_node_modules_bin(&project, "tool"), Some(trusted));
+        std::fs::remove_dir_all(root.join("node_modules")).unwrap();
+        assert_eq!(find_node_modules_bin(&project, "tool"), None);
+        set_mode(&root.join("shared"), 0o755);
+        let nearest = root
+            .join("shared/node_modules/.bin/tool")
+            .to_string_lossy()
+            .to_string();
+        assert_eq!(find_node_modules_bin(&project, "tool"), Some(nearest));
+        std::fs::remove_dir_all(&root).ok();
+    }
 }

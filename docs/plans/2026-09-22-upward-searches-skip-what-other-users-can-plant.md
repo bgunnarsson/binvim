@@ -91,7 +91,7 @@ Decisions (made here, from the code and the rule):
   `paths.rs` for: clean tree → false; `0o777` `dir` → true; `0o777` intermediate directory → true;
   `0o666` candidate → true. Switch `find_tags_file` to it and delete `tag.rs`'s
   `writable_by_others`. Verify: `cargo test paths::tests` and `cargo test tag::tests`.
-- [ ] `find_node_modules_bin` skips a candidate when `others_can_plant(dir,
+- [x] `find_node_modules_bin` skips a candidate when `others_can_plant(dir,
   "node_modules/.bin/<name>")`. Test as in the acceptance criteria, plus a trusted install further
   up being found, in a new `mod tests` at the bottom of `src/lsp/specs.rs`, which has none yet.
   Verify: `cargo test lsp::specs::tests`.
