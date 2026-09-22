@@ -12,7 +12,7 @@ root_cause: "open_buffer is the one open path for users and for programmatic edi
 related:
   - docs/plans/2026-09-15-writes-cannot-lose-work-and-clippy-gates-ci.md
   - docs/solutions/runtime/a-recorded-pid-does-not-identify-a-process.md
-  - docs/solutions/security/an-upward-file-search-trusts-files-other-users-can-plant.md
+  - docs/solutions/security/an-upward-search-trusts-what-other-users-own-or-can-write.md
 ---
 
 ## Problem

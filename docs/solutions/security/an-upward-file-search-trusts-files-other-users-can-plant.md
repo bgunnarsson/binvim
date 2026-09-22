@@ -16,6 +16,8 @@ symptoms:
   - "a tags file in /tmp or /private/tmp is used for a buffer in /tmp/scratch"
   - "rust-analyzer starts on a workspace outside the project after a tag jump"
 root_cause: "find_tags_file walked every ancestor to / and took the first file named tags, whoever could write it, and the file it names is opened with open_buffer, which attaches a language server that may build the project it finds"
+status: superseded
+superseded_by: docs/solutions/security/an-upward-search-trusts-what-other-users-own-or-can-write.md
 related:
   - docs/solutions/runtime/open-buffer-runs-for-batch-edits-nobody-sees.md
 ---
