@@ -321,51 +321,11 @@ fn run_ktfmt(path: &Path, source: &str) -> Result<String, String> {
         "ktfmt not found — install with `brew install ktfmt` or grab the jar from GitHub"
             .to_string()
     })?;
-    let parent = path.parent().unwrap_or(Path::new("."));
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("buffer");
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("kt");
-    let temp = parent.join(format!(
-        ".{stem}.binvim-format.{pid}.{ext}",
-        pid = std::process::id(),
-    ));
-    std::fs::write(&temp, source).map_err(|e| format!("write temp: {e}"))?;
-    let result = Command::new(&ktfmt)
-        .arg(&temp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-    let outcome = match result {
-        Ok(o) if o.status.success() => {
-            std::fs::read_to_string(&temp).map_err(|e| format!("read temp: {e}"))
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let cleaned: Vec<String> = stderr
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .take(4)
-                .collect();
-            let msg = if cleaned.is_empty() {
-                "(no error output)".to_string()
-            } else {
-                cleaned.join(" / ")
-            };
-            let code = o
-                .status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "?".into());
-            Err(format!("ktfmt exit {code}: {msg}"))
-        }
-        Err(e) => Err(format!("failed to spawn ktfmt: {e}")),
-    };
-    let _ = std::fs::remove_file(&temp);
-    outcome
+    let ((), text) = format_via_temp_file(path, ext, source, |temp| {
+        run_tool_on_file(&ktfmt, &[], temp, "ktfmt")
+    })?;
+    Ok(text)
 }
 
 /// Format SQL via `sql-formatter` (the npm tool). Reads stdin, writes
@@ -388,53 +348,15 @@ fn run_sql_formatter(source: &str) -> Result<String, String> {
 fn run_php_cs_fixer(path: &Path, source: &str) -> Result<String, String> {
     let bin = find_on_path("php-cs-fixer")
         .ok_or_else(|| "php-cs-fixer not found — install with `composer global require friendsofphp/php-cs-fixer`".to_string())?;
-    let parent = path.parent().unwrap_or(Path::new("."));
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("buffer");
-    let temp = parent.join(format!(
-        ".{stem}.binvim-format.{pid}.php",
-        pid = std::process::id(),
-    ));
-    std::fs::write(&temp, source).map_err(|e| format!("write temp: {e}"))?;
-    let result = Command::new(&bin)
-        .arg("fix")
-        .arg("--quiet")
-        .arg("--using-cache=no")
-        .arg(&temp)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output();
-    let outcome = match result {
-        Ok(o) if o.status.success() => {
-            std::fs::read_to_string(&temp).map_err(|e| format!("read temp: {e}"))
-        }
-        Ok(o) => {
-            let stderr = String::from_utf8_lossy(&o.stderr);
-            let cleaned: Vec<String> = stderr
-                .lines()
-                .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
-                .take(4)
-                .collect();
-            let msg = if cleaned.is_empty() {
-                "(no error output)".to_string()
-            } else {
-                cleaned.join(" / ")
-            };
-            let code = o
-                .status
-                .code()
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "?".into());
-            Err(format!("php-cs-fixer exit {code}: {msg}"))
-        }
-        Err(e) => Err(format!("failed to spawn php-cs-fixer: {e}")),
-    };
-    let _ = std::fs::remove_file(&temp);
-    outcome
+    let ((), text) = format_via_temp_file(path, "php", source, |temp| {
+        run_tool_on_file(
+            &bin,
+            &["fix", "--quiet", "--using-cache=no"],
+            temp,
+            "php-cs-fixer",
+        )
+    })?;
+    Ok(text)
 }
 
 /// Run biome against `source`, telling it the buffer's real path so it can
@@ -540,27 +462,14 @@ fn run_csharpier(path: &Path, source: &str) -> Result<Option<String>, String> {
     let csharpier = find_csharpier().ok_or_else(|| {
         "csharpier not found — install with `dotnet tool install -g csharpier`".to_string()
     })?;
-    let parent = path.parent().unwrap_or(Path::new("."));
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("cs");
-    let stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("buffer");
-    let temp = parent.join(format!(
-        ".{stem}.binvim-format.{pid}.{ext}",
-        pid = std::process::id(),
-    ));
-    std::fs::write(&temp, source).map_err(|e| format!("write temp: {e}"))?;
-    let result = csharpier_format_inplace(&csharpier, &temp);
-    let outcome = match &result {
-        Ok(CsharpierOutcome::Formatted) => std::fs::read_to_string(&temp)
-            .map(Some)
-            .map_err(|e| format!("read temp: {e}")),
-        Ok(CsharpierOutcome::Unsupported) => Ok(None),
-        Err(e) => Err(e.clone()),
-    };
-    let _ = std::fs::remove_file(&temp);
-    outcome
+    let (outcome, text) = format_via_temp_file(path, ext, source, |temp| {
+        csharpier_format_inplace(&csharpier, temp)
+    })?;
+    match outcome {
+        CsharpierOutcome::Formatted => Ok(Some(text)),
+        CsharpierOutcome::Unsupported => Ok(None),
+    }
 }
 
 enum CsharpierOutcome {
@@ -799,6 +708,73 @@ pub fn primary_formatter_for_path(path: &Path) -> Option<FormatterStatus> {
 /// `.bat` fallback on Windows.
 fn find_on_path(name: &str) -> Option<PathBuf> {
     crate::paths::find_on_path(name)
+}
+
+/// Shared temp-file dance for formatters that only edit files in place
+/// (csharpier, ktfmt, php-cs-fixer): write the buffer to an exclusively
+/// created temp beside the real file — beside it so project-level config
+/// still resolves, exclusive so a symlink planted at the name fails the
+/// create instead of redirecting the write — run the tool against it,
+/// read the result back, unlink. `ext` is the extension the tool needs
+/// to see to recognise the file type.
+fn format_via_temp_file<T>(
+    path: &Path,
+    ext: &str,
+    source: &str,
+    run: impl FnOnce(&Path) -> Result<T, String>,
+) -> Result<(T, String), String> {
+    let (temp, mut file) =
+        crate::paths::create_temp_with_ext(path, ext).map_err(|e| format!("write temp: {e}"))?;
+    let written = file.write_all(source.as_bytes());
+    drop(file);
+    if let Err(e) = written {
+        let _ = std::fs::remove_file(&temp);
+        return Err(format!("write temp: {e}"));
+    }
+    let outcome = run(&temp).and_then(|t| {
+        std::fs::read_to_string(&temp)
+            .map(|text| (t, text))
+            .map_err(|e| format!("read temp: {e}"))
+    });
+    let _ = std::fs::remove_file(&temp);
+    outcome
+}
+
+/// Run an in-place formatter against `file`, mapping a non-zero exit to
+/// the same `"<label> exit <code>: <lines>"` shape the stdin formatters
+/// produce.
+fn run_tool_on_file(bin: &Path, args: &[&str], file: &Path, label: &str) -> Result<(), String> {
+    let result = Command::new(bin)
+        .args(args)
+        .arg(file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output();
+    match result {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            let cleaned: Vec<String> = stderr
+                .lines()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty())
+                .take(4)
+                .collect();
+            let msg = if cleaned.is_empty() {
+                "(no error output)".to_string()
+            } else {
+                cleaned.join(" / ")
+            };
+            let code = o
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "?".into());
+            Err(format!("{label} exit {code}: {msg}"))
+        }
+        Err(e) => Err(format!("failed to spawn {label}: {e}")),
+    }
 }
 
 fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOutcome, String> {

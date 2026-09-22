@@ -319,6 +319,27 @@ fn create_temp_beside(
     target: &Path,
     existing: Option<&std::fs::Metadata>,
 ) -> std::io::Result<(PathBuf, std::fs::File)> {
+    create_temp_with_suffix(target, existing, "tmp")
+}
+
+/// `create_temp_beside` for a tool that has to see the file's real
+/// extension (an in-place formatter): the unpredictable-name and
+/// exclusive-create guarantees are the same, only the final suffix is
+/// `ext` instead of `tmp`, and the temp copies the target's mode when the
+/// target exists so a 0600 file's contents aren't briefly world-readable.
+pub(crate) fn create_temp_with_ext(
+    target: &Path,
+    ext: &str,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
+    let existing = std::fs::metadata(target).ok();
+    create_temp_with_suffix(target, existing.as_ref(), ext)
+}
+
+fn create_temp_with_suffix(
+    target: &Path,
+    existing: Option<&std::fs::Metadata>,
+    suffix: &str,
+) -> std::io::Result<(PathBuf, std::fs::File)> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let name = target.file_name().ok_or_else(|| {
@@ -331,7 +352,7 @@ fn create_temp_beside(
             .map(|d| d.subsec_nanos())
             .unwrap_or(0);
         let tmp = target.with_file_name(format!(
-            ".{}.binvim-{}-{nanos:08x}-{}.tmp",
+            ".{}.binvim-{}-{nanos:08x}-{}.{suffix}",
             name.to_string_lossy(),
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -457,6 +478,35 @@ mod tests {
         let err = create_exclusive(&planted, None).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+    }
+
+    #[test]
+    fn create_temp_with_ext_lands_beside_the_target_with_its_extension() {
+        let dir = scratch("toolext");
+        let target = dir.join("Program.cs");
+        std::fs::write(&target, "class A {}").unwrap();
+        let (a, _fa) = create_temp_with_ext(&target, "cs").unwrap();
+        let (b, _fb) = create_temp_with_ext(&target, "cs").unwrap();
+        assert_ne!(a, b);
+        for p in [&a, &b] {
+            assert_eq!(p.parent(), target.parent());
+            assert_eq!(p.extension().and_then(|e| e.to_str()), Some("cs"));
+            assert!(p.file_name().unwrap().to_string_lossy().starts_with('.'));
+            assert!(p.exists());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_temp_with_ext_copies_the_target_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("toolmode");
+        let target = dir.join("secret.php");
+        std::fs::write(&target, "x").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let (tmp, _f) = create_temp_with_ext(&target, "php").unwrap();
+        let mode = std::fs::metadata(&tmp).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[cfg(unix)]

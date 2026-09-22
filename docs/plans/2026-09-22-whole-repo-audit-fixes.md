@@ -142,7 +142,7 @@ Decisions made here, from the code and the lore:
   `fn drop_overlapping_ranges(ranges: &mut Vec<(usize, usize)>)` used by all three sites
   (`visual.rs:461` gains it; `visual.rs:628` and `multi_cursor.rs:156` converge on it). Unit test
   overlapping-range input on the operate path.
-- [ ] **A5 — Formatter temp files through exclusive create, once.** Expose a `pub(crate)` wrapper
+- [x] **A5 — Formatter temp files through exclusive create, once.** Expose a `pub(crate)` wrapper
   over `create_temp_beside` in `paths.rs`; factor the csharpier/ktfmt/php-cs-fixer temp-file dance
   into one `format.rs` helper built on it. Unit test: pre-planted path forces a different name.
 - [ ] **A6 — Yazi chooser out of the shared temp dir.** `open_yazi` writes its chooser file under
