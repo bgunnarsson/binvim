@@ -1,7 +1,7 @@
 ---
 title: Tasks and AI side panes start under cmd.exe and PowerShell, not only a POSIX shell
 date: 2026-09-22
-status: in-progress
+status: done
 ---
 
 ## Context
