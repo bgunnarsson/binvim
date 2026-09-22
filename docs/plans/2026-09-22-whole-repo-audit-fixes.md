@@ -154,10 +154,12 @@ Decisions made here, from the code and the lore:
 - [x] **A7 — Narrow cache permissions.** Narrow `~/.cache/binvim` at startup and `sessions/` on
   save to `0700`, following `undo.rs`'s save+startup pattern. Unit test mirrors `undo.rs`'s
   permission assertions.
-- [ ] **A8 — Windows URL open without `cmd /C`.** `open_url_in_browser` uses
+- [x] **A8 — Windows URL open without `cmd /C`.** `open_url_in_browser` uses
   `rundll32 url.dll,FileProtocolHandler`; `find_url_at` unchanged. Verify: compile-only on this
   platform; note in hand-off that Windows is untested here.
-- [ ] **A9 — Validate Android identifiers.** Reject `applicationId`/activity not matching
+- [x] **A9 — Validate Android identifiers.**
+  Deviation: the activity name additionally allows `$` (inner-class spelling),
+  neutralized by single-quoting the `-n` component for the device shell. Reject `applicationId`/activity not matching
   `[A-Za-z0-9._]+` before any `adb shell` interpolation, with a status message. Unit tests beside
   `parse_application_id`.
 - [ ] **B1 — Gate and flatten folds.** `ensure_folds` gates on `buffer.is_large()` like

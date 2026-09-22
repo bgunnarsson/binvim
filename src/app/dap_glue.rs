@@ -587,14 +587,21 @@ impl super::App {
     }
 
     /// Open `url` in the OS browser. macOS → `open`, Linux →
-    /// `xdg-open`, Windows → `start`. Best-effort: failures
-    /// surface as a status-line message so the user knows the
-    /// click registered but couldn't fire.
+    /// `xdg-open`, Windows → `rundll32 url.dll,FileProtocolHandler`.
+    /// Best-effort: failures surface as a status-line message so the
+    /// user knows the click registered but couldn't fire.
+    ///
+    /// The URL comes off the debuggee's own console output, so it's not
+    /// trusted content — every branch has to take it as a plain argv
+    /// element. `cmd /C start` doesn't: cmd re-parses the line, and `&`
+    /// or `%VAR%` inside a URL (both legal, both common) become a second
+    /// command or an expansion. rundll32's handler takes the argument
+    /// verbatim.
     pub(super) fn open_url_in_browser(&mut self, url: &str) {
         let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
             ("open", vec![url])
         } else if cfg!(target_os = "windows") {
-            ("cmd", vec!["/C", "start", "", url])
+            ("rundll32", vec!["url.dll,FileProtocolHandler", url])
         } else {
             ("xdg-open", vec![url])
         };
