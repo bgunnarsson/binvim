@@ -4,7 +4,7 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.6.6]
 
 ### Added
 - **A reopened file comes back to where you left it.** binvim remembers the
