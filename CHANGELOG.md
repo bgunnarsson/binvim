@@ -11,7 +11,14 @@ follows [Semantic Versioning](https://semver.org/).
   `:task` and the AI panes handed every shell POSIX flags (`-l -i -c`), so on
   Windows — or with `pwsh` as your shell anywhere — nothing ran. Each shell now
   gets its own launch, and a task's script name is quoted for that shell, so a
-  name like `a&echo pwned` is passed to the task instead of being run.
+  name like `a&echo pwned` is passed to the task instead of being run. Under
+  PowerShell such a name is refused, with the reason in the status line, since
+  PowerShell can't pass it safely to a `.cmd` shim like `yarn.cmd`. Under
+  cmd.exe a program is found through `PATH`, never in the project directory.
+- **A task's script name can't break out of fish's quotes.** fish reads `\'`
+  inside single quotes as an escape, so a `package.json` script name holding
+  one could close its quote and run a command substitution. fish now gets
+  quoting of its own.
 
 ## [0.6.6] - 2026-09-22
 
