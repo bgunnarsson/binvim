@@ -194,7 +194,10 @@ Decisions made here, from the code and the lore:
   four scrollable pages factor into one painter; nothing tests sibling overlay flags
   (`top_overlay` untouched). Verify: tmux visual check of all four pages + `:registers`-then-
   `:health` stacking per the overlay lore.
-- [ ] **C5 — Popup border helper.** `popup_box_top/bottom` taking colors directly; the seven
+- [x] **C5 — Popup border helper.**
+  Deviation: the hover and picker top borders keep their own layout (they
+  carry right-aligned segments — scroll label, match count); the helper took
+  the seven bottoms and the five centred/plain tops. `popup_box_top/bottom` taking colors directly; the seven
   popups adopt it. Verify: tmux visual check of whichkey, hover, picker, rename preview.
 - [ ] **C6 — Drifted pairs.** `indent_label` (with width, both panels), `apply_formatted_replace`
   (clamping `.col` too), `adopt_window_buffer`, `strip_phantom_seed_if_unused` — verifying first

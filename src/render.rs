@@ -152,6 +152,66 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
     Ok(())
 }
 
+/// `╭─ title ─╮` top border for a floating popup, title centred and bold;
+/// an empty title is a plain run of dashes. Takes colors directly — the
+/// popups aren't `DashboardPalette` consumers the way the dashboard pages
+/// are. Popups whose border carries extra segments (the hover scroll
+/// label, the picker's match count) lay their top out themselves.
+fn popup_box_top(
+    out: &mut impl Write,
+    left: u16,
+    y: u16,
+    inner_w: usize,
+    title: &str,
+    title_fg: Color,
+    border: Color,
+    bg: Color,
+) -> Result<()> {
+    let title_text: String = title.chars().take(inner_w).collect();
+    let title_len = title_text.chars().count();
+    let pre = inner_w.saturating_sub(title_len) / 2;
+    let post = inner_w.saturating_sub(title_len + pre);
+    queue!(
+        out,
+        MoveTo(left, y),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╭'),
+        Print("─".repeat(pre)),
+        SetForegroundColor(title_fg),
+        SetAttribute(Attribute::Bold),
+        Print(&title_text),
+        SetAttribute(Attribute::Reset),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print("─".repeat(post)),
+        Print('╮'),
+    )?;
+    Ok(())
+}
+
+/// `╰─…─╯` bottom border matching `popup_box_top`.
+fn popup_box_bottom(
+    out: &mut impl Write,
+    left: u16,
+    y: u16,
+    inner_w: usize,
+    border: Color,
+    bg: Color,
+) -> Result<()> {
+    queue!(
+        out,
+        MoveTo(left, y),
+        SetBackgroundColor(bg),
+        SetForegroundColor(border),
+        Print('╰'),
+        Print("─".repeat(inner_w)),
+        Print('╯'),
+        ResetColor,
+    )?;
+    Ok(())
+}
+
 fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     let Some(wk) = app.whichkey.as_ref() else {
         return Ok(());
@@ -216,26 +276,15 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
     let arrow_fg = app.config.theme_dim();
     let hint_fg = app.config.theme_dim();
 
-    // ── Top border ───────────────────────────────────────────────────────
-    let title_text = format!(" {} ", wk.title);
-    let title_len = title_text.chars().count();
-    let pre = content_w.saturating_sub(title_len) / 2;
-    let post = content_w.saturating_sub(title_len + pre);
-    queue!(
+    popup_box_top(
         out,
-        MoveTo(left as u16, top as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╭'),
-        Print("─".repeat(pre)),
-        SetForegroundColor(title_fg),
-        SetAttribute(Attribute::Bold),
-        Print(&title_text),
-        SetAttribute(Attribute::Reset),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("─".repeat(post)),
-        Print('╮'),
+        left as u16,
+        top as u16,
+        content_w,
+        &format!(" {} ", wk.title),
+        title_fg,
+        border,
+        bg,
     )?;
 
     // ── Entry rows ───────────────────────────────────────────────────────
@@ -285,17 +334,7 @@ fn draw_whichkey(out: &mut impl Write, app: &App) -> Result<()> {
         Print('│'),
     )?;
 
-    // ── Bottom border ────────────────────────────────────────────────────
-    queue!(
-        out,
-        MoveTo(left as u16, (footer_row + 1) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(content_w)),
-        Print('╯'),
-        ResetColor,
-    )?;
+    popup_box_bottom(out, left as u16, (footer_row + 1) as u16, content_w, border, bg)?;
     Ok(())
 }
 
@@ -410,24 +449,15 @@ fn draw_rename_preview(out: &mut impl Write, app: &App) -> Result<()> {
         preview.enabled_count(),
     );
     let title_chars: String = title.chars().take(content_w.saturating_sub(4)).collect();
-    let title_w = title_chars.chars().count();
-    let pre = content_w.saturating_sub(title_w) / 2;
-    let post = content_w.saturating_sub(title_w + pre);
-    queue!(
+    popup_box_top(
         out,
-        MoveTo(left as u16, top as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╭'),
-        Print("─".repeat(pre)),
-        SetForegroundColor(title_fg),
-        SetAttribute(Attribute::Bold),
-        Print(&title_chars),
-        SetAttribute(Attribute::Reset),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("─".repeat(post)),
-        Print('╮'),
+        left as u16,
+        top as u16,
+        content_w,
+        &title_chars,
+        title_fg,
+        border,
+        bg,
     )?;
 
     // ── Body rows ───────────────────────────────────────────────────────
@@ -570,16 +600,13 @@ fn draw_rename_preview(out: &mut impl Write, app: &App) -> Result<()> {
         )?;
     }
 
-    // ── Bottom border ───────────────────────────────────────────────────
-    queue!(
+    popup_box_bottom(
         out,
-        MoveTo(left as u16, (top + popup_h - 1) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(content_w)),
-        Print('╯'),
-        ResetColor,
+        left as u16,
+        (top + popup_h - 1) as u16,
+        content_w,
+        border,
+        bg,
     )?;
     Ok(())
 }
@@ -646,14 +673,9 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     let active_fg = app.config.theme_chip_fg();
     let active_bg = app.config.theme_warning();
 
+    popup_box_top(out, left_col as u16, top_row as u16, inner_w, "", text_fg, border, bg)?;
     queue!(
         out,
-        MoveTo(left_col as u16, top_row as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╭'),
-        Print("─".repeat(inner_w)),
-        Print('╮'),
         MoveTo(left_col as u16, (top_row + 1) as u16),
         SetBackgroundColor(bg),
         SetForegroundColor(border),
@@ -682,17 +704,14 @@ fn draw_signature_popup(out: &mut impl Write, app: &App) -> Result<()> {
     if pad > 0 {
         queue!(out, Print(" ".repeat(pad)))?;
     }
-    queue!(
+    queue!(out, SetForegroundColor(border), Print('│'))?;
+    popup_box_bottom(
         out,
-        SetForegroundColor(border),
-        Print('│'),
-        MoveTo(left_col as u16, (top_row + 2) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(inner_w)),
-        Print('╯'),
-        ResetColor,
+        left_col as u16,
+        (top_row + 2) as u16,
+        inner_w,
+        border,
+        bg,
     )?;
     Ok(())
 }
@@ -851,16 +870,13 @@ fn draw_hover_popup(out: &mut impl Write, app: &App) -> Result<()> {
         queue!(out, SetForegroundColor(border), Print('│'))?;
     }
 
-    // Bottom border.
-    queue!(
+    popup_box_bottom(
         out,
-        MoveTo(left_col as u16, (top_row + 1 + visible) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(content_w)),
-        Print('╯'),
-        ResetColor,
+        left_col as u16,
+        (top_row + 1 + visible) as u16,
+        content_w,
+        border,
+        bg,
     )?;
     Ok(())
 }
@@ -1059,16 +1075,7 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
     let bg = app.config.chrome_bg();
     let text_fg = app.config.theme_fg();
 
-    // Top border
-    queue!(
-        out,
-        MoveTo(left as u16, top as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(level),
-        Print('╭'),
-        Print("─".repeat(inner_w)),
-        Print('╮'),
-    )?;
+    popup_box_top(out, left as u16, top as u16, inner_w, "", text_fg, level, bg)?;
 
     // Content rows
     for (i, line) in wrapped.iter().enumerate() {
@@ -1088,16 +1095,13 @@ fn draw_notification(out: &mut impl Write, app: &App) -> Result<()> {
         )?;
     }
 
-    // Bottom border
-    queue!(
+    popup_box_bottom(
         out,
-        MoveTo(left as u16, (top + 1 + wrapped.len()) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(level),
-        Print('╰'),
-        Print("─".repeat(inner_w)),
-        Print('╯'),
-        ResetColor,
+        left as u16,
+        (top + 1 + wrapped.len()) as u16,
+        inner_w,
+        level,
+        bg,
     )?;
     Ok(())
 }
@@ -1167,27 +1171,15 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
     let prompt_fg = app.config.theme_info();
     let text_fg = app.config.theme_fg();
 
-    // Top border with centred title.
-    let title_text = format!(" {} ", title);
-    let title_w = title_text.chars().count();
-    let left_pad = inner_w.saturating_sub(title_w) / 2;
-    let right_pad = inner_w.saturating_sub(title_w + left_pad);
-
-    queue!(
+    popup_box_top(
         out,
-        MoveTo(left as u16, top as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╭'),
-        Print("─".repeat(left_pad)),
-        SetForegroundColor(title_fg),
-        SetAttribute(Attribute::Bold),
-        Print(&title_text),
-        SetAttribute(Attribute::Reset),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("─".repeat(right_pad)),
-        Print('╮'),
+        left as u16,
+        top as u16,
+        inner_w,
+        &format!(" {} ", title),
+        title_fg,
+        border,
+        bg,
     )?;
 
     // Input row. The cursor is painted as a highlighted cell at
@@ -1255,17 +1247,7 @@ fn draw_floating_cmdline(out: &mut impl Write, app: &App) -> Result<()> {
         Print('│'),
     )?;
 
-    // Bottom border.
-    queue!(
-        out,
-        MoveTo(left as u16, (top + 2) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(inner_w)),
-        Print('╯'),
-        ResetColor,
-    )?;
+    popup_box_bottom(out, left as u16, (top + 2) as u16, inner_w, border, bg)?;
 
     Ok(())
 }
@@ -1290,27 +1272,7 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
     let text_fg = app.config.theme_fg();
     let dim_fg = app.config.theme_dim();
 
-    // Top border with centred title.
-    let title_text = " Delete ";
-    let title_w = title_text.chars().count();
-    let left_pad = inner_w.saturating_sub(title_w) / 2;
-    let right_pad = inner_w.saturating_sub(title_w + left_pad);
-    queue!(
-        out,
-        MoveTo(left as u16, top as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╭'),
-        Print("─".repeat(left_pad)),
-        SetForegroundColor(title_fg),
-        SetAttribute(Attribute::Bold),
-        Print(title_text),
-        SetAttribute(Attribute::Reset),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print("─".repeat(right_pad)),
-        Print('╮'),
-    )?;
+    popup_box_top(out, left as u16, top as u16, inner_w, " Delete ", title_fg, border, bg)?;
 
     // Body row. Layout matches the cmdline: `│ ! <target>  <hint> │`
     // with the prompt glyph in the accent error colour so it reads
@@ -1366,17 +1328,7 @@ fn draw_file_tree_confirm(out: &mut impl Write, app: &App) -> Result<()> {
         Print('│'),
     )?;
 
-    // Bottom border.
-    queue!(
-        out,
-        MoveTo(left as u16, (top + 2) as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(inner_w)),
-        Print('╯'),
-        ResetColor,
-    )?;
+    popup_box_bottom(out, left as u16, (top + 2) as u16, inner_w, border, bg)?;
     Ok(())
 }
 
@@ -1871,16 +1823,13 @@ fn draw_picker(out: &mut impl Write, app: &App) -> Result<()> {
         Print('│'),
     )?;
 
-    // ── Bottom border ──────────────────────────────────────────────────
-    queue!(
+    popup_box_bottom(
         out,
-        MoveTo(layout.left as u16, layout.bottom_row as u16),
-        SetBackgroundColor(bg),
-        SetForegroundColor(border),
-        Print('╰'),
-        Print("─".repeat(layout.inner_w)),
-        Print('╯'),
-        ResetColor,
+        layout.left as u16,
+        layout.bottom_row as u16,
+        layout.inner_w,
+        border,
+        bg,
     )?;
     Ok(())
 }
