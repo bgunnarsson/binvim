@@ -726,12 +726,13 @@ pub fn find_tailwind_config(start: &Path) -> Option<PathBuf> {
     loop {
         for name in &cfg_names {
             let candidate = dir.join(name);
-            if candidate.is_file() {
+            if candidate.is_file() && !crate::paths::others_can_plant(dir, name) {
                 return Some(candidate);
             }
         }
         let pkg = dir.join("package.json");
-        if pkg.is_file() && package_has_tailwind(&pkg) {
+        let trusted = !crate::paths::others_can_plant(dir, "package.json");
+        if pkg.is_file() && trusted && package_has_tailwind(&pkg) {
             return Some(pkg);
         }
         match dir.parent() {
@@ -767,10 +768,10 @@ pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
     loop {
         for marker in markers {
             if let Some(ext) = marker.strip_prefix("*.") {
-                if dir_contains_extension(dir, ext) {
+                if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
                     return dir.to_path_buf();
                 }
-            } else if dir.join(marker).exists() {
+            } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
                 return dir.to_path_buf();
             }
         }
@@ -991,6 +992,46 @@ mod tests {
             .to_string_lossy()
             .to_string();
         assert_eq!(find_node_modules_bin(&project, "tool"), Some(nearest));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_markers_others_could_plant_are_passed_over() {
+        let root = scratch("root");
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(root.join("Cargo.toml"), "").unwrap();
+        std::fs::write(root.join("shared/Cargo.toml"), "").unwrap();
+        std::fs::write(root.join("shared/App.sln"), "").unwrap();
+        set_mode(&root, 0o755);
+        set_mode(&root.join("shared"), 0o777);
+        let markers = ["Cargo.toml".to_string(), "*.sln".to_string()];
+        assert_eq!(find_workspace_root(&project, &markers), root);
+        std::fs::write(project.join("Cargo.toml"), "").unwrap();
+        set_mode(&project.join("Cargo.toml"), 0o666);
+        assert_eq!(find_workspace_root(&project, &markers), root);
+        set_mode(&project.join("Cargo.toml"), 0o644);
+        assert_eq!(find_workspace_root(&project, &markers), project);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tailwind_configs_others_could_plant_are_passed_over() {
+        let root = scratch("tailwind");
+        let project = root.join("shared/project");
+        std::fs::create_dir_all(&project).unwrap();
+        let pkg = r#"{ "devDependencies": { "tailwindcss": "4.0.0" } }"#;
+        std::fs::write(root.join("package.json"), pkg).unwrap();
+        std::fs::write(root.join("shared/package.json"), pkg).unwrap();
+        std::fs::write(root.join("shared/tailwind.config.js"), "").unwrap();
+        set_mode(&root, 0o755);
+        set_mode(&root.join("shared"), 0o777);
+        assert_eq!(
+            find_tailwind_config(&project),
+            Some(root.join("package.json"))
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 }

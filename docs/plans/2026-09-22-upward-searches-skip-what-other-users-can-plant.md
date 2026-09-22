@@ -95,7 +95,7 @@ Decisions (made here, from the code and the rule):
   "node_modules/.bin/<name>")`. Test as in the acceptance criteria, plus a trusted install further
   up being found, in a new `mod tests` at the bottom of `src/lsp/specs.rs`, which has none yet.
   Verify: `cargo test lsp::specs::tests`.
-- [ ] `lsp::find_workspace_root` skips a marker when `others_can_plant(dir, marker)` (dir only for
+- [x] `lsp::find_workspace_root` skips a marker when `others_can_plant(dir, marker)` (dir only for
   `*.` markers); `find_tailwind_config` skips a config or `package.json` the same way. One test
   each. Verify: `cargo test lsp::specs::tests`.
 - [ ] `dap::find_workspace_root` (through `has_any_marker`), `find_dotnet_workspace_root` (the
