@@ -103,9 +103,8 @@ impl super::App {
         // shrunk, or disappeared entirely.
         self.refresh_git_hunks();
         // Persist undo so the next session can keep walking history.
-        if let Some(path) = self.buffer.path.as_deref() {
+        if let (Some(path), Some(hash)) = (self.buffer.path.as_deref(), self.buffer.clean_hash) {
             if let Some(cache) = crate::undo::cache_path_for(path) {
-                let hash = crate::undo::hash_text(&self.buffer.rope.to_string());
                 let cursor = persist_cursor.unwrap_or(self.window.cursor);
                 let _ = self.history.save_to_path(&cache, hash);
                 // A `:w` also refreshes the nvim-style cursor cache, so a

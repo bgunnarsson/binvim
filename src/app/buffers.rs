@@ -23,8 +23,7 @@ pub(super) const DISK_CHECK_INTERVAL: Duration = Duration::from_millis(1000);
 /// different version. Used both by `open_buffer` and by session-less relaunch
 /// of an explicit CLI path, which bypasses `open_buffer`.
 pub(super) fn loaded_buf_state(buf: &Buffer) -> (History, Cursor) {
-    if let Some(path) = buf.path.as_deref() {
-        let hash = crate::undo::hash_text(&buf.rope.to_string());
+    if let (Some(path), Some(hash)) = (buf.path.as_deref(), buf.clean_hash) {
         if let Some(cache) = crate::undo::cache_path_for(path) {
             let history = crate::undo::History::load_from_path(&cache, hash).unwrap_or_default();
             let cursor = crate::cursor_cache::load(path, hash).unwrap_or_default();
@@ -687,17 +686,11 @@ impl super::App {
     }
 
     /// Write the active buffer's cursor to the nvim-style cursor cache, keyed
-    /// by its current content hash (so a later open won't put it back on
-    /// changed content). Called on buffer leave and quit.
+    /// by the hash of its text on disk: a dirty buffer thrown away with `:q!`
+    /// is reopened onto that text, and a file changed meanwhile doesn't get
+    /// the position back. Called on buffer leave and quit.
     pub(super) fn persist_active_cursor(&self) {
-        // Only write when the position is actually restorable. A dirty buffer's
-        // content hash never matches what's on disk, so persisting it would
-        // clobber the last good position with one that can't be restored.
-        if self.buffer.dirty {
-            return;
-        }
-        if let Some(path) = self.buffer.path.as_deref() {
-            let hash = crate::undo::hash_text(&self.buffer.rope.to_string());
+        if let (Some(path), Some(hash)) = (self.buffer.path.as_deref(), self.buffer.clean_hash) {
             crate::cursor_cache::save(path, hash, self.window.cursor);
         }
     }

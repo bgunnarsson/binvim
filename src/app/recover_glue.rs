@@ -136,38 +136,16 @@ impl super::App {
             .unwrap_or_else(|e| e.into_inner()) = dirty;
     }
 
-    /// Refresh the signal thread's view of the active buffer's cursor. Only a
-    /// clean buffer, shown by its own live window, is captured — the same rule
-    /// as `persist_active_cursor`, so a signal never writes a dirty buffer's
-    /// un-restorable cursor or a focus-swapped path↔cursor mismatch to disk.
+    /// Refresh the signal thread's view of the active buffer's cursor, keyed
+    /// like `persist_active_cursor` — by the hash of its text on disk.
     #[cfg(unix)]
     pub(super) fn refresh_cursor_snapshot(&mut self) {
-        let snap = if self.buffer.dirty || self.window.buffer_idx != self.active {
-            // A dirty or focus-swapped buffer's cursor is never restorable, and
-            // a pathless one (start page, `[Health]`) has nowhere to write —
-            // clear the snapshot either way rather than carry a stale entry.
-            None
-        } else {
-            match &self.buffer.path {
-                None => None,
-                Some(path) => {
-                    // An idle clean buffer mustn't re-copy and re-hash its
-                    // whole text on every loop tick; reuse the hash memoized on
-                    // the buffer while it's unchanged (by version). The memo
-                    // lives on the `Buffer` so a fresh instance for an
-                    // externally-rewritten file can't reuse a prior one's stale
-                    // hash.
-                    let hash = match &self.buffer.cursor_hash_cache {
-                        Some((v, h)) if *v == self.buffer.version => *h,
-                        _ => {
-                            let h = crate::undo::hash_text(&self.buffer.rope.to_string());
-                            self.buffer.cursor_hash_cache = Some((self.buffer.version, h));
-                            h
-                        }
-                    };
-                    Some((path.clone(), hash, self.window.cursor))
-                }
-            }
+        // A pathless buffer (start page, `[Health]`) has nowhere to write, and
+        // one not yet on disk nothing to key on — clear the snapshot rather
+        // than carry a stale entry.
+        let snap = match (&self.buffer.path, self.buffer.clean_hash) {
+            (Some(path), Some(hash)) => Some((path.clone(), hash, self.window.cursor)),
+            _ => None,
         };
         *self
             .cursor_snapshot

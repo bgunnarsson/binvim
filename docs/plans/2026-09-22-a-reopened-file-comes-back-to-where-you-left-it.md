@@ -159,7 +159,7 @@ Decisions made in this plan:
   `focus_window` / `window_close` that explain the mismatch. Verify: the tmux
   sequence in the acceptance criteria on a debug build, plus `<C-w>v`,
   `<C-w>h`, `<C-w>l` round-trips keep each pane's cursor.
-- [ ] **`Buffer.clean_hash` replaces the live-rope hashing.** Add `clean_hash:
+- [x] **`Buffer.clean_hash` replaces the live-rope hashing.** Add `clean_hash:
   Option<u64>` to `Buffer`, `None` in `empty`, set from `undo::hash_text` of
   the loaded text in `from_path` and of the written rope in `save`.
   `loaded_buf_state` and `save_active` read it instead of hashing.

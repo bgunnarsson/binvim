@@ -110,12 +110,10 @@ pub struct Buffer {
     pub dirty: bool,
     /// Bumped on every mutation; used to invalidate the syntax-highlight cache.
     pub version: u64,
-    /// Cache of the clean active buffer's `(version, content hash)` for the
-    /// loop's per-tick cursor snapshot, so an idle clean buffer isn't
-    /// re-copied and re-hashed on every event-loop tick. Dies with the
-    /// instance: a fresh `Buffer` for an externally-rewritten file starts at
-    /// `version == 0` but must not reuse a prior instance's stale hash.
-    pub cursor_hash_cache: Option<(u64, u64)>,
+    /// Hash of the text as last read from or written to disk — the key the
+    /// undo history and cursor cache are stamped with, so a reopen restores
+    /// them onto the same content. `None` when nothing is on disk yet.
+    pub clean_hash: Option<u64>,
     /// File mtime captured at the most-recent on-disk load or save. Drives
     /// the auto-reload watcher — if the file's current mtime is newer and
     /// the buffer isn't dirty, the watcher reloads from disk.
@@ -176,7 +174,7 @@ impl Buffer {
             path: None,
             dirty: false,
             version: 0,
-            cursor_hash_cache: None,
+            clean_hash: None,
             disk_mtime: None,
             disk_len: None,
             lossy: false,
@@ -215,6 +213,7 @@ impl Buffer {
             Ok(Self {
                 rope,
                 path: Some(path),
+                clean_hash: Some(crate::undo::hash_text(&text)),
                 disk_mtime: mtime,
                 disk_len,
                 lossy,
@@ -239,6 +238,7 @@ impl Buffer {
         crate::paths::write_atomic(path, &bytes)
             .with_context(|| format!("writing {}", path.display()))?;
         self.dirty = false;
+        self.clean_hash = Some(crate::undo::hash_text(&self.rope.to_string()));
         // Refresh mtime so the watcher doesn't immediately think the file
         // changed under us.
         if let Ok(meta) = std::fs::metadata(path) {
@@ -664,6 +664,29 @@ mod tests {
         buf.save().unwrap();
         let out = std::fs::read(&tmp).unwrap();
         assert_eq!(out, b"hello\r\nworld\r\n");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn clean_hash_follows_the_disk_text() {
+        let tmp = std::env::temp_dir().join("binvim_clean_hash.txt");
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, "hello\nworld\n").unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        let loaded = buf.clean_hash.unwrap();
+        assert_eq!(loaded, crate::undo::hash_text("hello\nworld\n"));
+        // An unsaved edit leaves the key on the text still on disk.
+        buf.insert_at_idx(0, "x");
+        assert_eq!(buf.clean_hash, Some(loaded));
+        buf.save().unwrap();
+        assert_eq!(
+            buf.clean_hash,
+            Some(crate::undo::hash_text("xhello\nworld\n"))
+        );
+        assert_eq!(
+            Buffer::from_path(tmp.join("missing")).unwrap().clean_hash,
+            None
+        );
         let _ = std::fs::remove_file(&tmp);
     }
 

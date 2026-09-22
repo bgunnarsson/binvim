@@ -3873,13 +3873,15 @@ impl super::App {
                         // and the pre-save text differs from what a save's
                         // formatter / .editorconfig transforms write, so the
                         // key must come from the post-save rope.
-                        match self.save_active(false, Some(persisted_cursor)) {
-                            Ok(_) => restored_cursors.push((
-                                path,
-                                crate::undo::hash_text(&self.buffer.rope.to_string()),
-                                persisted_cursor,
-                            )),
-                            Err(_) => errors += 1,
+                        match (
+                            self.save_active(false, Some(persisted_cursor)),
+                            self.buffer.clean_hash,
+                        ) {
+                            (Ok(_), Some(hash)) => {
+                                restored_cursors.push((path, hash, persisted_cursor))
+                            }
+                            (Ok(_), None) => {}
+                            (Err(_), _) => errors += 1,
                         }
                     }
                 }
