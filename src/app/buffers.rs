@@ -105,6 +105,7 @@ impl super::App {
     }
 
     fn load_stash(&mut self, stash: BufferStash) {
+        self.active_shown = false;
         self.buffer = stash.buffer;
         self.window.cursor = stash.cursor;
         self.window.view_top = stash.view_top;
@@ -548,7 +549,7 @@ impl super::App {
             self.switch_to(idx)?;
             self.refresh_editorconfig();
             let is_config = self.active_is_config();
-            let note = self.save_active(false, None)?;
+            let note = self.save_active(false)?;
             if is_config {
                 config_note = note;
             }
@@ -690,6 +691,9 @@ impl super::App {
     /// is reopened onto that text, and a file changed meanwhile doesn't get
     /// the position back. Called on buffer leave and quit.
     pub(super) fn persist_active_cursor(&self) {
+        if !self.active_shown {
+            return;
+        }
         if let (Some(path), Some(hash)) = (self.buffer.path.as_deref(), self.buffer.clean_hash) {
             crate::cursor_cache::save(path, hash, self.window.cursor);
         }
@@ -699,16 +703,16 @@ impl super::App {
         if !force && self.buffer.dirty {
             anyhow::bail!("E89: No write since last change (use :bd!)");
         }
-        // Closing this buffer (both the last-buffer branch below and the
-        // switch_tab path) should still remember where we were in it.
-        self.persist_active_cursor();
         // Closed on purpose: `:bd!` discarded the changes, and a buffer undone
         // back to clean may still have a dump of its dirty text.
         if let Some(path) = self.buffer.path.clone() {
             self.discard_recovery(&path);
         }
         if self.buffers.len() == 1 {
-            // Last buffer — replace with an empty one and resurface the start page.
+            // Last buffer — replace with an empty one and resurface the start
+            // page. No switch snapshots it, so its cursor is remembered here.
+            self.persist_active_cursor();
+            self.active_shown = false;
             self.buffer = Buffer::empty();
             self.window.cursor = Cursor::default();
             self.window.view_top = 0;
@@ -810,6 +814,7 @@ impl super::App {
             s.insert(0);
             s
         };
+        self.active_shown = false;
         self.buffer = Buffer::empty();
         self.window.cursor = Cursor::default();
         self.window.view_top = 0;

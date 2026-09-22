@@ -6,7 +6,6 @@
 use anyhow::Result;
 use std::path::PathBuf;
 
-use crate::cursor::Cursor;
 use crate::editorconfig::EditorConfig;
 
 impl super::App {
@@ -53,16 +52,7 @@ impl super::App {
     /// Unless `force` (`:w!`), a write that would destroy something is
     /// refused before the formatter runs: another program's changes to the
     /// file, or the bytes of a file that wasn't valid UTF-8.
-    /// `persist_cursor` lets a caller choose which position gets remembered
-    /// as this file's "where I was last". Default (`None`) uses wherever the
-    /// cursor currently is — right for an interactive `:w`. A batch edit
-    /// (e.g. project-wide `:S`) passes the cursor it started from, so the
-    /// edit moving the cursor doesn't wipe a saved position to the top.
-    pub(super) fn save_active(
-        &mut self,
-        force: bool,
-        persist_cursor: Option<Cursor>,
-    ) -> Result<Option<String>> {
+    pub(super) fn save_active(&mut self, force: bool) -> Result<Option<String>> {
         if !force && self.buffer.changed_on_disk() {
             anyhow::bail!("file changed on disk since it was read (:w! overwrites it)");
         }
@@ -105,13 +95,11 @@ impl super::App {
         // Persist undo so the next session can keep walking history.
         if let (Some(path), Some(hash)) = (self.buffer.path.as_deref(), self.buffer.clean_hash) {
             if let Some(cache) = crate::undo::cache_path_for(path) {
-                let cursor = persist_cursor.unwrap_or(self.window.cursor);
                 let _ = self.history.save_to_path(&cache, hash);
-                // A `:w` also refreshes the nvim-style cursor cache, so a
-                // file saved then left (without a buffer switch) is current.
-                crate::cursor_cache::save(path, hash, cursor);
             }
         }
+        // The text the cursor cache is keyed on just changed.
+        self.persist_active_cursor();
         if self.active_is_config() {
             let reload = self.reload_config();
             format_note = Some(match format_note {

@@ -426,6 +426,11 @@ pub struct App {
     /// cache's hash gate would reject it anyway (`None` otherwise).
     pub cursor_snapshot:
         std::sync::Arc<std::sync::Mutex<Option<(PathBuf, u64, crate::cursor::Cursor)>>>,
+    /// Whether a frame has been drawn since the active buffer became active.
+    /// The cursor cache is only written for a buffer that was: the `:S` loop,
+    /// LSP workspace edits, `:wa` and session hydrate all switch through
+    /// buffers nobody sees, at positions the user never chose.
+    pub active_shown: bool,
     /// Number of dashboard rows scrolled off the top while
     /// `show_health_page` is up. Clamped against
     /// `health_content_height` by the input handlers.
@@ -1049,6 +1054,7 @@ impl App {
             recovery_snapshot: Default::default(),
             session_snapshot: Default::default(),
             cursor_snapshot: Default::default(),
+            active_shown: false,
             health_scroll: 0,
             health_content_height: std::cell::Cell::new(0),
             debug_pane_open: false,
@@ -1269,6 +1275,7 @@ impl App {
                 self.copilot_maybe_poll_status();
                 render::draw(&mut stdout, self)?;
                 stdout.flush()?;
+                self.active_shown = true;
                 needs_render = false;
             }
             // Compute the poll budget — a pending leader-prefix shortens it so the

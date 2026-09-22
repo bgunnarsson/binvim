@@ -2242,13 +2242,13 @@ impl super::App {
                 }
             }
             ExCommand::QuitForce | ExCommand::QuitAllForce => self.quit_now(),
-            ExCommand::WriteQuit => match self.save_active(false, None) {
+            ExCommand::WriteQuit => match self.save_active(false) {
                 Ok(_) => self.quit_unless_background_dirty(),
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
             ExCommand::WriteQuitIfModified => {
                 let saved = if self.buffer.dirty {
-                    self.save_active(false, None).map(|_| ())
+                    self.save_active(false).map(|_| ())
                 } else {
                     Ok(())
                 };
@@ -3103,7 +3103,7 @@ impl super::App {
     /// `:w` and `:w {file}`: write, then say so with whatever the save
     /// noted — the formatter, or a reload when the file is `config.toml`.
     fn write_and_report(&mut self, force: bool) {
-        match self.save_active(force, None) {
+        match self.save_active(force) {
             Ok(format_note) => {
                 // Show the basename only — full paths blow up the
                 // notification box for deep working trees. Disambiguating
@@ -3841,9 +3841,6 @@ impl super::App {
         let mut files_changed = 0usize;
         let mut errors = 0usize;
         let mut skipped = 0usize;
-        // The pre-substitute cursor of every file that actually changed, so we
-        // can re-assert it once the loop is over (see below).
-        let mut restored_cursors: Vec<(PathBuf, u64, crate::cursor::Cursor)> = Vec::new();
         for path in files {
             if self.pending_recovery(&path) {
                 skipped += 1;
@@ -3853,36 +3850,15 @@ impl super::App {
                 errors += 1;
                 continue;
             }
-            // Remember where this file was when it was opened (its restored
-            // last position, or the top for a new one). The edit below moves
-            // the cursor, so persisting the live cursor here would wipe every
-            // touched file's saved position to the top.
-            let persisted_cursor = self.window.cursor;
             if !flags.count_only {
-                self.history.record(&self.buffer.rope, persisted_cursor);
+                self.history.record(&self.buffer.rope, self.window.cursor);
             }
             match self.substitute(crate::command::ExRange::Whole, pattern, replacement, flags) {
                 Ok((n, _)) if n > 0 => {
                     total_subs += n;
                     files_changed += 1;
-                    if !flags.count_only {
-                        // Re-assert the original cursor once every file is
-                        // processed (opening the next buffer's leave would
-                        // clobber it). Hash AFTER saving, from the loaded
-                        // buffer: a raw disk read would differ on a CRLF file,
-                        // and the pre-save text differs from what a save's
-                        // formatter / .editorconfig transforms write, so the
-                        // key must come from the post-save rope.
-                        match (
-                            self.save_active(false, Some(persisted_cursor)),
-                            self.buffer.clean_hash,
-                        ) {
-                            (Ok(_), Some(hash)) => {
-                                restored_cursors.push((path, hash, persisted_cursor))
-                            }
-                            (Ok(_), None) => {}
-                            (Err(_), _) => errors += 1,
-                        }
+                    if !flags.count_only && self.save_active(false).is_err() {
+                        errors += 1;
                     }
                 }
                 Ok(_) => {}
@@ -3893,17 +3869,6 @@ impl super::App {
         }
         if original_active < self.buffers.len() && self.active != original_active {
             let _ = self.switch_to(original_active);
-        }
-        // Opening the *next* file's buffer switches away from this one, and
-        // that leave writes the post-substitute cursor over the original
-        // position `save_active` just stored — defeating its `persisted_cursor`
-        // for every file but the last. Re-assert the original on each changed
-        // file (keyed by the hash captured right after its save) so a reopen
-        // lands where the user last was.
-        if !flags.count_only {
-            for (path, hash, cursor) in &restored_cursors {
-                crate::cursor_cache::save(path, *hash, *cursor);
-            }
         }
         let skipped_note = if skipped > 0 {
             let s = if skipped == 1 { "" } else { "s" };

@@ -168,7 +168,7 @@ Decisions made in this plan:
   `buffer::tests` test that `from_path` sets the hash, an edit leaves it, and
   `save` updates it; `grep -rn 'hash_text(&self.buffer' src/app` returns
   nothing.
-- [ ] **Persist only what was drawn.** Add `App.active_shown: bool`, false in
+- [x] **Persist only what was drawn.** Add `App.active_shown: bool`, false in
   `App::new`, cleared in `load_stash` and where `App.buffer` is replaced
   (`delete_buffer`'s last-buffer branch, `:new` / `:vnew`), set true right
   after `render::draw` in `run`. `persist_active_cursor` returns early when it
