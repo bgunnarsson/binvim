@@ -151,7 +151,7 @@ Decisions made here, from the code and the lore:
   `paths::cache_dir()` (0700-narrowed like `undo.rs`) with the existing unpredictable-name
   machinery. Verify: manual yazi open/pick still works; path asserted in a unit test if the fn
   splits cleanly, else by reading the code in review.
-- [ ] **A7 — Narrow cache permissions.** Narrow `~/.cache/binvim` at startup and `sessions/` on
+- [x] **A7 — Narrow cache permissions.** Narrow `~/.cache/binvim` at startup and `sessions/` on
   save to `0700`, following `undo.rs`'s save+startup pattern. Unit test mirrors `undo.rs`'s
   permission assertions.
 - [ ] **A8 — Windows URL open without `cmd /C`.** `open_url_in_browser` uses

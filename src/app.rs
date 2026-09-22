@@ -1209,6 +1209,13 @@ impl App {
         // `[update] check`; a cached answer (the common case) needs no
         // network and lands on the first tick, in time for the start page.
         self.update_spawn_check();
+        // Everything under the cache root is this user's business — buffer
+        // text (recovery, undo), what they typed (sessions), where they've
+        // been (recents). Narrowed every launch, not just when a subdir is
+        // next written, so directories an older build left at 0755 tighten.
+        if let Some(cache) = crate::paths::cache_dir() {
+            let _ = crate::paths::create_private_dir(&cache);
+        }
         // Undo history for files not saved in 90 days. A directory walk, so
         // off the thread that draws the first frame.
         std::thread::spawn(crate::undo::prune_stale_history);

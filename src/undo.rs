@@ -351,14 +351,9 @@ impl History {
             future: future.into_iter().map(StoredSnapshot::from).collect(),
         };
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
             // Every snapshot is the file's full text, so the directory is
             // private for the same reason `recover::write_to`'s is.
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-            }
+            crate::paths::create_private_dir(parent)?;
         }
         let serialized = serde_json::to_vec(&stored).map_err(std::io::Error::other)?;
         crate::paths::write_atomic(path, &serialized)
@@ -471,11 +466,7 @@ pub fn prune_stale_history() {
 /// a directory an older binvim made is `0755`, and would stay that way until
 /// the next `:w`.
 fn tidy_history_dir(dir: &Path, max_age: Duration, now: std::time::SystemTime) -> usize {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-    }
+    let _ = crate::paths::create_private_dir(dir);
     let Some(cutoff) = now.checked_sub(max_age) else {
         return 0;
     };

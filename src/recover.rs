@@ -38,14 +38,9 @@ pub fn recovery_path(file: &Path) -> Option<PathBuf> {
 
 pub fn write_to(dest: &Path, rec: &RecoveryFile) -> std::io::Result<()> {
     if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
         // The text may be a private file's — a key, a `.env` — so only this
         // user may look inside, whatever the files' own modes come out as.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-        }
+        crate::paths::create_private_dir(parent)?;
     }
     let json = serde_json::to_vec(rec).map_err(std::io::Error::other)?;
     crate::paths::write_atomic(dest, &json)

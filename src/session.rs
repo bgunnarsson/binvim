@@ -174,7 +174,10 @@ pub fn save(session: &Session) -> std::io::Result<()> {
         return Ok(());
     };
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        // Sessions carry `:` and `/` history and recorded macros — anything
+        // the user typed, occasionally a pasted secret — so the directory is
+        // private like recovery's and undo's.
+        crate::paths::create_private_dir(parent)?;
     }
     let json = serde_json::to_string_pretty(session)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
