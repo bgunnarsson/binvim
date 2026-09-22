@@ -9,7 +9,8 @@ symptoms:
   - "semantic-token colours stay painted after [lsp] semantic_tokens = false and a reload"
   - "a reload turns relative line numbers back on after :set norelativenumber"
 root_cause: "App.config is mostly read at use, but some state bakes it in — resolved colours in caches, toggles checked only before a request, :set values written into the struct — and a wholesale swap updates none of it"
-related: []
+related:
+  - docs/solutions/runtime/a-buffers-disk-fields-are-set-in-three-places-and-the-reload-is-outside-buffer-rs.md
 ---
 
 ## Problem
@@ -77,4 +78,4 @@ tokens stay on screen was established from the render path (`render.rs`, the
   `apply_config_text`. Otherwise the next reload silently undoes it.
 - **Plan claims about stored state.** A plan statement about what a cache or struct stores must
   name the field and its type as read in the source, not repeat a research agent's summary.
-- Enforced by: CLAUDE.md (Conventions to preserve) as a written rule; review holds diffs to it.
+- Written into: CLAUDE.md
