@@ -138,7 +138,7 @@ Decisions made here, from the code and the lore:
   `shutdown` request + `exit` notification per client). Verify: tmux checks per acceptance
   criteria; no unit-testable surface beyond `shutdown_all` sending the two messages
   (assert on the wire via the existing client test harness if present, else the tmux check).
-- [ ] **A4 — Overlap-drop in `apply_multi_selection_operate`.** Extract
+- [x] **A4 — Overlap-drop in `apply_multi_selection_operate`.** Extract
   `fn drop_overlapping_ranges(ranges: &mut Vec<(usize, usize)>)` used by all three sites
   (`visual.rs:461` gains it; `visual.rs:628` and `multi_cursor.rs:156` converge on it). Unit test
   overlapping-range input on the operate path.

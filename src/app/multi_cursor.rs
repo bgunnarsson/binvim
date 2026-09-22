@@ -156,26 +156,15 @@ impl super::App {
     fn apply_multi_op(
         &mut self,
         op: Operator,
-        mut ranges: Vec<(usize, usize)>,
+        ranges: Vec<(usize, usize)>,
         register: Option<char>,
         linewise: bool,
     ) {
-        // Drop empty / inverted ranges (e.g. `dw` at EOL).
-        ranges.retain(|r| r.1 > r.0);
+        // Empty / inverted ranges (e.g. `dw` at EOL) drop out here too.
+        let ranges = super::state::disjoint_sorted_ranges(ranges);
         if ranges.is_empty() {
             return;
         }
-        ranges.sort_by_key(|r| r.0);
-        // Drop overlaps — keep the leftmost-starting one.
-        let mut keep: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
-        let mut last_end = 0usize;
-        for r in &ranges {
-            if r.0 >= last_end {
-                keep.push(*r);
-                last_end = r.1;
-            }
-        }
-        let ranges = keep;
 
         // Each range's landing in the post-delete buffer is its original
         // start minus the total chars deleted by ranges before it. Same

@@ -472,8 +472,11 @@ impl super::App {
                 ranges.push(*r);
             }
         }
-        ranges.sort_by_key(|r| r.0);
-        ranges.dedup();
+        let ranges = super::state::disjoint_sorted_ranges(ranges);
+        if ranges.is_empty() {
+            self.exit_visual();
+            return;
+        }
         // Concatenated removed-text for the register, in document order.
         let mut texts: Vec<String> = Vec::with_capacity(ranges.len());
         for &(s, e) in &ranges {
@@ -633,19 +636,7 @@ impl super::App {
                 ranges.push(*r);
             }
         }
-        ranges.sort_by_key(|r| r.0);
-        ranges.dedup();
-        // Drop overlaps — keep the leftmost-starting one, so a paste can't
-        // land inside a range another paste already rewrote.
-        let mut keep: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
-        let mut last_end = 0usize;
-        for &r in &ranges {
-            if r.1 > r.0 && (keep.is_empty() || r.0 >= last_end) {
-                keep.push(r);
-                last_end = r.1;
-            }
-        }
-        let ranges = keep;
+        let ranges = super::state::disjoint_sorted_ranges(ranges);
         if ranges.is_empty() {
             self.exit_visual();
             return;
@@ -916,6 +907,29 @@ mod tests {
 
     fn text(app: &crate::app::App) -> String {
         app.buffer.rope.to_string()
+    }
+
+    // Overlapping additional selections must collapse to the
+    // leftmost-starting one before the bottom-up delete — otherwise the
+    // shared chars are deleted twice and the landing math places cursors
+    // mid-buffer.
+    #[test]
+    fn multi_selection_delete_drops_overlapping_ranges() {
+        let mut app = app_with("a.txt", "abcdefghij\n");
+        // Primary selection: chars 0..4 ("abcd").
+        app.window.cursor.line = 0;
+        app.window.cursor.col = 3;
+        let mut anchor = app.window.cursor;
+        anchor.col = 0;
+        app.window.visual_anchor = Some(anchor);
+        app.mode = Mode::Visual(VisualKind::Char);
+        // An overlapping extra (2..6) and a disjoint one (6..8).
+        app.additional_selections = vec![(2, 6), (6, 8)];
+        app.apply_multi_selection_operate(crate::mode::Operator::Delete, None);
+        // 0..4 and 6..8 survive; 2..6 overlaps the primary and is dropped.
+        assert_eq!(text(&app), "efij\n");
+        assert_eq!(app.window.cursor.col, 0);
+        assert_eq!(app.additional_cursors, vec![2]);
     }
 
     // Visual-line paste must NOT clobber the register with the replaced

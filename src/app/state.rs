@@ -769,6 +769,25 @@ pub struct YankHighlight {
     pub expires_at: Instant,
 }
 
+/// Sort char-index ranges by start, dropping empty ones and any range that
+/// overlaps an earlier-starting one. Every multi-range edit path leans on
+/// this: a bottom-up delete over overlapping ranges removes the shared
+/// chars twice, and the cumulative-offset landing math after it places
+/// cursors mid-buffer.
+pub(super) fn disjoint_sorted_ranges(mut ranges: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    ranges.retain(|r| r.1 > r.0);
+    ranges.sort_by_key(|r| r.0);
+    let mut keep: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
+    let mut last_end = 0usize;
+    for r in ranges {
+        if keep.is_empty() || r.0 >= last_end {
+            keep.push(r);
+            last_end = r.1;
+        }
+    }
+    keep
+}
+
 pub fn leader_entries() -> Vec<(String, String)> {
     vec![
         ("<space>".into(), "Files".into()),
