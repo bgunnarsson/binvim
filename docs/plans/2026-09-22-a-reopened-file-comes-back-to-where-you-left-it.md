@@ -193,7 +193,7 @@ Decisions made in this plan:
   from one thread in `run`. `cursor_cache`'s tests use
   `paths::test_scratch_dir("cursor", …)` instead of a private `scratch`.
   Verify: `cargo test cursor_cache::tests` and `cargo test undo::tests`.
-- [ ] **Changelog.** Add `## [Unreleased]` above `## [0.6.5]` with one
+- [x] **Changelog.** Add `## [Unreleased]` above `## [0.6.5]` with one
   `### Added` entry in the file's style: binvim remembers where you were in
   each file and comes back to it on reopen, unless the file changed on disk
   meanwhile. Verify: `cargo test` (the changelog has no test; read it back).

@@ -4,6 +4,14 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **A reopened file comes back to where you left it.** binvim remembers the
+  cursor position of every file you leave, quit from, or lose to a closed
+  terminal, and puts you back there the next time the file opens — unless the
+  file changed on disk in between. Thanks to [@happyTonakai](https://github.com/happyTonakai) (#12).
+
 ## [0.6.5] - 2026-09-22
 
 ### Added
