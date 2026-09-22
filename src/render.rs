@@ -2208,22 +2208,35 @@ const HEALTH_BANNER: &[&str] = &[
 /// Full-screen `:health` dashboard. ASCII-art banner up top, then
 /// densely-packed section headers (no boxes — boxes added too much
 /// chrome). Esc / `q` / `:q` dismiss (handled in `app/input.rs`).
-fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
-    // Lay the dashboard out inside the editor rect, not the full terminal,
-    // so it scales around any open panes — file tree on the left, AI
-    // terminal on the right, debug / terminal panes on the bottom — rather
-    // than painting underneath them.
+/// Geometry and palette shared by every scrollable overlay page
+/// (`:health`, `:messages`, `:registers`, test results). Produced by
+/// `begin_overlay_page`, consumed by the row painters and
+/// `paint_page_footer`, so the four pages can't drift apart on margins,
+/// clearing or the footer hint.
+struct PageChrome {
+    area_w: usize,
+    rows: usize,
+    top: usize,
+    left: usize,
+    viewport_rows: usize,
+    body_w: usize,
+    page_bg: Option<Color>,
+    p: DashboardPalette,
+}
+
+/// Clear the editor rect and compute an overlay page's layout. Anchored to
+/// the editor rect, not the full terminal, so the page scales around any
+/// open panes (file tree, AI terminal, debug / terminal) rather than
+/// painting underneath them. `None` when the area is too small to draw.
+fn begin_overlay_page(out: &mut impl Write, app: &App) -> Result<Option<PageChrome>> {
     let area = app.editor_rect();
     let area_x = area.x as usize;
     let area_w = area.w as usize;
     let rows = area.h as usize;
     let top = area.y as usize;
     if rows == 0 || area_w < 30 {
-        return Ok(());
+        return Ok(None);
     }
-
-    // Clear the editor area first so leftover frame content can't bleed
-    // through. Panes paint over their own columns afterwards.
     let page_bg = app.config.background_color();
     let blank: String = " ".repeat(area_w);
     for row in 0..rows {
@@ -2234,39 +2247,30 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
             queue!(out, Clear(ClearType::CurrentLine))?;
         }
     }
+    Ok(Some(PageChrome {
+        area_w,
+        rows,
+        top,
+        // Reserve the bottom row for the always-on footer, and leave a
+        // 2-col margin each side.
+        left: area_x + 2,
+        viewport_rows: rows.saturating_sub(1),
+        body_w: area_w.saturating_sub(4).max(40),
+        page_bg,
+        p: DashboardPalette::from_config(&app.config),
+    }))
+}
 
-    let snap = app.build_health_snapshot();
-    let p = DashboardPalette::from_config(&app.config);
-
-    let left = area_x + 2;
-    // Reserve the bottom row of the buffer area for the always-on
-    // footer so the keybinding hint stays visible while scrolling.
-    let viewport_rows = rows.saturating_sub(1);
-    // Body width budget — leave a 2-col margin on the right too.
-    let body_w = area_w.saturating_sub(4).max(40);
-
-    // Build the dashboard as a flat list of virtual rows first so we
-    // can both measure its total height (for the input handler's
-    // clamp) and paint just the slice the user has scrolled to.
-    let banner_fits = area_w >= 50 && rows > 10;
-    let mut rows_buf: Vec<DashRow> = Vec::new();
-    build_health_rows(&mut rows_buf, &snap, &p, left, body_w, banner_fits);
-
-    // Stash the total content height so input handlers can clamp the
-    // scroll without re-running the snapshot.
-    app.health_content_height.set(rows_buf.len());
-
-    let scroll = app
-        .health_scroll
-        .min(rows_buf.len().saturating_sub(viewport_rows));
-
-    for (i, row) in rows_buf.iter().enumerate().skip(scroll).take(viewport_rows) {
-        let screen_y = (top + (i - scroll)) as u16;
-        row.paint(out, screen_y, &p, page_bg)?;
-    }
-
-    // --- Footer (anchored to bottom of buffer area) -------------------
-    let has_more_below = scroll + viewport_rows < rows_buf.len();
+/// The footer every scrollable page anchors to its bottom row. `prefix`
+/// prepends page-specific keys (the health page's install hint).
+fn paint_page_footer(
+    out: &mut impl Write,
+    c: &PageChrome,
+    scroll: usize,
+    content_len: usize,
+    prefix: Option<&str>,
+) -> Result<()> {
+    let has_more_below = scroll + c.viewport_rows < content_len;
     let has_more_above = scroll > 0;
     let hint = match (has_more_above, has_more_below) {
         (false, false) => "Esc · q · :q to dismiss",
@@ -2274,20 +2278,109 @@ fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
         (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
         (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
     };
-    // The SETUP box scrolls away; the footer doesn't, so it carries the key too.
-    let footer = match &snap.setup {
-        Some(setup) => format!("i install {} toolchain · {hint}", setup.bundle),
+    let footer = match prefix {
+        Some(pre) => format!("{pre} · {hint}"),
         None => hint.to_string(),
     };
-    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
-    apply_buf_bg(out, page_bg)?;
+    queue!(out, MoveTo(c.left as u16, (c.top + c.rows - 1) as u16))?;
+    apply_buf_bg(out, c.page_bg)?;
     queue!(
         out,
-        SetForegroundColor(p.overlay0),
-        Print(truncate(&footer, area_w.saturating_sub(2))),
+        SetForegroundColor(c.p.overlay0),
+        Print(truncate(&footer, c.area_w.saturating_sub(2))),
     )?;
-    reset_to_buf_bg(out, page_bg)?;
+    reset_to_buf_bg(out, c.page_bg)?;
     Ok(())
+}
+
+/// Paint the visible slice of a page's `MessageRow` list — the row model
+/// the messages, registers/list and test-results pages share.
+fn paint_message_rows(
+    out: &mut impl Write,
+    c: &PageChrome,
+    lines: &[MessageRow],
+    scroll: usize,
+) -> Result<()> {
+    for (i, row) in lines.iter().enumerate().skip(scroll).take(c.viewport_rows) {
+        let screen_y = (c.top + (i - scroll)) as u16;
+        match row {
+            MessageRow::Blank => {}
+            MessageRow::Entry {
+                prefix,
+                prefix_colour,
+                body,
+            } => {
+                queue!(out, MoveTo(c.left as u16, screen_y))?;
+                apply_buf_bg(out, c.page_bg)?;
+                queue!(
+                    out,
+                    SetForegroundColor(*prefix_colour),
+                    Print(prefix),
+                    SetForegroundColor(c.p.text),
+                    Print(truncate(
+                        body,
+                        c.body_w.saturating_sub(prefix.chars().count())
+                    )),
+                )?;
+                reset_to_buf_bg(out, c.page_bg)?;
+            }
+            MessageRow::Continuation { indent, body } => {
+                queue!(out, MoveTo(c.left as u16, screen_y))?;
+                apply_buf_bg(out, c.page_bg)?;
+                queue!(
+                    out,
+                    SetForegroundColor(c.p.overlay1),
+                    Print(indent),
+                    SetForegroundColor(c.p.subtext1),
+                    Print(truncate(
+                        body,
+                        c.body_w.saturating_sub(indent.chars().count())
+                    )),
+                )?;
+                reset_to_buf_bg(out, c.page_bg)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn draw_health_page(out: &mut impl Write, app: &App) -> Result<()> {
+    let Some(c) = begin_overlay_page(out, app)? else {
+        return Ok(());
+    };
+    let snap = app.build_health_snapshot();
+
+    // Build the dashboard as a flat list of virtual rows first so we
+    // can both measure its total height (for the input handler's
+    // clamp) and paint just the slice the user has scrolled to.
+    let banner_fits = c.area_w >= 50 && c.rows > 10;
+    let mut rows_buf: Vec<DashRow> = Vec::new();
+    build_health_rows(&mut rows_buf, &snap, &c.p, c.left, c.body_w, banner_fits);
+
+    // Stash the total content height so input handlers can clamp the
+    // scroll without re-running the snapshot.
+    app.health_content_height.set(rows_buf.len());
+
+    let scroll = app
+        .health_scroll
+        .min(rows_buf.len().saturating_sub(c.viewport_rows));
+
+    for (i, row) in rows_buf
+        .iter()
+        .enumerate()
+        .skip(scroll)
+        .take(c.viewport_rows)
+    {
+        let screen_y = (c.top + (i - scroll)) as u16;
+        row.paint(out, screen_y, &c.p, c.page_bg)?;
+    }
+
+    // The SETUP box scrolls away; the footer doesn't, so it carries the key too.
+    let install_hint = snap
+        .setup
+        .as_ref()
+        .map(|setup| format!("i install {} toolchain", setup.bundle));
+    paint_page_footer(out, &c, scroll, rows_buf.len(), install_hint.as_deref())
 }
 
 // ─── :install overlay ─────────────────────────────────────────────────────
@@ -3453,35 +3546,19 @@ fn draw_side_loading_splash(
 }
 
 fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
-    // Anchor to the editor rect so the overlay scales around any open
-    // panes (file tree, AI terminal, debug / terminal) rather than
-    // painting full-width underneath them.
-    let area = app.editor_rect();
-    let area_x = area.x as usize;
-    let area_w = area.w as usize;
-    let rows = area.h as usize;
-    let top = area.y as usize;
-    if rows == 0 || area_w < 30 {
+    let Some(c) = begin_overlay_page(out, app)? else {
         return Ok(());
-    }
-    let page_bg = app.config.background_color();
-    let blank_row: String = " ".repeat(area_w);
-    for row in 0..rows {
-        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
-        if let Some(c) = page_bg {
-            queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
-        } else {
-            queue!(out, Clear(ClearType::CurrentLine))?;
-        }
-    }
-    let p = DashboardPalette::from_config(&app.config);
-    let left = area_x + 2;
-    let viewport_rows = rows.saturating_sub(1);
-    let body_w = area_w.saturating_sub(4).max(40);
+    };
+    let p = &c.p;
+    let body_w = c.body_w;
 
     // Header row + one trailing blank.
     let mut lines: Vec<MessageRow> = Vec::new();
-    lines.push(MessageRow::Header);
+    lines.push(MessageRow::Entry {
+        prefix: format!(" {} captured server messages", app.lsp_messages.len()),
+        prefix_colour: p.lavender,
+        body: String::new(),
+    });
     lines.push(MessageRow::Blank);
 
     // Newest first — the user usually wants to read the latest server
@@ -3535,105 +3612,18 @@ fn draw_messages_page(out: &mut impl Write, app: &App) -> Result<()> {
     app.messages_content_height.set(lines.len());
     let scroll = app
         .messages_scroll
-        .min(lines.len().saturating_sub(viewport_rows));
+        .min(lines.len().saturating_sub(c.viewport_rows));
 
-    for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
-        let screen_y = (top + (i - scroll)) as u16;
-        match row {
-            MessageRow::Header => {
-                let title = format!(" {} captured server messages", app.lsp_messages.len());
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(p.lavender),
-                    Print(truncate(&title, body_w)),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-            MessageRow::Blank => {}
-            MessageRow::Entry {
-                prefix,
-                prefix_colour,
-                body,
-            } => {
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(*prefix_colour),
-                    Print(prefix),
-                    SetForegroundColor(p.text),
-                    Print(truncate(
-                        body,
-                        body_w.saturating_sub(prefix.chars().count())
-                    )),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-            MessageRow::Continuation { indent, body } => {
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(p.overlay1),
-                    Print(indent),
-                    SetForegroundColor(p.subtext1),
-                    Print(truncate(
-                        body,
-                        body_w.saturating_sub(indent.chars().count())
-                    )),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-        }
-    }
-
-    let has_more_below = scroll + viewport_rows < lines.len();
-    let has_more_above = scroll > 0;
-    let footer = match (has_more_above, has_more_below) {
-        (false, false) => "Esc · q · :q to dismiss",
-        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
-        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
-        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
-    };
-    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
-    apply_buf_bg(out, page_bg)?;
-    queue!(
-        out,
-        SetForegroundColor(p.overlay0),
-        Print(truncate(footer, area_w.saturating_sub(2))),
-    )?;
-    reset_to_buf_bg(out, page_bg)?;
-    Ok(())
+    paint_message_rows(out, &c, &lines, scroll)?;
+    paint_page_footer(out, &c, scroll, lines.len(), None)
 }
 
 fn draw_list_page(out: &mut impl Write, app: &App) -> Result<()> {
-    // Anchor to the editor rect so the overlay scales around any open
-    // panes (file tree, AI terminal, debug / terminal) rather than
-    // painting full-width underneath them.
-    let area = app.editor_rect();
-    let area_x = area.x as usize;
-    let area_w = area.w as usize;
-    let rows = area.h as usize;
-    let top = area.y as usize;
-    if rows == 0 || area_w < 30 {
+    let Some(c) = begin_overlay_page(out, app)? else {
         return Ok(());
-    }
-    let page_bg = app.config.background_color();
-    let blank_row: String = " ".repeat(area_w);
-    for row in 0..rows {
-        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
-        if let Some(c) = page_bg {
-            queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
-        } else {
-            queue!(out, Clear(ClearType::CurrentLine))?;
-        }
-    }
-    let p = DashboardPalette::from_config(&app.config);
-    let left = area_x + 2;
-    let viewport_rows = rows.saturating_sub(1);
-    let body_w = area_w.saturating_sub(4).max(40);
+    };
+    let p = &c.p;
+    let body_w = c.body_w;
 
     let mut lines: Vec<MessageRow> = Vec::new();
 
@@ -3700,67 +3690,10 @@ fn draw_list_page(out: &mut impl Write, app: &App) -> Result<()> {
     app.list_content_height.set(lines.len());
     let scroll = app
         .list_scroll
-        .min(lines.len().saturating_sub(viewport_rows));
+        .min(lines.len().saturating_sub(c.viewport_rows));
 
-    for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
-        let screen_y = (top + (i - scroll)) as u16;
-        match row {
-            MessageRow::Header => {}
-            MessageRow::Blank => {}
-            MessageRow::Entry {
-                prefix,
-                prefix_colour,
-                body,
-            } => {
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(*prefix_colour),
-                    Print(prefix),
-                    SetForegroundColor(p.text),
-                    Print(truncate(
-                        body,
-                        body_w.saturating_sub(prefix.chars().count())
-                    )),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-            MessageRow::Continuation { indent, body } => {
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(p.overlay1),
-                    Print(indent),
-                    SetForegroundColor(p.subtext1),
-                    Print(truncate(
-                        body,
-                        body_w.saturating_sub(indent.chars().count())
-                    )),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-        }
-    }
-
-    let has_more_below = scroll + viewport_rows < lines.len();
-    let has_more_above = scroll > 0;
-    let footer = match (has_more_above, has_more_below) {
-        (false, false) => "Esc · q · :q to dismiss",
-        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
-        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
-        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
-    };
-    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
-    apply_buf_bg(out, page_bg)?;
-    queue!(
-        out,
-        SetForegroundColor(p.overlay0),
-        Print(truncate(footer, area_w.saturating_sub(2))),
-    )?;
-    reset_to_buf_bg(out, page_bg)?;
-    Ok(())
+    paint_message_rows(out, &c, &lines, scroll)?;
+    paint_page_footer(out, &c, scroll, lines.len(), None)
 }
 
 /// Rows for a `Listing` in the list overlay: its title, then one row per
@@ -3902,31 +3835,11 @@ fn format_key_with_mods(c: char, mods: crossterm::event::KeyModifiers) -> String
 }
 
 fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
-    // Anchor to the editor rect so the overlay scales around any open
-    // panes (file tree, AI terminal, debug / terminal) rather than
-    // painting full-width underneath them.
-    let area = app.editor_rect();
-    let area_x = area.x as usize;
-    let area_w = area.w as usize;
-    let rows = area.h as usize;
-    let top = area.y as usize;
-    if rows == 0 || area_w < 30 {
+    let Some(c) = begin_overlay_page(out, app)? else {
         return Ok(());
-    }
-    let page_bg = app.config.background_color();
-    let blank_row: String = " ".repeat(area_w);
-    for row in 0..rows {
-        queue!(out, MoveTo(area_x as u16, (row + top) as u16))?;
-        if let Some(c) = page_bg {
-            queue!(out, SetBackgroundColor(c), Print(&blank_row))?;
-        } else {
-            queue!(out, Clear(ClearType::CurrentLine))?;
-        }
-    }
-    let p = DashboardPalette::from_config(&app.config);
-    let left = area_x + 2;
-    let viewport_rows = rows.saturating_sub(1);
-    let body_w = area_w.saturating_sub(4).max(40);
+    };
+    let p = &c.p;
+    let body_w = c.body_w;
 
     let mut lines: Vec<MessageRow> = Vec::new();
     let header_text = if app.test.is_running() {
@@ -4052,76 +3965,18 @@ fn draw_test_results_page(out: &mut impl Write, app: &App) -> Result<()> {
     // viewport to the bottom every frame so streaming events stay
     // visible without the user having to press G between each tick.
     // Scrolling upward in `test_results_scroll_by` clears the flag.
-    let max_scroll = lines.len().saturating_sub(viewport_rows);
+    let max_scroll = lines.len().saturating_sub(c.viewport_rows);
     let scroll = if app.test_results_at_tail {
         max_scroll
     } else {
         app.test_results_scroll.min(max_scroll)
     };
 
-    for (i, row) in lines.iter().enumerate().skip(scroll).take(viewport_rows) {
-        let screen_y = (top + (i - scroll)) as u16;
-        match row {
-            MessageRow::Header => {}
-            MessageRow::Blank => {}
-            MessageRow::Entry {
-                prefix,
-                prefix_colour,
-                body,
-            } => {
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(*prefix_colour),
-                    Print(prefix),
-                    SetForegroundColor(p.text),
-                    Print(truncate(
-                        body,
-                        body_w.saturating_sub(prefix.chars().count())
-                    )),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-            MessageRow::Continuation { indent, body } => {
-                queue!(out, MoveTo(left as u16, screen_y))?;
-                apply_buf_bg(out, page_bg)?;
-                queue!(
-                    out,
-                    SetForegroundColor(p.overlay1),
-                    Print(indent),
-                    SetForegroundColor(p.subtext1),
-                    Print(truncate(
-                        body,
-                        body_w.saturating_sub(indent.chars().count())
-                    )),
-                )?;
-                reset_to_buf_bg(out, page_bg)?;
-            }
-        }
-    }
-
-    let has_more_below = scroll + viewport_rows < lines.len();
-    let has_more_above = scroll > 0;
-    let footer = match (has_more_above, has_more_below) {
-        (false, false) => "Esc · q · :q to dismiss",
-        (false, true) => "Esc · q · :q to dismiss · ↓ j more below",
-        (true, false) => "Esc · q · :q to dismiss · ↑ k more above",
-        (true, true) => "Esc · q · :q to dismiss · ↑ k ↓ j to scroll",
-    };
-    queue!(out, MoveTo(left as u16, (top + rows - 1) as u16))?;
-    apply_buf_bg(out, page_bg)?;
-    queue!(
-        out,
-        SetForegroundColor(p.overlay0),
-        Print(truncate(footer, area_w.saturating_sub(2))),
-    )?;
-    reset_to_buf_bg(out, page_bg)?;
-    Ok(())
+    paint_message_rows(out, &c, &lines, scroll)?;
+    paint_page_footer(out, &c, scroll, lines.len(), None)
 }
 
 enum MessageRow {
-    Header,
     Blank,
     Entry {
         prefix: String,

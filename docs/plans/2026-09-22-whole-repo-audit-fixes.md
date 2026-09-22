@@ -190,7 +190,7 @@ Decisions made here, from the code and the lore:
   signatures align. Verify: existing formatter/package/android parser tests unchanged.
 - [x] **C3 — Parser leader tail.** One `finish(state, action)` helper for the ten
   `awaiting_*_leader` blocks. Verify: existing parser tests.
-- [ ] **C4 — Shared page chrome.** Footer-hint match and the clear/scroll/paint boilerplate of the
+- [x] **C4 — Shared page chrome.** Footer-hint match and the clear/scroll/paint boilerplate of the
   four scrollable pages factor into one painter; nothing tests sibling overlay flags
   (`top_overlay` untouched). Verify: tmux visual check of all four pages + `:registers`-then-
   `:health` stacking per the overlay lore.
