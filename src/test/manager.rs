@@ -114,37 +114,48 @@ impl TestManager {
     /// — `progress=true` whenever any byte / event was processed so
     /// the main loop knows to schedule a redraw.
     pub fn drain(&mut self) -> (Vec<TestEvent>, bool) {
+        // Bounded per call like `LspManager::drain` and the PTY byte
+        // budget: a `--nocapture` println storm or a huge parametrized
+        // suite can queue thousands of events, and folding them all in
+        // one tick stalls input. `progress` already forces a render, so
+        // the loop comes straight back for the remainder.
+        const MAX_PER_CALL: usize = 256;
         let mut events = Vec::new();
         let mut session_dead = false;
         if let Some(session) = self.session.as_ref() {
-            while let Ok(ev) = session.events_rx.try_recv() {
+            while events.len() < MAX_PER_CALL {
+                let Ok(ev) = session.events_rx.try_recv() else { break };
                 events.push(ev);
             }
             // Detect a silent reader-thread death (e.g. the child was
             // killed externally). If the process has exited AND the
-            // channel is drained, the session is over.
-            if let Ok(mut child) = session.child.lock() {
-                if let Ok(Some(status)) = child.try_wait() {
-                    // Drain any final events the reader thread queued
-                    // before noticing EOF.
-                    while let Ok(ev) = session.events_rx.try_recv() {
-                        events.push(ev);
+            // channel is drained, the session is over. At the cap the
+            // channel may still hold events, so the judgment waits for a
+            // later, emptier call.
+            if events.len() < MAX_PER_CALL {
+                if let Ok(mut child) = session.child.lock() {
+                    if let Ok(Some(status)) = child.try_wait() {
+                        // Drain any final events the reader thread queued
+                        // before noticing EOF.
+                        while let Ok(ev) = session.events_rx.try_recv() {
+                            events.push(ev);
+                        }
+                        let has_finished = events
+                            .iter()
+                            .any(|e| matches!(e, TestEvent::Finished { .. }));
+                        let has_aborted = events
+                            .iter()
+                            .any(|e| matches!(e, TestEvent::Aborted { .. }));
+                        if !has_finished && !has_aborted && !status.success() {
+                            events.push(TestEvent::Aborted {
+                                message: format!(
+                                    "adapter exited with code {}",
+                                    status.code().unwrap_or(-1)
+                                ),
+                            });
+                        }
+                        session_dead = true;
                     }
-                    let has_finished = events
-                        .iter()
-                        .any(|e| matches!(e, TestEvent::Finished { .. }));
-                    let has_aborted = events
-                        .iter()
-                        .any(|e| matches!(e, TestEvent::Aborted { .. }));
-                    if !has_finished && !has_aborted && !status.success() {
-                        events.push(TestEvent::Aborted {
-                            message: format!(
-                                "adapter exited with code {}",
-                                status.code().unwrap_or(-1)
-                            ),
-                        });
-                    }
-                    session_dead = true;
                 }
             }
         }
@@ -274,4 +285,51 @@ fn spawn_runner(
         }
     });
     Ok(Arc::new(Mutex::new(child)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc::channel;
+
+    // A burst bigger than the per-call cap drains across calls with no
+    // event lost, and the session isn't reaped while events are queued.
+    #[test]
+    fn drain_caps_events_per_call_without_losing_any() {
+        let child = if cfg!(windows) {
+            std::process::Command::new("cmd").args(["/C", "exit"]).spawn()
+        } else {
+            std::process::Command::new("true").spawn()
+        }
+        .expect("spawn trivial child");
+        let (tx, events_rx) = channel();
+        for i in 0..600 {
+            tx.send(TestEvent::Output {
+                stream: OutputStream::Stdout,
+                text: format!("line {i}"),
+            })
+            .unwrap();
+        }
+        let mut mgr = TestManager::new();
+        mgr.session = Some(TestSession {
+            adapter_key: "x".into(),
+            display_command: "x".into(),
+            started_at: Instant::now(),
+            child: Arc::new(Mutex::new(child)),
+            events_rx,
+        });
+        let (a, progress) = mgr.drain();
+        assert_eq!(a.len(), 256);
+        assert!(progress);
+        assert!(mgr.session.is_some());
+        let (b, _) = mgr.drain();
+        assert_eq!(b.len(), 256);
+        let (c, _) = mgr.drain();
+        let outputs = |evs: &[TestEvent]| {
+            evs.iter()
+                .filter(|e| matches!(e, TestEvent::Output { .. }))
+                .count()
+        };
+        assert_eq!(outputs(&a) + outputs(&b) + outputs(&c), 600);
+    }
 }

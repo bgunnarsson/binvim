@@ -168,7 +168,7 @@ Decisions made here, from the code and the lore:
   skips.
 - [x] **B2 — Gate `syntax_object`.** Early-return `None` on `is_large()` inside `syntax_object`
   (covers all three callers). Unit test with an over-threshold buffer.
-- [ ] **B3 — Cap `TestManager::drain`.** Count-bound per call like `lsp/manager.rs`'s
+- [x] **B3 — Cap `TestManager::drain`.** Count-bound per call like `lsp/manager.rs`'s
   `MAX_PER_CALL`, returning a "more pending" signal consistent with how the run loop re-polls.
   Unit test: a burst larger than the cap drains across calls without loss.
 - [ ] **B4 — Render nits.** Reuse the `line_diags` binding in `draw_line_with_selection` (both
