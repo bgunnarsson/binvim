@@ -170,6 +170,16 @@ impl super::App {
     fn task_kickoff(&mut self, task: Task) {
         let command_line = task.command_line();
         let label = task.label.clone();
+        // Spawn through the user's shell rather than the program itself,
+        // so the rc files or profile load (PATH shims from nvm / asdf /
+        // direnv — `pnpm` is usually a nvm-managed Node script).
+        let launch = match task_launch(&crate::terminal::default_shell(), &task) {
+            Ok(launch) => launch,
+            Err(e) => {
+                self.status_msg = format!("task: {e}");
+                return;
+            }
+        };
         // Compute pane geometry. Mirrors `cmd_open_terminal` — we flip
         // the open flag first so `terminal_pane_rows()` returns the
         // post-open value when we size the PTY.
@@ -177,28 +187,7 @@ impl super::App {
         self.terminal_pane_open = true;
         let rows = self.terminal_pane_rows().saturating_sub(1).max(4) as u16;
         let cols = (self.width as usize).max(8) as u16;
-        // Spawn via `$SHELL -l -i -c "<command>"` so the user's rc
-        // files load (PATH shims from nvm / asdf / direnv all
-        // necessary for many tasks — `pnpm` is usually a nvm-managed
-        // Node script) and the resulting shell `exec`s into the task
-        // program. The shell wrapper inherits cwd via env::set_current_dir
-        // before the spawn, so the task runs from `task.cwd`.
-        let shell = crate::terminal::default_shell();
-        // Push the task's working directory into the spawn via a `cd`
-        // prefix on the shell command. Cleaner than mutating
-        // std::env::current_dir() (which is process-global) — the
-        // child shell does the cd, the parent stays put.
-        let cwd_arg = crate::terminal::shell_quote(&task.cwd.to_string_lossy());
-        let exec_line = launcher_exec_line(&task);
-        let launcher = format!("cd {cwd_arg} && exec {exec_line}");
-        match Terminal::spawn_program(
-            rows,
-            cols,
-            &shell,
-            &["-l", "-i", "-c", &launcher],
-            None,
-            &[],
-        ) {
+        match Terminal::spawn_launch(rows, cols, &launch) {
             Ok(term) => {
                 term.set_label(Some(label.clone()));
                 self.terminals.push(term);
@@ -438,22 +427,14 @@ fn resolve_path(s: &str, cwd: &std::path::Path) -> std::path::PathBuf {
     if p.is_absolute() { p } else { cwd.join(p) }
 }
 
-/// The `exec …` half of a task's shell launcher: the program and every
-/// discovered arg single-quoted (they come verbatim out of project
+/// A task's launch through `shell`, in the task's directory: the program
+/// and every discovered arg quoted (they come verbatim out of project
 /// files), the `:make` tail appended as typed so the user's shell still
 /// word-splits, globs and expands their own text.
-fn launcher_exec_line(task: &crate::task::Task) -> String {
-    use crate::terminal::shell_quote;
-    let mut out = shell_quote(&task.program);
-    for arg in &task.args {
-        out.push(' ');
-        out.push_str(&shell_quote(arg));
-    }
-    if let Some(tail) = &task.shell_tail {
-        out.push(' ');
-        out.push_str(tail);
-    }
-    out
+fn task_launch(shell: &str, task: &crate::task::Task) -> Result<crate::terminal::Launch, String> {
+    let mut words = vec![task.program.as_str()];
+    words.extend(task.args.iter().map(String::as_str));
+    crate::terminal::shell_launch(shell, Some(&task.cwd), &words, task.shell_tail.as_deref())
 }
 
 #[cfg(test)]
@@ -472,8 +453,12 @@ mod tests {
             shell_tail: Some("CFLAGS=\"-O2 -g\" src/*.c".into()),
         };
         assert_eq!(
-            launcher_exec_line(&task),
-            "'make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
+            task_launch("/bin/sh", &task).unwrap().args[3],
+            "cd '/p' && exec 'make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
+        );
+        assert_eq!(
+            task_launch("cmd.exe", &task).unwrap().env[0].1,
+            "\"make\" \"all$(boom)\" CFLAGS=\"-O2 -g\" src/*.c"
         );
     }
 

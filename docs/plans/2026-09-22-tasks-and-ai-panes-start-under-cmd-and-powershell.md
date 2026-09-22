@@ -101,9 +101,11 @@ Decisions:
   above. `Terminal::spawn_program` takes the optional cwd and extra env. Its bare `:terminal`
   caller passes `None` / `&[]`. Verify with unit tests for the exact args/env/cwd of each kind,
   including the `:make` tail appended unquoted and a POSIX result identical to today's launcher.
-- [ ] Route `task_kickoff` through `shell_launch` with `[program, args…]` + `shell_tail`, show the
+- [x] Route `task_kickoff` through `shell_launch` with `[program, args…]` + `shell_tail`, show the
   error in `status_msg` when it refuses, and drop `launcher_exec_line`. Move its test onto
   `shell_launch`. Verify with `cargo test task_glue::tests` and `cargo test terminal::tests`.
+  Deviation: the task-to-words step is a small `task_launch` helper in `task_glue.rs`, so its test
+  stays there and checks the POSIX line and the cmd.exe `BINVIM_LAUNCH` value for the same task.
 - [ ] Route `open_side_terminal` through `shell_launch` with `[command]` and no cwd, and update the
   comment above it that describes the POSIX-only launcher. Verify with `cargo build` and the manual
   AI-pane check below.
