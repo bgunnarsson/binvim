@@ -174,7 +174,10 @@ Decisions made here, from the code and the lore:
 - [x] **B4 — Render nits.** Reuse the `line_diags` binding in `draw_line_with_selection` (both
   sites), drop the dead `dim_fg` parameter, remove the `.saturating_sub(0)` and fix its comment.
   Verify: `cargo test` + visual tmux smoke.
-- [ ] **C1 — `paths::find_marker_root`.** Shared walk (+`has_any_marker`/`dir_contains_extension`)
+- [x] **C1 — `paths::find_marker_root`.**
+  Deviation: `lsp::find_workspace_root` and `dap::find_workspace_root` stay as
+  one-line delegating wrappers (their signatures are public API of the specs
+  modules); the four walk bodies and helpers now exist only in `paths.rs`. Shared walk (+`has_any_marker`/`dir_contains_extension`)
   in `paths.rs` with Option and fallback variants; `lsp/dap/test/task` specs call it; their walk
   tests collapse into `paths.rs` (nested-candidate planting per the lore); the per-module callers
   keep only integration-shaped tests. Verify: the lore's grep accounting plus full test suite.

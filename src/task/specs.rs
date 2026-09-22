@@ -38,51 +38,12 @@ pub fn discover_all(start: &Path) -> Vec<Task> {
     out
 }
 
-/// Walk up from `start` looking for any of `markers`. Returns the
-/// matching directory, or `None` when nothing's found before we
-/// reach the filesystem root. Honours `*.ext` markers (any file in
-/// the directory with that extension), same convention as the test-
-/// adapter walker.
+/// Walk up from `start` looking for any of `markers`, through the shared
+/// trusted walk in `paths`. Returns the matching directory, or `None`
+/// when nothing's found before the filesystem root — each provider simply
+/// contributes no tasks then.
 fn find_root(start: &Path, markers: &[&str]) -> Option<PathBuf> {
-    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    let mut dir: &Path = canon.as_path();
-    loop {
-        if has_any_marker(dir, markers) {
-            return Some(dir.to_path_buf());
-        }
-        match dir.parent() {
-            Some(p) if p != dir => dir = p,
-            _ => break,
-        }
-    }
-    None
-}
-
-fn has_any_marker(dir: &Path, markers: &[&str]) -> bool {
-    for marker in markers {
-        if let Some(ext) = marker.strip_prefix("*.") {
-            if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
-                return true;
-            }
-        } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
-            return true;
-        }
-    }
-    false
-}
-
-fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        if let Some(file_ext) = entry.path().extension().and_then(|e| e.to_str()) {
-            if file_ext.eq_ignore_ascii_case(ext) {
-                return true;
-            }
-        }
-    }
-    false
+    crate::paths::find_marker_root(start, markers)
 }
 
 #[cfg(test)]

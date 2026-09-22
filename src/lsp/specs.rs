@@ -760,29 +760,11 @@ fn package_has_tailwind(path: &Path) -> bool {
     needles.iter().any(|n| text.contains(n))
 }
 
-/// Walk up from `start` looking for any of the marker filenames. Markers
-/// starting with `*.` match any directory entry with that extension (used for
-/// `.sln` / `.csproj` etc. where the actual filename varies). Falls back to
-/// `start` if no marker matches.
+/// Walk up from `start` looking for any of the marker filenames, through
+/// the shared trusted walk in `paths`. Falls back to `start` if no marker
+/// matches — the caller guards what it does with the fallback.
 pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
-    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    let mut dir: &Path = canon.as_path();
-    loop {
-        for marker in markers {
-            if let Some(ext) = marker.strip_prefix("*.") {
-                if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
-                    return dir.to_path_buf();
-                }
-            } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
-                return dir.to_path_buf();
-            }
-        }
-        match dir.parent() {
-            Some(p) if p != dir => dir = p,
-            _ => break,
-        }
-    }
-    canon
+    crate::paths::find_marker_root_or_start(start, markers)
 }
 
 /// Walk up from `start` looking for `node_modules/.bin/<name>`. Returns the
@@ -802,19 +784,6 @@ pub fn find_node_modules_bin(start: &Path, name: &str) -> Option<String> {
             _ => return None,
         }
     }
-}
-
-fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else { return false };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if let Some(file_ext) = path.extension().and_then(|e| e.to_str()) {
-            if file_ext.eq_ignore_ascii_case(ext) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 /// GitHub Copilot via `copilot-language-server`. Attached as an aux

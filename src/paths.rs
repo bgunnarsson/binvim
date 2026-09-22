@@ -226,6 +226,68 @@ fn trusted_owners() -> (Option<u32>, u32) {
     (me, 0)
 }
 
+/// Walk up from `start` looking for any of `markers` — a filename, or
+/// `*.ext` matching any file in the directory with that extension (the
+/// `.sln` / `.csproj` convention, where the name varies). Returns the
+/// first directory holding a marker `others_can_plant` clears; a marker
+/// another user could have planted is passed over, per the upward-search
+/// rule. This is the single implementation — the LSP, DAP, test and task
+/// walks all route here, because the last time each carried its own copy,
+/// three of them shipped without the guard.
+pub fn find_marker_root(start: &Path, markers: &[impl AsRef<str>]) -> Option<PathBuf> {
+    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    let mut dir: &Path = canon.as_path();
+    loop {
+        if has_any_marker(dir, markers) {
+            return Some(dir.to_path_buf());
+        }
+        match dir.parent() {
+            Some(p) if p != dir => dir = p,
+            _ => return None,
+        }
+    }
+}
+
+/// `find_marker_root`, falling back to the canonical form of `start` when
+/// nothing matches — for callers that always need a path to show or work
+/// from. Callers that open, run or root something in the result still owe
+/// the fallback its own `others_can_plant` check, as `lsp::ensure_for_path`
+/// does: finding no marker doesn't make `/tmp` a workspace.
+pub fn find_marker_root_or_start(start: &Path, markers: &[impl AsRef<str>]) -> PathBuf {
+    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    find_marker_root(&canon, markers).unwrap_or(canon)
+}
+
+/// True when `dir` holds one of `markers` that `others_can_plant` clears.
+pub(crate) fn has_any_marker(dir: &Path, markers: &[impl AsRef<str>]) -> bool {
+    for marker in markers {
+        let marker = marker.as_ref();
+        if let Some(ext) = marker.strip_prefix("*.") {
+            if dir_contains_extension(dir, ext) && !others_can_plant(dir, "") {
+                return true;
+            }
+        } else if dir.join(marker).exists() && !others_can_plant(dir, marker) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Any entry in `dir` with extension `ext`, compared case-insensitively.
+pub(crate) fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        if let Some(file_ext) = entry.path().extension().and_then(|e| e.to_str()) {
+            if file_ext.eq_ignore_ascii_case(ext) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Create `dir` (and its parents) and narrow it to `0700`. For every
 /// directory that holds user text or paths the editor acts on — what's
 /// inside may be a private file's contents, so only this user may look,
@@ -495,6 +557,46 @@ mod tests {
         let err = create_exclusive(&planted, None).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
         assert_eq!(std::fs::read_to_string(&victim).unwrap(), "untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn marker_roots_others_could_plant_are_passed_over() {
+        use std::os::unix::fs::PermissionsExt;
+        let set = |p: &Path, mode: u32| {
+            std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        let root = scratch("markerwalk");
+        std::fs::create_dir_all(root.join("shared/project")).unwrap();
+        let root = root.canonicalize().unwrap();
+        let project = root.join("shared/project");
+        std::fs::write(root.join("Cargo.toml"), "").unwrap();
+        std::fs::write(root.join("shared/Cargo.toml"), "").unwrap();
+        std::fs::write(root.join("shared/App.sln"), "").unwrap();
+        set(&root, 0o755);
+        set(&root.join("shared"), 0o777);
+        let markers = ["Cargo.toml", "*.sln"];
+        // Both nested candidates (plain and `*.ext`) sit in a directory
+        // others can write — the walk goes past them to the next one up.
+        assert_eq!(find_marker_root(&project, &markers), Some(root.clone()));
+        // A marker file others can write is just as plantable.
+        std::fs::write(project.join("Cargo.toml"), "").unwrap();
+        set(&project.join("Cargo.toml"), 0o666);
+        assert_eq!(find_marker_root(&project, &markers), Some(root.clone()));
+        set(&project.join("Cargo.toml"), 0o644);
+        assert_eq!(find_marker_root(&project, &markers), Some(project.clone()));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn find_marker_root_without_a_match_is_none_and_the_fallback_is_start() {
+        let dir = scratch("markerfall");
+        let markers = ["binvim-no-such-marker.xyz"];
+        assert_eq!(find_marker_root(&dir, &markers), None);
+        assert_eq!(
+            find_marker_root_or_start(&dir, &markers),
+            dir.canonicalize().unwrap()
+        );
     }
 
     #[cfg(unix)]

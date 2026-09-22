@@ -727,7 +727,8 @@ pub fn find_dotnet_workspace_root(start: &Path) -> PathBuf {
     // `.slnx` is the .NET 10 XML solution format (alongside the classic `.sln`).
     let mut dir: &Path = canon.as_path();
     loop {
-        let solution = dir_contains_extension(dir, "sln") || dir_contains_extension(dir, "slnx");
+        let solution = crate::paths::dir_contains_extension(dir, "sln")
+            || crate::paths::dir_contains_extension(dir, "slnx");
         if solution && !crate::paths::others_can_plant(dir, "") {
             return dir.to_path_buf();
         }
@@ -905,59 +906,19 @@ pub fn load_launch_profiles(project_dir: &Path) -> Vec<LaunchProfile> {
 #[allow(dead_code)]
 pub fn adapter_for_workspace(start: &Path) -> Option<(DapAdapterSpec, PathBuf)> {
     for spec in BUILTIN_ADAPTERS {
-        let markers: Vec<String> = spec.root_markers.iter().map(|s| s.to_string()).collect();
-        let root = find_workspace_root(start, &markers);
-        if has_any_marker(&root, &markers) {
+        if let Some(root) = crate::paths::find_marker_root(start, spec.root_markers) {
             return Some((spec.clone(), root));
         }
     }
     None
 }
 
-/// Walk up from `start` until any of `markers` is found in a directory.
-/// `*.ext` markers match any file in the directory with that extension.
-/// Returns the matching directory, or the canonical form of `start` if
-/// nothing was found (so callers can still emit a useful path).
+/// Walk up from `start` until any of `markers` is found in a directory,
+/// through the shared trusted walk in `paths`. Returns the matching
+/// directory, or the canonical form of `start` if nothing was found (so
+/// callers can still emit a useful path).
 pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
-    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    let mut dir: &Path = canon.as_path();
-    loop {
-        if has_any_marker(dir, markers) {
-            return dir.to_path_buf();
-        }
-        match dir.parent() {
-            Some(p) if p != dir => dir = p,
-            _ => break,
-        }
-    }
-    canon
-}
-
-fn has_any_marker(dir: &Path, markers: &[String]) -> bool {
-    for marker in markers {
-        if let Some(ext) = marker.strip_prefix("*.") {
-            if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
-                return true;
-            }
-        } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
-            return true;
-        }
-    }
-    false
-}
-
-fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        if let Some(file_ext) = entry.path().extension().and_then(|e| e.to_str()) {
-            if file_ext.eq_ignore_ascii_case(ext) {
-                return true;
-            }
-        }
-    }
-    false
+    crate::paths::find_marker_root_or_start(start, markers)
 }
 
 /// Resolve the first command candidate to an absolute path. Bare names go
@@ -1263,7 +1224,7 @@ mod tests {
         assert_eq!(find_workspace_root(&project, &markers), root);
         std::fs::write(project.join("go.mod"), "").unwrap();
         set_mode(&project.join("go.mod"), 0o666);
-        assert!(!has_any_marker(&project, &markers));
+        assert_eq!(find_workspace_root(&project, &markers), root);
         std::fs::remove_dir_all(&root).ok();
     }
 

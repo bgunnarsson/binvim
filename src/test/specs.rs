@@ -160,58 +160,11 @@ const DOTNET: TestAdapterSpec = TestAdapterSpec {
 /// above `start`. Returns the spec plus the resolved workspace root.
 pub fn adapter_for_workspace(start: &Path) -> Option<(TestAdapterSpec, PathBuf)> {
     for spec in BUILTIN_ADAPTERS {
-        let markers: Vec<String> = spec.root_markers.iter().map(|s| s.to_string()).collect();
-        let root = find_workspace_root(start, &markers);
-        if has_any_marker(&root, &markers) {
+        if let Some(root) = crate::paths::find_marker_root(start, spec.root_markers) {
             return Some((spec.clone(), root));
         }
     }
     None
-}
-
-/// Walk up from `start` until any of `markers` is found. Returns the
-/// matching directory, or a canonical form of `start` when nothing
-/// matches (so callers always get a useful path back).
-pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
-    let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    let mut dir: &Path = canon.as_path();
-    loop {
-        if has_any_marker(dir, markers) {
-            return dir.to_path_buf();
-        }
-        match dir.parent() {
-            Some(p) if p != dir => dir = p,
-            _ => break,
-        }
-    }
-    canon
-}
-
-fn has_any_marker(dir: &Path, markers: &[String]) -> bool {
-    for marker in markers {
-        if let Some(ext) = marker.strip_prefix("*.") {
-            if dir_contains_extension(dir, ext) && !crate::paths::others_can_plant(dir, "") {
-                return true;
-            }
-        } else if dir.join(marker).exists() && !crate::paths::others_can_plant(dir, marker) {
-            return true;
-        }
-    }
-    false
-}
-
-fn dir_contains_extension(dir: &Path, ext: &str) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    for entry in entries.flatten() {
-        if let Some(file_ext) = entry.path().extension().and_then(|e| e.to_str()) {
-            if file_ext.eq_ignore_ascii_case(ext) {
-                return true;
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]
