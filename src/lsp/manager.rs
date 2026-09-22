@@ -108,6 +108,9 @@ pub struct LspManager {
     /// progress and the user needs to visit GitHub.
     #[allow(dead_code)]
     pub copilot_status: CopilotStatus,
+    /// The directory `ensure_for_path` last refused to start a server in,
+    /// because other users can write it — kept for the status line.
+    pub skipped_root: Option<PathBuf>,
 }
 
 /// Sign-in state for the Copilot LSP. Surfaced in the status line +
@@ -144,6 +147,7 @@ impl LspManager {
             pending: HashMap::new(),
             copilot_enabled: false,
             copilot_status: CopilotStatus::NotStarted,
+            skipped_root: None,
         }
     }
 
@@ -170,6 +174,7 @@ impl LspManager {
     /// *any* matching client is alive, so emmet-ls / Tailwind / etc.
     /// still get the document even when the primary binary is missing.
     pub fn ensure_for_path(&mut self, path: &Path, fallback_root: &Path) -> bool {
+        self.skipped_root = None;
         let specs = self.specs_for(path);
         if specs.is_empty() {
             return false;
@@ -180,6 +185,12 @@ impl LspManager {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| fallback_root.to_path_buf());
             let root = find_workspace_root(&start, &spec.root_markers);
+            // With no trusted marker the walk falls back to the file's own
+            // directory; when other users can write that (`/tmp`), rooting
+            // the server there hands it their `Cargo.toml` or `package.json`.
+            // Starting it with no root doesn't help: rust-analyzer then roots
+            // itself at its working directory, which is often the same one.
+            let root = (!crate::paths::others_can_plant(&root, "")).then_some(root);
             if let Some(client) = self.clients.get(&spec.key) {
                 // Client already running for this server type. If the
                 // file's workspace root isn't already attached AND the
@@ -189,7 +200,8 @@ impl LspManager {
                 // sending `didChangeWorkspaceFolders` to a server that
                 // doesn't model multiple folders would be ignored at
                 // best and confusing at worst.
-                if client.add_workspace_folder(&root) && client.supports_workspace_folders() {
+                let Some(root) = &root else { continue };
+                if client.add_workspace_folder(root) && client.supports_workspace_folders() {
                     let folder_name = root
                         .file_name()
                         .map(|s| s.to_string_lossy().to_string())
@@ -199,7 +211,7 @@ impl LspManager {
                         json!({
                             "event": {
                                 "added": [{
-                                    "uri": super::types::path_to_uri(&root),
+                                    "uri": super::types::path_to_uri(root),
                                     "name": folder_name,
                                 }],
                                 "removed": []
@@ -209,6 +221,10 @@ impl LspManager {
                 }
                 continue;
             }
+            let Some(root) = root else {
+                self.skipped_root = Some(start);
+                continue;
+            };
             if let Some(client) = LspClient::spawn_spec(spec, &root) {
                 let key = spec.key.clone();
                 self.clients.insert(key.clone(), client);

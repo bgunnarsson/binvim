@@ -915,7 +915,14 @@ impl super::App {
             return;
         };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        if !self.lsp.ensure_for_path(&path, &cwd) {
+        let attached = self.lsp.ensure_for_path(&path, &cwd);
+        if let Some(dir) = self.lsp.skipped_root.take() {
+            self.status_msg = format!(
+                "no language server: {} is writable by other users",
+                dir.display()
+            );
+        }
+        if !attached {
             return;
         }
         let text = self.buffer.rope.to_string();
