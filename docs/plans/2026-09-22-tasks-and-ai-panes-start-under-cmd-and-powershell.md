@@ -96,7 +96,7 @@ Decisions:
   `src/terminal.rs`. Verify with unit tests: stem classification (`C:\Windows\System32\cmd.exe`,
   `CMD.EXE`, `pwsh`, `/usr/local/bin/pwsh`, `powershell.exe`, `/bin/zsh`, `bash.exe`), each quoter
   on spaces / `&` / `%` / `!` / `'` / trailing backslash, and `cmd_quote` rejecting `"`.
-- [ ] Add `shell_launch(shell, cwd, words, tail) -> Result<Launch, String>` in `src/terminal.rs`.
+- [x] Add `shell_launch(shell, cwd, words, tail) -> Result<Launch, String>` in `src/terminal.rs`.
   `Launch` holds the program, args, optional cwd and env pairs, built per `ShellKind` as decided
   above. `Terminal::spawn_program` takes the optional cwd and extra env. Its bare `:terminal`
   caller passes `None` / `&[]`. Verify with unit tests for the exact args/env/cwd of each kind,

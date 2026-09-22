@@ -28,6 +28,7 @@ use anyhow::{Context, Result};
 use crossterm::style::Color;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -1180,16 +1181,34 @@ impl Terminal {
             Some(s) => s.to_string(),
             None => default_shell(),
         };
-        Self::spawn_program(rows, cols, &shell_cmd, &[])
+        Self::spawn_program(rows, cols, &shell_cmd, &[], None, &[])
     }
 
-    /// Spawn `program` with `args` in a `rows × cols` PTY. Same env and
-    /// cwd treatment as `spawn`. Used by the side-pane AI launcher
-    /// to start the user's shell with `-l -i -c "exec <tool>"` so
-    /// the shell sources its rc files (login + interactive), picks
-    /// up nvm / asdf / direnv shims, and then `exec`s into the tool
-    /// — replacing the shell process so the tool owns the PTY.
-    pub fn spawn_program(rows: u16, cols: u16, program: &str, args: &[&str]) -> Result<Self> {
+    /// Spawn a `shell_launch` result — the task runner and the side-pane
+    /// AI launcher both start the user's shell this way.
+    pub fn spawn_launch(rows: u16, cols: u16, launch: &Launch) -> Result<Self> {
+        let args: Vec<&str> = launch.args.iter().map(String::as_str).collect();
+        Self::spawn_program(
+            rows,
+            cols,
+            &launch.program,
+            &args,
+            launch.cwd.as_deref(),
+            &launch.env,
+        )
+    }
+
+    /// Spawn `program` with `args` in a `rows × cols` PTY, in `cwd` or
+    /// else binvim's own working directory, with binvim's environment
+    /// plus `env`.
+    pub fn spawn_program(
+        rows: u16,
+        cols: u16,
+        program: &str,
+        args: &[&str],
+        cwd: Option<&Path>,
+        env: &[(String, String)],
+    ) -> Result<Self> {
         let pty_system = native_pty_system();
         let pair = pty_system
             .openpty(PtySize {
@@ -1204,8 +1223,13 @@ impl Terminal {
         for a in args {
             cmd.arg(a);
         }
-        if let Ok(cwd) = std::env::current_dir() {
-            cmd.cwd(cwd);
+        match cwd {
+            Some(dir) => cmd.cwd(dir),
+            None => {
+                if let Ok(cwd) = std::env::current_dir() {
+                    cmd.cwd(cwd);
+                }
+            }
         }
         // Pass through binvim's env so the spawned shell sees the
         // same `HOME`, `PATH`, `NVM_DIR`, `XDG_*`, etc. that we
@@ -1232,6 +1256,9 @@ impl Terminal {
         // looks like a stray glyph in our empty pane. Other shells
         // ignore this env entirely.
         cmd.env("PROMPT_EOL_MARK", "");
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
 
         let child = pair
             .slave
@@ -1645,6 +1672,91 @@ pub(crate) fn pwsh_quote(s: &str) -> String {
     out
 }
 
+/// How to start a program through the user's shell: what to spawn, in
+/// which directory, with which extra environment.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Launch {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: Option<PathBuf>,
+    pub env: Vec<(String, String)>,
+}
+
+/// The environment variable a cmd.exe launch carries its line in.
+const CMD_LAUNCH_VAR: &str = "BINVIM_LAUNCH";
+
+/// Run `words` (each quoted, since they come out of project files) and
+/// then `tail` (the user's own typed text, appended as-is) through
+/// `shell`, in `cwd`.
+///
+/// A POSIX shell gets `-l -i -c "cd … && exec …"` so its rc files load —
+/// that's where nvm / asdf / direnv shims live. PowerShell gets
+/// `-Command "& …"` and cmd.exe `/C`, both with the directory set on the
+/// spawn and their profile / AutoRun left to run the same way.
+///
+/// cmd.exe's line travels in `BINVIM_LAUNCH` rather than as the `/C`
+/// argument: portable-pty escapes a `"` inside an argument as `\"`,
+/// which cmd doesn't unescape, so a quoted word would come unquoted and
+/// its `&` would run. cmd expands `%BINVIM_LAUNCH%` once and doesn't
+/// rescan the result, so a `%` in a word — or in the tail — stays
+/// literal; `/V:OFF` does the same for `!`.
+pub(crate) fn shell_launch(
+    shell: &str,
+    cwd: Option<&Path>,
+    words: &[&str],
+    tail: Option<&str>,
+) -> Result<Launch, String> {
+    let with_tail = |mut line: String| {
+        if let Some(tail) = tail {
+            line.push(' ');
+            line.push_str(tail);
+        }
+        line
+    };
+    let kind = ShellKind::of(shell);
+    let (args, env, cwd) = match kind {
+        ShellKind::Posix => {
+            let mut line = String::new();
+            if let Some(dir) = cwd {
+                line.push_str("cd ");
+                line.push_str(&shell_quote(&dir.to_string_lossy()));
+                line.push_str(" && ");
+            }
+            line.push_str("exec ");
+            let quoted: Vec<String> = words.iter().map(|w| shell_quote(w)).collect();
+            line.push_str(&quoted.join(" "));
+            let args = vec!["-l".into(), "-i".into(), "-c".into(), with_tail(line)];
+            (args, Vec::new(), None)
+        }
+        ShellKind::Cmd => {
+            let mut quoted = Vec::with_capacity(words.len());
+            for word in words {
+                let Some(q) = cmd_quote(word) else {
+                    return Err(format!(
+                        "cmd.exe can't be handed {word:?}: it holds a double quote or a line break"
+                    ));
+                };
+                quoted.push(q);
+            }
+            let args = vec!["/V:OFF".into(), "/C".into(), format!("%{CMD_LAUNCH_VAR}%")];
+            let env = vec![(CMD_LAUNCH_VAR.to_string(), with_tail(quoted.join(" ")))];
+            (args, env, cwd.map(Path::to_path_buf))
+        }
+        ShellKind::PowerShell => {
+            let quoted: Vec<String> = words.iter().map(|w| pwsh_quote(w)).collect();
+            let line = with_tail(format!("& {}", quoted.join(" ")));
+            let args = vec!["-NoLogo".into(), "-Command".into(), line];
+            (args, Vec::new(), cwd.map(Path::to_path_buf))
+        }
+    };
+    Ok(Launch {
+        program: shell.to_string(),
+        args,
+        cwd,
+        env,
+    })
+}
+
 fn spawn_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Vec<u8>>) {
     thread::spawn(move || {
         let mut buf = [0u8; 4096];
@@ -1743,6 +1855,80 @@ mod tests {
         assert_eq!(pwsh_quote("it's"), "'it''s'");
         assert_eq!(pwsh_quote("it\u{2019}s"), "'it\u{2019}\u{2019}s'");
         assert_eq!(pwsh_quote(r"C:\dir\"), r"'C:\dir\'");
+    }
+
+    #[test]
+    fn posix_launch_is_the_login_shell_line_with_a_cd() {
+        let launch = shell_launch(
+            "/bin/zsh",
+            Some(Path::new("/p/it's")),
+            &["make", "all$(boom)"],
+            Some("CFLAGS=\"-O2 -g\" src/*.c"),
+        )
+        .unwrap();
+        assert_eq!(launch.program, "/bin/zsh");
+        assert_eq!(
+            launch.args,
+            [
+                "-l",
+                "-i",
+                "-c",
+                "cd '/p/it'\\''s' && exec 'make' 'all$(boom)' CFLAGS=\"-O2 -g\" src/*.c"
+            ]
+        );
+        assert_eq!(launch.cwd, None);
+        assert!(launch.env.is_empty());
+    }
+
+    #[test]
+    fn posix_launch_without_a_cwd_only_execs() {
+        let launch = shell_launch("/bin/bash", None, &["claude"], None).unwrap();
+        assert_eq!(launch.args, ["-l", "-i", "-c", "exec 'claude'"]);
+    }
+
+    #[test]
+    fn cmd_launch_carries_its_line_in_the_environment() {
+        let dir = Path::new(r"C:\my project");
+        let launch = shell_launch(
+            r"C:\Windows\system32\cmd.exe",
+            Some(dir),
+            &["npm", "run", "a&echo pwned"],
+            Some("-- --watch"),
+        )
+        .unwrap();
+        assert_eq!(launch.args, ["/V:OFF", "/C", "%BINVIM_LAUNCH%"]);
+        assert_eq!(
+            launch.env,
+            [(
+                "BINVIM_LAUNCH".to_string(),
+                r#""npm" "run" "a&echo pwned" -- --watch"#.to_string()
+            )]
+        );
+        assert_eq!(launch.cwd.as_deref(), Some(dir));
+    }
+
+    #[test]
+    fn cmd_launch_refuses_a_word_it_cannot_quote() {
+        let err = shell_launch("cmd.exe", None, &["npm", "run", "say \"hi\""], None).unwrap_err();
+        assert!(err.contains("double quote"), "{err}");
+    }
+
+    #[test]
+    fn powershell_launch_uses_the_call_operator() {
+        let dir = Path::new("/p");
+        let launch = shell_launch(
+            "pwsh",
+            Some(dir),
+            &["npm", "run", "it's&$x"],
+            Some("-- --watch"),
+        )
+        .unwrap();
+        assert_eq!(
+            launch.args,
+            ["-NoLogo", "-Command", "& 'npm' 'run' 'it''s&$x' -- --watch"]
+        );
+        assert!(launch.env.is_empty());
+        assert_eq!(launch.cwd.as_deref(), Some(dir));
     }
 
     /// Drives a fresh parser+handler over a byte slice without the

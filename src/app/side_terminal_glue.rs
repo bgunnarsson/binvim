@@ -305,7 +305,14 @@ impl super::App {
         } else {
             None
         };
-        match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
+        match Terminal::spawn_program(
+            rows,
+            cols,
+            &shell,
+            &["-l", "-i", "-c", &launcher],
+            None,
+            &[],
+        ) {
             Ok(t) => {
                 let now = Instant::now();
                 self.side_terminals.push(SideTerminal {

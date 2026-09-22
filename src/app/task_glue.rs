@@ -191,7 +191,14 @@ impl super::App {
         let cwd_arg = crate::terminal::shell_quote(&task.cwd.to_string_lossy());
         let exec_line = launcher_exec_line(&task);
         let launcher = format!("cd {cwd_arg} && exec {exec_line}");
-        match Terminal::spawn_program(rows, cols, &shell, &["-l", "-i", "-c", &launcher]) {
+        match Terminal::spawn_program(
+            rows,
+            cols,
+            &shell,
+            &["-l", "-i", "-c", &launcher],
+            None,
+            &[],
+        ) {
             Ok(term) => {
                 term.set_label(Some(label.clone()));
                 self.terminals.push(term);
