@@ -4,7 +4,7 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.6.5]
+## [0.6.5] - 2026-09-22
 
 ### Added
 - **Tag jumps.** `Ctrl-]` jumps to the word under the cursor through a ctags
