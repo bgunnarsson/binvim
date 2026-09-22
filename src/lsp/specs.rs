@@ -731,8 +731,10 @@ pub fn find_tailwind_config(start: &Path) -> Option<PathBuf> {
             }
         }
         let pkg = dir.join("package.json");
-        let trusted = !crate::paths::others_can_plant(dir, "package.json");
-        if pkg.is_file() && trusted && package_has_tailwind(&pkg) {
+        if pkg.is_file()
+            && !crate::paths::others_can_plant(dir, "package.json")
+            && package_has_tailwind(&pkg)
+        {
             return Some(pkg);
         }
         match dir.parent() {
@@ -953,6 +955,7 @@ mod tests {
 
     /// A fresh directory per test, canonical so it compares with what the
     /// searches return (`/var` is a symlink on macOS).
+    #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("binvim-specs-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
