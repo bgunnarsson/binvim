@@ -1931,6 +1931,77 @@ mod tests {
         assert_eq!(launch.cwd.as_deref(), Some(dir));
     }
 
+    /// Run a `Launch` the way the PTY spawn does — same argv, env and cwd —
+    /// through `std::process::Command`, whose Windows argv quoting is the
+    /// same MSVC form portable-pty writes, so the output can be read back.
+    #[cfg(windows)]
+    fn run_launch(launch: &Launch) -> std::process::Output {
+        let mut cmd = std::process::Command::new(&launch.program);
+        cmd.args(&launch.args);
+        cmd.envs(launch.env.iter().map(|(k, v)| (k, v)));
+        if let Some(dir) = &launch.cwd {
+            cmd.current_dir(dir);
+        }
+        cmd.output().expect("spawn the launch")
+    }
+
+    /// Not `paths::test_scratch_dir`: it canonicalizes, and a `\\?\` path
+    /// is not a directory cmd.exe will run in.
+    #[cfg(windows)]
+    fn windows_scratch_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("binvim-launch-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[cfg(windows)]
+    fn printed_dir(out: &std::process::Output) -> String {
+        String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cmd_launch_runs_in_its_directory_and_keeps_an_ampersand_quoted() {
+        let dir = windows_scratch_dir("cmd");
+        let expected = dir
+            .to_string_lossy()
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+        let cd = shell_launch("cmd.exe", Some(&dir), &["cmd.exe", "/D", "/C", "cd"], None).unwrap();
+        assert_eq!(printed_dir(&run_launch(&cd)), expected);
+        // Inside the quotes the outer cmd.exe leaves `&` alone, and the
+        // inner one runs `exit 7&exit 9` and stops at 7. An outer split
+        // would end the line with its own `exit 9"`.
+        let words = ["cmd.exe", "/D", "/C", "exit 7&exit 9"];
+        let exit = shell_launch("cmd.exe", Some(&dir), &words, None).unwrap();
+        assert_eq!(run_launch(&exit).status.code(), Some(7));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn powershell_launch_runs_in_its_directory() {
+        let dir = windows_scratch_dir("pwsh");
+        let expected = dir
+            .to_string_lossy()
+            .trim_end_matches('\\')
+            .to_ascii_lowercase();
+        let words = ["cmd.exe", "/D", "/C", "cd"];
+        let cd = shell_launch("powershell.exe", Some(&dir), &words, None).unwrap();
+        let out = run_launch(&cd);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(printed_dir(&out), expected);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Drives a fresh parser+handler over a byte slice without the
     /// PTY round-trip — pure model test, no external processes.
     fn parse_bytes(bytes: &[u8], rows: usize, cols: usize) -> VteHandler {
