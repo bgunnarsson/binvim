@@ -1576,10 +1576,9 @@ impl TerminalInner {
 
 /// The shell to spawn when no override is provided. Honours `$SHELL`
 /// first; falls back to the platform's canonical login shell —
-/// `/bin/sh` on Unix, `$COMSPEC` (or `cmd.exe`) on Windows. Callers
-/// that need POSIX-shell semantics (`-l -i -c`) should be aware that
-/// Windows' `cmd.exe` uses a different flag dialect (`/C`); that
-/// translation is out of scope for v1 of the Windows port.
+/// `/bin/sh` on Unix, `$COMSPEC` (or `cmd.exe`) on Windows. Anything
+/// handed to it as a command line goes through `shell_launch`, which
+/// speaks the shell's own dialect.
 pub fn default_shell() -> String {
     if let Ok(s) = std::env::var("SHELL") {
         if !s.is_empty() {
@@ -1955,30 +1954,45 @@ mod tests {
         dir
     }
 
+    /// What a launch printed and how it ended, for an assertion message.
     #[cfg(windows)]
-    fn printed_dir(out: &std::process::Output) -> String {
-        String::from_utf8_lossy(&out.stdout)
-            .trim()
-            .trim_end_matches('\\')
-            .to_ascii_lowercase()
+    fn report(out: &std::process::Output) -> String {
+        format!(
+            "status {:?}, stdout {:?}, stderr {:?}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        )
+    }
+
+    /// Assert `cd` printed `dir`. Both sides are canonicalized: the
+    /// runner's `temp_dir()` is an 8.3 short path (`RUNNER~1`) and `cd`
+    /// prints the long one.
+    #[cfg(windows)]
+    fn assert_printed_dir(out: &std::process::Output, dir: &Path) {
+        let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        let printed = std::fs::canonicalize(&printed);
+        assert_eq!(
+            printed.ok(),
+            std::fs::canonicalize(dir).ok(),
+            "{}",
+            report(out)
+        );
     }
 
     #[cfg(windows)]
     #[test]
     fn cmd_launch_runs_in_its_directory_and_keeps_an_ampersand_quoted() {
         let dir = windows_scratch_dir("cmd");
-        let expected = dir
-            .to_string_lossy()
-            .trim_end_matches('\\')
-            .to_ascii_lowercase();
-        let cd = shell_launch("cmd.exe", Some(&dir), &["cmd.exe", "/D", "/C", "cd"], None).unwrap();
-        assert_eq!(printed_dir(&run_launch(&cd)), expected);
         // Inside the quotes the outer cmd.exe leaves `&` alone, and the
         // inner one runs `exit 7&exit 9` and stops at 7. An outer split
         // would end the line with its own `exit 9"`.
         let words = ["cmd.exe", "/D", "/C", "exit 7&exit 9"];
-        let exit = shell_launch("cmd.exe", Some(&dir), &words, None).unwrap();
-        assert_eq!(run_launch(&exit).status.code(), Some(7));
+        let exit = run_launch(&shell_launch("cmd.exe", Some(&dir), &words, None).unwrap());
+        assert_eq!(exit.status.code(), Some(7), "{}", report(&exit));
+        let words = ["cmd.exe", "/D", "/C", "cd"];
+        let cd = run_launch(&shell_launch("cmd.exe", Some(&dir), &words, None).unwrap());
+        assert_printed_dir(&cd, &dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1986,19 +2000,10 @@ mod tests {
     #[test]
     fn powershell_launch_runs_in_its_directory() {
         let dir = windows_scratch_dir("pwsh");
-        let expected = dir
-            .to_string_lossy()
-            .trim_end_matches('\\')
-            .to_ascii_lowercase();
         let words = ["cmd.exe", "/D", "/C", "cd"];
-        let cd = shell_launch("powershell.exe", Some(&dir), &words, None).unwrap();
-        let out = run_launch(&cd);
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert_eq!(printed_dir(&out), expected);
+        let cd = run_launch(&shell_launch("powershell.exe", Some(&dir), &words, None).unwrap());
+        assert!(cd.status.success(), "{}", report(&cd));
+        assert_printed_dir(&cd, &dir);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
