@@ -1,7 +1,7 @@
 ---
 title: A reopened file comes back to where you left it, and PR #12 is merged
 date: 2026-09-22
-status: in-progress
+status: done
 ---
 
 ## Context
@@ -197,10 +197,10 @@ Decisions made in this plan:
   `### Added` entry in the file's style: binvim remembers where you were in
   each file and comes back to it on reopen, unless the file changed on disk
   meanwhile. Verify: `cargo test` (the changelog has no test; read it back).
-- [ ] **Push and watch CI.** `git push`, then `gh run watch` the ci run on the
+- [x] **Push and watch CI.** `git push`, then `gh run watch` the ci run on the
   final commit until all seven jobs pass. Verify: `gh pr view 12 --json state`
   is `MERGED`.
-- [ ] **Comment on the PR.** One `gh pr comment 12` thanking the contributor for
+- [x] **Comment on the PR.** One `gh pr comment 12` thanking the contributor for
   the feature and listing, in plain language, what was changed after the
   merge and why, with a link to each follow-up commit. No attribution lines.
   Verify: `gh pr view 12 --comments` shows it.
