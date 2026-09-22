@@ -1,7 +1,7 @@
 ---
 title: The whole-repo audit's findings are fixed — quoting, crash detection, quit teardown, large-file gates, and the drifted duplicates consolidated
 date: 2026-09-22
-status: in-progress
+status: done
 ---
 
 ## Context
