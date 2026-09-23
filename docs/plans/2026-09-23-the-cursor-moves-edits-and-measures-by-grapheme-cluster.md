@@ -1,7 +1,7 @@
 ---
 title: The cursor moves, edits and measures text by grapheme cluster, not by codepoint
 date: 2026-09-23
-status: in-progress
+status: done
 ---
 
 ## Context
@@ -144,3 +144,17 @@ doesn't add.
   width table, so confirm by eye in Ghostty too.
 - Open a 50 000-line file whose lines are 10 000 chars of emoji. `l`, `$` and `x` respond without
   a visible stall.
+
+Run on 2026-09-23 against `target/release/binvim` at `f1e53d6`:
+
+- 1116 + 37 tests single-threaded and pinned clippy green; CI green on `d39d42f`.
+- tmux (own server, isolated `HOME` / XDG dirs): after `l` from each cluster, tmux's cursor sits
+  on cell 2 past the gutter for every two-cell cluster and cell 1 after `e` + U+0301. `x`, `r`,
+  `~` and Insert Backspace took each whole cluster; `~` gave `E` + U+0301. The copy step used
+  `"ayl` / `"ap` rather than `v` + `y` + `p`: an unnamed yank reaches the macOS clipboard, and
+  `v"ay` names no register in binvim; `v`'s range is covered by
+  `normal_edits_take_a_whole_cluster`. Not checked by eye in Ghostty.
+- Scaled down: 50 000 lines of emoji text, the first 30 of them 10 000 chars (34 MB), since the
+  plan's size is about 2 GB. `l`, `$`, `x`, `5000l` and `0` on the long lines, and `G` / `k` / `$` /
+  `x` at the end, each answered within the harness's 27 ms polling floor. The build before this
+  plan hung on the second `l`, which stepped into the family emoji and moved nothing on screen.
