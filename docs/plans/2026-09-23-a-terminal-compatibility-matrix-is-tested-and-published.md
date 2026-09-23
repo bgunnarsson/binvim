@@ -125,8 +125,25 @@ Decisions (the user chose the checklist route):
   cell and its note.
   Done in `2026-09-23-no-known-data-loss-path-is-left-open-for-0-7.md` (`ca45836`): check 14 now
   reads the saved bytes, and the tmux note says what the first run missed.
-- [ ] Hand the checklist to the user for Ghostty, Kitty, WezTerm, Alacritty, Windows Terminal,
-  over-SSH and Terminal.app. Fill the rows from their reports, fix binvim-side failures (each its
+- [ ] `scripts/terminal-probe.sh` answers the checks a terminal can report on itself, in one run
+  with a pasteable report keyed by check number. It asks the terminal (XTVERSION, the Kitty
+  keyboard query after binvim's own push, DECRQM for 2026 / 2004 / 1006, DECRQSS for truecolor,
+  undercurl and cursor shape), measures the fixture's clusters with `CSI 6n` against the widths
+  `render::cluster_width` gives them, reads the bytes a few named keys send, a click and a
+  bracketed paste of a two-line OSC 52 write, and asks y/n about italic, bold, undercurl and
+  Nerd Font glyphs it draws. POSIX sh, so it runs on macOS's shells, Linux, WSL and over SSH.
+  Verify by running it in tmux (every answer read back through `capture-pane`) and in Kitty
+  under remote control, and checking its verdicts against the results those columns already
+  hold.
+  Deviation: the user found the 21 hand-run checks too slow per terminal and chose this route.
+  Deviation: Kitty is run by the user, not under remote control. The look, click and paste
+  prompts need a person at the window either way. The tmux run (`2326dd6`) agreed with every cell
+  of the tmux column; tmux answers no DECRQM, so check 15 reads `?` there.
+- [x] `TERMINALS.md` says which checks the probe answers and why a probe answer stands in for the
+  check (binvim's side of each was verified by hand in tmux and Kitty), and keeps the rest as a
+  short in-binvim list. Verify by reading the diff against the probe's report.
+- [ ] Hand the probe and the in-binvim list to the user for Ghostty, WezTerm, Alacritty, Windows
+  Terminal, over-SSH and Terminal.app, and finish Kitty (checks 1–6 are in, `05d468f`). Fill the rows from their reports, fix binvim-side failures (each its
   own commit) and file terminal-side ones in `KNOWN_ISSUES.md`. Verify that every cell is
   resolved as the acceptance criteria require.
 - [ ] Link `TERMINALS.md` from `README.md`, mark the matrix done in `ROADMAP.md`, and add a
