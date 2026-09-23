@@ -57,6 +57,10 @@ bim [path]
 
 If `path` is omitted and a session exists for this cwd, the session restores (start page + tab row above it). Otherwise the start page renders alone. Press `:` for a command (`:e <path>`, `:q`) or `<space><space>` to open the file picker.
 
+## Terminals
+
+binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux, and PowerShell in Windows Terminal on Windows. Other terminals work too, with the differences recorded in the [terminal matrix](TERMINALS.md): the checks every terminal is held to, and how Kitty, WezTerm, tmux and the rest came out.
+
 ## Documentation
 
 - [Install](docs/install.md): Homebrew, the install scripts, Scoop, crates.io, the Nix flake, from source, and `binvim-install` / `:install` / `:update` for the toolchains.
@@ -70,6 +74,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 - [External tools](docs/external-tools.md): every LSP, formatter and debug adapter binvim spawns, with the install command for each.
 - [Configuration](docs/configuration.md): `~/.config/binvim/config.toml` section by section, keymaps, and the theme presets.
 - [Project layout](docs/project-layout.md): what lives where in `src/`.
+- [Terminal matrix](TERMINALS.md): the checklist every terminal is held to, and the results per terminal.
 - [Data-loss audit](docs/data-loss-audit.md): every way text reaches disk or could be lost, what binvim guarantees there, and the test or check behind each.
 
 Alongside these: [CHANGELOG.md](CHANGELOG.md), [KNOWN_ISSUES.md](KNOWN_ISSUES.md), [ROADMAP.md](ROADMAP.md), [WINDOWS.md](WINDOWS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
