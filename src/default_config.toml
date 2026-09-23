@@ -12,10 +12,12 @@
 # to its prefix. Mode chips take "mode.normal", "mode.insert" and so on. See
 # themes/ in the repository for complete palettes.
 #
-# Buffer body; unset, the buffer inherits the terminal's background.
+# Buffer body. "Reset" hands it to the terminal: its background, and its text
+# colour for plain text.
 # background = "#1e1e2e"
 # Tabs, popups, status segments and side panes.
 # chrome_bg = "#181825"
+# Chrome text, and buffer text no syntax colour covers.
 # foreground = "#cdd6f4"
 # dim = "#6c7086"
 # emphasis = "#b4befe"

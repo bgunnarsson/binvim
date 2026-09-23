@@ -92,7 +92,7 @@ Decisions:
   `.md` file (acceptance criteria 1–3), reading `capture-pane -e`.
   Deviation: nothing else needed it. The markdown table, `<summary>` and fold-placeholder rows
   already set their own colour (`theme_fg` / `theme_emphasis` / `theme_dim` / `theme_accent`).
-- [ ] Update `src/default_config.toml` (the `background` and `foreground` comments),
+- [x] Update `src/default_config.toml` (the `background` and `foreground` comments),
   `docs/configuration.md` (the example block's `background` line, the chrome-palette paragraph
   and `foreground`'s role), the `themes/catppuccin-mocha/theme.toml` comment, and `CHANGELOG.md`
   (`### Changed`, naming `background = "Reset"` as the way back to the terminal's background).

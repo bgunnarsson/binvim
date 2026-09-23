@@ -7,11 +7,11 @@ schema_version = 1
 
 [colors]
 # Editor surface
-background        = "#1e1e2e"   # buffer body bg; unset = inherit terminal default
+background        = "#1e1e2e"   # buffer body bg; "Reset" = the terminal's own
 chrome_bg         = "#181825"   # tabs, popups, status segments, side panes
 
 # Chrome neutrals
-foreground        = "#cdd6f4"   # main chrome text
+foreground        = "#cdd6f4"   # chrome text, and plain buffer text
 dim               = "#6c7086"   # muted (line numbers, hints, comments)
 emphasis          = "#b4befe"   # active tab fg, multi-cursor block, picker title
 surface           = "#45475a"   # active tab bg, picker selection
@@ -75,6 +75,8 @@ L = "$"
 ```
 
 **`[colors]`** — values may be hex (`#rrggbb`) or a named crossterm colour. The section drives both **chrome** and **syntax** colouring.
+
+*Buffer background.* Unset, the buffer paints Catppuccin Mocha's `#1e1e2e`, and text no syntax colour covers takes `foreground`, so binvim looks the same whatever the terminal's own theme. `background = "Reset"` gives the buffer back to the terminal — its background (a transparent terminal shows through) and its text colour — while the chrome keeps its Catppuccin tones.
 
 *Chrome palette.* The neutrals + accents above (`background`, `chrome_bg`, `foreground`, `dim`, `emphasis`, `surface`, `border`, `accent`, `accent_secondary`, `chip_fg`, `error`, `warning`, `info`, `hint`) paint every chrome surface in the editor: tab bar, status line, popups (whichkey / hover / signature / notification / floating cmdline / picker / completion), terminal pane, debug pane, gutter signs, severity glyphs, buffer overlays (search / yank / multi-cursor / match-pair / doc-highlight), `:health`, `:messages`, and the start page. Set only `background` and binvim auto-derives the five neutrals (`chrome_bg`, `surface`, `border`, `foreground`, `dim`) by luminance-aware mixing — a one-line theme yields a coherent chrome. Each accent has a baked-in Catppuccin Mocha default that you can override.
 

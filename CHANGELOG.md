@@ -15,6 +15,13 @@ follows [Semantic Versioning](https://semver.org/).
   installed it, found from where its binary lives.
 
 ### Changed
+- **The buffer paints Catppuccin Mocha by default.** With no `[colors]
+  background`, the buffer used to take the terminal's own background and text
+  colour while the chrome and syntax were Catppuccin, so on a black or white
+  terminal theme binvim looked half-applied. An unset `background` is now
+  `#1e1e2e`, and text no syntax colour covers takes `foreground`, also under
+  themes that set `background`. To keep the terminal's background (a
+  transparent terminal, or one themed to match), set `background = "Reset"`.
 - **The cursor moves, edits and measures by grapheme cluster.** An emoji built
   from several codepoints (👨‍👩‍👧, 👍🏽, ❤️) or a letter with a combining accent
   is one character now: `l` / `h`, the word motions, `$`, `j` / `k`, `x`, `r`,
