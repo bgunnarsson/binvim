@@ -1,7 +1,7 @@
 ---
 title: The cursor moves, edits and measures text by grapheme cluster, not by codepoint
 date: 2026-09-23
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -73,7 +73,7 @@ doesn't add.
 
 ## Tasks
 
-- [ ] Add `Buffer::next_grapheme_col`, `prev_grapheme_col` and `grapheme_start_col` (by line and
+- [x] Add `Buffer::next_grapheme_col`, `prev_grapheme_col` and `grapheme_start_col` (by line and
   char col) over `GraphemeCursor` and rope chunks, in `src/buffer.rs`. Verify with `buffer::tests`
   on the table's strings, on line start and end, on an empty line, and on a line longer than one
   rope chunk.

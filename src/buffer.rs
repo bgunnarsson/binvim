@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use ropey::Rope;
+use ropey::{Rope, RopeSlice};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 /// Line-ending convention for a buffer. We always normalize to LF in
 /// the rope so the rest of the editor (motion, render, LSP) only ever
@@ -459,6 +460,47 @@ impl Buffer {
         self.change_open = open;
     }
 
+    /// The line's text without its newline — the slice grapheme lookups walk,
+    /// so a trailing `\r` never joins the `\n` into one cluster.
+    fn line_text(&self, line: usize) -> RopeSlice<'_> {
+        if line >= self.line_count() || self.rope.len_chars() == 0 {
+            return self.rope.slice(0..0);
+        }
+        let start = self.rope.line_to_char(line);
+        self.rope.slice(start..start + self.line_len(line))
+    }
+
+    /// Col of the next grapheme-cluster boundary after `col` on `line`,
+    /// capped at the line's length.
+    pub fn next_grapheme_col(&self, line: usize, col: usize) -> usize {
+        let text = self.line_text(line);
+        if col >= text.len_chars() {
+            return text.len_chars();
+        }
+        next_grapheme_boundary(&text, col)
+    }
+
+    /// Col of the grapheme-cluster boundary before `col` on `line`, or 0.
+    pub fn prev_grapheme_col(&self, line: usize, col: usize) -> usize {
+        let text = self.line_text(line);
+        let col = col.min(text.len_chars());
+        if col == 0 {
+            return 0;
+        }
+        prev_grapheme_boundary(&text, col)
+    }
+
+    /// Col of the start of the cluster `col` sits in — `col` itself when it's
+    /// already a boundary. Past the line's end it clamps to the length.
+    pub fn grapheme_start_col(&self, line: usize, col: usize) -> usize {
+        let text = self.line_text(line);
+        let col = col.min(text.len_chars());
+        if col == text.len_chars() || is_grapheme_boundary(&text, col) {
+            return col;
+        }
+        prev_grapheme_boundary(&text, col)
+    }
+
     pub fn total_chars(&self) -> usize {
         self.rope.len_chars()
     }
@@ -472,6 +514,75 @@ impl Buffer {
     }
 }
 
+// Boundary lookups over rope chunks, after ropey 1.6's
+// `examples/graphemes_step.rs`: each one reads only the chunks around `col`,
+// so a line megabytes long costs no full scan per keypress.
+fn next_grapheme_boundary(slice: &RopeSlice, col: usize) -> usize {
+    let byte = slice.char_to_byte(col);
+    let (mut chunk, mut chunk_byte, mut chunk_char, _) = slice.chunk_at_byte(byte);
+    let mut gc = GraphemeCursor::new(byte, slice.len_bytes(), true);
+    loop {
+        match gc.next_boundary(chunk, chunk_byte) {
+            Ok(None) => return slice.len_chars(),
+            Ok(Some(n)) => {
+                return chunk_char + ropey::str_utils::byte_to_char_idx(chunk, n - chunk_byte);
+            }
+            Err(GraphemeIncomplete::NextChunk) => {
+                chunk_byte += chunk.len();
+                let (c, _, ci, _) = slice.chunk_at_byte(chunk_byte);
+                chunk = c;
+                chunk_char = ci;
+            }
+            Err(GraphemeIncomplete::PreContext(n)) => {
+                let ctx = slice.chunk_at_byte(n - 1).0;
+                gc.provide_context(ctx, n - ctx.len());
+            }
+            Err(_) => return (col + 1).min(slice.len_chars()),
+        }
+    }
+}
+
+fn prev_grapheme_boundary(slice: &RopeSlice, col: usize) -> usize {
+    let byte = slice.char_to_byte(col);
+    let (mut chunk, mut chunk_byte, mut chunk_char, _) = slice.chunk_at_byte(byte);
+    let mut gc = GraphemeCursor::new(byte, slice.len_bytes(), true);
+    loop {
+        match gc.prev_boundary(chunk, chunk_byte) {
+            Ok(None) => return 0,
+            Ok(Some(n)) => {
+                return chunk_char + ropey::str_utils::byte_to_char_idx(chunk, n - chunk_byte);
+            }
+            Err(GraphemeIncomplete::PrevChunk) => {
+                let (c, b, ci, _) = slice.chunk_at_byte(chunk_byte - 1);
+                chunk = c;
+                chunk_byte = b;
+                chunk_char = ci;
+            }
+            Err(GraphemeIncomplete::PreContext(n)) => {
+                let ctx = slice.chunk_at_byte(n - 1).0;
+                gc.provide_context(ctx, n - ctx.len());
+            }
+            Err(_) => return col.saturating_sub(1),
+        }
+    }
+}
+
+fn is_grapheme_boundary(slice: &RopeSlice, col: usize) -> bool {
+    let byte = slice.char_to_byte(col);
+    let (chunk, chunk_byte, _, _) = slice.chunk_at_byte(byte);
+    let mut gc = GraphemeCursor::new(byte, slice.len_bytes(), true);
+    loop {
+        match gc.is_boundary(chunk, chunk_byte) {
+            Ok(b) => return b,
+            Err(GraphemeIncomplete::PreContext(n)) => {
+                let (ctx, ctx_byte, _, _) = slice.chunk_at_byte(n - 1);
+                gc.provide_context(ctx, ctx_byte);
+            }
+            Err(_) => return true,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +591,65 @@ mod tests {
         let mut b = Buffer::empty();
         b.rope = ropey::Rope::from_str(s);
         b
+    }
+
+    const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+
+    #[test]
+    fn grapheme_cols_step_over_whole_clusters() {
+        let text = format!("a{FAMILY}b\ne\u{301}x\n\u{1F44D}\u{1F3FD}\u{2764}\u{FE0F}\n\n");
+        let b = buf_with_text(&text);
+        // `a` 0, family 1..6, `b` 6.
+        assert_eq!(b.next_grapheme_col(0, 0), 1);
+        assert_eq!(b.next_grapheme_col(0, 1), 6);
+        assert_eq!(b.next_grapheme_col(0, 6), 7);
+        assert_eq!(b.next_grapheme_col(0, 7), 7);
+        assert_eq!(b.prev_grapheme_col(0, 6), 1);
+        assert_eq!(b.prev_grapheme_col(0, 1), 0);
+        assert_eq!(b.prev_grapheme_col(0, 0), 0);
+        assert_eq!(b.grapheme_start_col(0, 3), 1);
+        assert_eq!(b.grapheme_start_col(0, 6), 6);
+        assert_eq!(b.grapheme_start_col(0, 99), 7);
+        // e + combining acute is one cluster.
+        assert_eq!(b.next_grapheme_col(1, 0), 2);
+        assert_eq!(b.grapheme_start_col(1, 1), 0);
+        // skin tone, then heart + VS16.
+        assert_eq!(b.next_grapheme_col(2, 0), 2);
+        assert_eq!(b.next_grapheme_col(2, 2), 4);
+        assert_eq!(b.prev_grapheme_col(2, 4), 2);
+        // Empty line.
+        assert_eq!(b.next_grapheme_col(3, 0), 0);
+        assert_eq!(b.prev_grapheme_col(3, 0), 0);
+        assert_eq!(b.grapheme_start_col(3, 0), 0);
+    }
+
+    #[test]
+    fn grapheme_cols_never_join_a_crlf_line_end() {
+        let b = buf_with_text("ab\r\ncd\r\n");
+        // line_len keeps the `\r`; it must stay a cluster of its own.
+        assert_eq!(b.next_grapheme_col(0, 1), 2);
+        assert_eq!(b.next_grapheme_col(0, 2), 3);
+    }
+
+    #[test]
+    fn grapheme_cols_cross_rope_chunk_boundaries() {
+        let line: String = std::iter::repeat_n(format!("x{FAMILY}"), 2000).collect();
+        let b = buf_with_text(&format!("{line}\n"));
+        assert!(b.rope.chunks().count() > 1, "line must span several chunks");
+        let mut col = 0;
+        let mut steps = 0;
+        while col < b.line_len(0) {
+            let next = b.next_grapheme_col(0, col);
+            assert_eq!(b.prev_grapheme_col(0, next), col);
+            col = next;
+            steps += 1;
+        }
+        assert_eq!(steps, 4000);
+        for c in 0..b.line_len(0) {
+            // Each repeat is `x` at 0 mod 6, then the family at 1..6.
+            let expected = if c % 6 == 0 { c } else { c - c % 6 + 1 };
+            assert_eq!(b.grapheme_start_col(0, c), expected, "col {c}");
+        }
     }
 
     #[test]
