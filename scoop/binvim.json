@@ -1,5 +1,5 @@
 {
-    "version": "0.6.6",
+    "version": "0.7.0",
     "description": "Vim-grammar TUI editor with batteries included — tree-sitter, multi-server LSP, DAP, multi-cursor, sessions, single binary, no plugin system.",
     "homepage": "https://binvim.dev",
     "license": {
@@ -8,8 +8,8 @@
     },
     "architecture": {
         "64bit": {
-            "url": "https://github.com/bgunnarsson/binvim/releases/download/v0.6.6/binvim-v0.6.6-x86_64-pc-windows-msvc.zip",
-            "hash": "df1f93cabaea17c0d82438001549943cc732cd5f8d52444ecb10ad4ae61c280e"
+            "url": "https://github.com/bgunnarsson/binvim/releases/download/v0.7.0/binvim-v0.7.0-x86_64-pc-windows-msvc.zip",
+            "hash": "10e226ecf6444a13efab29eb13dd8b114f83e13df88b525e9cf6f998a30b5136"
         }
     },
     "bin": [
