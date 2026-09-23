@@ -1,7 +1,7 @@
 ---
 title: The installer installs through winget, scoop and choco on Windows
 date: 2026-09-23
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -47,6 +47,46 @@ Decisions:
   `community.chocolatey.org/packages`. A tool with no confirmed id in a manager gets no entry
   there.
 
+## Package ids
+
+Looked up 2026-09-23:
+
+- winget: `gh api repos/microsoft/winget-pkgs/contents/manifests/<l>/<Publisher>/<Name>`, reading
+  the latest version's `*.installer.yaml`.
+- scoop: `gh api repos/ScoopInstaller/Main/contents/bucket/<app>.json`.
+- choco: `https://community.chocolatey.org/api/v2/FindPackagesById()?id='<pkg>'`, where a
+  non-zero `<entry>` count means it exists.
+
+An id counts only when the package also puts the probed `bin` on `PATH`:
+
+- winget: a `portable` alias, or `Commands` naming the bin.
+- scoop: `bin` or `env_add_path`.
+
+| tool (`bin`) | winget | scoop (`main`) | choco |
+| --- | --- | --- | --- |
+| `clangd` | `LLVM.LLVM` (MSI; `Commands` lists `clangd`) | `llvm` (`env_add_path: bin`) | `llvm` |
+| `clang-format` | `LLVM.LLVM` (`Commands` lists it) | `llvm` | `llvm` |
+| `lldb-dap` | none (`LLVM.LLVM`'s `Commands` lists `lldb`, not `lldb-dap`) | none (unconfirmed in `llvm`) | none |
+| `lua-language-server` | `LuaLS.lua-language-server` (portable, `bin/lua-language-server.exe`) | `lua-language-server` | `lua-language-server` |
+| `marksman` | `Artempyanykh.Marksman` (portable `marksman.exe`) | `marksman` | none |
+| `jdtls` | none | none (`jdtls` has no `bin` / `env_add_path`) | none |
+| `google-java-format` | none | none | none |
+| `zls` | `zigtools.zls` (portable, `Commands: zls`) | `zls` | none |
+| `zig` | `zig.zig` (portable `zig.exe`) | `zig` | `zig` |
+| `elixir-ls` | none | `elixir-ls` (shim `elixir-ls`) | none |
+| `mix` | `Elixir.Elixir` (nullsoft; `Commands` lists `mix`) | `elixir` (`env_add_path: bin`) | `elixir` |
+| `kotlin-language-server` | none | none | none |
+| `ktfmt` | none | none | none |
+
+Two things I couldn't verify from the indexes, and which are left for the Windows check:
+
+- Whether the choco packages add their binary to `PATH`.
+- Whether `LLVM.LLVM`'s MSI adds its `bin` to `PATH`. Its manifest lists the commands, but the
+  MSI's PATH behaviour isn't stated.
+
+So 8 of the 13 tools gain a Windows path. `lldb-dap`, `jdtls`, `google-java-format`,
+`kotlin-language-server` and `ktfmt` stay on `NoManager` on Windows.
+
 ## Relevant lore
 
 None found. No doc covers the installer catalog, and `detect_managers` does no upward search, so
@@ -68,7 +108,7 @@ doesn't bind here.
 
 ## Tasks
 
-- [ ] Look up and record the package id for each of the 13 tools in winget, scoop `main` and
+- [x] Look up and record the package id for each of the 13 tools in winget, scoop `main` and
   choco, from the three indexes named under Decisions. Write the table (tool → id or "none") into
   this plan under a new `## Package ids` section. Verify each id against its manifest or package
   page URL, and cite that URL in the table.
