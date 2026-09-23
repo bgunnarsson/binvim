@@ -67,13 +67,35 @@ pub fn held_by_another_process(rec: &RecoveryFile) -> bool {
 
 #[cfg(unix)]
 fn process_alive(pid: u32) -> bool {
-    // `kill -0` delivers nothing and fails only for a pid that isn't running
-    // (or isn't ours to signal, which a dump in this user's cache would be).
-    std::process::Command::new("kill")
-        .args(["-0", &pid.to_string()])
+    // Matched on the command name, not only on the pid being in use: a dead
+    // binvim's pid goes to whatever starts next, and `kill -0` answers yes for
+    // any process of ours, which would hold the dump back while it runs.
+    // Without a name to match, the dump is taken to be a crash's.
+    let Some(image) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.file_name().map(|n| n.to_string_lossy().into_owned()))
+    else {
+        return false;
+    };
+    std::process::Command::new("ps")
+        .args(["-o", "comm=", "-p", &pid.to_string()])
         .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .output()
+        .is_ok_and(|out| ps_comm_is(&String::from_utf8_lossy(&out.stdout), &image))
+}
+
+/// Whether `ps -o comm=` output names `image`. macOS prints the executable's
+/// path and Linux its name cut to 15 bytes, so the last path component is
+/// compared, against the cut name too.
+#[cfg(any(unix, test))]
+fn ps_comm_is(stdout: &str, image: &str) -> bool {
+    let comm = stdout.trim();
+    let comm = comm.rsplit('/').next().unwrap_or(comm);
+    if comm.is_empty() {
+        return false;
+    }
+    let cut = image.get(..15).unwrap_or(image);
+    comm == image || (comm.len() == 15 && comm == cut)
 }
 
 #[cfg(windows)]
@@ -211,6 +233,19 @@ mod tests {
     }
 
     #[test]
+    fn ps_output_names_binvim_only_for_binvim() {
+        assert!(ps_comm_is("/Users/me/.cargo/bin/binvim\n", "binvim"));
+        assert!(ps_comm_is("binvim\n", "binvim"));
+        // The pid is in use, but by something else: a crash's dump.
+        assert!(!ps_comm_is("/bin/zsh\n", "binvim"));
+        assert!(!ps_comm_is("binvim-dev\n", "binvim"));
+        assert!(!ps_comm_is("", "binvim"));
+        // Linux cuts `comm` to 15 bytes.
+        assert!(ps_comm_is("binvim-nightly-\n", "binvim-nightly-build"));
+        assert!(!ps_comm_is("binvim-nightly\n", "binvim-nightly-build"));
+    }
+
+    #[test]
     fn tasklist_output_lists_binvim_only_under_its_own_pid() {
         let row = "\"binvim.exe\",\"1234\",\"Console\",\"1\",\"12,345 K\"\r\n";
         assert!(tasklist_lists(row, "binvim.exe", 1234));
@@ -229,10 +264,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_dump_is_held_only_while_its_writer_runs() {
-        let mut child = std::process::Command::new("sleep")
-            .arg("30")
-            .spawn()
-            .unwrap();
+        // A `sleep` under this binary's name stands in for another binvim:
+        // a link, since macOS kills a copy of a system binary.
+        let dir = crate::paths::test_scratch_dir("recover", "held");
+        let exe = std::env::current_exe().unwrap();
+        let twin = dir.join(exe.file_name().unwrap());
+        std::os::unix::fs::symlink("/bin/sleep", &twin).unwrap();
+        let mut child = std::process::Command::new(&twin).arg("30").spawn().unwrap();
         let mut rec = RecoveryFile {
             path: "/tmp/a.txt".into(),
             saved_at: 0,
@@ -243,7 +281,17 @@ mod tests {
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(!held_by_another_process(&rec));
+        // A live process that isn't binvim, holding the pid a crash left.
+        let mut other = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        rec.pid = other.id();
+        assert!(!held_by_another_process(&rec));
+        other.kill().unwrap();
+        other.wait().unwrap();
         rec.pid = std::process::id();
         assert!(!held_by_another_process(&rec));
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

@@ -41,6 +41,16 @@ follows [Semantic Versioning](https://semver.org/).
   inside single quotes as an escape, so a `package.json` script name holding
   one could close its quote and run a command substitution. fish now gets
   quoting of its own.
+- **A file deleted while it's open is marked as deleted.** The status line shows
+  `[deleted]` beside the file name, and a message says `:w` writes it again,
+  where the buffer used to carry on as if nothing had happened. A buffer with
+  unsaved changes is marked too.
+- **On macOS and Linux, a crash's recovered text is offered even after its pid
+  is reused.** A recovery file names the binvim that wrote it, so a second one
+  leaves a running editor's dump alone. The check asked only whether that pid
+  was alive, so when the pid had passed to any other of your processes, the
+  text was held back for as long as that process ran. It now also checks the
+  process is binvim, as Windows already did.
 
 ## [0.6.6] - 2026-09-22
 
