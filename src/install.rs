@@ -137,9 +137,12 @@ impl Installer {
             }
             Installer::Nix(r) => format!("nix profile install {r}"),
             Installer::Composer(p) => format!("composer global require {p}"),
-            Installer::Winget(id) => format!(
-                "winget install --id {id} --exact --accept-source-agreements --accept-package-agreements"
-            ),
+            Installer::Winget(id) => {
+                format!(
+                    "winget install --id {id} --exact {}",
+                    WINGET_AGREEMENTS.join(" ")
+                )
+            }
             Installer::Scoop(app) => format!("scoop install {app}"),
             Installer::Choco(p) => format!("choco install {p} -y"),
             Installer::Manual(s) => format!("manual: {s}"),
@@ -309,6 +312,14 @@ impl Installer {
         Some(cmd)
     }
 
+    /// Whether a non-zero exit from this installer means there was nothing to
+    /// do. winget exits `UPDATE_NOT_APPLICABLE` when the package is already at
+    /// its newest version: an upgrade with nothing newer, or an install of a
+    /// package already installed, which winget turns into an upgrade.
+    pub fn is_noop_exit(&self, code: i32) -> bool {
+        matches!(self, Installer::Winget(_)) && code == WINGET_UPDATE_NOT_APPLICABLE
+    }
+
     /// Human-readable form of [`upgrade_command`](Self::upgrade_command), for
     /// the `:update` plan preview.
     pub fn upgrade_display(&self) -> String {
@@ -323,9 +334,12 @@ impl Installer {
                 format!("dotnet tool update --global {p} --version {v}")
             }
             Installer::Nix(r) => format!("nix profile upgrade {}", nix_profile_name(r)),
-            Installer::Winget(id) => format!(
-                "winget upgrade --id {id} --exact --accept-source-agreements --accept-package-agreements"
-            ),
+            Installer::Winget(id) => {
+                format!(
+                    "winget upgrade --id {id} --exact {}",
+                    WINGET_AGREEMENTS.join(" ")
+                )
+            }
             Installer::Scoop(app) => format!("scoop update {app}"),
             Installer::Choco(p) => format!("choco upgrade {p} -y"),
             // Everything else upgrades by re-running its install command.
@@ -333,6 +347,10 @@ impl Installer {
         }
     }
 }
+
+/// `APPINSTALLER_CLI_ERROR_UPDATE_NOT_APPLICABLE` (0x8A15002B), as the `i32`
+/// `ExitStatus::code` reports on Windows.
+const WINGET_UPDATE_NOT_APPLICABLE: i32 = 0x8A15_002B_u32 as i32;
 
 /// winget stops to ask about source and package agreements otherwise.
 const WINGET_AGREEMENTS: [&str; 2] = ["--accept-source-agreements", "--accept-package-agreements"];
@@ -424,10 +442,10 @@ pub const BUNDLES: &[Bundle] = &[
     Bundle { name: "C / C++", tools: &[
         Tool { bin: "clangd", label: "clangd", role: Role::Lsp,
             installers: &[Installer::Brew("llvm"), Installer::Apt("clangd"),
-                Installer::Winget("LLVM.LLVM"), Installer::Scoop("llvm"), Installer::Choco("llvm")] },
+                Installer::Scoop("llvm")] },
         Tool { bin: "clang-format", label: "clang-format", role: Role::Formatter,
             installers: &[Installer::Brew("llvm"), Installer::Apt("clang-format"),
-                Installer::Winget("LLVM.LLVM"), Installer::Scoop("llvm"), Installer::Choco("llvm")] },
+                Installer::Scoop("llvm")] },
         Tool { bin: "lldb-dap", label: "lldb-dap", role: Role::Dap,
             installers: &[Installer::Brew("llvm"), Installer::Apt("lldb")] },
     ]},
@@ -533,7 +551,7 @@ pub const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Brew("elixir-ls"), Installer::Scoop("elixir-ls")] },
         Tool { bin: "mix", label: "elixir (includes `mix format`)", role: Role::Formatter,
             installers: &[Installer::Brew("elixir"),
-                Installer::Winget("Elixir.Elixir"), Installer::Scoop("elixir"), Installer::Choco("elixir")] },
+                Installer::Scoop("elixir")] },
     ]},
     Bundle { name: "Kotlin", tools: &[
         Tool { bin: "kotlin-language-server", label: "kotlin-language-server", role: Role::Lsp,
@@ -951,10 +969,9 @@ pub fn build_update_plan(selected: &[usize], managers: &BTreeSet<&'static str>) 
     let mut plan = Vec::new();
     for (_, (tool_copy, used_by)) in by_bin {
         let tool: &'static Tool = find_static_tool(tool_copy.bin).expect("tool came from BUNDLES");
-        let chosen = if !on_path(tool.bin) {
-            Choice::NotInstalled
-        } else {
-            match pick_installer(tool, managers) {
+        let chosen = match find_on_path(tool.bin) {
+            None => Choice::NotInstalled,
+            Some(path) => match pick_update_installer(tool, managers, installed_by(&path)) {
                 Some(inst) => Choice::Update(inst),
                 None => {
                     if let Some(Installer::Manual(s)) = tool.installers.first() {
@@ -969,7 +986,7 @@ pub fn build_update_plan(selected: &[usize], managers: &BTreeSet<&'static str>) 
                         Choice::NoManager(missing)
                     }
                 }
-            }
+            },
         };
         plan.push(PlanItem {
             tool,
@@ -979,6 +996,43 @@ pub fn build_update_plan(selected: &[usize], managers: &BTreeSet<&'static str>) 
     }
     sort_plan(&mut plan);
     plan
+}
+
+/// The installer `:update` runs: the one belonging to the manager that
+/// installed the binary, when its path says so, rather than the first manager
+/// present — a `zig` from `scoop install zig` is unknown to winget, and a
+/// `stylua` from `cargo install` is unknown to brew.
+fn pick_update_installer<'a>(
+    tool: &'a Tool,
+    managers: &BTreeSet<&'static str>,
+    owner: Option<&str>,
+) -> Option<&'a Installer> {
+    owner
+        .filter(|m| managers.contains(m))
+        .and_then(|m| tool.installers.iter().find(|i| i.manager() == m))
+        .or_else(|| pick_installer(tool, managers))
+}
+
+/// The manager whose own directory `path` sits in, for the managers that
+/// install into one: scoop's apps and shims, winget's links and packages,
+/// Chocolatey's bin and lib, `~/.cargo/bin`, and Homebrew's prefix.
+fn installed_by(path: &Path) -> Option<&'static str> {
+    let path = path
+        .to_string_lossy()
+        .replace('\\', "/")
+        .to_ascii_lowercase();
+    [
+        ("/scoop/", "scoop"),
+        ("/microsoft/winget/", "winget"),
+        ("/chocolatey/", "choco"),
+        ("/.cargo/bin/", "cargo"),
+        ("/homebrew/", "brew"),
+        ("/cellar/", "brew"),
+        ("/linuxbrew/", "brew"),
+    ]
+    .into_iter()
+    .find(|(dir, _)| path.contains(dir))
+    .map(|(_, manager)| manager)
 }
 
 /// Stable ordering shared by both plan builders: LSP → formatter → DAP → tool,
@@ -1043,6 +1097,7 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
         failed: Vec::new(),
     };
     let mut stdout = std::io::stdout();
+    let mut ran: BTreeMap<String, Result<&str, String>> = BTreeMap::new();
     for item in plan {
         match &item.chosen {
             Choice::Already => {
@@ -1107,53 +1162,55 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
                     }
                 }
             }
-            Choice::Install(inst) => {
-                let _ = writeln!(stdout, "\n→ {} — {}", item.tool.label, inst.display());
-                let Some(mut cmd) = inst.build_command() else {
+            Choice::Install(inst) | Choice::Update(inst) => {
+                let updating = matches!(item.chosen, Choice::Update(_));
+                let (arrow, shown, cmd, done) = if updating {
+                    (
+                        "↑",
+                        inst.upgrade_display(),
+                        inst.upgrade_command(),
+                        "✓ updated",
+                    )
+                } else {
+                    ("→", inst.display(), inst.build_command(), "✓ installed")
+                };
+                let _ = writeln!(stdout, "\n{arrow} {} — {shown}", item.tool.label);
+                let Some(mut cmd) = cmd else {
                     summary.manual += 1;
                     continue;
                 };
-                match cmd.status() {
-                    Ok(s) if s.success() => {
-                        summary.installed += 1;
-                        let _ = writeln!(stdout, "✓ installed");
+                // Tools can share a package (clangd and clang-format are both
+                // LLVM), and a second run of the same command isn't a no-op for
+                // every manager, so each command runs once per plan.
+                let outcome = match ran.get(&shown) {
+                    Some(Ok(_)) => Ok("✓ (same command as above)"),
+                    Some(Err(msg)) => Err(format!("{msg} (same command as above)")),
+                    None => {
+                        let outcome = match cmd.status() {
+                            Ok(s) if s.success() => Ok(done),
+                            Ok(s) if s.code().is_some_and(|c| inst.is_noop_exit(c)) => {
+                                Ok("✓ already up to date")
+                            }
+                            Ok(s) => {
+                                let mut msg = format!("exit code {}", s.code().unwrap_or(-1));
+                                if matches!(inst, Installer::Choco(_)) {
+                                    msg.push_str("; choco needs an elevated (Administrator) shell");
+                                }
+                                Err(msg)
+                            }
+                            Err(e) => Err(format!("spawn error: {e}")),
+                        };
+                        ran.insert(shown, outcome.clone());
+                        outcome
                     }
-                    Ok(s) => {
-                        let msg = format!("exit code {}", s.code().unwrap_or(-1));
-                        let _ = writeln!(stdout, "✗ failed ({msg})");
-                        summary.failed.push((item.tool.label.to_string(), msg));
-                    }
-                    Err(e) => {
-                        let msg = format!("spawn error: {e}");
-                        let _ = writeln!(stdout, "✗ {msg}");
-                        summary.failed.push((item.tool.label.to_string(), msg));
-                    }
-                }
-            }
-            Choice::Update(inst) => {
-                let _ = writeln!(
-                    stdout,
-                    "\n↑ {} — {}",
-                    item.tool.label,
-                    inst.upgrade_display()
-                );
-                let Some(mut cmd) = inst.upgrade_command() else {
-                    summary.manual += 1;
-                    continue;
                 };
-                match cmd.status() {
-                    Ok(s) if s.success() => {
+                match outcome {
+                    Ok(line) => {
                         summary.installed += 1;
-                        let _ = writeln!(stdout, "✓ updated");
+                        let _ = writeln!(stdout, "{line}");
                     }
-                    Ok(s) => {
-                        let msg = format!("exit code {}", s.code().unwrap_or(-1));
+                    Err(msg) => {
                         let _ = writeln!(stdout, "✗ failed ({msg})");
-                        summary.failed.push((item.tool.label.to_string(), msg));
-                    }
-                    Err(e) => {
-                        let msg = format!("spawn error: {e}");
-                        let _ = writeln!(stdout, "✗ {msg}");
                         summary.failed.push((item.tool.label.to_string(), msg));
                     }
                 }
@@ -1399,34 +1456,15 @@ mod tests {
     }
 
     #[test]
-    fn windows_entries_never_change_a_non_windows_pick() {
-        // Every manager a macOS or Linux host can have, alone and all together.
-        let unix = [
+    fn no_unix_host_picks_a_windows_manager() {
+        // Every manager a macOS or Linux host can have, all at once.
+        let unix = BTreeSet::from([
             "brew", "apt-get", "sudo", "npm", "cargo", "rustup", "go", "pipx", "pip", "gem",
             "dotnet", "nix", "composer",
-        ];
-        let mut sets: Vec<BTreeSet<&'static str>> =
-            unix.iter().map(|m| BTreeSet::from([*m])).collect();
-        sets.push(unix.into_iter().collect());
-        sets.push(BTreeSet::from(["apt-get", "sudo"]));
-        for bundle in BUNDLES {
-            for tool in bundle.tools {
-                let without: Vec<Installer> = tool
-                    .installers
-                    .iter()
-                    .copied()
-                    .filter(|i| !is_windows_manager(i))
-                    .collect();
-                let stripped = Tool {
-                    installers: Box::leak(without.into_boxed_slice()),
-                    ..*tool
-                };
-                for managers in &sets {
-                    let picked = pick_installer(tool, managers).map(Installer::display);
-                    let before = pick_installer(&stripped, managers).map(Installer::display);
-                    assert_eq!(picked, before, "{} under {managers:?}", tool.bin);
-                }
-            }
+        ]);
+        for tool in BUNDLES.iter().flat_map(|b| b.tools) {
+            let picked = pick_installer(tool, &unix);
+            assert!(!picked.is_some_and(is_windows_manager), "{}", tool.bin);
         }
     }
 
@@ -1454,15 +1492,7 @@ mod tests {
                 .find(|t| t.bin == bin)
                 .unwrap()
         };
-        for bin in [
-            "clangd",
-            "clang-format",
-            "lua-language-server",
-            "marksman",
-            "zls",
-            "zig",
-            "mix",
-        ] {
+        for bin in ["lua-language-server", "marksman", "zls", "zig"] {
             assert!(
                 matches!(
                     pick_installer(find(bin), &managers),
@@ -1471,7 +1501,12 @@ mod tests {
                 "{bin}"
             );
         }
+        // LLVM's MSI and Elixir's silent NSIS install don't add their `bin` to
+        // PATH, so clangd, clang-format and mix come from scoop instead.
         for bin in [
+            "clangd",
+            "clang-format",
+            "mix",
             "lldb-dap",
             "jdtls",
             "google-java-format",
@@ -1481,6 +1516,55 @@ mod tests {
         ] {
             assert!(pick_installer(find(bin), &managers).is_none(), "{bin}");
         }
+    }
+
+    #[test]
+    fn only_wingets_nothing_to_do_exit_is_a_no_op() {
+        let code = 0x8A15_002B_u32 as i32;
+        assert_eq!(code, -1978335189);
+        assert!(Installer::Winget("zig.zig").is_noop_exit(code));
+        assert!(!Installer::Winget("zig.zig").is_noop_exit(1));
+        assert!(!Installer::Choco("zig").is_noop_exit(code));
+        assert!(!Installer::Brew("zig").is_noop_exit(code));
+    }
+
+    #[test]
+    fn installed_by_reads_the_managers_own_directory() {
+        let cases = [
+            (r"C:\Users\me\scoop\shims\zig.exe", Some("scoop")),
+            (
+                r"C:\Users\me\AppData\Local\Microsoft\WinGet\Links\zig.exe",
+                Some("winget"),
+            ),
+            (r"C:\ProgramData\chocolatey\bin\zig.exe", Some("choco")),
+            ("/Users/me/.cargo/bin/stylua", Some("cargo")),
+            ("/opt/homebrew/bin/stylua", Some("brew")),
+            ("/usr/local/Cellar/stylua/2.0/bin/stylua", Some("brew")),
+            ("/usr/bin/stylua", None),
+        ];
+        for (path, owner) in cases {
+            assert_eq!(installed_by(Path::new(path)), owner, "{path}");
+        }
+    }
+
+    #[test]
+    fn update_goes_to_the_manager_that_installed_the_tool() {
+        let zig = BUNDLES
+            .iter()
+            .flat_map(|b| b.tools)
+            .find(|t| t.bin == "zig")
+            .unwrap();
+        let managers = BTreeSet::from(["winget", "scoop", "choco"]);
+        let pick = |owner| pick_update_installer(zig, &managers, owner).map(Installer::display);
+        assert_eq!(pick(Some("scoop")), Some("scoop install zig".into()));
+        assert_eq!(pick(Some("choco")), Some("choco install zig -y".into()));
+        // Unknown owner, or an owner that isn't on PATH any more: catalog order.
+        assert_eq!(pick(None), Installer::Winget("zig.zig").display().into());
+        let winget_only = BTreeSet::from(["winget"]);
+        assert_eq!(
+            pick_update_installer(zig, &winget_only, Some("scoop")).map(Installer::display),
+            Some(Installer::Winget("zig.zig").display())
+        );
     }
 
     #[test]
