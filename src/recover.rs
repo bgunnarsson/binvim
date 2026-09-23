@@ -65,6 +65,33 @@ pub fn recovery_path_for(key: &RecoveryKey) -> Option<PathBuf> {
     }
 }
 
+/// The `[No Name]` dumps a crash left: parsed, and not another running
+/// binvim's live one. Oldest first, so `:recover` opens them in the order
+/// they were written.
+pub fn crash_unnamed_dumps() -> Vec<(String, RecoveryFile)> {
+    recover_dir().map_or_else(Vec::new, |dir| unnamed_dumps_in(&dir))
+}
+
+fn unnamed_dumps_in(dir: &Path) -> Vec<(String, RecoveryFile)> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut dumps: Vec<(String, RecoveryFile)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let key = name.strip_suffix(".json")?;
+            if !key.starts_with("unnamed-") {
+                return None;
+            }
+            let rec = load_from(&e.path())?;
+            (!held_by_another_process(&rec)).then(|| (key.to_string(), rec))
+        })
+        .collect();
+    dumps.sort_by_key(|(_, rec)| rec.saved_at);
+    dumps
+}
+
 pub fn write_to(dest: &Path, rec: &RecoveryFile) -> std::io::Result<()> {
     if let Some(parent) = dest.parent() {
         // The text may be a private file's — a key, a `.env` — so only this
@@ -185,6 +212,33 @@ mod tests {
             std::env::temp_dir().join(format!("binvim_recover_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn only_parsed_unnamed_dumps_are_offered() {
+        let dir = scratch("unnamed");
+        let rec = |saved_at, text: &str| RecoveryFile {
+            path: "[No Name]".into(),
+            saved_at,
+            text: text.into(),
+            pid: 0,
+        };
+        write_to(&dir.join("unnamed-1-20-0.json"), &rec(20, "later")).unwrap();
+        write_to(&dir.join("unnamed-1-10-1.json"), &rec(10, "earlier")).unwrap();
+        write_to(&dir.join("0123abcd.json"), &rec(5, "a named file's")).unwrap();
+        std::fs::write(dir.join("unnamed-1-30-2.json"), "{ cut short").unwrap();
+        let found: Vec<(String, String)> = unnamed_dumps_in(&dir)
+            .into_iter()
+            .map(|(key, rec)| (key, rec.text))
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("unnamed-1-10-1".to_string(), "earlier".to_string()),
+                ("unnamed-1-20-0".to_string(), "later".to_string()),
+            ]
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

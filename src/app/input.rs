@@ -2557,6 +2557,7 @@ impl super::App {
             ExCommand::Health => self.cmd_health(),
             ExCommand::Messages => self.cmd_messages(),
             ExCommand::Registers => self.cmd_registers(),
+            ExCommand::Recover => self.cmd_recover(),
             ExCommand::Digraphs => self.cmd_digraphs(),
             ExCommand::Changes => self.cmd_changes(),
             ExCommand::UndoTime { earlier, amount } => self.undo_jump(earlier, amount),

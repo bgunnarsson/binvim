@@ -142,6 +142,61 @@ impl super::App {
         );
     }
 
+    /// Say at launch that a crash left `[No Name]` text behind, since nothing
+    /// opens it until `:recover` is asked for. A launch message already
+    /// showing wins; the next launch counts again.
+    pub(super) fn announce_unnamed_recovery(&mut self) {
+        let n = crate::recover::crash_unnamed_dumps().len();
+        if n == 0 || !self.status_msg.is_empty() {
+            return;
+        }
+        let what = if n == 1 {
+            "1 unnamed buffer".to_string()
+        } else {
+            format!("{n} unnamed buffers")
+        };
+        self.status_msg = format!("{what} left by a crash — :recover opens them");
+    }
+
+    /// `:recover` — each `[No Name]` dump a crash left, opened as a buffer
+    /// with unsaved changes. The dump is rewritten under this binvim's pid
+    /// straight away: until then it names the dead one, and another binvim's
+    /// `:recover` would take it too.
+    pub(super) fn cmd_recover(&mut self) {
+        let dumps: Vec<(String, RecoveryFile)> = crate::recover::crash_unnamed_dumps()
+            .into_iter()
+            .filter(|(key, _)| {
+                !self
+                    .recovery_written
+                    .contains_key(&RecoveryKey::Unnamed(key.clone()))
+            })
+            .collect();
+        if dumps.is_empty() {
+            self.status_msg = "no unnamed buffers to recover".into();
+            return;
+        }
+        let n = dumps.len();
+        for (name, rec) in dumps {
+            if let Err(e) = self.open_empty_buffer() {
+                self.status_msg = format!("recover: {e}");
+                return;
+            }
+            self.history.record(&self.buffer.rope, self.window.cursor);
+            self.buffer.replace_all(&rec.text);
+            self.buffer.dirty = true;
+            self.buffer.unnamed_key = Some(name.clone());
+            self.clamp_cursor_normal();
+            let key = RecoveryKey::Unnamed(name);
+            dump(&key, rec.text);
+            self.recovery_written.insert(key, self.buffer.version);
+        }
+        self.status_msg = if n == 1 {
+            "recovered 1 unnamed buffer — :w {file} keeps it".into()
+        } else {
+            format!("recovered {n} unnamed buffers — :w {{file}} keeps each")
+        };
+    }
+
     /// The dirty buffers as the signal thread would find them. A rope clone
     /// shares its nodes, so this costs a `Vec` per iteration, not the text.
     #[cfg(unix)]

@@ -209,6 +209,9 @@ pub enum ExCommand {
     /// `:reg` / `:registers` — open a scrollable overlay listing every
     /// yank register and recorded macro register with a short preview.
     Registers,
+    /// `:rec[over]` — open the `[No Name]` buffers a crash left recovery
+    /// files for.
+    Recover,
     /// `:dig[raphs]` — the Insert `Ctrl-K` digraphs.
     Digraphs,
     /// `:changes` — the change list in the list overlay.
@@ -860,6 +863,7 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "health" | "checkhealth" => ExCommand::Health,
         "messages" | "message" | "mes" => ExCommand::Messages,
         "reg" | "registers" | "display" => ExCommand::Registers,
+        "rec" | "reco" | "recov" | "recove" | "recover" => ExCommand::Recover,
         "dig" | "digr" | "digra" | "digrap" | "digraph" | "digraphs" => ExCommand::Digraphs,
         "changes" => ExCommand::Changes,
         "marks" => ExCommand::Marks,
@@ -2071,6 +2075,8 @@ mod tests {
         assert!(matches!(parse("write!"), ExCommand::WriteForce));
         assert!(matches!(parse("w! out.txt"), ExCommand::WriteAsForce(p) if p == "out.txt"));
         assert!(matches!(parse("reg"), ExCommand::Registers));
+        assert!(matches!(parse("rec"), ExCommand::Recover));
+        assert!(matches!(parse("recover"), ExCommand::Recover));
     }
 
     #[test]
