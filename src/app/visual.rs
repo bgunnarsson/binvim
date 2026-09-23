@@ -297,13 +297,11 @@ impl super::App {
         let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
         match kind {
             VisualKind::Char => {
+                let cur = self.window.cursor;
                 let a = self.buffer.pos_to_char(anchor.line, anchor.col);
-                let c = self
-                    .buffer
-                    .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-                let (lo, hi) = if a <= c { (a, c) } else { (c, a) };
-                let total = self.buffer.total_chars();
-                (lo, (hi + 1).min(total), false)
+                let c = self.buffer.pos_to_char(cur.line, cur.col);
+                let (lo, hi) = if a <= c { (a, cur) } else { (c, anchor) };
+                (lo, self.buffer.inclusive_end_idx(hi.line, hi.col), false)
             }
             VisualKind::Line => {
                 let l1 = anchor.line.min(self.window.cursor.line);

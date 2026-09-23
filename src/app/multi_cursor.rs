@@ -290,11 +290,10 @@ fn range_from_motion_at(buffer: &Buffer, from: Cursor, m: MotionResult) -> (usiz
         MotionKind::CharInclusive => {
             let f = buffer.pos_to_char(from.line, from.col);
             let t = buffer.pos_to_char(to.line, to.col);
-            let total = buffer.total_chars();
             if f <= t {
-                (f, (t + 1).min(total))
+                (f, buffer.inclusive_end_idx(to.line, to.col))
             } else {
-                (t, (f + 1).min(total))
+                (t, buffer.inclusive_end_idx(from.line, from.col))
             }
         }
         MotionKind::Linewise => {

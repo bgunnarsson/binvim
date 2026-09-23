@@ -978,7 +978,9 @@ impl super::App {
                     return None;
                 }
                 let start_col = if line == lo.line { lo.col } else { 0 };
-                let end_col = if line == hi.line {
+                let end_col = if line == hi.line && hi.col < line_len {
+                    self.buffer.next_grapheme_col(line, hi.col)
+                } else if line == hi.line {
                     (hi.col + 1).min(line_len.max(1))
                 } else {
                     line_len.max(1)

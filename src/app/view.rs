@@ -197,6 +197,11 @@ impl super::App {
         if self.window.cursor.col > max {
             self.window.cursor.col = max;
         }
+        // A col set from outside — an LSP jump, a search match, a mark — can
+        // land inside a cluster; the cursor sits on the cluster's start.
+        self.window.cursor.col = self
+            .buffer
+            .grapheme_start_col(self.window.cursor.line, self.window.cursor.col);
     }
 
     /// Mouse-wheel scroll: shift the viewport by `delta` lines and drag the

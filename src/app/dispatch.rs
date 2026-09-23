@@ -1082,12 +1082,14 @@ impl super::App {
                 if f <= t { (f, t) } else { (t, f) }
             }
             MotionKind::CharInclusive => {
+                // The far end takes its whole cluster, so `de` onto an emoji
+                // or `v…y` over one never splits it.
                 let f = self.buffer.pos_to_char(from.line, from.col);
                 let t = self.buffer.pos_to_char(to.line, to.col);
                 if f <= t {
-                    (f, (t + 1).min(self.buffer.total_chars()))
+                    (f, self.buffer.inclusive_end_idx(to.line, to.col))
                 } else {
-                    (t, (f + 1).min(self.buffer.total_chars()))
+                    (t, self.buffer.inclusive_end_idx(from.line, from.col))
                 }
             }
             MotionKind::Linewise => {

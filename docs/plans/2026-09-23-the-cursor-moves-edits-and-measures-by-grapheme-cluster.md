@@ -102,13 +102,18 @@ doesn't add.
   existing motion proptests) asserting every motion target is a boundary.
   Deviation: `to_column` (`|`), `line_middle` (`gM`) and `last_non_blank` (`g_`) snap too, since
   the proptest covers them and each could land on a combining mark or VS16.
-- [ ] Make the edits span clusters. That means `delete_char_forward` (`app/edit.rs:1219`) and `X`,
+- [x] Make the edits span clusters. That means `delete_char_forward` (`app/edit.rs:1219`) and `X`,
   `replace_char` (`:646`), `toggle_case` (`:1179`), `a` / `A`, and Insert Backspace / Delete
   (`app/input.rs` around 1931 and 2150). The `CharInclusive` range end in `app/dispatch.rs:1084`
   and `app/multi_cursor.rs:290` extends to the cluster's end. `clamp_cursor_normal`
   (`app/view.rs:190`) snaps to the cluster start. Verify with `app::input` / `app::edit` tests for
   each edit on the emoji and on `e` + U+0301, and with the existing tests for `x`, `r`, `~` and
   Visual unchanged.
+  Deviation: Normal-mode `X` and Insert-mode Delete aren't implemented in binvim, so neither has
+  anything to change. Insert-mode Left / Right step by cluster as well, and so do `a` for
+  secondary cursors and charwise Visual's range and highlight, through a new
+  `Buffer::inclusive_end_idx`. `v"ay` doesn't name a register in Visual even on ASCII, so the
+  test checks `v`'s range directly rather than a register.
 - [ ] Add a `CHANGELOG.md` Unreleased `### Changed` entry. If the terminal matrix finds a
   terminal that draws clusters differently, add a `KNOWN_ISSUES.md` entry for it. Verify by
   reading the diff.

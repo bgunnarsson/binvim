@@ -577,7 +577,7 @@ impl super::App {
                     let col = *pos - line_start;
                     let len = self.buffer.line_len(line);
                     if col < len && *pos < total {
-                        *pos += 1;
+                        *pos = line_start + self.buffer.next_grapheme_col(line, col);
                     }
                 }
             }
@@ -590,7 +590,9 @@ impl super::App {
             InsertWhere::AfterCursor => {
                 let len = self.buffer.line_len(self.window.cursor.line);
                 if self.window.cursor.col < len {
-                    self.window.cursor.col += 1;
+                    self.window.cursor.col = self
+                        .buffer
+                        .next_grapheme_col(self.window.cursor.line, self.window.cursor.col);
                     self.window.cursor.want_col = self.window.cursor.col;
                 }
             }
@@ -649,13 +651,20 @@ impl super::App {
         if line_len == 0 {
             return;
         }
-        let start = self.buffer.pos_to_char(line, self.window.cursor.col);
-        let max_end = self.buffer.pos_to_char(line, line_len);
-        let end = (start + count.max(1)).min(max_end);
-        let actual = end - start;
+        // `r` replaces clusters: `r` on `e` + U+0301 takes both codepoints,
+        // and `3r` three whole clusters.
+        let start_col = self.window.cursor.col;
+        let mut end_col = start_col;
+        let mut actual = 0;
+        while actual < count.max(1) && end_col < line_len {
+            end_col = self.buffer.next_grapheme_col(line, end_col);
+            actual += 1;
+        }
         if actual == 0 {
             return;
         }
+        let start = self.buffer.pos_to_char(line, start_col);
+        let end = self.buffer.pos_to_char(line, end_col);
         self.buffer.delete_range(start, end);
         let mut buf = String::new();
         for _ in 0..actual {
@@ -1206,10 +1215,14 @@ impl super::App {
             self.buffer.delete_range(idx, idx + 1);
             self.buffer
                 .insert_char(self.window.cursor.line, self.window.cursor.col, new_c);
-            // Advance unless we're at end of line.
+            // Advance a cluster unless we're on the last one. Only the
+            // cluster's first char changes case; its marks go with it.
             let len_now = self.buffer.line_len(self.window.cursor.line);
-            if self.window.cursor.col + 1 < len_now {
-                self.window.cursor.col += 1;
+            let next = self
+                .buffer
+                .next_grapheme_col(self.window.cursor.line, self.window.cursor.col);
+            if next < len_now {
+                self.window.cursor.col = next;
             }
         }
         self.window.cursor.want_col = self.window.cursor.col;
@@ -1221,11 +1234,16 @@ impl super::App {
         if line_len == 0 {
             return;
         }
-        let start = self
-            .buffer
-            .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-        let max_end = self.buffer.pos_to_char(self.window.cursor.line, line_len);
-        let end = (start + count).min(max_end);
+        let line = self.window.cursor.line;
+        let start = self.buffer.pos_to_char(line, self.window.cursor.col);
+        let mut end_col = self.window.cursor.col;
+        for _ in 0..count {
+            if end_col >= line_len {
+                break;
+            }
+            end_col = self.buffer.next_grapheme_col(line, end_col);
+        }
+        let end = self.buffer.pos_to_char(line, end_col);
         let removed = self.buffer.delete_range(start, end);
         if !removed.is_empty() {
             self.write_register(target, removed, false);

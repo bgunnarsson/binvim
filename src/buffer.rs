@@ -490,6 +490,18 @@ impl Buffer {
         prev_grapheme_boundary(&text, col)
     }
 
+    /// Char index just past the cluster at (`line`, `col`) — the end of an
+    /// inclusive range whose last position is there. At or past the line's
+    /// end it's one char further, so an inclusive range can take the newline.
+    pub fn inclusive_end_idx(&self, line: usize, col: usize) -> usize {
+        let end = if col < self.line_len(line) {
+            self.pos_to_char(line, self.next_grapheme_col(line, col))
+        } else {
+            self.pos_to_char(line, col) + 1
+        };
+        end.min(self.total_chars())
+    }
+
     /// Col of the start of the cluster `col` sits in — `col` itself when it's
     /// already a boundary. Past the line's end it clamps to the length.
     pub fn grapheme_start_col(&self, line: usize, col: usize) -> usize {

@@ -1842,11 +1842,14 @@ impl super::App {
                             return;
                         }
                     }
-                    let idx = self
-                        .buffer
-                        .pos_to_char(self.window.cursor.line, self.window.cursor.col);
-                    self.buffer.delete_range(idx - 1, idx);
-                    self.window.cursor.col -= 1;
+                    // A whole cluster goes: the ZWJ family is one keypress,
+                    // not five.
+                    let line = self.window.cursor.line;
+                    let prev_col = self.buffer.prev_grapheme_col(line, self.window.cursor.col);
+                    let idx = self.buffer.pos_to_char(line, self.window.cursor.col);
+                    self.buffer
+                        .delete_range(self.buffer.pos_to_char(line, prev_col), idx);
+                    self.window.cursor.col = prev_col;
                     self.window.cursor.want_col = self.window.cursor.col;
                 } else if self.window.cursor.line > 0 {
                     let prev = self.window.cursor.line - 1;
@@ -1887,14 +1890,18 @@ impl super::App {
             }
             KeyCode::Left => {
                 if self.window.cursor.col > 0 {
-                    self.window.cursor.col -= 1;
+                    self.window.cursor.col = self
+                        .buffer
+                        .prev_grapheme_col(self.window.cursor.line, self.window.cursor.col);
                     self.window.cursor.want_col = self.window.cursor.col;
                 }
             }
             KeyCode::Right => {
                 let len = self.buffer.line_len(self.window.cursor.line);
                 if self.window.cursor.col < len {
-                    self.window.cursor.col += 1;
+                    self.window.cursor.col = self
+                        .buffer
+                        .next_grapheme_col(self.window.cursor.line, self.window.cursor.col);
                     self.window.cursor.want_col = self.window.cursor.col;
                 }
             }
@@ -4052,6 +4059,89 @@ mod tests {
 
     fn tap(app: &mut crate::app::App, code: KeyCode) {
         app.replay_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+
+    fn reg(app: &crate::app::App, name: char) -> String {
+        app.registers
+            .get(&name)
+            .map(|r| r.text.clone())
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn normal_edits_take_a_whole_cluster() {
+        let text = format!("a{FAMILY}b\n");
+        // `l` from `a` lands on the emoji, `l` again on `b`.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "l");
+        assert_eq!(app.window.cursor.col, 1);
+        press(&mut app, "l");
+        assert_eq!(app.window.cursor.col, 6);
+        // `x` on the emoji leaves `ab`, and the register holds all of it.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "l\"ax");
+        assert_eq!(app.buffer.rope.to_string(), "ab\n");
+        assert_eq!(reg(&app, 'a'), FAMILY);
+        // `dl` and `v` + `y` take the same five codepoints.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "l\"adl");
+        assert_eq!(app.buffer.rope.to_string(), "ab\n");
+        assert_eq!(reg(&app, 'a'), FAMILY);
+        // `v` on the emoji selects all of it; `"ay` after it isn't how binvim
+        // names a register in Visual, so the range is checked directly.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "lv");
+        let (start, end, _) = app.visual_range_chars(crate::mode::VisualKind::Char);
+        assert_eq!((start, end), (1, 6));
+        // `cl` replaces it.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "lclZ");
+        assert_eq!(app.buffer.rope.to_string(), "aZb\n");
+        // `a` on the emoji starts Insert after all of it.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "laZ");
+        assert_eq!(app.buffer.rope.to_string(), format!("a{FAMILY}Zb\n"));
+    }
+
+    #[test]
+    fn r_and_tilde_treat_a_combining_mark_as_part_of_its_letter() {
+        // `r` on e + U+0301 replaces both codepoints.
+        let mut app = app_with_keymaps("e\u{301}x\n", "");
+        press(&mut app, "rZ");
+        assert_eq!(app.buffer.rope.to_string(), "Zx\n");
+        assert_eq!(app.window.cursor.col, 0);
+        // `2r` takes two clusters.
+        let mut app = app_with_keymaps(&format!("{FAMILY}e\u{301}x\n"), "");
+        press(&mut app, "2rZ");
+        assert_eq!(app.buffer.rope.to_string(), "ZZx\n");
+        // `~` upper-cases the letter, keeps its mark and steps past both.
+        let mut app = app_with_keymaps("e\u{301}x\n", "");
+        press(&mut app, "~");
+        assert_eq!(app.buffer.rope.to_string(), "E\u{301}x\n");
+        assert_eq!(app.window.cursor.col, 2);
+    }
+
+    #[test]
+    fn insert_backspace_and_arrows_step_a_whole_cluster() {
+        let mut app = insert_at(&format!("a{FAMILY}b\n"), 0, 6);
+        tap(&mut app, KeyCode::Left);
+        assert_eq!(app.window.cursor.col, 1);
+        tap(&mut app, KeyCode::Right);
+        assert_eq!(app.window.cursor.col, 6);
+        tap(&mut app, KeyCode::Backspace);
+        assert_eq!(app.buffer.rope.to_string(), "ab\n");
+        assert_eq!(app.window.cursor.col, 1);
+    }
+
+    #[test]
+    fn a_col_set_inside_a_cluster_snaps_to_its_start() {
+        // A search match, an LSP jump or a mark can set a mid-cluster col.
+        let mut app = app_with_keymaps(&format!("a{FAMILY}b\n"), "");
+        app.window.cursor.col = 4;
+        app.clamp_cursor_normal();
+        assert_eq!(app.window.cursor.col, 1);
     }
 
     #[test]
