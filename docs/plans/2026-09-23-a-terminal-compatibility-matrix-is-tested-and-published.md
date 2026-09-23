@@ -90,9 +90,17 @@ Decisions (the user chose the checklist route):
   LSP produces diagnostics and a `.txt` file has none. rust-analyzer reports its syntax error.
   Deviation: the start page has no Nerd Font icons (its logo is box-drawing characters). The
   glyph check looks at the status line and the file picker instead.
-- [ ] Run the tmux row and, if `ssh localhost` works, the tmux-over-SSH row, recording evidence.
+- [x] Run the tmux row and, if `ssh localhost` works, the tmux-over-SSH row, recording evidence.
   Fix any binvim-side failure as its own commit with a test where one can be written. Verify each
   fix with the check it failed, and record that in the matrix.
+  Deviation: `ssh localhost` doesn't work here (nothing listens on port 22; Remote Login is off),
+  so the tmux-over-SSH row wasn't run and the over-SSH column is left to the user's report.
+  Three fixes, each with the check that found it: `Tab` as `Ctrl-i` (`2f81606`, check 2),
+  `Ctrl-[` as Esc under the Kitty protocol (`c15d6b5`, check 4, found by sending that encoding
+  through tmux by hand), and `Ctrl-C` at a suspended child no longer ending binvim (`a4ace97`,
+  check 20). The last has no unit test: it is a signal disposition, checked in tmux.
+  Check 19's `Ctrl-[` in `:terminal` can't pass without the protocol, so it's a `KNOWN_ISSUES.md`
+  entry.
 - [ ] Check how crossterm 0.x (the version in `Cargo.lock`) handles
   `PushKeyboardEnhancementFlags` on a terminal that doesn't support it, by reading its source. If
   it can leak, gate the four pushes on `supports_keyboard_enhancement()`. Verify by reading the

@@ -105,6 +105,27 @@ dangling symlink. There it writes the file in place, and a write that fails
 partway (a full disk) leaves the file truncated. The text is still in the
 buffer, and in its recovery file, so `:w` again once the cause is fixed.
 
+## Terminals
+
+Each terminal's results are in `TERMINALS.md`. What is listed here is a
+terminal's doing rather than binvim's, and the matrix links to it.
+
+### `Ctrl-[` leaves the `:terminal` pane on a terminal without the Kitty keyboard protocol
+
+**tmux, and any terminal that doesn't speak the protocol. No fix available in
+binvim.**
+
+In the `:terminal` pane `Esc` hands focus back to the editor, and `Ctrl-[` is
+how an Esc reaches the program running there (a vi-mode shell, vim, `less`).
+That only works where the terminal reports `Ctrl-[` apart from `Esc`, which is
+what the Kitty keyboard protocol's disambiguate flag does. A legacy terminal
+sends the same byte, 0x1b, for both keys, so binvim can't tell them apart and
+`Ctrl-[` leaves the pane like `Esc` does (`TERMINALS.md` check 19).
+
+Workaround: use a terminal that passes check 19, where the pane gets the Esc,
+or run the program that needs it in a split of the host terminal rather than
+in `:terminal`.
+
 ## Tests
 
 ### A grammar that segfaults is only identifiable when tests run sequentially

@@ -143,27 +143,85 @@ A cell is never a bare "fail".
 
 | # | Check | Ghostty | Kitty | WezTerm | Alacritty | tmux | Windows Terminal | over SSH | Terminal.app |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| | Version | | | | | | | | |
-| 1 | Launch and quit | | | | | | | | |
-| 2 | Re-encoded keys | | | | | | | | |
-| 3 | Esc response | | | | | | | | |
-| 4 | `Ctrl-[` and Alt | | | | | | | | |
-| 5 | Shift / Ctrl arrows | | | | | | | | |
-| 6 | Cursor shape | | | | | | | | |
-| 7 | Truecolor | | | | | | | | |
-| 8 | Italic and bold | | | | | | | | |
-| 9 | Nerd Font glyphs | | | | | | | | |
-| 10 | Wide characters | | | | | | | | |
-| 11 | Emoji clusters | | | | | | | | |
-| 12 | Long line | | | | | | | | |
-| 13 | Mouse | | | | | | | | |
-| 14 | Bracketed paste | | | | | | | | |
-| 15 | Synchronized output | | | | | | | | |
-| 16 | Undercurl | | | | | | | | |
-| 17 | Resize | | | | | | | | |
-| 18 | OSC 52 | | | | | | | | |
-| 19 | `:terminal` | | | | | | | | |
-| 20 | lazygit round trip | | | | | | | | |
-| 21 | Closing unsaved | | | | | | | | |
+| | Version | | | | | 3.6a | | | |
+| 1 | Launch and quit | | | | | ✓ | | | |
+| 2 | Re-encoded keys | | | | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
+| 3 | Esc response | | | | | ✓ | | | |
+| 4 | `Ctrl-[` and Alt | | | | | ✓ | | | |
+| 5 | Shift / Ctrl arrows | | | | | ✓ | | | |
+| 6 | Cursor shape | | | | | ✓ | | | |
+| 7 | Truecolor | | | | | ✓ | | | |
+| 8 | Italic and bold | | | | | ✓ | | | |
+| 9 | Nerd Font glyphs | | | | | ✓ | | | |
+| 10 | Wide characters | | | | | ✓ | | | |
+| 11 | Emoji clusters | | | | | ✓ | | | |
+| 12 | Long line | | | | | ✓ | | | |
+| 13 | Mouse | | | | | ✓ | | | |
+| 14 | Bracketed paste | | | | | ✓ | | | |
+| 15 | Synchronized output | | | | | ✓ | | | |
+| 16 | Undercurl | | | | | ✓ | | | |
+| 17 | Resize | | | | | ✓ | | | |
+| 18 | OSC 52 | | | | | ✓ | | | |
+| 19 | `:terminal` | | | | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
+| 20 | lazygit round trip | | | | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
+| 21 | Closing unsaved | | | | | ✓ | | | |
 
 ### Notes
+
+**tmux** — tmux 3.6a on macOS, run on 2026-09-23 against a detached server
+(`tmux -L`, a 120×30 window, `TERM=tmux-256color`, the default config apart from
+what is named below). With no client attached, what was checked is what tmux
+parsed from binvim, not how an outer terminal then draws it. Keys went in with
+`send-keys`, one call per key after `Esc`, and every check read the result back
+from tmux:
+
+- 1: the shell screen after `:q` (`capture-pane`) held only the prompt and
+  `ok`, under both `TERM=tmux-256color` and `TERM=xterm-256color` with
+  `extended-keys off`, so the `CSI > 1 u` binvim pushes on startup was taken as
+  a control sequence and not printed.
+- 2: failed first, since tmux sends `Ctrl-i` as `Tab`: fixed in `2f81606`, then
+  `Ctrl-o` / `Ctrl-i` moved `cursor_y` from 1 to 12.
+- 3: `Esc` to `NORMAL` in the mode line took 30–33 ms including the harness's own
+  polling. An interactive tmux adds `escape-time` (10 ms here, 500 ms before
+  tmux 3.5); a slow `Esc` in tmux is that option.
+- 4: `Ctrl-[` arrives as the Esc byte and left Insert. `Alt-Backspace` deleted a
+  word; `Esc` then `j` sent in quick succession left Insert and moved down.
+  Sending the Kitty protocol's `Ctrl-[` (`CSI 91;5u`) by hand did nothing before
+  `c15d6b5`, which now makes it Esc outside `:terminal`.
+- 5, 10, 11, 12: `#{cursor_x}` after each key. The arrows moved one column
+  with or without Shift or Ctrl; CJK and emoji steps were two columns, and
+  `$` on the *Emoji* line landed where tmux's own widths put the last
+  character (tmux measures 👍🏽, 👨‍👩‍👧, 🇮🇸 and ❤️ as two columns, like
+  `unicode-width`).
+- 6: `#{cursor_shape}` read block, bar, block, underline, block, and
+  `default` at the shell afterwards.
+- 7, 8, 16: `capture-pane -e` showed `38;2` / `48;2` colours, `3m` on `italic`
+  and `1m` on `bold`, and `4:3` with `58;2;243;139;168` under the syntax error.
+  An outer terminal only gets the undercurl if tmux's `terminal-features` gives
+  it `usstyle`.
+- 9: the status line and the file picker's rows carry the Nerd Font codepoints
+  (`U+E0B0`, `U+E0B2`, `U+E609`, …). Whether they draw is the outer terminal's
+  font.
+- 13: SGR mouse reports written into the pane (`send-keys -H`): the click put
+  the cursor on the cell, the drag yanked exactly `one two three`, two wheel
+  notches scrolled `src/render.rs` by six lines. tmux forwarding an outer
+  terminal's mouse wasn't exercised.
+- 14: `paste-buffer -p` delivered the three lines intact and in `INSERT`; one
+  `u` removed them.
+- 15: `pipe-pane -O` over six `Ctrl-d` and twenty `j` caught 30 frames, each
+  inside `?2026h` … `?2026l`.
+- 17: `resize-window` to 70×16 and 130×34 redrew with the status line on the
+  last row each time.
+- 18: needs `set -s set-clipboard on`; tmux's default (`external`) drops OSC
+  52 from applications. With it, both the `printf` and a `yy` under
+  `osc52 = true` landed in tmux's paste buffer. The `allow-passthrough` route
+  sends the DCS-wrapped copy to the outer terminal, which a detached server
+  can't show.
+- 19: `Ctrl-[` left the pane, as `Esc` does; the red `printf` rendered.
+- 20: from a buffer in the repo. Before `a4ace97`, `Ctrl-C` at lazygit's
+  "not a git repository" prompt, which comes up when the buffer's directory is
+  outside a repo, ended binvim too; after it, binvim came back with its dirty
+  buffer. `Ctrl-[`, `Alt-Backspace`, the arrows and a click passed again after
+  lazygit.
+- 21: `kill-server` hung up the pane; the relaunch reported recovered changes
+  with ` unsaved` on the *Styles* line, and `:e!` removed the recovery file.
