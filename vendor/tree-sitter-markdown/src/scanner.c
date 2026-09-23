@@ -1309,7 +1309,49 @@ static bool parse_pipe_table(Scanner *s, TSLexer *lexer,
     return true;
 }
 
+// binvim: `serialize` writes every open block into tree-sitter's
+// TREE_SITTER_SERIALIZATION_BUFFER_SIZE-byte buffer without checking, and the
+// runtime aborts once it overflows. Every block is opened by one of these
+// tokens, so while the stack is full none of them is offered and the line
+// reads as text instead.
+#define MAX_OPEN_BLOCKS \
+    ((TREE_SITTER_SERIALIZATION_BUFFER_SIZE - 5) / sizeof(Block))
+
+static const TokenType BLOCK_OPENING_TOKENS[] = {
+    BLOCK_QUOTE_START,
+    INDENTED_CHUNK_START,
+    LIST_MARKER_MINUS,
+    LIST_MARKER_PLUS,
+    LIST_MARKER_STAR,
+    LIST_MARKER_PARENTHESIS,
+    LIST_MARKER_DOT,
+    LIST_MARKER_MINUS_DONT_INTERRUPT,
+    LIST_MARKER_PLUS_DONT_INTERRUPT,
+    LIST_MARKER_STAR_DONT_INTERRUPT,
+    LIST_MARKER_PARENTHESIS_DONT_INTERRUPT,
+    LIST_MARKER_DOT_DONT_INTERRUPT,
+    FENCED_CODE_BLOCK_START_BACKTICK,
+    FENCED_CODE_BLOCK_START_TILDE,
+    HTML_BLOCK_1_START,
+    HTML_BLOCK_2_START,
+    HTML_BLOCK_3_START,
+    HTML_BLOCK_4_START,
+    HTML_BLOCK_5_START,
+    HTML_BLOCK_6_START,
+    HTML_BLOCK_7_START,
+};
+
 static bool scan(Scanner *s, TSLexer *lexer, const bool *valid_symbols) {
+    bool bounded_symbols[PIPE_TABLE_LINE_ENDING + 1];
+    if (s->open_blocks.size >= MAX_OPEN_BLOCKS) {
+        memcpy(bounded_symbols, valid_symbols, sizeof(bounded_symbols));
+        for (size_t i = 0; i < sizeof(BLOCK_OPENING_TOKENS) /
+                                   sizeof(BLOCK_OPENING_TOKENS[0]);
+             i++) {
+            bounded_symbols[BLOCK_OPENING_TOKENS[i]] = false;
+        }
+        valid_symbols = bounded_symbols;
+    }
     // A normal tree-sitter rule decided that the current branch is invalid and
     // now "requests" an error to stop the branch
     if (valid_symbols[TRIGGER_ERROR]) {

@@ -513,7 +513,8 @@ impl Lang {
 
 // Markdown's block grammar is compiled from vendor/tree-sitter-markdown by
 // build.rs rather than taken from tree-sitter-md, whose scanner can abort on
-// `1€` at the start of a line under glibc (see the vendor README).
+// `1€` at the start of a line under glibc, or on nesting deep enough to
+// overflow its saved state (see the vendor README).
 unsafe extern "C" {
     fn tree_sitter_markdown() -> *const ();
 }
@@ -898,9 +899,6 @@ fn compute_byte_colors_until(
     config: &Config,
     deadline: Instant,
 ) -> Option<Vec<Option<Color>>> {
-    if lang == Lang::Markdown && markdown_nesting_bound(source) > MARKDOWN_MAX_OPEN_BLOCKS {
-        return None;
-    }
     let language = lang.ts_language();
     let mut parser = Parser::new();
     parser.set_language(&language).ok()?;
@@ -908,51 +906,6 @@ fn compute_byte_colors_until(
     // two halves of one highlight pass are bounded together.
     let tree = parse_bounded(&mut parser, source, deadline)?;
     paint_from_tree(lang, source, config, &tree, deadline)
-}
-
-/// The most blocks tree-sitter-md's scanner can hold open before its state
-/// overflows tree-sitter's 1024-byte serialization buffer: 5 header bytes and
-/// a 4-byte `Block` each. Its `serialize` never checks, and the runtime's
-/// `ts_assert(length <= 1024)` aborts the process — no panic hook, no crash
-/// log, no last recovery dump. Unfixed upstream as of tree-sitter-md 0.5.3.
-const MARKDOWN_MAX_OPEN_BLOCKS: usize = (1024 - 5) / 4;
-
-/// An upper bound on how deeply tree-sitter-md will nest blocks in `source`,
-/// so a file that could overflow its scanner is never handed to it.
-///
-/// The scanner only opens a block while reading a line's container prefix —
-/// in error recovery it returns an error token before opening anything — and
-/// every level costs that prefix a `>`, a list marker followed by whitespace
-/// or the line end, or two columns of indentation (a list item's least; a tab
-/// is four). Blocks carried to a later line have to be matched by that line's
-/// prefix again, blank and lazy lines carry them without opening more, and the
-/// one raw block that can sit innermost (fenced code, HTML) is the `+ 2`.
-/// Checked against an instrumented copy of the scanner, which never went past
-/// this bound in 60,000 generated documents, deeply nested ones included.
-fn markdown_nesting_bound(source: &str) -> usize {
-    let deepest_line = source
-        .split(['\n', '\r'])
-        .map(|line| {
-            let bytes = line.as_bytes();
-            let (mut columns, mut markers) = (0usize, 0usize);
-            for (i, &b) in bytes.iter().enumerate() {
-                let spaced = matches!(bytes.get(i + 1), None | Some(b' ' | b'\t'));
-                match b {
-                    b' ' => columns += 1,
-                    b'\t' => columns += 4,
-                    b'>' => markers += 1,
-                    b'-' | b'+' | b'*' | b'.' | b')' if spaced => markers += 1,
-                    // A marker run with nothing after it (`-----`, `1234`)
-                    // opens nothing, but the prefix may carry on past it.
-                    b'-' | b'+' | b'*' | b'.' | b')' | b'0'..=b'9' => {}
-                    _ => break,
-                }
-            }
-            markers + columns.div_ceil(2)
-        })
-        .max()
-        .unwrap_or(0);
-    deepest_line + 2
 }
 
 /// Paint the byte-colour map from an already-parsed `tree`, cancelling the
@@ -1616,27 +1569,22 @@ mod tests {
     }
 
     #[test]
-    fn markdown_nested_past_its_scanner_state_is_never_parsed() {
-        // Parsed, these abort the test process from inside tree-sitter.
+    fn markdown_nested_past_its_scanner_state_is_still_highlighted() {
+        // Every open block is serialized into tree-sitter's 1024-byte scanner
+        // state; before the vendored scanner stopped opening blocks at that
+        // limit, each of these aborted the test process from inside C.
         let cfg = Config::default();
-        let quotes = ">".repeat(300);
-        assert!(compute_byte_colors(Lang::Markdown, &quotes, &cfg).is_none());
-        let list: String = (0..300)
+        let quotes = ">".repeat(2000);
+        let list: String = (0..600)
             .map(|depth| format!("{}- x\n", "  ".repeat(depth)))
             .collect();
-        assert!(compute_byte_colors(Lang::Markdown, &list, &cfg).is_none());
-    }
-
-    #[test]
-    fn markdown_that_fits_its_scanner_is_still_highlighted() {
-        let cfg = Config::default();
-        let quotes = ">".repeat(MARKDOWN_MAX_OPEN_BLOCKS - 2);
-        assert_eq!(markdown_nesting_bound(&quotes), MARKDOWN_MAX_OPEN_BLOCKS);
-        assert!(compute_byte_colors(Lang::Markdown, &quotes, &cfg).is_some());
-        // Marker runs that open nothing don't count toward the bound.
-        let rule = format!("# notes\n\n{}\n\n{}\n", "-".repeat(400), "7".repeat(400));
-        assert_eq!(markdown_nesting_bound(&rule), 3);
-        assert!(compute_byte_colors(Lang::Markdown, &rule, &cfg).is_some());
+        let numbered: String = (0..600).map(|_| "1. ").collect::<String>() + "x\n";
+        let mixed: String = (0..300).map(|_| "> - ").collect::<String>() + "```\ncode\n";
+        let html = format!("{}<div>\n", "> ".repeat(300));
+        for src in [&quotes, &list, &numbered, &mixed, &html] {
+            let colors = compute_byte_colors(Lang::Markdown, src, &cfg).unwrap();
+            assert_eq!(colors.len(), src.len());
+        }
     }
 
     #[test]

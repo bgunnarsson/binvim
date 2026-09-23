@@ -25,16 +25,6 @@ The three bash-backed grammars are fuzzed over printable ASCII
 (`BASH_FUZZ_ALPHABET`, `lang.rs:2714`). Restore `\PC{0,400}` if a fixed
 `tree-sitter-bash` lands upstream.
 
-### Markdown nested past ~254 block levels is not highlighted
-
-**Markdown. Bounded — degrades instead of crashing.**
-
-A file nested about 255 block levels deep (`>>>>…`, or list items) overflows
-tree-sitter's fixed scanner-state serialization buffer and aborts. binvim now
-measures an upper bound on nesting depth first and skips the parse entirely when
-it exceeds `MARKDOWN_MAX_OPEN_BLOCKS` (`lang.rs:888`), so such a file opens with
-no Markdown highlighting rather than not opening at all.
-
 ### A grammar that will not finish loses its highlighting
 
 **Every language. Bounded — degrades instead of hanging.**

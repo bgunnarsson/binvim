@@ -46,6 +46,11 @@ follows [Semantic Versioning](https://semver.org/).
   glibc's table and take the process down with unsaved work in it. binvim now
   builds the Markdown grammar from a copy in `vendor/tree-sitter-markdown` with
   that loop comparing against `0`–`9`, since upstream declined the same fix.
+- **Markdown nested more than about 254 levels deep is highlighted again.**
+  binvim used to skip highlighting a file whose quotes or lists went deep
+  enough to overflow the Markdown scanner's saved state, because the scanner
+  would abort the process. The vendored scanner now stops opening blocks at
+  that limit, and anything deeper reads as text.
 - **A `[No Name]` buffer's unsaved text survives a crash.** It's now dumped
   every four seconds like a file's, and on a closed terminal. The next launch
   says how many a crash left, and `:recover` opens them. It used to be lost
