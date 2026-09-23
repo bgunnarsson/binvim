@@ -111,3 +111,4 @@ binvim while a suspended child owns the terminal (`interrupts_quit`,
   `git reflog` in the repo it did open, and report any ref it moved.
 - **A change to `cmd_lazygit`'s start directory keeps a non-repo buffer in
   mind:** a directory with no repo means the plain-text prompt, not lazygit's UI.
+- Written into: CLAUDE.md
