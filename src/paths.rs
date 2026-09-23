@@ -449,7 +449,13 @@ fn write_in_place(
     let Some(dir) = backup_dir else {
         return write(target, bytes);
     };
-    let original = std::fs::read(target)?;
+    // A file that isn't there (`:w` into a directory the temp file can't be
+    // made in) has nothing to lose, and one this user may write but not read
+    // can't be copied; both are written as they always were, and a failure
+    // is reported as the write's own.
+    let Ok(original) = std::fs::read(target) else {
+        return write(target, bytes);
+    };
     let backup = write_backup(dir, target, &original)?;
     match write(target, bytes) {
         Ok(()) => {
@@ -458,27 +464,29 @@ fn write_in_place(
         }
         Err(e) => Err(std::io::Error::new(
             e.kind(),
-            format!("{e} — the file as it was is kept at {}", backup.display()),
+            format!(
+                "{e} — {} as it was is kept at {}",
+                target.display(),
+                backup.display()
+            ),
         )),
     }
 }
 
 /// Copy `bytes`, `target`'s contents, into a new file in `dir`. Named apart
 /// from any copy already there: one left by an earlier failed write holds the
-/// file from before it was truncated, and the file on disk now doesn't.
+/// file from before it was truncated, and the file on disk now doesn't. The
+/// name leaves out the file's own, which could take it past the length limit;
+/// the error that keeps a copy names the file it came from.
 fn write_backup(dir: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     // The text may be a private file's, whatever mode the copy comes out as.
     create_private_dir(dir)?;
-    let name = target
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
     let existing = std::fs::metadata(target).ok();
     for _ in 0..16 {
         let backup = dir.join(format!(
-            "{}-{}-{}-{name}",
+            "{}-{}-{}",
             path_key(target),
             std::process::id(),
             COUNTER.fetch_add(1, Ordering::Relaxed),
@@ -734,6 +742,28 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert_eq!(std::fs::read(&kept[0]).unwrap(), b"old contents");
         assert!(err.to_string().contains(&kept[0].display().to_string()));
+    }
+
+    #[test]
+    fn a_new_file_written_in_place_reports_the_write_s_own_error() {
+        let dir = scratch("inplace-new");
+        let file = dir.join("new.txt");
+        let err = write_in_place(&file, b"new", Some(&dir.join("backup")), |_, _| {
+            Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        })
+        .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+    }
+
+    #[test]
+    fn a_long_file_name_still_gets_a_backup() {
+        let dir = scratch("inplace-long");
+        let file = dir.join("x".repeat(240));
+        std::fs::write(&file, "old").unwrap();
+        let backups = dir.join("backup");
+        write_in_place(&file, b"new", Some(&backups), |p, b| std::fs::write(p, b)).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 0);
     }
 
     #[test]
