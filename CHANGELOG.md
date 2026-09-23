@@ -33,6 +33,9 @@ follows [Semantic Versioning](https://semver.org/).
   that had grown, and colours named for the stock palette only.
 
 ### Fixed
+- **`Ctrl-I` jumps forward in tmux and Terminal.app.** A terminal without the
+  Kitty keyboard protocol sends `Ctrl-I` as `Tab`, which Normal mode ignored.
+  `Tab` now jumps forward as `Ctrl-I` does, as in Vim.
 - **A global biome is found.** `:install` puts `@biomejs/biome` on `$PATH`, but the
   JSON language server and the JS / TS / JSON formatter only ever looked in the
   project's `node_modules/.bin/`, so the tool it had just installed was reported

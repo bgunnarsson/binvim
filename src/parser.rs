@@ -1069,6 +1069,14 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return ParseResult::Action(Action::PageScroll(p));
     }
 
+    // `<Tab>` is `Ctrl-i`, as in Vim: a terminal without the Kitty keyboard
+    // protocol sends both as the same byte, so the jump forward has to answer
+    // to either. Only where a command starts, like `<CR>` above.
+    if key.code == KeyCode::Tab && key.modifiers.is_empty() && state.accepts_mapping() {
+        state.reset();
+        return ParseResult::Action(Action::JumpForward);
+    }
+
     // `z<CR>` is `zt` with the cursor on the first non-blank. Enter isn't a
     // char, so the `z` table would never see it and `z` would hang pending.
     if state.awaiting_z && key.code == KeyCode::Enter {
@@ -2612,6 +2620,19 @@ mod tests {
     // six — but dispatch dropped it on the floor, which made `d2aw` behave as
     // `daw`. Assert the parser's half so a regression there is caught here
     // rather than in the editor.
+    #[test]
+    fn tab_jumps_forward_like_ctrl_i() {
+        let tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        let ctrl_i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL);
+        for k in [tab, ctrl_i] {
+            let mut state = PendingCmd::default();
+            assert!(matches!(
+                parse(&mut state, k, ParseCtx::Normal),
+                ParseResult::Action(Action::JumpForward)
+            ));
+        }
+    }
+
     #[test]
     fn d2aw_carries_its_count_to_the_action() {
         let mut state = PendingCmd::default();

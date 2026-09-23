@@ -80,7 +80,7 @@ Hold `<space>` (or `<space>A` / `<space>b` / `<space>d` / `<space>g` / `<space>h
 | `H` / `L`             | Previous / next buffer (same as `:bp`/`:bn`) |
 | `gt` / `gT`           | Same as `L` / `H` (Vim aliases)              |
 | `Ctrl-^`              | Alternate buffer — the file active before this one (same as `:e#` / `:b#`); `N Ctrl-^` goes to buffer N |
-| `Ctrl-O` / `Ctrl-I`   | Jumplist back / forward — persists across sessions per-buffer |
+| `Ctrl-O` / `Ctrl-I`   | Jumplist back / forward — persists across sessions per-buffer. `Tab` is `Ctrl-I`, as in Vim |
 | Click a tab           | Switch to it                                 |
 | Middle-click a tab    | Close it (refuses dirty, same as `:bd`)      |
 | Click `×` on a tab    | Close it (refuses dirty)                     |
