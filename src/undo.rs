@@ -465,6 +465,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_truncated_or_garbage_undo_file_loads_as_no_history() {
+        let dir = crate::paths::test_scratch_dir("undo", "corrupt");
+        let mut history = History::new();
+        history.record(&Rope::from_str("a"), at_start());
+        history.record(&Rope::from_str("ab"), at_start());
+        let whole = dir.join("whole.json");
+        history.save_to_path(&whole, 7).unwrap();
+        assert!(History::load_from_path(&whole, 7).is_some());
+        let bytes = std::fs::read(&whole).unwrap();
+        let truncated = dir.join("truncated.json");
+        std::fs::write(&truncated, &bytes[..bytes.len() / 2]).unwrap();
+        assert!(History::load_from_path(&truncated, 7).is_none());
+        let garbage = dir.join("garbage.json");
+        std::fs::write(&garbage, [0xff, 0x00, b'{', 0x9f]).unwrap();
+        assert!(History::load_from_path(&garbage, 7).is_none());
+        // History recorded against other text is dropped, not applied.
+        assert!(History::load_from_path(&whole, 8).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn earlier_and_later_by_writes_and_by_time() {
         let r = Rope::from_str;
         let mut history = History::new();

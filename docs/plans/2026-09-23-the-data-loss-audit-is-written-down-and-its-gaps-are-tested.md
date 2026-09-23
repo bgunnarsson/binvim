@@ -1,7 +1,7 @@
 ---
 title: The data-loss audit is written down, path by path, and its untested gaps are tested
 date: 2026-09-23
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -88,7 +88,7 @@ Decisions:
 
 ## Tasks
 
-- [ ] Add `undo::tests` for a truncated and a garbage undo file, beside the recovery test's shape.
+- [x] Add `undo::tests` for a truncated and a garbage undo file, beside the recovery test's shape.
   Verify with `cargo test undo::tests`.
 - [ ] Add `session::tests`: round trip, garbage file, cwd mismatch. Session paths are `None` under
   `cfg!(test)`, so test the parse/serialize functions on a scratch path, or add a `_from(path)`
