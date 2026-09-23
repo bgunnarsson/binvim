@@ -125,6 +125,10 @@ pub struct Buffer {
     /// The file wasn't valid UTF-8, so its invalid bytes were replaced with
     /// U+FFFD on load. Writing it back makes that replacement permanent.
     pub lossy: bool,
+    /// The file was on disk when this buffer last read or wrote it, and the
+    /// watcher has since found it gone. The text is still here; `:w` writes it
+    /// back, so the status line says so rather than letting it pass unseen.
+    pub gone: bool,
     /// Synthetic label for path-less internal buffers (e.g. `[Health]`). Lets
     /// the buffer list show something meaningful instead of `[No Name]`.
     pub display_name: Option<String>,
@@ -178,6 +182,7 @@ impl Buffer {
             disk_mtime: None,
             disk_len: None,
             lossy: false,
+            gone: false,
             display_name: None,
             line_ending: LineEnding::platform_default(),
             marks: HashMap::new(),
@@ -247,6 +252,7 @@ impl Buffer {
         }
         // The replacement characters are the file's bytes now.
         self.lossy = false;
+        self.gone = false;
         Ok(())
     }
 

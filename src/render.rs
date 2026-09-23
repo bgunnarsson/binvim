@@ -7895,7 +7895,8 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
             format!(" {} {}{} ", NF_BRANCH, b, stats)
         })
         .unwrap_or_default();
-    let dirty = if app.buffer.dirty { "●" } else { " " };
+    let gone = if app.buffer.gone { " [deleted]" } else { "" };
+    let dirty = format!("{gone}{}", if app.buffer.dirty { "●" } else { " " });
     let path = app.buffer.path.as_deref();
     let lang = path.and_then(Lang::detect);
     let right_text = match lang {
@@ -7917,7 +7918,7 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
     let path_used = mode_w + mode_arrow_w + branch_w + branch_arrow_w + right_arrow_w + right_w;
     let path_room = total
         .saturating_sub(path_used)
-        .saturating_sub(2 + dirty.chars().count()); // surrounding spaces + dirty marker
+        .saturating_sub(2 + dirty.chars().count()); // surrounding spaces + dirty and deleted markers
 
     let path_str = match app.buffer.path.as_ref() {
         Some(p) => {

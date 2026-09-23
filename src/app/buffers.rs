@@ -358,16 +358,30 @@ impl super::App {
     /// the user sees the latest version. Throttled to once per second so
     /// the syscall cost is negligible.
     pub(super) fn maybe_reload_from_disk(&mut self) {
-        if self.buffer.dirty {
-            return;
-        }
         let now = Instant::now();
         if now.duration_since(self.last_disk_check) < DISK_CHECK_INTERVAL {
             return;
         }
         self.last_disk_check = now;
         let Some(path) = self.buffer.path.clone() else { return };
-        let Ok(meta) = std::fs::metadata(&path) else { return };
+        // Checked before the dirty guard: a dirty buffer's file can go too,
+        // and it's the one with the most to lose if nobody notices.
+        let meta = match std::fs::metadata(&path) {
+            Ok(meta) => meta,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                if self.buffer.disk_mtime.is_some() && !self.buffer.gone {
+                    self.buffer.gone = true;
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    self.status_msg = format!("{name} was deleted on disk (:w writes it again)");
+                }
+                return;
+            }
+            Err(_) => return,
+        };
+        self.buffer.gone = false;
+        if self.buffer.dirty {
+            return;
+        }
         let Ok(disk_mtime) = meta.modified() else { return };
         match self.buffer.disk_mtime {
             Some(prev) if disk_mtime <= prev => return,
@@ -421,6 +435,7 @@ impl super::App {
         let meta = std::fs::metadata(path).ok();
         self.buffer.disk_mtime = disk_mtime.or_else(|| meta.as_ref()?.modified().ok());
         self.buffer.disk_len = meta.map(|m| m.len());
+        self.buffer.gone = false;
         self.buffer.clean_hash = Some(crate::undo::hash_text(&text));
         self.buffer.dirty = false;
         let last = self.buffer.line_count().saturating_sub(1);
@@ -1321,6 +1336,35 @@ mod tests {
             "{open:?}"
         );
         assert!(!open.iter().any(|p| p.ends_with("gone.txt")), "{open:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_file_deleted_under_its_buffer_is_marked_gone_until_written() {
+        let dir = crate::paths::test_scratch_dir("watcher", "deleted");
+        let path = dir.join("doomed.txt");
+        std::fs::write(&path, "keep me\n").unwrap();
+        let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        let check = |app: &mut crate::app::App| {
+            app.last_disk_check = Instant::now() - DISK_CHECK_INTERVAL * 2;
+            app.maybe_reload_from_disk();
+        };
+        check(&mut app);
+        assert!(!app.buffer.gone);
+        std::fs::remove_file(&path).unwrap();
+        // Dirty too: the guard that stops a reload mustn't hide the deletion.
+        app.buffer.dirty = true;
+        check(&mut app);
+        assert!(app.buffer.gone);
+        assert!(
+            app.status_msg.contains("deleted on disk"),
+            "{}",
+            app.status_msg
+        );
+        assert_eq!(app.buffer.rope.to_string(), "keep me\n");
+        app.buffer.save().unwrap();
+        assert!(!app.buffer.gone);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me\n");
         std::fs::remove_dir_all(&dir).ok();
     }
 
