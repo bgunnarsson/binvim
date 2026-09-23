@@ -12,6 +12,7 @@ symptoms:
 root_cause: "`reload_buffer_from_disk_inner` in src/app/buffers.rs swaps the rope with `replace_all` and re-sets `disk_mtime`, `disk_len`, `lossy` and `dirty` by hand rather than building a new Buffer, so a field describing the on-disk text that was added beside those in buffer.rs was refreshed on open and save but not on reload"
 related:
   - docs/solutions/runtime/config-reload-misses-state-derived-from-app-config.md
+  - docs/solutions/runtime/changing-the-cursors-unit-leaves-col-plus-one-steps-in-the-old-unit.md
 ---
 
 ## Problem
