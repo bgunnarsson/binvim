@@ -17,8 +17,14 @@ pub struct MotionResult {
     pub kind: MotionKind,
 }
 
-pub fn left(_buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
-    let new_col = cur.col.saturating_sub(count);
+// Horizontal motions step by grapheme cluster, so `l` crosses a ZWJ emoji or
+// a letter with its combining mark in one press. `Cursor.col` stays a char
+// index; it just only ever lands on a cluster's first char.
+pub fn left(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
+    let mut new_col = buf.grapheme_start_col(cur.line, cur.col);
+    for _ in 0..count {
+        new_col = buf.prev_grapheme_col(cur.line, new_col);
+    }
     MotionResult {
         target: Cursor {
             line: cur.line,
@@ -31,8 +37,14 @@ pub fn left(_buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
 
 pub fn right(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let len = buf.line_len(cur.line);
-    let max = if len == 0 { 0 } else { len - 1 };
-    let new_col = (cur.col + count).min(max);
+    let mut new_col = buf.grapheme_start_col(cur.line, cur.col);
+    for _ in 0..count {
+        let next = buf.next_grapheme_col(cur.line, new_col);
+        if next >= len {
+            break;
+        }
+        new_col = next;
+    }
     MotionResult {
         target: Cursor {
             line: cur.line,
@@ -47,7 +59,7 @@ pub fn up(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let new_line = cur.line.saturating_sub(count);
     let len = buf.line_len(new_line);
     let max = if len == 0 { 0 } else { len - 1 };
-    let new_col = cur.want_col.min(max);
+    let new_col = buf.grapheme_start_col(new_line, cur.want_col.min(max));
     MotionResult {
         target: Cursor {
             line: new_line,
@@ -63,7 +75,7 @@ pub fn down(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let new_line = (cur.line + count).min(last);
     let len = buf.line_len(new_line);
     let max = if len == 0 { 0 } else { len - 1 };
-    let new_col = cur.want_col.min(max);
+    let new_col = buf.grapheme_start_col(new_line, cur.want_col.min(max));
     MotionResult {
         target: Cursor {
             line: new_line,
@@ -87,7 +99,7 @@ pub fn line_start(_buf: &Buffer, cur: Cursor) -> MotionResult {
 
 pub fn line_end(buf: &Buffer, cur: Cursor) -> MotionResult {
     let len = buf.line_len(cur.line);
-    let col = if len == 0 { 0 } else { len - 1 };
+    let col = buf.grapheme_start_col(cur.line, len.saturating_sub(1));
     MotionResult {
         target: Cursor {
             line: cur.line,
@@ -394,6 +406,7 @@ pub fn line_start_down(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult 
 /// chars, where Vim counts screen columns, so a tab is one column here.
 pub fn to_column(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let col = (count.max(1) - 1).min(buf.line_len(cur.line).saturating_sub(1));
+    let col = buf.grapheme_start_col(cur.line, col);
     MotionResult {
         target: Cursor {
             line: cur.line,
@@ -459,7 +472,7 @@ pub fn screen_first_non_blank(buf: &Buffer, cur: Cursor, visual: usize) -> Motio
 /// `gM` — the middle of the line's text.
 pub fn line_middle(buf: &Buffer, cur: Cursor) -> MotionResult {
     let len = buf.line_len(cur.line);
-    let col = (len / 2).min(len.saturating_sub(1));
+    let col = buf.grapheme_start_col(cur.line, (len / 2).min(len.saturating_sub(1)));
     MotionResult {
         target: Cursor {
             line: cur.line,
@@ -509,6 +522,8 @@ pub fn last_non_blank(buf: &Buffer, cur: Cursor) -> MotionResult {
             }
         }
     }
+    // A combining mark or VS16 isn't blank either; land on its cluster.
+    let col = buf.grapheme_start_col(cur.line, col);
     MotionResult {
         target: Cursor {
             line: cur.line,
@@ -976,8 +991,9 @@ fn skip_whitespace_backward(buf: &Buffer, line: &mut usize, col: &mut usize) {
 
 fn advance_one(buf: &Buffer, line: usize, col: usize) -> Option<(usize, usize)> {
     let len = buf.line_len(line);
-    if len > 0 && col + 1 < len {
-        Some((line, col + 1))
+    let next = buf.next_grapheme_col(line, col);
+    if len > 0 && next < len {
+        Some((line, next))
     } else if line + 1 < buf.line_count() {
         Some((line + 1, 0))
     } else {
@@ -987,10 +1003,10 @@ fn advance_one(buf: &Buffer, line: usize, col: usize) -> Option<(usize, usize)> 
 
 fn retreat_one(buf: &Buffer, line: usize, col: usize) -> Option<(usize, usize)> {
     if col > 0 {
-        Some((line, col - 1))
+        Some((line, buf.prev_grapheme_col(line, col)))
     } else if line > 0 {
         let prev_len = buf.line_len(line - 1);
-        let c = if prev_len == 0 { 0 } else { prev_len - 1 };
+        let c = buf.grapheme_start_col(line - 1, prev_len.saturating_sub(1));
         Some((line - 1, c))
     } else {
         None
@@ -1328,6 +1344,53 @@ mod tests {
         assert_eq!(r.target.col, 4);
     }
 
+    const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+
+    #[test]
+    fn horizontal_motions_cross_a_cluster_in_one_step() {
+        // `a` 0, family 1..6, `b` 6.
+        let b = buf(&format!("a{FAMILY}b\ne\u{301}x\n"));
+        assert_eq!(right(&b, cur(0, 0), 1).target.col, 1);
+        assert_eq!(right(&b, cur(0, 1), 1).target.col, 6);
+        assert_eq!(right(&b, cur(0, 0), 2).target.col, 6);
+        assert_eq!(right(&b, cur(0, 6), 1).target.col, 6);
+        assert_eq!(left(&b, cur(0, 6), 1).target.col, 1);
+        assert_eq!(left(&b, cur(0, 6), 2).target.col, 0);
+        assert_eq!(right(&b, cur(1, 0), 1).target.col, 2);
+        assert_eq!(line_end(&b, cur(0, 0)).target.col, 6);
+    }
+
+    #[test]
+    fn a_line_ending_in_a_cluster_ends_on_its_start() {
+        let b = buf(&format!("ab{FAMILY}\nxxxxxxx\n"));
+        assert_eq!(line_end(&b, cur(0, 0)).target.col, 2);
+        assert_eq!(last_non_blank(&b, cur(0, 0)).target.col, 2);
+        assert_eq!(right(&b, cur(0, 1), 5).target.col, 2);
+        // Coming up from col 4 of the line below lands inside the family,
+        // which snaps back to its start.
+        let r = up(
+            &b,
+            Cursor {
+                line: 1,
+                col: 4,
+                want_col: 4,
+            },
+            1,
+        );
+        assert_eq!(r.target.col, 2);
+        assert_eq!(r.target.want_col, 4, "want_col survives the snap");
+    }
+
+    #[test]
+    fn word_motions_step_over_clusters() {
+        let b = buf(&format!("x {FAMILY} y\n"));
+        // `w` from `x` lands on the emoji (a punctuation-class run), then `y`.
+        let w1 = word_forward(&b, cur(0, 0), 1).target.col;
+        assert_eq!(w1, 2);
+        assert_eq!(word_forward(&b, cur(0, w1), 1).target.col, 8);
+        assert_eq!(word_backward(&b, cur(0, 8), 1).target.col, 2);
+    }
+
     use proptest::prelude::*;
 
     fn arb_text() -> impl Strategy<Value = String> {
@@ -1356,6 +1419,47 @@ mod tests {
                 },
             )
         })
+    }
+
+    fn arb_cluster_buf_and_cursor() -> impl Strategy<Value = (Buffer, Cursor)> {
+        let piece = prop::sample::select(vec![
+            "a",
+            "Z",
+            " ",
+            "_",
+            ".",
+            "\t",
+            "\u{4F60}",
+            "\u{D55C}",
+            "e\u{301}",
+            "o\u{308}\u{301}",
+            FAMILY,
+            "\u{1F44D}\u{1F3FD}",
+            "\u{2764}\u{FE0F}",
+            "\u{1F1EE}\u{1F1F8}",
+            "\n",
+        ]);
+        (
+            prop::collection::vec(piece, 0..40),
+            0usize..200,
+            0usize..200,
+        )
+            .prop_map(|(pieces, line_hint, col_hint)| {
+                let b = buf(&pieces.concat());
+                let line = line_hint % b.line_count();
+                let llen = b.line_len(line);
+                let col = if llen == 0 { 0 } else { col_hint % llen };
+                // Start from a boundary, as the cursor always is.
+                let col = b.grapheme_start_col(line, col);
+                (
+                    b,
+                    Cursor {
+                        line,
+                        col,
+                        want_col: col,
+                    },
+                )
+            })
     }
 
     fn in_bounds(b: &Buffer, c: Cursor) -> bool {
@@ -1402,6 +1506,37 @@ mod tests {
                 big_end_word_backward(&b, c, n),
             ] {
                 prop_assert!(in_bounds(&b, r.target), "out-of-bounds target {:?}", r.target);
+            }
+        }
+
+        // Every motion lands on a grapheme-cluster boundary, on lines mixing
+        // ASCII, CJK, combining marks and emoji sequences.
+        #[test]
+        fn motions_land_on_cluster_boundaries((b, c) in arb_cluster_buf_and_cursor(), n in 1usize..6) {
+            for r in [
+                left(&b, c, n),
+                right(&b, c, n),
+                up(&b, c, n),
+                down(&b, c, n),
+                line_end(&b, c),
+                first_non_blank(&b, c),
+                last_non_blank(&b, c),
+                to_column(&b, c, n),
+                line_middle(&b, c),
+                word_forward(&b, c, n),
+                big_word_forward(&b, c, n),
+                word_backward(&b, c, n),
+                big_word_backward(&b, c, n),
+                end_word(&b, c, n),
+                big_end_word(&b, c, n),
+                end_word_backward(&b, c, n),
+                big_end_word_backward(&b, c, n),
+            ] {
+                let t = r.target;
+                prop_assert_eq!(
+                    b.grapheme_start_col(t.line, t.col), t.col,
+                    "{:?} is inside a cluster of {:?}", t, b.rope.line(t.line).to_string()
+                );
             }
         }
 

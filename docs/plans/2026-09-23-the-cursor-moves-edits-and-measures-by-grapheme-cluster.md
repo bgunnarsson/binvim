@@ -97,9 +97,11 @@ doesn't add.
   Deviation: the two loops at `render.rs:6485-6536` measure an inline diagnostic's message and a
   blame author, not buffer text, so they stay per-char. A click past the end of a line that ends
   in a cluster, and `g$` / `gm` on one, clamp to the cluster's start rather than its last char.
-- [ ] Make `left`, `right`, `line_end`, `advance_one`, `retreat_one` and the `want_col` snap step
+- [x] Make `left`, `right`, `line_end`, `advance_one`, `retreat_one` and the `want_col` snap step
   by cluster. Verify with `motion::tests` on the acceptance lines, plus a proptest (next to the
   existing motion proptests) asserting every motion target is a boundary.
+  Deviation: `to_column` (`|`), `line_middle` (`gM`) and `last_non_blank` (`g_`) snap too, since
+  the proptest covers them and each could land on a combining mark or VS16.
 - [ ] Make the edits span clusters. That means `delete_char_forward` (`app/edit.rs:1219`) and `X`,
   `replace_char` (`:646`), `toggle_case` (`:1179`), `a` / `A`, and Insert Backspace / Delete
   (`app/input.rs` around 1931 and 2150). The `CharInclusive` range end in `app/dispatch.rs:1084`
