@@ -115,7 +115,7 @@ Decisions (the user chose the checklist route):
   drops, so Windows Terminal runs without the protocol. `supports_keyboard_enhancement()` would
   cost a query round trip with a two-second timeout at startup and after every suspend, for no
   failure seen. The `app.rs` comment now says what happens on Windows (`77dae2b`).
-- [ ] A bracketed paste with CR line breaks lands as lines, not as CRs in the text. tmux's
+- [x] A bracketed paste with CR line breaks lands as lines, not as CRs in the text. tmux's
   `paste-buffer -p` turns each LF into CR, as terminals commonly do, and `handle_paste`'s Insert
   arm (`src/app/input.rs`) inserts the text verbatim, so `[colors]` + newline + `background = …`
   became `[colors]\rbackground = …` on disk. That means check 14's ✓ in the tmux column was
@@ -123,6 +123,8 @@ Decisions (the user chose the checklist route):
   file after check 14, normalise `\r\n` and a lone `\r` to `\n` in the pasted text (a unit test
   on the paste handler), re-run check 14 in tmux reading the saved bytes, and correct the tmux
   cell and its note.
+  Done in `2026-09-23-no-known-data-loss-path-is-left-open-for-0-7.md` (`ca45836`): check 14 now
+  reads the saved bytes, and the tmux note says what the first run missed.
 - [ ] Hand the checklist to the user for Ghostty, Kitty, WezTerm, Alacritty, Windows Terminal,
   over-SSH and Terminal.app. Fill the rows from their reports, fix binvim-side failures (each its
   own commit) and file terminal-side ones in `KNOWN_ISSUES.md`. Verify that every cell is
