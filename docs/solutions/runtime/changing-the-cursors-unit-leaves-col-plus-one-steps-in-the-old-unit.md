@@ -87,3 +87,4 @@ rather than `col + 1 == line_len`.
   `grep -nE 'col \+ 1|col - 1|col \+= 1|col -= 1|c2 \+ 1' src/app/*.rs src/motion.rs src/text_object.rs`,
   with each hit named in the plan as converted or as left in the old unit on purpose, and why. A
   plan whose site list has no such grep behind it is a violation.
+- Written into: CLAUDE.md
