@@ -108,7 +108,7 @@ Decisions:
   isn't *marked* as not on disk, as the Decisions expected: the buffer just stays as it was, and
   `:w` recreates the file. That's recorded in the audit as a display gap, not a loss. Check 2's
   "quit and reopen from recovery" ran as a `kill -9`, because `:q!` discards the dump by design.
-- [ ] Write `docs/data-loss-audit.md` with every row and its evidence, and link it from
+- [x] Write `docs/data-loss-audit.md` with every row and its evidence, and link it from
   `ROADMAP.md`. Verify each cited test name exists (`cargo test <name> -- --list`).
 
 ## Files
