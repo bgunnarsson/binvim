@@ -13,6 +13,7 @@ symptoms:
 root_cause: "the old save truncated and rewrote the target's inode, so permission checks, owner, mode and the file's identity all stayed with the file; a rename installs a new inode in a directory entry, so every one of those has to be carried over or checked by hand, and the temp name beside the target is a new path an attacker can reach"
 related:
   - docs/plans/2026-09-15-writes-cannot-lose-work-and-clippy-gates-ci.md
+  - docs/solutions/conventions/an-audit-guarantee-is-read-from-the-code-not-from-the-lore-that-describes-it.md
 ---
 
 ## Problem

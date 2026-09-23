@@ -11,6 +11,7 @@ symptoms:
 root_cause: "App.config is mostly read at use, but some state bakes it in — resolved colours in caches, toggles checked only before a request, :set values written into the struct — and a wholesale swap updates none of it"
 related:
   - docs/solutions/runtime/a-buffers-disk-fields-are-set-in-three-places-and-the-reload-is-outside-buffer-rs.md
+  - docs/solutions/conventions/an-audit-guarantee-is-read-from-the-code-not-from-the-lore-that-describes-it.md
 ---
 
 ## Problem

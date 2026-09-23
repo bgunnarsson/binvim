@@ -29,6 +29,7 @@ related:
   - docs/solutions/runtime/open-buffer-runs-for-batch-edits-nobody-sees.md
   - docs/solutions/security/a-word-quoted-for-one-shell-is-parsed-again-by-the-next.md
   - docs/solutions/security/an-upward-file-search-trusts-files-other-users-can-plant.md
+  - docs/solutions/conventions/an-audit-guarantee-is-read-from-the-code-not-from-the-lore-that-describes-it.md
 ---
 
 ## Problem
