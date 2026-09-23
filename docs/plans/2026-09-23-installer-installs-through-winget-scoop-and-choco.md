@@ -120,11 +120,16 @@ doesn't bind here.
   `Command::new("scoop")`. scoop is a PowerShell shim, which `Command` can't spawn directly;
   `BinvimUpdate::Scoop` already runs it the same way. The tests are new functions beside
   `upgrade_display_uses_manager_upgrade_verbs` rather than an extension of it.
-- [ ] Append the confirmed ids to the 13 `Tool`s in `BUNDLES`. Verify with a test that, for every
+- [x] Append the confirmed ids to the 13 `Tool`s in `BUNDLES`. Verify with a test that, for every
   bundle, `pick_installer` under a manager set of `{brew, npm, cargo, go, pipx}` picks the same
   installer as before. The test compares against a `Choice` list captured before the change, so
   the macOS path is pinned. Add a second test: under `{winget}`, each of the 13 tools picks
   `Winget`, or has no winget id in the table.
+  Deviation: rather than a captured `Choice` list, `windows_entries_never_change_a_non_windows_pick`
+  holds, for every tool and every macOS / Linux manager set, that the pick equals the pick with the
+  Windows entries stripped. That pins today's catalog and any tool added later.
+  `windows_entries_follow_every_other_installer` pins the order. The `{winget}` check runs through
+  `pick_installer`, since `build_plan` also consults `on_path` on the host running the test.
 - [ ] Update `docs/external-tools.md` with the Windows command
   per tool, and tick `WINDOWS.md`'s installer item with prose saying what shipped. Verify by
   reading the diff.

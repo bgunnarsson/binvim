@@ -423,9 +423,11 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "C / C++", tools: &[
         Tool { bin: "clangd", label: "clangd", role: Role::Lsp,
-            installers: &[Installer::Brew("llvm"), Installer::Apt("clangd")] },
+            installers: &[Installer::Brew("llvm"), Installer::Apt("clangd"),
+                Installer::Winget("LLVM.LLVM"), Installer::Scoop("llvm"), Installer::Choco("llvm")] },
         Tool { bin: "clang-format", label: "clang-format", role: Role::Formatter,
-            installers: &[Installer::Brew("llvm"), Installer::Apt("clang-format")] },
+            installers: &[Installer::Brew("llvm"), Installer::Apt("clang-format"),
+                Installer::Winget("LLVM.LLVM"), Installer::Scoop("llvm"), Installer::Choco("llvm")] },
         Tool { bin: "lldb-dap", label: "lldb-dap", role: Role::Dap,
             installers: &[Installer::Brew("llvm"), Installer::Apt("lldb")] },
     ]},
@@ -460,7 +462,9 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "Lua", tools: &[
         Tool { bin: "lua-language-server", label: "lua-language-server", role: Role::Lsp,
-            installers: &[Installer::Brew("lua-language-server")] },
+            installers: &[Installer::Brew("lua-language-server"),
+                Installer::Winget("LuaLS.lua-language-server"), Installer::Scoop("lua-language-server"),
+                Installer::Choco("lua-language-server")] },
         Tool { bin: "stylua", label: "stylua", role: Role::Formatter,
             installers: &[Installer::Brew("stylua"), Installer::Cargo("stylua", &["--version", "2.5.2"])] },
     ]},
@@ -483,7 +487,8 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "Markdown", tools: &[
         Tool { bin: "marksman", label: "marksman", role: Role::Lsp,
-            installers: &[Installer::Brew("marksman")] },
+            installers: &[Installer::Brew("marksman"),
+                Installer::Winget("Artempyanykh.Marksman"), Installer::Scoop("marksman")] },
         Tool { bin: "prettier", label: "prettier", role: Role::Formatter,
             installers: &[Installer::Npm(&["prettier@3.8.3"])] },
     ]},
@@ -511,9 +516,11 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "Zig", tools: &[
         Tool { bin: "zls", label: "zls", role: Role::Lsp,
-            installers: &[Installer::Brew("zls")] },
+            installers: &[Installer::Brew("zls"),
+                Installer::Winget("zigtools.zls"), Installer::Scoop("zls")] },
         Tool { bin: "zig", label: "zig (includes `zig fmt`)", role: Role::Formatter,
-            installers: &[Installer::Brew("zig")] },
+            installers: &[Installer::Brew("zig"),
+                Installer::Winget("zig.zig"), Installer::Scoop("zig"), Installer::Choco("zig")] },
     ]},
     Bundle { name: "Nix", tools: &[
         Tool { bin: "nil", label: "nil", role: Role::Lsp,
@@ -523,9 +530,10 @@ pub const BUNDLES: &[Bundle] = &[
     ]},
     Bundle { name: "Elixir", tools: &[
         Tool { bin: "elixir-ls", label: "elixir-ls", role: Role::Lsp,
-            installers: &[Installer::Brew("elixir-ls")] },
+            installers: &[Installer::Brew("elixir-ls"), Installer::Scoop("elixir-ls")] },
         Tool { bin: "mix", label: "elixir (includes `mix format`)", role: Role::Formatter,
-            installers: &[Installer::Brew("elixir")] },
+            installers: &[Installer::Brew("elixir"),
+                Installer::Winget("Elixir.Elixir"), Installer::Scoop("elixir"), Installer::Choco("elixir")] },
     ]},
     Bundle { name: "Kotlin", tools: &[
         Tool { bin: "kotlin-language-server", label: "kotlin-language-server", role: Role::Lsp,
@@ -1380,6 +1388,98 @@ mod tests {
                     t.bin
                 );
             }
+        }
+    }
+
+    fn is_windows_manager(inst: &Installer) -> bool {
+        matches!(
+            inst,
+            Installer::Winget(_) | Installer::Scoop(_) | Installer::Choco(_)
+        )
+    }
+
+    #[test]
+    fn windows_entries_never_change_a_non_windows_pick() {
+        // Every manager a macOS or Linux host can have, alone and all together.
+        let unix = [
+            "brew", "apt-get", "sudo", "npm", "cargo", "rustup", "go", "pipx", "pip", "gem",
+            "dotnet", "nix", "composer",
+        ];
+        let mut sets: Vec<BTreeSet<&'static str>> =
+            unix.iter().map(|m| BTreeSet::from([*m])).collect();
+        sets.push(unix.into_iter().collect());
+        sets.push(BTreeSet::from(["apt-get", "sudo"]));
+        for bundle in BUNDLES {
+            for tool in bundle.tools {
+                let without: Vec<Installer> = tool
+                    .installers
+                    .iter()
+                    .copied()
+                    .filter(|i| !is_windows_manager(i))
+                    .collect();
+                let stripped = Tool {
+                    installers: Box::leak(without.into_boxed_slice()),
+                    ..*tool
+                };
+                for managers in &sets {
+                    let picked = pick_installer(tool, managers).map(Installer::display);
+                    let before = pick_installer(&stripped, managers).map(Installer::display);
+                    assert_eq!(picked, before, "{} under {managers:?}", tool.bin);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn windows_entries_follow_every_other_installer() {
+        for tool in BUNDLES.iter().flat_map(|b| b.tools) {
+            let first_windows = tool.installers.iter().position(is_windows_manager);
+            if let Some(i) = first_windows {
+                assert!(
+                    tool.installers[i..].iter().all(is_windows_manager),
+                    "{}: a non-Windows installer follows a Windows one",
+                    tool.bin
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn winget_alone_installs_the_tools_it_carries() {
+        let managers = BTreeSet::from(["winget"]);
+        let find = |bin: &str| {
+            BUNDLES
+                .iter()
+                .flat_map(|b| b.tools)
+                .find(|t| t.bin == bin)
+                .unwrap()
+        };
+        for bin in [
+            "clangd",
+            "clang-format",
+            "lua-language-server",
+            "marksman",
+            "zls",
+            "zig",
+            "mix",
+        ] {
+            assert!(
+                matches!(
+                    pick_installer(find(bin), &managers),
+                    Some(Installer::Winget(_))
+                ),
+                "{bin}"
+            );
+        }
+        for bin in [
+            "lldb-dap",
+            "jdtls",
+            "google-java-format",
+            "elixir-ls",
+            "kotlin-language-server",
+            "ktfmt",
+        ] {
+            assert!(pick_installer(find(bin), &managers).is_none(), "{bin}");
         }
     }
 
