@@ -9,7 +9,7 @@
 //! only care about a handful of structural / inline patterns, all
 //! line-local except code fences (which we deliberately don't
 //! handle in v1 — see the module-level limitations note in
-//! ROADMAP.md). A char-walk is shorter, faster, and avoids pulling
+//! docs/roadmap.md). A char-walk is shorter, faster, and avoids pulling
 //! the inline-grammar second pass into the render loop.
 //!
 //! Char-column based (not byte-column) because the renderer iterates

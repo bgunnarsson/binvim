@@ -67,7 +67,7 @@ Record each cell as:
 
 - **✓** — passed as written.
 - **n/a** — the check can't apply here, with the reason in the notes under the matrix.
-- **a link** — to the `KNOWN_ISSUES.md` entry when the terminal is at fault, or to the commit
+- **a link** — to the `docs/known-issues.md` entry when the terminal is at fault, or to the commit
   that fixed binvim when binvim was.
 - **—** — not run yet. Alacritty, Windows Terminal, over-SSH and Terminal.app shipped in 0.7
   without a run and are filled in as they are checked.
@@ -112,7 +112,7 @@ A cell is never a bare "fail".
     after `d`. With the cursor on `👍🏽`, `x` deletes it whole (`a漢bc🇮🇸d`), then `u`. On `:7`, the
     family `👨‍👩‍👧` draws as one glyph and `¬` stays at the end of the line as the cursor crosses it.
     A terminal that draws a cluster at a different width than `unicode-width` gives it is a
-    `KNOWN_ISSUES.md` entry, not a binvim bug.
+    `docs/known-issues.md` entry, not a binvim bug.
 12. **Long line.** `:11` Enter, `$`.
     *Pass:* the view scrolls right, `END¬` is visible and the line-number gutter is intact. `0`
     scrolls back with nothing left over from the scrolled view.
@@ -151,7 +151,7 @@ A cell is never a bare "fail".
     `TERMINAL`. Run `printf '\e[31mred\e[0m\n'`. *Pass:* `red` in red. Run `cat -v`, press
     `Ctrl-[`. *Pass:* `^[` is printed and the chip still reads `TERMINAL`. `Ctrl-c`, then `Esc`.
     *Pass:* the chip reads `NORMAL`. A terminal without the Kitty keyboard protocol sends `Ctrl-[`
-    as `Esc`, so the pane loses focus instead: record the `KNOWN_ISSUES.md` link.
+    as `Esc`, so the pane loses focus instead: record the `docs/known-issues.md` link.
 20. **lazygit round trip.** `<space>gg` (needs `lazygit`; it starts in the buffer's directory, so
     the fixture has to be the one in this repo). *Pass:* lazygit fills the screen.
     `q`. *Pass:* binvim redraws as it was, and checks 4, 5 and 13 still pass.
@@ -176,7 +176,7 @@ A cell is never a bare "fail".
 | 8 | Italic and bold | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 | 9 | Nerd Font glyphs | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 | 10 | Wide characters | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
-| 11 | Emoji clusters | ✓ | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | — | ✓ | — | — | — |
+| 11 | Emoji clusters | ✓ | ✓ | [KI](known-issues.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | — | ✓ | — | — | — |
 | 12 | Long line | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 | 13 | Mouse | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 | 14 | Bracketed paste | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
@@ -184,7 +184,7 @@ A cell is never a bare "fail".
 | 16 | Undercurl | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 | 17 | Resize | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 | 18 | OSC 52 | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
-| 19 | `:terminal` | ✓ | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | — | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | — | — | — |
+| 19 | `:terminal` | ✓ | ✓ | [KI](known-issues.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | — | [KI](known-issues.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | — | — | — |
 | 20 | lazygit round trip | ✓ | ✓ | ✓ | — | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | — | — | — |
 | 21 | Closing unsaved | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 
@@ -204,7 +204,7 @@ the probe:
 - Kitty takes the keyboard protocol: the flags read 0 before binvim's push and 1
   after, so `Ctrl-i`, `Ctrl-[`, `Ctrl-w`, `Ctrl-c`, Esc and Alt-Backspace all
   arrive as `CSI u` keys, and check 19 passes where tmux's needs the
-  `KNOWN_ISSUES.md` entry.
+  `docs/known-issues.md` entry.
 - 5: Shift-Left and Shift-Right arrive as `CSI 1;2D` / `1;2C` and move one
   character. Ctrl-Left and Ctrl-Right never reach the terminal: macOS keeps
   them for switching Spaces unless that shortcut is turned off.

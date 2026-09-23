@@ -5,8 +5,8 @@ category: conventions
 module: docs/data-loss-audit.md
 paths:
   - "docs/**/*audit*.md"
-  - ROADMAP.md
-  - KNOWN_ISSUES.md
+  - docs/roadmap.md
+  - docs/known-issues.md
 tags: [audit, data-loss, guarantee, evidence, write_atomic, recovery, pid, documentation]
 symptoms:
   - "The file is replaced whole or not at all. A failed write leaves the old file."
@@ -74,7 +74,7 @@ backed, and the check that the tests existed passed.
 
 - `bed2990`: the audit's `:w`, disk-full, pid, recovery, `:S` / LSP and watcher rows are
   corrected from the code. A `[No Name]` row is added, `:saveas` is removed, and the check
-  outcomes are recorded in the audit itself. `KNOWN_ISSUES.md` carries the two open gaps
+  outcomes are recorded in the audit itself. `docs/known-issues.md` carries the two open gaps
   (in-place writes, pathless buffers). The ROADMAP line names them instead of "no path loses
   text", and the README links the audit.
 - `bd2cd6f`: the unix `process_alive` matches `ps -o comm=` against the executable's name, so the
@@ -101,7 +101,7 @@ backed, and the check that the tests existed passed.
   cited for atomicity, or a "saves" test cited for "untouched on failure", is a violation.
   `cargo test <name> -- --list` shows that a test exists, not that it proves the row.
 - **A summary line (ROADMAP, a release note) claims no more than the audit's weakest row.** "No
-  path loses text" beside an audit with an open gap, or one that isn't in `KNOWN_ISSUES.md`, is a
+  path loses text" beside an audit with an open gap, or one that isn't in `docs/known-issues.md`, is a
   violation.
 - **A plan Decision that says "bug to fix, not a behaviour to document" is fixed before the plan is
   marked done,** or the Decision is revised in the plan with the reason. A task that ticks with

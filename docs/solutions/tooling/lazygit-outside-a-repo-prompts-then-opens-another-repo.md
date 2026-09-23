@@ -5,7 +5,7 @@ category: tooling
 module: tmux-driven manual checks of src/app/lazygit_glue.rs
 paths:
   - src/app/lazygit_glue.rs
-  - TERMINALS.md
+  - docs/terminals.md
 tags: [lazygit, tmux, harness, manual-testing, suspend, git, recent-repos, auto-fetch, sigint]
 symptoms:
   - "Not in a git repository. Create a new git repository? (y/N):"
@@ -22,7 +22,7 @@ related:
 
 ## Problem
 
-Running `TERMINALS.md` check 20 (the lazygit round trip) in tmux, the harness
+Running `docs/terminals.md` check 20 (the lazygit round trip) in tmux, the harness
 opened a scratch copy of the fixture in the session scratchpad, pressed
 `<space>gg`, waited a fixed 2.5 s, then went on sending the next checks' keys
 (`q`, `:8` Enter, `0`, arrows, `i`, …). lazygit ended up open on
@@ -83,7 +83,7 @@ git:
 
 and the harness polled `capture-pane` for lazygit's `Status` panel before
 sending `q`, then polled for `NORMAL` before sending anything else.
-`TERMINALS.md` check 20 now says the fixture has to be the in-repo one. osar's
+`docs/terminals.md` check 20 now says the fixture has to be the in-repo one. osar's
 `main` was left at `origin/main`, the user's to reset
 (`git update-ref refs/heads/main 3334f42a`) if they want.
 

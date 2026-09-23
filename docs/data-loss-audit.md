@@ -1,6 +1,6 @@
 # Data-loss audit
 
-binvim's 1.0 promise is that it won't lose your work (`ROADMAP.md`, Horizon 2). This is the
+binvim's 1.0 promise is that it won't lose your work (`docs/roadmap.md`, Horizon 2). This is the
 audit behind that promise: every way text reaches disk or could be lost, what binvim guarantees
 there, the code that keeps the guarantee, and the evidence.
 

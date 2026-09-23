@@ -1,6 +1,6 @@
 # Terminal check
 
-Open this file for the checks in `TERMINALS.md`. Each line below is named by
+Open this file for the checks in `docs/terminals.md`. Each line below is named by
 the check that uses it.
 
 Wide: 漢字かなカナ한글 — every CJK character here takes two columns.

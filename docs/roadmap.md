@@ -54,10 +54,10 @@ literally.
   crash recovery of unsaved buffers, atomic saves, session robustness when files
   vanish or change underneath. This bug class ends adoption permanently.
   The audit, path by path with the evidence for each, is
-  [`docs/data-loss-audit.md`](docs/data-loss-audit.md) (2026-09-23). Its two gaps
+  [`docs/data-loss-audit.md`](data-loss-audit.md) (2026-09-23). Its two gaps
   are closed: a `[No Name]` buffer is dumped and `:recover` brings it back, and a
   save that has to write in place copies the file aside first. What's left needs a
-  machine with no cache directory, and is in `KNOWN_ISSUES.md`.
+  machine with no cache directory, and is in `docs/known-issues.md`.
 - **Correctness on hostile input.** Grapheme clusters / wide chars / emoji /
   mixed EOL / very long lines / huge files. Large-file mode is in (past 5 MB or
   50,000 lines, tree-sitter and LSP are switched off, `Buffer::is_large`). Extend the density of the
@@ -68,7 +68,7 @@ literally.
   is back on full Unicode.
 - **Terminal compatibility matrix.** Test + document Ghostty, Kitty, WezTerm,
   Alacritty, tmux, Windows Terminal, and over-SSH. The published matrix doubles
-  as a hardening checklist and marketing. Documented in [`TERMINALS.md`](TERMINALS.md)
+  as a hardening checklist and marketing. Documented in [`docs/terminals.md`](terminals.md)
   with `scripts/terminal-probe.sh`: Ghostty, Kitty, WezTerm and tmux are in for
   0.7; Alacritty, Windows Terminal, over-SSH and Terminal.app are still to run.
 - **Performance budget with numbers.** Formalize the render-coalescing win into
@@ -94,7 +94,7 @@ literally.
 The Windows port is mostly shipped — WS1–8 are done, the editor builds, tests, and
 runs on `x86_64-pc-windows-msvc`, and CI exercises every push against
 `windows-latest` alongside ubuntu + macos. The detailed tracker lives in
-[`WINDOWS.md`](WINDOWS.md); the roadmap-level commitment is to close the gap
+[`docs/windows.md`](windows.md); the roadmap-level commitment is to close the gap
 between "compiles and unit-tests pass in CI" and "a Windows developer gets the
 same zero-config IDE a macOS developer does." Three tiers, the first done:
 
@@ -108,7 +108,7 @@ same zero-config IDE a macOS developer does." Three tiers, the first done:
   native **winget / scoop / choco** support in `binvim-install` + `:install`
   (three `Installer` variants + `detect_managers` probes) — done. Full SCSS
   highlighting waits on a `tree-sitter-scss` release with the MSVC fix, so 0.7
-  ships with Windows SCSS on the CSS grammar (`KNOWN_ISSUES.md`), and it lands
+  ships with Windows SCSS on the CSS grammar (`docs/known-issues.md`), and it lands
   in whichever release follows upstream's.
 - **Distribution & trust (0.8–1.0).** winget submission to `microsoft/winget-pkgs`,
   and **code-signing the Windows binary** so SmartScreen stops warning on first

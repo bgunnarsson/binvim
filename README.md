@@ -59,7 +59,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 
 ## Terminals
 
-binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux, and PowerShell in Windows Terminal on Windows. Other terminals work too, with the differences recorded in the [terminal matrix](TERMINALS.md): the checks every terminal is held to, and how Kitty, WezTerm, tmux and the rest came out.
+binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux, and PowerShell in Windows Terminal on Windows. Other terminals work too, with the differences recorded in the [terminal matrix](docs/terminals.md): the checks every terminal is held to, and how Kitty, WezTerm, tmux and the rest came out.
 
 ## Documentation
 
@@ -74,10 +74,13 @@ binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux,
 - [External tools](docs/external-tools.md): every LSP, formatter and debug adapter binvim spawns, with the install command for each.
 - [Configuration](docs/configuration.md): `~/.config/binvim/config.toml` section by section, keymaps, and the theme presets.
 - [Project layout](docs/project-layout.md): what lives where in `src/`.
-- [Terminal matrix](TERMINALS.md): the checklist every terminal is held to, and the results per terminal.
+- [Terminal matrix](docs/terminals.md): the checklist every terminal is held to, and the results per terminal.
 - [Data-loss audit](docs/data-loss-audit.md): every way text reaches disk or could be lost, what binvim guarantees there, and the test or check behind each.
+- [Known issues](docs/known-issues.md): defects binvim ships with, and what each one costs you.
+- [Roadmap](docs/roadmap.md): the goals through 1.0 and the milestone each release closes.
+- [Windows](docs/windows.md): where the Windows port stands and what is still to do.
 
-Alongside these: [CHANGELOG.md](CHANGELOG.md), [KNOWN_ISSUES.md](KNOWN_ISSUES.md), [ROADMAP.md](ROADMAP.md), [WINDOWS.md](WINDOWS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+Alongside these: [CHANGELOG.md](CHANGELOG.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Licence
 

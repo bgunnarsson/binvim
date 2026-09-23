@@ -3,7 +3,7 @@
 Defects binvim ships with, and what each one costs you. Every entry names where
 it lives in the tree so it can be checked rather than believed. Fixed issues
 move out of here and into `CHANGELOG.md`; whole areas that have never been
-audited are Horizon 2 in `ROADMAP.md`, not entries here.
+audited are Horizon 2 in `docs/roadmap.md`, not entries here.
 
 There is no issue tracker — this file is it.
 
@@ -67,7 +67,7 @@ fixed.
 
 ## Terminals
 
-Each terminal's results are in `TERMINALS.md`. What is listed here is a
+Each terminal's results are in `docs/terminals.md`. What is listed here is a
 terminal's doing rather than binvim's, and the matrix links to it.
 
 ### `Ctrl-[` leaves the `:terminal` pane on a terminal without the Kitty keyboard protocol
@@ -80,7 +80,7 @@ how an Esc reaches the program running there (a vi-mode shell, vim, `less`).
 That only works where the terminal reports `Ctrl-[` apart from `Esc`, which is
 what the Kitty keyboard protocol's disambiguate flag does. A legacy terminal
 sends the same byte, 0x1b, for both keys, so binvim can't tell them apart and
-`Ctrl-[` leaves the pane like `Esc` does (`TERMINALS.md` check 19).
+`Ctrl-[` leaves the pane like `Esc` does (`docs/terminals.md` check 19).
 
 Workaround: use a terminal that passes check 19, where the pane gets the Esc,
 or run the program that needs it in a split of the host terminal rather than
@@ -97,7 +97,7 @@ variation selector U+FE0F, like `❤️` (U+2764 U+FE0F), is two cells wide in
 `unicode-width` and so in binvim. WezTerm's `unicode_version` defaults to 9,
 which predates that rule, so it draws the pair in one cell. On such a line
 binvim and WezTerm disagree about every column after the emoji: the text after
-it is drawn one cell left of where binvim puts the cursor (`TERMINALS.md` check
+it is drawn one cell left of where binvim puts the cursor (`docs/terminals.md` check
 11). Emoji that are wide without a selector, such as `👍🏽`, `👨‍👩‍👧` and flags,
 are not affected.
 

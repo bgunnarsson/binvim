@@ -1,5 +1,5 @@
 #!/bin/sh
-# Asks the terminal this runs in for what TERMINALS.md's checks depend on,
+# Asks the terminal this runs in for what docs/terminals.md's checks depend on,
 # and prints a report keyed by check number to paste into the matrix.
 #
 # Most of it the terminal answers itself: replies to queries (XTVERSION, the
@@ -441,7 +441,7 @@ TERM=${TERM:-unset} TERM_PROGRAM=${TERM_PROGRAM:-unset} ${TERM_PROGRAM_VERSION:+
 Kitty keyboard flags: $flags_before before binvim's push, $flags_after after. Stray text on screen: $stray.
 
 $rows
-Still to run inside binvim: checks 1, 12, 17, 20 and 21 in TERMINALS.md."
+Still to run inside binvim: checks 1, 12, 17, 20 and 21 in docs/terminals.md."
 
 printf '\n%s\n' "$report" | tee "$report_file"
 printf '\nSaved to %s\n' "$report_file"
