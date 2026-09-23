@@ -43,13 +43,16 @@ follows [Semantic Versioning](https://semver.org/).
 - **A `[No Name]` buffer's unsaved text survives a crash.** It's now dumped
   every four seconds like a file's, and on a closed terminal. The next launch
   says how many a crash left, and `:recover` opens them. It used to be lost
-  outright.
-- **A save that has to write in place can't lose the file.** A hard-linked file,
-  or one in a directory you can't create files in, is written in place, which
-  truncates it first. A write failing partway there (a full disk) left it cut
-  short. The file is now copied to `~/.cache/binvim/backup/` first. The copy is
-  kept, and named, if the write fails, and the save stops with the file
-  untouched if the copy can't be made.
+  outright. Like every recovery file, it needs a cache directory (`HOME` or
+  `XDG_CACHE_HOME`).
+- **A save that has to write in place copies the file aside first.** A
+  hard-linked file, or one in a directory you can't create files in, is written
+  in place, which truncates it first. A write failing partway there (a full
+  disk) left it cut short. The file is now copied to `~/.cache/binvim/backup/`
+  first. The copy is kept, and named, if the write fails, and the save stops
+  with the file untouched if the copy can't be made. With no cache directory
+  (no `HOME` or `XDG_CACHE_HOME`) there's nowhere to put the copy, and the
+  write goes ahead as before.
 - **A paste with CR line breaks lands as lines.** tmux's `paste-buffer`, and
   some terminals, send a paste's line breaks as CR. Insert mode put them into
   the text as-is, so the saved file had a stray `\r` where each break should

@@ -62,13 +62,6 @@ impl super::App {
             } else {
                 &mut self.buffers[i].buffer
             };
-            // Named since its last dump (`:w name`): that dump is stale, and
-            // `:recover` would offer text the file now holds.
-            if buf.path.is_some()
-                && let Some(stale) = buf.unnamed_key.take()
-            {
-                cleaned.push(RecoveryKey::Unnamed(stale));
-            }
             let Some(key) = dump_key(buf) else {
                 continue;
             };
@@ -361,12 +354,15 @@ impl super::App {
     }
 }
 
-/// What `buf`'s recovery file is kept under, if it has one: its path, or the
-/// unnamed key a `[No Name]` buffer was given when it was dumped.
+/// What `buf`'s recovery file is kept under, if it has one. A `[No Name]`
+/// buffer keeps its unnamed key until a save under its new name goes through
+/// (`save_active` drops it): `:w name` names the buffer before writing, and a
+/// write that fails would otherwise move the text to a dump for a file that
+/// doesn't exist, which neither the launch notice nor `:recover` looks at.
 pub(super) fn recovery_key(buf: &Buffer) -> Option<RecoveryKey> {
-    match (&buf.path, &buf.unnamed_key) {
-        (Some(path), _) => Some(RecoveryKey::Path(path.clone())),
-        (None, Some(name)) => Some(RecoveryKey::Unnamed(name.clone())),
+    match (&buf.unnamed_key, &buf.path) {
+        (Some(name), _) => Some(RecoveryKey::Unnamed(name.clone())),
+        (None, Some(path)) => Some(RecoveryKey::Path(path.clone())),
         (None, None) => None,
     }
 }
@@ -405,13 +401,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_no_name_buffer_keeps_one_unnamed_key_until_it_has_a_path() {
+    fn a_no_name_buffer_keeps_its_unnamed_key_until_a_save_drops_it() {
         let mut buf = Buffer::empty();
         let Some(RecoveryKey::Unnamed(first)) = dump_key(&mut buf) else {
             panic!("a [No Name] buffer is dumped under an unnamed key");
         };
-        assert_eq!(dump_key(&mut buf), Some(RecoveryKey::Unnamed(first)));
+        assert_eq!(
+            dump_key(&mut buf),
+            Some(RecoveryKey::Unnamed(first.clone()))
+        );
+        // `:w name` names it first; a write that then fails leaves it here.
         buf.path = Some("/tmp/named.txt".into());
+        assert_eq!(dump_key(&mut buf), Some(RecoveryKey::Unnamed(first)));
+        buf.unnamed_key = None;
         assert_eq!(
             dump_key(&mut buf),
             Some(RecoveryKey::Path("/tmp/named.txt".into()))
