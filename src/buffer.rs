@@ -133,6 +133,9 @@ pub struct Buffer {
     /// Synthetic label for path-less internal buffers (e.g. `[Health]`). Lets
     /// the buffer list show something meaningful instead of `[No Name]`.
     pub display_name: Option<String>,
+    /// The recovery file a `[No Name]` buffer's text is dumped to, named the
+    /// first time it's dumped and dropped once the buffer has a path.
+    pub unnamed_key: Option<String>,
     /// What the file was on disk (or platform default for path-less
     /// buffers). `save` emits the matching ending; `.editorconfig`'s
     /// `end_of_line` overrides this when set.
@@ -185,6 +188,7 @@ impl Buffer {
             lossy: false,
             gone: false,
             display_name: None,
+            unnamed_key: None,
             line_ending: LineEnding::platform_default(),
             marks: HashMap::new(),
             change_open: false,

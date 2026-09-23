@@ -88,6 +88,9 @@ impl super::App {
         if let Some(path) = self.buffer.path.clone() {
             self.discard_recovery(&path);
         }
+        if let Some(name) = self.buffer.unnamed_key.take() {
+            self.discard_recovery_key(&crate::recover::RecoveryKey::Unnamed(name));
+        }
         // Refresh git stripe after a successful write — the index hasn't
         // moved but the working tree just did, so hunks may have grown,
         // shrunk, or disappeared entirely.

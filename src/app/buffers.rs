@@ -722,8 +722,8 @@ impl super::App {
         }
         // Closed on purpose: `:bd!` discarded the changes, and a buffer undone
         // back to clean may still have a dump of its dirty text.
-        if let Some(path) = self.buffer.path.clone() {
-            self.discard_recovery(&path);
+        if let Some(key) = super::recover_glue::recovery_key(&self.buffer) {
+            self.discard_recovery_key(&key);
         }
         if self.buffers.len() == 1 {
             // Last buffer — replace with an empty one and resurface the start
@@ -809,17 +809,17 @@ impl super::App {
         // Remember the active buffer's position before its stash is wiped below
         // (`delete_buffer` does the same for a single close).
         self.persist_active_cursor();
-        let closed: Vec<PathBuf> = (0..self.buffers.len())
+        let closed: Vec<_> = (0..self.buffers.len())
             .filter_map(|i| {
                 if i == self.active {
-                    self.buffer.path.clone()
+                    super::recover_glue::recovery_key(&self.buffer)
                 } else {
-                    self.buffers[i].buffer.path.clone()
+                    super::recover_glue::recovery_key(&self.buffers[i].buffer)
                 }
             })
             .collect();
-        for path in closed {
-            self.discard_recovery(&path);
+        for key in closed {
+            self.discard_recovery_key(&key);
         }
         let count = self.buffers.len();
         self.buffers.clear();

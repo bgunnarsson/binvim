@@ -6,9 +6,10 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
+use crate::buffer::Buffer;
 use crate::recover::{
-    RecoveryFile, RecoveryKey, held_by_another_process, load_from, now_secs, recovered_text,
-    recovery_path, recovery_path_for, write_to,
+    RecoveryFile, RecoveryKey, held_by_another_process, load_from, new_unnamed_key, now_secs,
+    recovered_text, recovery_path, recovery_path_for, write_to,
 };
 
 /// How often dirty buffers are dumped, and so the most typing a `kill -9`
@@ -57,18 +58,30 @@ impl super::App {
         let mut cleaned: Vec<RecoveryKey> = Vec::new();
         for i in 0..self.buffers.len() {
             let buf = if i == self.active {
-                &self.buffer
+                &mut self.buffer
             } else {
-                &self.buffers[i].buffer
+                &mut self.buffers[i].buffer
             };
-            let Some(path) = buf.path.as_ref() else {
+            // Named since its last dump (`:w name`): that dump is stale, and
+            // `:recover` would offer text the file now holds.
+            if buf.path.is_some()
+                && let Some(stale) = buf.unnamed_key.take()
+            {
+                cleaned.push(RecoveryKey::Unnamed(stale));
+            }
+            let Some(key) = dump_key(buf) else {
                 continue;
             };
-            let key = RecoveryKey::Path(path.clone());
+            let (dirty, version) = (buf.dirty, buf.version);
             let dumped = self.recovery_written.get(&key).copied();
-            if buf.dirty && dumped != Some(buf.version) {
-                writes.push((key, buf.version, buf.rope.to_string()));
-            } else if !buf.dirty && dumped.is_some() {
+            if dirty && dumped != Some(version) {
+                let buf = if i == self.active {
+                    &self.buffer
+                } else {
+                    &self.buffers[i].buffer
+                };
+                writes.push((key, version, buf.rope.to_string()));
+            } else if !dirty && dumped.is_some() {
                 cleaned.push(key);
             }
         }
@@ -133,17 +146,19 @@ impl super::App {
     /// shares its nodes, so this costs a `Vec` per iteration, not the text.
     #[cfg(unix)]
     pub(super) fn refresh_recovery_snapshot(&mut self) {
-        let dirty: Vec<(RecoveryKey, ropey::Rope)> = (0..self.buffers.len())
-            .filter_map(|i| {
-                let buf = if i == self.active {
-                    &self.buffer
-                } else {
-                    &self.buffers[i].buffer
-                };
-                let key = RecoveryKey::Path(buf.path.clone()?);
-                buf.dirty.then(|| (key, buf.rope.clone()))
-            })
-            .collect();
+        let mut dirty: Vec<(RecoveryKey, ropey::Rope)> = Vec::new();
+        for i in 0..self.buffers.len() {
+            let buf = if i == self.active {
+                &mut self.buffer
+            } else {
+                &mut self.buffers[i].buffer
+            };
+            if buf.dirty
+                && let Some(key) = dump_key(buf)
+            {
+                dirty.push((key, buf.rope.clone()));
+            }
+        }
         *self
             .recovery_snapshot
             .lock()
@@ -291,6 +306,26 @@ impl super::App {
     }
 }
 
+/// What `buf`'s recovery file is kept under, if it has one: its path, or the
+/// unnamed key a `[No Name]` buffer was given when it was dumped.
+pub(super) fn recovery_key(buf: &Buffer) -> Option<RecoveryKey> {
+    match (&buf.path, &buf.unnamed_key) {
+        (Some(path), _) => Some(RecoveryKey::Path(path.clone())),
+        (None, Some(name)) => Some(RecoveryKey::Unnamed(name.clone())),
+        (None, None) => None,
+    }
+}
+
+/// `recovery_key`, naming a user's `[No Name]` buffer the first time it's
+/// asked. An internal path-less buffer (`display_name`: `[Command Line]`,
+/// `[config defaults]`) isn't the user's text, and has none.
+fn dump_key(buf: &mut Buffer) -> Option<RecoveryKey> {
+    if buf.path.is_none() && buf.display_name.is_none() && buf.unnamed_key.is_none() {
+        buf.unnamed_key = Some(new_unnamed_key());
+    }
+    recovery_key(buf)
+}
+
 /// Write `text` as `key`'s recovery file. False when there's nowhere to put
 /// it (tests, no cache dir) or the write failed.
 fn dump(key: &RecoveryKey, text: String) -> bool {
@@ -299,6 +334,7 @@ fn dump(key: &RecoveryKey, text: String) -> bool {
     };
     let path = match key {
         RecoveryKey::Path(path) => path.display().to_string(),
+        RecoveryKey::Unnamed(_) => "[No Name]".to_string(),
     };
     let rec = RecoveryFile {
         path,
@@ -307,4 +343,31 @@ fn dump(key: &RecoveryKey, text: String) -> bool {
         pid: std::process::id(),
     };
     write_to(&dest, &rec).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_no_name_buffer_keeps_one_unnamed_key_until_it_has_a_path() {
+        let mut buf = Buffer::empty();
+        let Some(RecoveryKey::Unnamed(first)) = dump_key(&mut buf) else {
+            panic!("a [No Name] buffer is dumped under an unnamed key");
+        };
+        assert_eq!(dump_key(&mut buf), Some(RecoveryKey::Unnamed(first)));
+        buf.path = Some("/tmp/named.txt".into());
+        assert_eq!(
+            dump_key(&mut buf),
+            Some(RecoveryKey::Path("/tmp/named.txt".into()))
+        );
+    }
+
+    #[test]
+    fn an_internal_buffer_has_no_recovery_key() {
+        let mut buf = Buffer::empty();
+        buf.display_name = Some("[Command Line]".into());
+        assert_eq!(dump_key(&mut buf), None);
+        assert_eq!(buf.unnamed_key, None);
+    }
 }

@@ -4,9 +4,9 @@
 //! than everything since the last `:w`. The `App` side — when they're written,
 //! applied on open and removed — is `app/recover_glue.rs`.
 //!
-//! One file per path, keyed like sessions (`paths::path_key`). Only buffers
-//! with a path are covered: a `[No Name]` buffer has nothing to be recovered
-//! into.
+//! One file per path, keyed like sessions (`paths::path_key`). A `[No Name]`
+//! buffer has no path to key on, so it gets an `unnamed-…` key of its own, and
+//! nothing opens it on its own: `:recover` does, after a crash left one.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -28,6 +28,20 @@ pub struct RecoveryFile {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RecoveryKey {
     Path(PathBuf),
+    Unnamed(String),
+}
+
+/// A key no other binvim's unnamed dump has: the pid alone would collide
+/// with a crashed binvim's whose pid was handed on to this one.
+pub fn new_unnamed_key() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "unnamed-{}-{}-{}",
+        std::process::id(),
+        now_secs(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// Where recovery files live. `None` under test, like every other persisted
@@ -47,6 +61,7 @@ pub fn recovery_path(file: &Path) -> Option<PathBuf> {
 pub fn recovery_path_for(key: &RecoveryKey) -> Option<PathBuf> {
     match key {
         RecoveryKey::Path(file) => recovery_path(file),
+        RecoveryKey::Unnamed(name) => Some(recover_dir()?.join(format!("{name}.json"))),
     }
 }
 
@@ -170,6 +185,13 @@ mod tests {
             std::env::temp_dir().join(format!("binvim_recover_{name}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn unnamed_keys_are_this_process_s_and_never_repeat() {
+        let (a, b) = (new_unnamed_key(), new_unnamed_key());
+        assert!(a.starts_with(&format!("unnamed-{}-", std::process::id())));
+        assert_ne!(a, b);
     }
 
     #[test]
