@@ -64,3 +64,4 @@ on the command that starts the server. The scratch server is ended with
   ls`). Any session the check didn't create means the user's configuration
   loaded: kill that server (`tmux -L <name> kill-server`, never the default
   server), and confirm no new file appeared in the user's resurrect directory.
+- Written into: CLAUDE.md
