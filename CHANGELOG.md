@@ -33,6 +33,11 @@ follows [Semantic Versioning](https://semver.org/).
   that had grown, and colours named for the stock palette only.
 
 ### Fixed
+- **`Ctrl-[` leaves Insert mode in Ghostty, Kitty, WezTerm and Alacritty.**
+  A terminal speaking the Kitty keyboard protocol reports `Ctrl-[` as itself
+  rather than as the Esc byte, and no mode took it as Esc, so it did nothing.
+  It is Esc everywhere now except the `:terminal` pane, where it still sends Esc
+  to the program without leaving the pane.
 - **`Ctrl-I` jumps forward in tmux and Terminal.app.** A terminal without the
   Kitty keyboard protocol sends `Ctrl-I` as `Tab`, which Normal mode ignored.
   `Tab` now jumps forward as `Ctrl-I` does, as in Vim.

@@ -328,6 +328,7 @@ impl super::App {
             crossterm::event::Event::Key(k)
                 if matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat) =>
             {
+                let k = ctrl_bracket_as_esc(k, self.mode);
                 if !matches!(self.mode, Mode::Command) {
                     self.status_msg.clear();
                     self.status_msg_at = None;
@@ -3989,6 +3990,23 @@ pub(super) fn ctrl_c_as_esc(key: KeyEvent) -> KeyEvent {
     }
 }
 
+/// `Ctrl-[` as the `Esc` it is. A legacy terminal sends the Esc byte for it,
+/// but one speaking the Kitty keyboard protocol reports it as itself, which no
+/// mode took as Esc. The terminal pane is the exception: there `Ctrl-[` is how
+/// an Esc reaches the PTY without leaving the pane.
+fn ctrl_bracket_as_esc(key: KeyEvent, mode: Mode) -> KeyEvent {
+    let ctrl_bracket = key.code == KeyCode::Char('[') && key.modifiers == KeyModifiers::CONTROL;
+    if ctrl_bracket && !matches!(mode, Mode::Terminal) {
+        KeyEvent {
+            code: KeyCode::Esc,
+            modifiers: KeyModifiers::NONE,
+            ..key
+        }
+    } else {
+        key
+    }
+}
+
 /// Where `Ctrl-W` on a prompt deletes back to from `cursor` (a byte index):
 /// past any blanks, then over a run of keyword characters or else a run of
 /// other non-blank ones — Vim's word before the cursor.
@@ -4044,6 +4062,21 @@ mod tests {
         app.window.cursor.col = 0;
         app.config.keymaps = toml::from_str(keymaps).expect("keymaps parse");
         app
+    }
+
+    #[test]
+    fn ctrl_bracket_is_esc_everywhere_but_the_terminal_pane() {
+        let ctrl_bracket = KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL);
+        for mode in [Mode::Insert, Mode::Normal, Mode::Command, Mode::Picker] {
+            let k = ctrl_bracket_as_esc(ctrl_bracket, mode);
+            assert_eq!((k.code, k.modifiers), (KeyCode::Esc, KeyModifiers::NONE));
+        }
+        assert_eq!(
+            ctrl_bracket_as_esc(ctrl_bracket, Mode::Terminal),
+            ctrl_bracket
+        );
+        let bracket = KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE);
+        assert_eq!(ctrl_bracket_as_esc(bracket, Mode::Insert), bracket);
     }
 
     /// Types `keys` into whichever mode the app is in, so `ijk` enters
