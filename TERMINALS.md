@@ -164,7 +164,7 @@ A cell is never a bare "fail".
 | # | Check | Ghostty | Kitty | WezTerm | Alacritty | tmux | Windows Terminal | over SSH | Terminal.app |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | | Version | | 0.49.0 | 20240203-110809-5046fc22 | | 3.6a | | | |
-| 1 | Launch and quit | | ✓ | | | ✓ | | | |
+| 1 | Launch and quit | | ✓ | ✓ | | ✓ | | | |
 | 2 | Re-encoded keys | | ✓ | ✓ | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
 | 3 | Esc response | | ✓ | ✓ | | ✓ | | | |
 | 4 | `Ctrl-[` and Alt | | ✓ | ✓ | | ✓ | | | |
@@ -175,16 +175,16 @@ A cell is never a bare "fail".
 | 9 | Nerd Font glyphs | | ✓ | ✓ | | ✓ | | | |
 | 10 | Wide characters | | ✓ | ✓ | | ✓ | | | |
 | 11 | Emoji clusters | | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | | ✓ | | | |
-| 12 | Long line | | ✓ | | | ✓ | | | |
+| 12 | Long line | | ✓ | ✓ | | ✓ | | | |
 | 13 | Mouse | | ✓ | ✓ | | ✓ | | | |
 | 14 | Bracketed paste | | ✓ | ✓ | | ✓ | | | |
 | 15 | Synchronized output | | ✓ | ✓ | | ✓ | | | |
 | 16 | Undercurl | | ✓ | ✓ | | ✓ | | | |
-| 17 | Resize | | ✓ | | | ✓ | | | |
+| 17 | Resize | | ✓ | ✓ | | ✓ | | | |
 | 18 | OSC 52 | | ✓ | ✓ | | ✓ | | | |
 | 19 | `:terminal` | | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
-| 20 | lazygit round trip | | ✓ | | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
-| 21 | Closing unsaved | | ✓ | | | ✓ | | | |
+| 20 | lazygit round trip | | ✓ | ✓ | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
+| 21 | Closing unsaved | | ✓ | ✓ | | ✓ | | | |
 
 ### Notes
 
@@ -216,6 +216,7 @@ A cell is never a bare "fail".
   were judged by eye. DECRQM 2026 is 2 (supported).
 - 11: `❤️` (heart + VS16) measured one cell where `unicode-width` gives two;
   the other clusters matched. `unicode_version = 14` makes it two cells.
+- 1, 12, 17, 20, 21: by hand in binvim.
 
 **tmux** — tmux 3.6a on macOS, run on 2026-09-23 against a detached server
 (`tmux -L`, a 120×30 window, `TERM=tmux-256color`, the default config apart from
