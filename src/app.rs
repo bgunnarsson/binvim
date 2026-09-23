@@ -1665,7 +1665,9 @@ impl TerminalGuard {
         // Kitty keyboard protocol — terminals that support it now report
         // SUPER/META as a modifier (so Cmd-Backspace etc. arrive with the
         // right `KeyModifiers`). Non-supporting terminals silently ignore
-        // the CSI sequence, so this is safe to push unconditionally.
+        // the CSI sequence, so this is safe to push unconditionally. On
+        // Windows crossterm never writes it: the command reports no ANSI
+        // support and its WinAPI fallback returns an error, dropped here.
         let _ = execute!(
             stdout,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
