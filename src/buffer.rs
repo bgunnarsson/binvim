@@ -502,6 +502,21 @@ impl Buffer {
         end.min(self.total_chars())
     }
 
+    /// A Visual block's cols `c1..=c2` on `line`, widened to whole clusters:
+    /// the start of the cluster at `c1` to the end of the one at `c2`, clamped
+    /// to the line. Block cols are char cols, so a cluster on either edge would
+    /// otherwise be cut through.
+    pub fn block_row_cols(&self, line: usize, c1: usize, c2: usize) -> (usize, usize) {
+        let len = self.line_len(line);
+        let start = self.grapheme_start_col(line, c1);
+        let end = if c2 < len {
+            self.next_grapheme_col(line, self.grapheme_start_col(line, c2))
+        } else {
+            len
+        };
+        (start, end)
+    }
+
     /// Col of the start of the cluster `col` sits in — `col` itself when it's
     /// already a boundary. Past the line's end it clamps to the length.
     pub fn grapheme_start_col(&self, line: usize, col: usize) -> usize {

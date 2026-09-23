@@ -1322,8 +1322,10 @@ impl super::App {
                 if line_len == 0 {
                     self.buffer.line_start_idx(self.window.cursor.line)
                 } else {
-                    self.buffer
-                        .pos_to_char(self.window.cursor.line, self.window.cursor.col + 1)
+                    // After the whole cluster under the cursor, not inside it.
+                    let line = self.window.cursor.line;
+                    let after = self.buffer.next_grapheme_col(line, self.window.cursor.col);
+                    self.buffer.pos_to_char(line, after)
                 }
             };
             let mut text = String::new();

@@ -27,7 +27,7 @@ impl super::App {
             let anchor = self.window.visual_anchor.unwrap_or(self.window.cursor);
             let first = anchor.line.min(self.window.cursor.line);
             let last = anchor.line.max(self.window.cursor.line);
-            let after = (self.window.cursor.col + 1).min(self.buffer.line_len(last));
+            let after = self.buffer.next_grapheme_col(last, self.window.cursor.col);
             let (line, col) = if append { (last, after) } else { (first, 0) };
             self.exit_visual();
             self.window.cursor = crate::cursor::Cursor {
@@ -163,22 +163,31 @@ impl super::App {
             let c2 = anchor.col.max(self.window.cursor.col);
             (l1..=l2)
                 .map(|line| {
-                    let line_len = self.buffer.line_len(line);
                     let line_start = self.buffer.line_start_idx(line);
-                    (
-                        line_start + c1.min(line_len),
-                        line_start + (c2 + 1).min(line_len),
-                    )
+                    let (start, end) = self.buffer.block_row_cols(line, c1, c2);
+                    (line_start + start, line_start + end)
                 })
                 .collect()
         } else {
             let (start, end, _) = self.visual_range_chars(kind);
             vec![(start, end)]
         };
-        let keep_breaks = |old: char| if old == '\n' { old } else { c };
-        for &(start, end) in spans.iter().filter(|(start, end)| end > start) {
+        // Bottom-up: a cluster becomes one char, so a row can get shorter, and
+        // the rows below it would otherwise be addressed by stale indices.
+        for &(start, end) in spans.iter().rev().filter(|(start, end)| end > start) {
+            use unicode_segmentation::UnicodeSegmentation;
             let old = self.buffer.rope.slice(start..end).to_string();
-            let new: String = old.chars().map(keep_breaks).collect();
+            // One `c` per cluster, so an emoji becomes one char, not five.
+            let new: String = old
+                .graphemes(true)
+                .map(|g| {
+                    if g == "\n" || g == "\r\n" {
+                        g.to_string()
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect();
             self.buffer.replace_range(start, end, &new);
         }
         let first = spans.first().map_or(0, |(start, _)| *start);
@@ -690,9 +699,7 @@ impl super::App {
         // the unnamed register, so a follow-up paste replays the register's
         // original content (see `apply_visual_put`).
         for line in (l1..=l2).rev() {
-            let line_len = self.buffer.line_len(line);
-            let start = c1.min(line_len);
-            let end = (c2 + 1).min(line_len);
+            let (start, end) = self.buffer.block_row_cols(line, c1, c2);
             if end > start {
                 let line_start = self.buffer.line_start_idx(line);
                 self.buffer
@@ -726,7 +733,11 @@ impl super::App {
         let c2 = anchor.col.max(self.window.cursor.col);
         // `$` (or Visual `D` / `C`) takes every row to its own end.
         let to_eol = self.window.cursor.want_col == usize::MAX;
-        let row_end = |len: usize| if to_eol { len } else { (c2 + 1).min(len) };
+        let row = |buf: &crate::buffer::Buffer, line: usize| {
+            let (start, end) = buf.block_row_cols(line, c1, c2);
+            let end = if to_eol { buf.line_len(line) } else { end };
+            (start, end)
+        };
 
         if matches!(op, Operator::Indent) {
             self.indent_lines(l1, l2);
@@ -738,11 +749,9 @@ impl super::App {
         }
         if let Operator::Case(how) = op {
             for line in l1..=l2 {
-                let line_len = self.buffer.line_len(line);
                 let line_start = self.buffer.line_start_idx(line);
-                let start = line_start + c1.min(line_len);
-                let end = line_start + row_end(line_len);
-                self.recase_range(start, end, how);
+                let (start, end) = row(&self.buffer, line);
+                self.recase_range(line_start + start, line_start + end, how);
             }
             self.window.cursor.line = l1;
             self.window.cursor.col = c1.min(self.buffer.line_len(l1).saturating_sub(1));
@@ -755,9 +764,7 @@ impl super::App {
         // Lines shorter than `c1` contribute an empty row, matching Vim.
         let mut chunks: Vec<String> = Vec::with_capacity(l2 - l1 + 1);
         for line in l1..=l2 {
-            let line_len = self.buffer.line_len(line);
-            let start = c1.min(line_len);
-            let end = row_end(line_len);
+            let (start, end) = row(&self.buffer, line);
             if end <= start {
                 chunks.push(String::new());
                 continue;
@@ -780,9 +787,8 @@ impl super::App {
                 // change we haven't done.
                 let line_start = self.buffer.line_start_idx(l1);
                 let first_line_len = self.buffer.line_len(l1);
-                let start = (line_start + c1).min(line_start + first_line_len);
-                let end = (line_start + c2 + 1).min(line_start + first_line_len);
-                self.flash_yank(start, end);
+                let (start, end) = self.buffer.block_row_cols(l1, c1, c2);
+                self.flash_yank(line_start + start, line_start + end);
                 self.window.cursor.line = l1;
                 self.window.cursor.col = c1.min(first_line_len.saturating_sub(1));
                 self.window.cursor.want_col = self.window.cursor.col;
@@ -793,9 +799,7 @@ impl super::App {
                 // Iterate bottom-up so a per-line delete doesn't shift the
                 // start index of higher lines.
                 for line in (l1..=l2).rev() {
-                    let line_len = self.buffer.line_len(line);
-                    let start = c1.min(line_len);
-                    let end = row_end(line_len);
+                    let (start, end) = row(&self.buffer, line);
                     if end > start {
                         let line_start = self.buffer.line_start_idx(line);
                         self.buffer

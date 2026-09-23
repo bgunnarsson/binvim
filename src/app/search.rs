@@ -999,8 +999,7 @@ impl super::App {
                 if line_len <= c1 {
                     return None;
                 }
-                let end = (c2 + 1).min(line_len);
-                Some((c1, end))
+                Some(self.buffer.block_row_cols(line, c1, c2))
             }
         }
     }

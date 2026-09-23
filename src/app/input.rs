@@ -584,11 +584,15 @@ impl super::App {
             }
         }
         self.insert_oneshot = None;
+        let line_len = self.buffer.line_len(self.window.cursor.line);
+        let on_last = line_len > 0
+            && self
+                .buffer
+                .next_grapheme_col(self.window.cursor.line, self.window.cursor.col)
+                == line_len;
         let cursor = &mut self.window.cursor;
-        let line_len = self.buffer.line_len(cursor.line);
         // Past the end again if the command left the cursor where `Ctrl-O`
         // stepped it back to, or went there with `$`.
-        let on_last = line_len > 0 && cursor.col + 1 == line_len;
         let left_there = shot.stepped_back == Some((cursor.line, cursor.col));
         if on_last && (left_there || cursor.want_col == usize::MAX) {
             cursor.col = line_len;
@@ -1545,7 +1549,11 @@ impl super::App {
                     self.window.cursor.col = 0;
                     self.window.cursor.want_col = 0;
                 } else if self.window.cursor.col > 0 {
-                    self.window.cursor.col -= 1;
+                    // Back one cluster, not one codepoint: after typing 👍🏽 the
+                    // cursor must rest on the thumb, not its skin tone.
+                    self.window.cursor.col = self
+                        .buffer
+                        .prev_grapheme_col(self.window.cursor.line, self.window.cursor.col);
                     self.window.cursor.want_col = self.window.cursor.col;
                 }
                 self.mode = Mode::Normal;
@@ -1560,7 +1568,9 @@ impl super::App {
             // leave-time work: no blank-line strip, and nothing kept for `.`.
             KeyCode::Char('c' | 'C') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 if self.window.cursor.col > 0 {
-                    self.window.cursor.col -= 1;
+                    self.window.cursor.col = self
+                        .buffer
+                        .prev_grapheme_col(self.window.cursor.line, self.window.cursor.col);
                     self.window.cursor.want_col = self.window.cursor.col;
                 }
                 self.mode = Mode::Normal;
@@ -1584,7 +1594,7 @@ impl super::App {
                 let line = self.window.cursor.line;
                 let col = self.window.cursor.col;
                 let stepped_back = if col > 0 && col == self.buffer.line_len(line) {
-                    Some((line, col - 1))
+                    Some((line, self.buffer.prev_grapheme_col(line, col)))
                 } else {
                     None
                 };
@@ -4133,6 +4143,58 @@ mod tests {
         tap(&mut app, KeyCode::Backspace);
         assert_eq!(app.buffer.rope.to_string(), "ab\n");
         assert_eq!(app.window.cursor.col, 1);
+    }
+
+    #[test]
+    fn leaving_insert_after_a_cluster_rests_on_its_start() {
+        let thumb = "\u{1F44D}\u{1F3FD}";
+        // Esc, then `x`: the whole thumb goes, not just its skin tone.
+        let mut app = insert_at("\n", 0, 0);
+        press(&mut app, thumb);
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.window.cursor.col, 0);
+        press(&mut app, "x");
+        assert_eq!(app.buffer.rope.to_string(), "\n");
+        // Ctrl-C steps back the same way.
+        let mut app = insert_at("\n", 0, 0);
+        press(&mut app, thumb);
+        app.replay_key(ctrl('c'));
+        assert_eq!(app.window.cursor.col, 0);
+        // Ctrl-O steps back onto the thumb and comes back after all of it.
+        let mut app = insert_at("\n", 0, 0);
+        press(&mut app, thumb);
+        app.replay_key(ctrl('o'));
+        assert_eq!(app.window.cursor.col, 0);
+        press(&mut app, "lZ");
+        assert_eq!(app.buffer.rope.to_string(), format!("{thumb}Z\n"));
+    }
+
+    #[test]
+    fn put_and_visual_edits_keep_a_cluster_whole() {
+        let text = format!("a{FAMILY}b\n");
+        // `p` on the emoji puts after all of it.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "\"ayll\"ap");
+        assert_eq!(app.buffer.rope.to_string(), format!("a{FAMILY}ab\n"));
+        // Visual `A` on the emoji starts Insert after it.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "lvAZ");
+        assert_eq!(app.buffer.rope.to_string(), format!("a{FAMILY}Zb\n"));
+        // Visual `r` turns the emoji into one char, not five.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "lvrZ");
+        assert_eq!(app.buffer.rope.to_string(), "aZb\n");
+        // A block on the emoji takes all of it: `d`, and `r` on two rows.
+        let mut app = app_with_keymaps(&text, "");
+        press(&mut app, "l");
+        app.replay_key(ctrl('v'));
+        press(&mut app, "d");
+        assert_eq!(app.buffer.rope.to_string(), "ab\n");
+        let mut app = app_with_keymaps(&format!("{text}{text}"), "");
+        press(&mut app, "l");
+        app.replay_key(ctrl('v'));
+        press(&mut app, "jrZ");
+        assert_eq!(app.buffer.rope.to_string(), "aZb\naZb\n");
     }
 
     #[test]

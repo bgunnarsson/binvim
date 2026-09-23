@@ -22,7 +22,12 @@ pub struct MotionResult {
 // index; it just only ever lands on a cluster's first char.
 pub fn left(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
     let mut new_col = buf.grapheme_start_col(cur.line, cur.col);
+    // Stop at col 0: counts are uncapped, and `999999999h` must not walk
+    // a billion times.
     for _ in 0..count {
+        if new_col == 0 {
+            break;
+        }
         new_col = buf.prev_grapheme_col(cur.line, new_col);
     }
     MotionResult {
@@ -1358,6 +1363,13 @@ mod tests {
         assert_eq!(left(&b, cur(0, 6), 2).target.col, 0);
         assert_eq!(right(&b, cur(1, 0), 1).target.col, 2);
         assert_eq!(line_end(&b, cur(0, 0)).target.col, 6);
+    }
+
+    #[test]
+    fn a_huge_count_to_the_left_stops_at_col_zero() {
+        // Counts are uncapped; this must return at once, not loop usize::MAX times.
+        let b = buf(&format!("ab{FAMILY}\n"));
+        assert_eq!(left(&b, cur(0, 2), usize::MAX).target.col, 0);
     }
 
     #[test]
