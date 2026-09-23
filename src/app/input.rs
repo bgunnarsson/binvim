@@ -667,6 +667,7 @@ impl super::App {
             Mode::Insert => {
                 self.copilot_invalidate_ghost();
                 self.history.record(&self.buffer.rope, self.window.cursor);
+                let text = paste_line_breaks(&text);
                 let idx = self
                     .buffer
                     .pos_to_char(self.window.cursor.line, self.window.cursor.col);
@@ -4037,6 +4038,14 @@ fn cmdline_word_start(text: &str, cursor: usize) -> usize {
 
 /// A register's text as `Ctrl-R` puts it on a one-line prompt: without its
 /// last line break, and any others as spaces.
+/// A paste's line breaks as the rope holds them. Terminals commonly send the
+/// breaks in a bracketed paste as CR (tmux's `paste-buffer -p` turns every LF
+/// into one), and the rope is LF-only — a CR left in it is written to disk as
+/// a stray `\r` inside the line.
+fn paste_line_breaks(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 fn cmdline_text(text: &str) -> String {
     text.strip_suffix('\n').unwrap_or(text).replace('\n', " ")
 }
@@ -4062,6 +4071,14 @@ mod tests {
         app.window.cursor.col = 0;
         app.config.keymaps = toml::from_str(keymaps).expect("keymaps parse");
         app
+    }
+
+    #[test]
+    fn a_paste_with_cr_line_breaks_lands_as_lines() {
+        let mut app = insert_at("", 0, 0);
+        app.handle_paste("a\rb\r\nc".into());
+        assert_eq!(app.buffer.rope.to_string(), "a\nb\nc");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (2, 1));
     }
 
     #[test]
