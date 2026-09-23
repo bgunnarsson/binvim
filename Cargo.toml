@@ -99,6 +99,10 @@ tree-sitter-scss = "1.0.0"
 # equivalent signals to catch.
 [target.'cfg(unix)'.dependencies]
 signal-hook = "0.3"
+# `geteuid`, which std doesn't expose: under `sudo` the cache directory is
+# still the invoking user's, and root mustn't keep files there
+# (`paths::cache_dir`). Already in the tree through crossterm.
+libc = "0.2"
 
 [dev-dependencies]
 # proptest drives the property-based test suite for motion / text_object

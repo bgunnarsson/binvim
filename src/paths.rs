@@ -64,10 +64,21 @@ pub fn config_dir() -> Option<PathBuf> {
 /// `~/.cache/binvim/` on Unix (Linux and macOS, both honour
 /// `XDG_CACHE_HOME`), `%LOCALAPPDATA%\binvim\` on Windows. Holds
 /// sessions, undo history, crash logs, and recents.
+///
+/// `None` on Unix when the directory, or one above it from `$HOME` (or
+/// `$XDG_CACHE_HOME`) down, belongs to another user. `sudo` keeps the
+/// invoking user's `$HOME` on macOS and often elsewhere. Root's copies of
+/// root-only files would then land where that user can read them, and that
+/// user could swap a directory for a symlink that root follows when it
+/// narrows modes and creates files. So nothing is cached rather than that.
 pub fn cache_dir() -> Option<PathBuf> {
     #[cfg(unix)]
     {
-        xdg_or_home("XDG_CACHE_HOME", ".cache")
+        let (base, rel) = match std::env::var_os("XDG_CACHE_HOME").filter(|v| !v.is_empty()) {
+            Some(xdg) => (PathBuf::from(xdg), PathBuf::from(APP)),
+            None => (home_dir()?, Path::new(".cache").join(APP)),
+        };
+        cache_is_ours(&base, &rel).then(|| base.join(rel))
     }
     #[cfg(not(unix))]
     {
@@ -185,6 +196,21 @@ pub fn others_can_plant(dir: &Path, rel: impl AsRef<Path>) -> bool {
 #[cfg(not(unix))]
 pub fn others_can_plant(_: &Path, _: impl AsRef<Path>) -> bool {
     false
+}
+
+/// Every step from `base` down through `rel` is this process's effective
+/// user's, or root's and not writable by others. A step that doesn't exist
+/// yet is fine: this process creates it.
+#[cfg(unix)]
+fn cache_is_ours(base: &Path, rel: &Path) -> bool {
+    // SAFETY: `geteuid` takes nothing, touches no memory and can't fail.
+    let me = Some(unsafe { libc::geteuid() });
+    let mut path = base.to_path_buf();
+    owned_safely(&path, me, 0)
+        && rel.components().all(|c| {
+            path.push(c);
+            owned_safely(&path, me, 0)
+        })
 }
 
 /// A path that doesn't exist is safe here: the searches check existence
@@ -742,6 +768,20 @@ mod tests {
         assert_eq!(kept.len(), 1);
         assert_eq!(std::fs::read(&kept[0]).unwrap(), b"old contents");
         assert!(err.to_string().contains(&kept[0].display().to_string()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_cache_is_kept_only_where_nobody_else_can_reach_in() {
+        let dir = scratch("cache-ours");
+        assert!(cache_is_ours(&dir, Path::new(".cache/binvim")));
+        std::fs::create_dir_all(dir.join(".cache/binvim")).unwrap();
+        assert!(cache_is_ours(&dir, Path::new(".cache/binvim")));
+        // Root's, but anyone can create entries in it: a planted `binvim`
+        // would be someone else's. Skipped when the tests run as root.
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(!cache_is_ours(Path::new("/tmp"), Path::new("binvim")));
+        }
     }
 
     #[test]

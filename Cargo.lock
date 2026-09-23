@@ -55,6 +55,7 @@ dependencies = [
  "crossterm",
  "dirs",
  "ignore",
+ "libc",
  "portable-pty",
  "proptest",
  "regex",

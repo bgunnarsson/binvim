@@ -53,6 +53,13 @@ follows [Semantic Versioning](https://semver.org/).
   with the file untouched if the copy can't be made. With no cache directory
   (no `HOME` or `XDG_CACHE_HOME`) there's nowhere to put the copy, and the
   write goes ahead as before.
+- **`sudo binvim` keeps nothing in your cache directory.** `sudo` keeps your
+  `HOME`, so root wrote undo history, recovery files and session state, which
+  hold file text, into `~/.cache/binvim`, where you could read root's files
+  and redirect its writes. binvim now uses no cache directory that another
+  user owns or could plant in, so under `sudo` there's no recovery or undo
+  history. Use `sudoedit`, or run as root with root's own `HOME`, to keep
+  them.
 - **A paste with CR line breaks lands as lines.** tmux's `paste-buffer`, and
   some terminals, send a paste's line breaks as CR. Insert mode put them into
   the text as-is, so the saved file had a stray `\r` where each break should

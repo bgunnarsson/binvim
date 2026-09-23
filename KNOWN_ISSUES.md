@@ -88,8 +88,11 @@ once upstream guards the flag with `flag_if_supported`.
 ### Without a cache directory, nothing is recovered and an in-place write isn't guarded
 
 Recovery files and the copy a save takes before writing in place both live
-under the cache directory (`~/.cache/binvim`, or `XDG_CACHE_HOME`). When there
-is none (no `HOME`), unsaved text isn't dumped, and a save that has to write in
+under the cache directory (`~/.cache/binvim`, or `XDG_CACHE_HOME`). binvim goes
+without one when there's no `HOME`, and when the directory or one above it
+belongs to another user (`paths::cache_dir`). The second case covers `sudo
+binvim`, which keeps your `HOME`, so root doesn't leave copies of its files
+where you can read them. Without one, unsaved text isn't dumped, and a save that has to write in
 place — a hard-linked file, a directory you can't create files in, an owner the
 temp file can't take, a failed rename — goes ahead without a copy
 (`write_in_place`, `src/paths.rs`), so a write failing partway leaves the file
