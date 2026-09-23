@@ -11,6 +11,7 @@ symptoms:
   - "`tmux show-environment -g` prints HOME=/Users/<user> while the script exported another"
 root_cause: "a running tmux server gives `new-session` its own global environment, captured when the server started, not the calling shell's exports, so `export HOME=… XDG_CACHE_HOME=…` before `tmux new-session … \"binvim file\"` changes nothing the pane's command sees"
 related:
+  - docs/solutions/tooling/a-separate-tmux-server-still-loads-the-users-tmux-conf.md
   - docs/solutions/tooling/lazygit-outside-a-repo-prompts-then-opens-another-repo.md
   - docs/solutions/tooling/tmux-send-keys-escape-then-a-key-arrives-as-alt.md
   - docs/solutions/runtime/hung-up-tty-leaves-crossterm-poll-spinning.md
@@ -65,7 +66,10 @@ scratchpad path.
 
 - **A tmux harness that isolates binvim's files sets them in the pane's command**
   (`"env HOME=… XDG_CACHE_HOME=… binvim …"`) or starts its own server
-  (`tmux -L <name> …`), never by `export` before `tmux new-session`. An
+  (`tmux -f /dev/null -L <name> …`; without `-f /dev/null` that server loads
+  the user's `~/.tmux.conf` and its plugins, see
+  `a-separate-tmux-server-still-loads-the-users-tmux-conf.md`), never by
+  `export` before `tmux new-session`. An
   `export HOME=` or `XDG_CACHE_HOME=` line followed by
   `tmux new-session … "binvim …"` in a script is a violation.
 - **Before trusting a run, confirm the isolated directory received files**
