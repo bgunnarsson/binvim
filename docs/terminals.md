@@ -49,8 +49,8 @@ target/release/binvim docs/terminal-check.md
 ```
 
 `docs/terminal-check.md` holds the text the checks look at: a line of wide characters, one of
-emoji clusters, one mixing both, a styled line and a long line. `scripts/terminal-check.rs` carries a
-syntax error for the undercurl check and needs `rust-analyzer` on `PATH`. Lines are named by
+emoji clusters, one mixing both, a styled line and a long line. `scripts/terminal-check.rs` carries
+a syntax error for the undercurl check and needs `rust-analyzer` on `PATH`. Lines are named by
 their first word: `:6` jumps to *Wide*, `:7` *Emoji*, `:8` *Mixed*, `:9` *Styles*, `:11` *Long*.
 If a "Set up Markdown" install prompt appears, `Esc` dismisses it.
 
