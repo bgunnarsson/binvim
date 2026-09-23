@@ -24,16 +24,30 @@ pub struct RecoveryFile {
     pub pid: u32,
 }
 
-/// Where `file`'s recovery text lives. `None` under test, like every other
-/// persisted path, so tests never leave files in the real cache.
-pub fn recovery_path(file: &Path) -> Option<PathBuf> {
+/// What a recovery file belongs to.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RecoveryKey {
+    Path(PathBuf),
+}
+
+/// Where recovery files live. `None` under test, like every other persisted
+/// path, so tests never leave files in the real cache.
+fn recover_dir() -> Option<PathBuf> {
     if cfg!(test) {
         return None;
     }
-    let mut p = crate::paths::cache_dir()?;
-    p.push("recover");
-    p.push(format!("{}.json", crate::paths::path_key(file)));
-    Some(p)
+    Some(crate::paths::cache_dir()?.join("recover"))
+}
+
+/// Where `file`'s recovery text lives.
+pub fn recovery_path(file: &Path) -> Option<PathBuf> {
+    Some(recover_dir()?.join(format!("{}.json", crate::paths::path_key(file))))
+}
+
+pub fn recovery_path_for(key: &RecoveryKey) -> Option<PathBuf> {
+    match key {
+        RecoveryKey::Path(file) => recovery_path(file),
+    }
 }
 
 pub fn write_to(dest: &Path, rec: &RecoveryFile) -> std::io::Result<()> {

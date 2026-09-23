@@ -3,12 +3,12 @@
 //! once the buffer is written, reverted, closed or quit on purpose, and stays
 //! when the editor dies any other way — which is the point.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::recover::{
-    RecoveryFile, held_by_another_process, load_from, now_secs, recovered_text, recovery_path,
-    write_to,
+    RecoveryFile, RecoveryKey, held_by_another_process, load_from, now_secs, recovered_text,
+    recovery_path, recovery_path_for, write_to,
 };
 
 /// How often dirty buffers are dumped, and so the most typing a `kill -9`
@@ -53,8 +53,8 @@ impl super::App {
     /// buffer has gone clean (undone back to what's on disk). Called on the
     /// interval, and straight away when the editor is about to die.
     pub fn write_recovery_now(&mut self) {
-        let mut writes: Vec<(PathBuf, u64, String)> = Vec::new();
-        let mut cleaned: Vec<PathBuf> = Vec::new();
+        let mut writes: Vec<(RecoveryKey, u64, String)> = Vec::new();
+        let mut cleaned: Vec<RecoveryKey> = Vec::new();
         for i in 0..self.buffers.len() {
             let buf = if i == self.active {
                 &self.buffer
@@ -64,22 +64,23 @@ impl super::App {
             let Some(path) = buf.path.as_ref() else {
                 continue;
             };
-            let dumped = self.recovery_written.get(path).copied();
+            let key = RecoveryKey::Path(path.clone());
+            let dumped = self.recovery_written.get(&key).copied();
             if buf.dirty && dumped != Some(buf.version) {
-                writes.push((path.clone(), buf.version, buf.rope.to_string()));
+                writes.push((key, buf.version, buf.rope.to_string()));
             } else if !buf.dirty && dumped.is_some() {
-                cleaned.push(path.clone());
+                cleaned.push(key);
             }
         }
         let snapshot = self.recovery_snapshot.clone();
         let _writing = snapshot.lock().unwrap_or_else(|e| e.into_inner());
-        for (path, version, text) in writes {
-            if dump(&path, text) {
-                self.recovery_written.insert(path, version);
+        for (key, version, text) in writes {
+            if dump(&key, text) {
+                self.recovery_written.insert(key, version);
             }
         }
-        for path in cleaned {
-            self.discard_recovery(&path);
+        for key in cleaned {
+            self.discard_recovery_key(&key);
         }
     }
 
@@ -94,10 +95,11 @@ impl super::App {
         // Already this session's: applied when a restored session opened it,
         // or dumped since. Read again, it would match the buffer and be
         // removed while the buffer is still dirty.
-        if self.recovery_written.contains_key(&path) {
+        let key = RecoveryKey::Path(path);
+        if self.recovery_written.contains_key(&key) {
             return;
         }
-        let Some(dest) = recovery_path(&path) else {
+        let Some(dest) = recovery_path_for(&key) else {
             return;
         };
         let Some(rec) = load_from(&dest) else {
@@ -119,7 +121,7 @@ impl super::App {
         self.buffer.replace_all(text);
         self.buffer.dirty = true;
         self.clamp_cursor_normal();
-        self.recovery_written.insert(path, self.buffer.version);
+        self.recovery_written.insert(key, self.buffer.version);
         let age = Duration::from_secs(now_secs().saturating_sub(rec.saved_at));
         self.status_msg = format!(
             "recovered unsaved changes from {} — :w keeps them, :e! discards them",
@@ -131,15 +133,15 @@ impl super::App {
     /// shares its nodes, so this costs a `Vec` per iteration, not the text.
     #[cfg(unix)]
     pub(super) fn refresh_recovery_snapshot(&mut self) {
-        let dirty: Vec<(PathBuf, ropey::Rope)> = (0..self.buffers.len())
+        let dirty: Vec<(RecoveryKey, ropey::Rope)> = (0..self.buffers.len())
             .filter_map(|i| {
                 let buf = if i == self.active {
                     &self.buffer
                 } else {
                     &self.buffers[i].buffer
                 };
-                let path = buf.path.clone()?;
-                buf.dirty.then(|| (path, buf.rope.clone()))
+                let key = RecoveryKey::Path(buf.path.clone()?);
+                buf.dirty.then(|| (key, buf.rope.clone()))
             })
             .collect();
         *self
@@ -194,8 +196,8 @@ impl super::App {
             };
             {
                 let dirty = snapshot.lock().unwrap_or_else(|e| e.into_inner());
-                for (path, rope) in dirty.iter() {
-                    dump(path, rope.to_string());
+                for (key, rope) in dirty.iter() {
+                    dump(key, rope.to_string());
                 }
             }
             if let Some(session) = session.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
@@ -225,7 +227,10 @@ impl super::App {
         // Made absolute the way `Buffer::from_path` does, so the key matches:
         // ripgrep names files `./src/x.rs`, and `.` segments change the hash.
         let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        if self.recovery_written.contains_key(&path) {
+        if self
+            .recovery_written
+            .contains_key(&RecoveryKey::Path(path.clone()))
+        {
             return false;
         }
         let Some(rec) = recovery_path(&path).and_then(|dest| load_from(&dest)) else {
@@ -241,7 +246,10 @@ impl super::App {
     /// when that isn't what's on disk — for a caller that has to read the
     /// text before opening the file.
     pub(super) fn recovered_text_for(&self, path: &Path) -> Option<String> {
-        if self.recovery_written.contains_key(path) {
+        if self
+            .recovery_written
+            .contains_key(&RecoveryKey::Path(path.to_path_buf()))
+        {
             return None;
         }
         let rec = recovery_path(path).and_then(|dest| load_from(&dest))?;
@@ -256,10 +264,14 @@ impl super::App {
     /// applied here. One a crash left for a file not opened yet, or one
     /// another binvim is still writing, isn't this session's to remove.
     pub(super) fn discard_recovery(&mut self, path: &Path) {
-        if self.recovery_written.remove(path).is_none() {
+        self.discard_recovery_key(&RecoveryKey::Path(path.to_path_buf()));
+    }
+
+    pub(super) fn discard_recovery_key(&mut self, key: &RecoveryKey) {
+        if self.recovery_written.remove(key).is_none() {
             return;
         }
-        if let Some(dest) = recovery_path(path) {
+        if let Some(dest) = recovery_path_for(key) {
             let _ = std::fs::remove_file(dest);
         }
     }
@@ -272,21 +284,24 @@ impl super::App {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
-        let paths: Vec<PathBuf> = self.recovery_written.keys().cloned().collect();
-        for path in paths {
-            self.discard_recovery(&path);
+        let keys: Vec<RecoveryKey> = self.recovery_written.keys().cloned().collect();
+        for key in keys {
+            self.discard_recovery_key(&key);
         }
     }
 }
 
-/// Write `text` as `path`'s recovery file. False when there's nowhere to put
+/// Write `text` as `key`'s recovery file. False when there's nowhere to put
 /// it (tests, no cache dir) or the write failed.
-fn dump(path: &Path, text: String) -> bool {
-    let Some(dest) = recovery_path(path) else {
+fn dump(key: &RecoveryKey, text: String) -> bool {
+    let Some(dest) = recovery_path_for(key) else {
         return false;
     };
+    let path = match key {
+        RecoveryKey::Path(path) => path.display().to_string(),
+    };
     let rec = RecoveryFile {
-        path: path.display().to_string(),
+        path,
         saved_at: now_secs(),
         text,
         pid: std::process::id(),

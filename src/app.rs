@@ -408,14 +408,15 @@ pub struct App {
     /// the dashboard re-snapshots resources / LSP-pending counts on a
     /// fixed cadence rather than freezing at the open-time reading.
     pub health_last_refresh: Instant,
-    /// Buffer version last dumped to each path's recovery file, so an
+    /// Buffer version last dumped to each recovery file, so an
     /// unchanged buffer isn't rewritten every interval.
-    pub recovery_written: HashMap<PathBuf, u64>,
+    pub recovery_written: HashMap<crate::recover::RecoveryKey, u64>,
     pub recovery_checked_at: Instant,
-    /// Every dirty buffer's path and text, refreshed each loop iteration, for
+    /// Every dirty buffer's recovery key and text, refreshed each loop iteration, for
     /// the signal thread to write out (`recover_glue`). The lock also keeps
     /// that thread and the loop from writing the same recovery file at once.
-    pub recovery_snapshot: std::sync::Arc<std::sync::Mutex<Vec<(PathBuf, ropey::Rope)>>>,
+    pub recovery_snapshot:
+        std::sync::Arc<std::sync::Mutex<Vec<(crate::recover::RecoveryKey, ropey::Rope)>>>,
     /// The session as a clean quit would save it, refreshed with the recovery
     /// dumps, for the signal thread to save. `None` until the first refresh,
     /// so a signal that early leaves the last session on disk alone.
