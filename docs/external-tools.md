@@ -9,10 +9,10 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `typescript-language-server`    | JS / TS / JSX / TSX LSP                  | `npm i -g typescript-language-server typescript`                         |
 | `gopls`                         | Go LSP                                   | `go install golang.org/x/tools/gopls@latest`                             |
 | `pyright-langserver`            | Python LSP (`basedpyright-langserver` is tried as a fallback) | `npm i -g pyright` (or `npm i -g basedpyright`)                          |
-| `clangd`                        | C / C++ LSP                              | `brew install llvm` / `apt install clangd` / `winget install LLVM.LLVM` / `scoop install llvm` |
+| `clangd`                        | C / C++ LSP                              | `brew install llvm` / `apt install clangd` / `scoop install llvm` |
 | `bash-language-server`          | Bash / shell LSP                         | `npm i -g bash-language-server`                                          |
 | `yaml-language-server`          | YAML LSP                                 | `npm i -g yaml-language-server`                                          |
-| `lua-language-server`           | Lua LSP                                  | `brew install lua-language-server` / `winget install LuaLS.lua-language-server` / `scoop install lua-language-server` |
+| `lua-language-server`           | Lua LSP                                  | `brew install lua-language-server` / `winget install LuaLS.lua-language-server` / `scoop install lua-language-server` / `choco install lua-language-server` |
 | `vue-language-server`           | Vue LSP                                  | `npm i -g @vue/language-server`                                          |
 | `svelteserver`                  | Svelte LSP                               | `npm i -g svelte-language-server`                                        |
 | `marksman`                      | Markdown LSP                             | `brew install marksman` (single Go binary) / `winget install Artempyanykh.Marksman` / `scoop install marksman` |
@@ -38,16 +38,16 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `csharpier`                     | `.cs` formatter                          | `dotnet tool install --global csharpier`                                 |
 | `gofmt` / `goimports`           | Go formatter (`goimports` preferred when on `$PATH` — it also organises imports) | Ships with Go; `go install golang.org/x/tools/cmd/goimports@latest` for the imports variant |
 | `ruff` (or `black`)             | Python formatter (ruff preferred, black as fallback) | `pipx install ruff` / `pipx install black`                                |
-| `clang-format`                  | C / C++ formatter                        | `brew install llvm` / `apt install clang-format` / `winget install LLVM.LLVM` / `scoop install llvm` |
+| `clang-format`                  | C / C++ formatter                        | `brew install llvm` / `apt install clang-format` / `scoop install llvm` |
 | `shfmt`                         | Shell-script formatter                   | `brew install shfmt` / `go install mvdan.cc/sh/v3/cmd/shfmt@latest`       |
 | `stylua`                        | Lua formatter                            | `cargo install stylua` / `brew install stylua`                            |
 | `prettier`                      | Formatter for the file types biome doesn't cover — Markdown / MDX, Vue, Svelte, HTML, CSS / SCSS / Less, YAML, GraphQL. Project-local preferred (walks up to `node_modules/.bin/prettier`), then `$PATH` | `npm i -g prettier` (or `-D` per project; Svelte additionally needs `prettier-plugin-svelte` in node_modules) |
 | `rufo`                          | Ruby formatter                           | `gem install rufo`                                                       |
 | `php-cs-fixer`                  | PHP formatter                            | `composer global require friendsofphp/php-cs-fixer`                       |
 | `google-java-format`            | Java formatter                           | `brew install google-java-format`                                        |
-| `zig fmt`                       | Zig formatter (ships with the toolchain) | `brew install zig` / `winget install zig.zig` / `scoop install zig` |
+| `zig fmt`                       | Zig formatter (ships with the toolchain) | `brew install zig` / `winget install zig.zig` / `scoop install zig` / `choco install zig` |
 | `nixfmt` (or `alejandra`)       | Nix formatter                            | `nix profile install nixpkgs#nixfmt-rfc-style` (alejandra via `nix profile install nixpkgs#alejandra`) |
-| `mix format`                    | Elixir formatter (ships with the toolchain) | `brew install elixir` / `winget install Elixir.Elixir` / `scoop install elixir` |
+| `mix format`                    | Elixir formatter (ships with the toolchain) | `brew install elixir` / `scoop install elixir` |
 | `ktfmt`                         | Kotlin formatter                         | `brew install ktfmt`                                                     |
 | `sql-formatter`                 | SQL formatter (multi-dialect)            | `npm i -g sql-formatter`                                                 |
 | `netcoredbg`                    | .NET debug adapter (DAP)                 | Build from [github.com/Samsung/netcoredbg](https://github.com/Samsung/netcoredbg). The binary and its `libdbgshim.dylib` / `ManagedPart.dll` / `Microsoft.CodeAnalysis.*.dll` siblings need to live in the same directory — symlink them next to the binary if you copy out of the build's install dir. |

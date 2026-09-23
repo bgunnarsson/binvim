@@ -32,8 +32,10 @@ Decisions:
     --accept-package-agreements`, and `winget upgrade --id <id> --exact …` to upgrade.
   - scoop: `scoop install <app>`, and `scoop update <app>` to upgrade.
   - choco: `choco install <pkg> -y`, and `choco upgrade <pkg> -y` to upgrade.
-  - Each is spawned directly (`Command::new("winget")`), as `Brew` is. `run_plan` already
-    inherits stdio, so choco's elevation prompt reaches the user.
+  - winget and choco are spawned directly (`Command::new("winget")`), as `Brew` is. choco
+    doesn't raise UAC itself, so in a shell that isn't elevated it fails. A failed choco step
+    says it needs an Administrator shell. (This was first written as "choco's elevation prompt
+    reaches the user", which review found untrue.)
 - **Scoop entries come from the `main` bucket only.** `build_command` returns one `Command`, and
   an app in `extras` would first need `scoop bucket add extras`. Where only `extras` has a tool,
   the `Tool` gets no `Scoop` entry.
@@ -59,30 +61,31 @@ Looked up 2026-09-23:
 
 An id counts only when the package also puts the probed `bin` on `PATH`:
 
-- winget: a `portable` alias, or `Commands` naming the bin.
+- winget: a `portable` alias. `Commands` is search metadata only (winget's manifest schema:
+  "does not update the path"), so an MSI or NSIS package counts only if its installer adds PATH
+  itself. Review found that LLVM's MSI and Elixir's silent NSIS install don't.
 - scoop: `bin` or `env_add_path`.
 
 | tool (`bin`) | winget | scoop (`main`) | choco |
 | --- | --- | --- | --- |
-| `clangd` | `LLVM.LLVM` (MSI; `Commands` lists `clangd`) | `llvm` (`env_add_path: bin`) | `llvm` |
-| `clang-format` | `LLVM.LLVM` (`Commands` lists it) | `llvm` | `llvm` |
+| `clangd` | none (`LLVM.LLVM`'s WiX MSI has no PATH component) | `llvm` (`env_add_path: bin`) | none (`llvm` runs the MSI) |
+| `clang-format` | none (as `clangd`) | `llvm` | none |
 | `lldb-dap` | none (`LLVM.LLVM`'s `Commands` lists `lldb`, not `lldb-dap`) | none (unconfirmed in `llvm`) | none |
-| `lua-language-server` | `LuaLS.lua-language-server` (portable, `bin/lua-language-server.exe`) | `lua-language-server` | `lua-language-server` |
+| `lua-language-server` | `LuaLS.lua-language-server` (portable, `bin/lua-language-server.exe`) | `lua-language-server` | `lua-language-server` (unzips into the package, which choco shims) |
 | `marksman` | `Artempyanykh.Marksman` (portable `marksman.exe`) | `marksman` | none |
 | `jdtls` | none | none (`jdtls` has no `bin` / `env_add_path`) | none |
 | `google-java-format` | none | none | none |
 | `zls` | `zigtools.zls` (portable, `Commands: zls`) | `zls` | none |
-| `zig` | `zig.zig` (portable `zig.exe`) | `zig` | `zig` |
+| `zig` | `zig.zig` (portable `zig.exe`) | `zig` | `zig` (`Install-ChocolateyZipPackage` into the package, shimmed) |
 | `elixir-ls` | none | `elixir-ls` (shim `elixir-ls`) | none |
-| `mix` | `Elixir.Elixir` (nullsoft; `Commands` lists `mix`) | `elixir` (`env_add_path: bin`) | `elixir` |
+| `mix` | none (`Elixir.Elixir`'s NSIS adds PATH only on a finish page a silent install skips) | `elixir` (`env_add_path: bin`) | none (`elixir` runs the NSIS) |
 | `kotlin-language-server` | none | none | none |
 | `ktfmt` | none | none | none |
 
-Two things I couldn't verify from the indexes, and which are left for the Windows check:
-
-- Whether the choco packages add their binary to `PATH`.
-- Whether `LLVM.LLVM`'s MSI adds its `bin` to `PATH`. Its manifest lists the commands, but the
-  MSI's PATH behaviour isn't stated.
+The choco `zig` and `lua-language-server` packages were read on community.chocolatey.org
+(their `chocolateyinstall.ps1` unzips into the package). The LLVM MSI and the Elixir NSIS were
+read in `llvm/llvm-project` (`llvm/CMakeLists.txt` WIX branch) and `elixir-lang/elixir`
+(`lib/elixir/scripts/windows_installer/installer.nsi`).
 
 So 8 of the 13 tools gain a Windows path. `lldb-dap`, `jdtls`, `google-java-format`,
 `kotlin-language-server` and `ktfmt` stay on `NoManager` on Windows.
@@ -133,9 +136,10 @@ doesn't bind here.
 - [x] Update `docs/external-tools.md` with the Windows command
   per tool, and tick `WINDOWS.md`'s installer item with prose saying what shipped. Verify by
   reading the diff.
-- [ ] Update binvim.dev's install table in the sibling `binvim-web` repo to match. Verify by
-  reading its diff, and note in the report that the site isn't live until the user redeploys it
-  in Dokploy.
+- [x] ~~Update binvim.dev's install table in the sibling `binvim-web` repo to match.~~ Moved out
+  of this plan, as the user decided. `binvim-web` is mid-rework (26 uncommitted changes, and its only
+  install table is in `_old/index.html`), so the table is updated with the new site, copying
+  `docs/external-tools.md`.
 
 ## Files
 

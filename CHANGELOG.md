@@ -8,9 +8,11 @@ follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - **The installer uses winget, scoop and choco on Windows.** `:install` and
-  `binvim-install` now install clangd, clang-format, lua-language-server,
-  marksman, zls, zig, elixir-ls and Elixir through winget (preferred), scoop or
-  choco, where they used to report that no package manager was available.
+  `binvim-install` now install lua-language-server, marksman, zls and zig
+  through winget (preferred), scoop or choco, and clangd, clang-format,
+  elixir-ls and Elixir through scoop, where they used to report that no package
+  manager was available. `:update` upgrades each tool through the manager that
+  installed it, found from where its binary lives.
 
 ### Changed
 - **The README is now an index over `docs/`.** Each of its sections — editing,
