@@ -12,7 +12,7 @@ A few language-specific tweaks on top of the bundled queries:
 - **`.editorconfig`** — comments, `[*.cs]` section headers in Pink, `key = value` pairs with the key in Lavender, `=` in Sky, value in Green.
 - **`.gitignore` family** — `#` comments, `!`-negation prefix in Mauve, patterns in Lavender.
 
-Known issues: two upstream C-scanner bugs — in `tree-sitter-md` and in
-`tree-sitter-bash` — can abort the process rather than fail softly on hostile
-input, and SCSS on Windows falls back to the CSS grammar. See
+Known issues: an upstream C-scanner bug in `tree-sitter-bash` can abort the
+process rather than fail softly on hostile input, and SCSS on Windows falls back
+to the CSS grammar. See
 [KNOWN_ISSUES.md](../KNOWN_ISSUES.md).

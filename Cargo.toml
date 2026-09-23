@@ -25,6 +25,8 @@ include = [
     "/README.md",
     "/CHANGELOG.md",
     "/rustfmt.toml",
+    "/build.rs",
+    "/vendor/**/*",
 ]
 
 [dependencies]
@@ -39,7 +41,10 @@ tree-sitter-typescript = "0.23"
 tree-sitter-javascript = "0.23"
 tree-sitter-json = "0.24"
 tree-sitter-go = "0.23"
-tree-sitter-md = "0.3"
+# Markdown's block grammar is compiled from vendor/tree-sitter-markdown by
+# build.rs, not taken from tree-sitter-md, for a scanner fix upstream hasn't
+# taken; see its README. This is what its language function hands over.
+tree-sitter-language = "0.1"
 tree-sitter-html = "0.23"
 tree-sitter-css = "0.23"
 tree-sitter-c-sharp = "0.23"
@@ -92,6 +97,9 @@ vte = "0.15"
 # `flag_if_supported`.
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tree-sitter-scss = "1.0.0"
+
+[build-dependencies]
+cc = "1"
 
 # SIGTERM and SIGHUP (a `kill`, a closed terminal) end the process on the
 # spot by default, before dirty buffers' recovery files are brought up to

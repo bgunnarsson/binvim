@@ -327,7 +327,7 @@ impl Lang {
             Lang::Scss => tree_sitter_scss::language(),
             #[cfg(target_env = "msvc")]
             Lang::Scss => tree_sitter_css::LANGUAGE.into(),
-            Lang::Markdown => tree_sitter_md::LANGUAGE.into(),
+            Lang::Markdown => MARKDOWN_LANGUAGE.into(),
             Lang::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
             Lang::Razor => tree_sitter_razor::LANGUAGE.into(),
             Lang::Bash => tree_sitter_bash::LANGUAGE.into(),
@@ -464,7 +464,7 @@ impl Lang {
             Lang::Scss => format!("{CSS_QUERY_OVERRIDE}\n{SCSS_QUERY_OVERLAY}"),
             #[cfg(target_env = "msvc")]
             Lang::Scss => CSS_QUERY_OVERRIDE.into(),
-            Lang::Markdown => tree_sitter_md::HIGHLIGHT_QUERY_BLOCK.into(),
+            Lang::Markdown => MARKDOWN_HIGHLIGHTS_QUERY.into(),
             Lang::CSharp => tree_sitter_c_sharp::HIGHLIGHTS_QUERY.into(),
             // Razor's grammar extends C#, so the bundled C# query already
             // matches every C# node inside `@{}`, `@if`, `@(expr)`, etc.
@@ -510,6 +510,19 @@ impl Lang {
         }
     }
 }
+
+// Markdown's block grammar is compiled from vendor/tree-sitter-markdown by
+// build.rs rather than taken from tree-sitter-md, whose scanner can abort on
+// `1€` at the start of a line under glibc (see the vendor README).
+unsafe extern "C" {
+    fn tree_sitter_markdown() -> *const ();
+}
+
+const MARKDOWN_LANGUAGE: tree_sitter_language::LanguageFn =
+    unsafe { tree_sitter_language::LanguageFn::from_raw(tree_sitter_markdown) };
+
+const MARKDOWN_HIGHLIGHTS_QUERY: &str =
+    include_str!("../vendor/tree-sitter-markdown/queries/highlights.scm");
 
 /// Extra tree-sitter highlight captures layered onto the JS / TS / TSX
 /// queries. The bundled tree-sitter-javascript query categorises every
@@ -2713,19 +2726,27 @@ export function Page() {
     // `\PC{0,400}` if a fixed tree-sitter-bash lands upstream.
     const BASH_FUZZ_ALPHABET: &str = "[\t\n -~]{0,400}";
 
-    // tree-sitter-md's block scanner reads an ordered-list marker with
-    // `while (isdigit(lexer->lookahead))` (scanner.c), passing a full
-    // Unicode scalar to the *narrow* `isdigit`, whose argument is undefined
-    // outside 0..=255. glibc indexes its ctype table unchecked, so a digit
-    // followed by a codepoint >= U+0100 reads past the table — usually a
-    // wrong answer, occasionally an unmapped page and a SIGSEGV. Like bash's
-    // scanner it only faults on x86_64 CI and never reproduces from one
-    // input; macOS's range-checked libc hides it. Still present in
-    // tree-sitter-md 0.5.3. Restricting to ASCII keeps the byte-offset
-    // invariant and every block shape while never feeding a wide codepoint
-    // to `isdigit`. A known issue in KNOWN_ISSUES.md; drop this if
-    // upstream fixes the call.
-    const MARKDOWN_FUZZ_ALPHABET: &str = "[\t\n -~]{0,400}";
+    // The vendored scanner reads an ordered-list marker's digits by range, not
+    // with `isdigit` on a Unicode scalar (vendor/tree-sitter-markdown/README.md).
+    // A digit followed by a wide codepoint is text, and one followed by `.` and
+    // a space is still a list item.
+    #[test]
+    fn a_digit_before_a_wide_codepoint_is_not_a_list_marker() {
+        let mut parser = Parser::new();
+        parser.set_language(&Lang::Markdown.ts_language()).unwrap();
+        let mut kinds = |src: &str| {
+            let tree = parser.parse(src, None).unwrap();
+            let section = tree.root_node().child(0).unwrap();
+            let mut cursor = section.walk();
+            section
+                .named_children(&mut cursor)
+                .map(|n| n.kind())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(kinds("1\u{20ac} a\n"), ["paragraph"]);
+        assert_eq!(kinds("12\u{4e00}. a\n"), ["paragraph"]);
+        assert_eq!(kinds("1. \u{20ac}\n2. \u{4e00}\n"), ["list"]);
+    }
 
     fuzz_lang!(fuzz_rust, Lang::Rust);
     fuzz_lang!(fuzz_typescript, Lang::TypeScript);
@@ -2736,7 +2757,7 @@ export function Page() {
     fuzz_lang!(fuzz_html, Lang::Html);
     fuzz_lang!(fuzz_css, Lang::Css);
     fuzz_lang!(fuzz_scss, Lang::Scss);
-    fuzz_lang!(fuzz_markdown, Lang::Markdown, MARKDOWN_FUZZ_ALPHABET);
+    fuzz_lang!(fuzz_markdown, Lang::Markdown);
     fuzz_lang!(fuzz_csharp, Lang::CSharp);
     fuzz_lang!(fuzz_razor, Lang::Razor);
     fuzz_lang!(fuzz_bash, Lang::Bash, BASH_FUZZ_ALPHABET);

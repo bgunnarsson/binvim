@@ -9,30 +9,6 @@ There is no issue tracker — this file is it.
 
 ## Highlighting
 
-### An ordered-list marker followed by a non-ASCII character can abort binvim
-
-**Markdown, glibc only. No fix available.**
-
-`tree-sitter-md`'s block scanner reads an ordered-list marker with
-`while (isdigit(lexer->lookahead))`, handing a full Unicode scalar to the
-*narrow* `isdigit`, whose argument is undefined outside `0..=255`. glibc indexes
-its ctype table unchecked, so a digit followed by a codepoint at or above U+0100
-— `1€` at the start of a line — reads past the table. Usually that is a wrong
-answer; occasionally it is an unmapped page and a `SIGSEGV` that takes the
-process with it, because a C-side fault is not a Rust panic and nothing above it
-can catch it.
-
-Present through `tree-sitter-md` 0.5.3. macOS's range-checked libc hides it, and
-it has never reproduced from a single captured input — it needs an allocator
-shaped by enough prior parses — so it surfaced only as a non-deterministic
-crash in `fuzz_markdown` on native x86_64 CI.
-
-The call is inherent to the grammar, so closing it means an upstream fix or a
-vendored grammar. Until then the fuzz suite feeds Markdown printable ASCII plus
-tab and newline (`MARKDOWN_FUZZ_ALPHABET`, `lang.rs:2728`), which keeps the
-byte-offset invariant and every block shape under test while never exercising
-the path. That stops the random CI crash; it does not stop the crash.
-
 ### Adversarial multibyte UTF-8 can abort binvim through the bash grammar
 
 **Bash, `.editorconfig` and the `.gitignore` family. No fix available.**

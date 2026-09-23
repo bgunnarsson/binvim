@@ -40,6 +40,12 @@ follows [Semantic Versioning](https://semver.org/).
   that had grown, and colours named for the stock palette only.
 
 ### Fixed
+- **A digit followed by a non-ASCII character can no longer abort binvim in a
+  Markdown file.** `1€` at the start of a line sent a Unicode codepoint to C's
+  `isdigit` in `tree-sitter-md`'s scanner, which on Linux could read past
+  glibc's table and take the process down with unsaved work in it. binvim now
+  builds the Markdown grammar from a copy in `vendor/tree-sitter-markdown` with
+  that loop comparing against `0`–`9`, since upstream declined the same fix.
 - **A `[No Name]` buffer's unsaved text survives a crash.** It's now dumped
   every four seconds like a file's, and on a closed terminal. The next launch
   says how many a crash left, and `:recover` opens them. It used to be lost
