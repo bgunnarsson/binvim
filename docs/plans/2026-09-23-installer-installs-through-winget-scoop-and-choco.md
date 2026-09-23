@@ -130,7 +130,7 @@ doesn't bind here.
   Windows entries stripped. That pins today's catalog and any tool added later.
   `windows_entries_follow_every_other_installer` pins the order. The `{winget}` check runs through
   `pick_installer`, since `build_plan` also consults `on_path` on the host running the test.
-- [ ] Update `docs/external-tools.md` with the Windows command
+- [x] Update `docs/external-tools.md` with the Windows command
   per tool, and tick `WINDOWS.md`'s installer item with prose saying what shipped. Verify by
   reading the diff.
 - [ ] Update binvim.dev's install table in the sibling `binvim-web` repo to match. Verify by

@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **The installer uses winget, scoop and choco on Windows.** `:install` and
+  `binvim-install` now install clangd, clang-format, lua-language-server,
+  marksman, zls, zig, elixir-ls and Elixir through winget (preferred), scoop or
+  choco, where they used to report that no package manager was available.
+
 ### Changed
 - **The README is now an index over `docs/`.** Each of its sections — editing,
   keys, ex commands, Vim compatibility, highlighting, LSP, the debugger,
