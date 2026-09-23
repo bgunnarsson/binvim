@@ -4,9 +4,17 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.7.0]
 
 ### Added
+- **A terminal compatibility matrix.** `TERMINALS.md` holds the checks every
+  terminal is held to (keys, cursor shape, colour, italics, glyphs, widths,
+  mouse, paste, synchronized output, undercurl, OSC 52, `:terminal`, lazygit,
+  closing with unsaved changes) and how Ghostty, Kitty, WezTerm and tmux came
+  out. `scripts/terminal-probe.sh` asks a terminal most of it directly and
+  prints a report keyed by check number, so a new terminal takes about a
+  minute. The README names binvim's official terminals: Ghostty on macOS and
+  Linux, PowerShell in Windows Terminal on Windows.
 - **The installer uses winget, scoop and choco on Windows.** `:install` and
   `binvim-install` now install lua-language-server, marksman, zls and zig
   through winget (preferred), scoop or choco, and clangd, clang-format,

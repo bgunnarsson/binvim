@@ -68,7 +68,9 @@ literally.
   is back on full Unicode.
 - **Terminal compatibility matrix.** Test + document Ghostty, Kitty, WezTerm,
   Alacritty, tmux, Windows Terminal, and over-SSH. The published matrix doubles
-  as a hardening checklist and marketing.
+  as a hardening checklist and marketing. Documented in [`TERMINALS.md`](TERMINALS.md)
+  with `scripts/terminal-probe.sh`: Ghostty, Kitty, WezTerm and tmux are in for
+  0.7; Alacritty, Windows Terminal, over-SSH and Terminal.app are still to run.
 - **Performance budget with numbers.** Formalize the render-coalescing win into
   input-latency and startup-time budgets, and a benchmark page (startup + memory
   vs a Neovim distro like LazyVim). The clippy gate is on — pinned to 1.98.0,

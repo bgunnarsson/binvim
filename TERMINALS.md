@@ -69,6 +69,8 @@ Record each cell as:
 - **n/a** — the check can't apply here, with the reason in the notes under the matrix.
 - **a link** — to the `KNOWN_ISSUES.md` entry when the terminal is at fault, or to the commit
   that fixed binvim when binvim was.
+- **—** — not run yet. Alacritty, Windows Terminal, over-SSH and Terminal.app shipped in 0.7
+  without a run and are filled in as they are checked.
 
 A cell is never a bare "fail".
 
@@ -163,28 +165,28 @@ A cell is never a bare "fail".
 
 | # | Check | Ghostty | Kitty | WezTerm | Alacritty | tmux | Windows Terminal | over SSH | Terminal.app |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| | Version | 1.3.1 | 0.49.0 | 20240203-110809-5046fc22 | | 3.6a | | | |
-| 1 | Launch and quit | ✓ | ✓ | ✓ | | ✓ | | | |
-| 2 | Re-encoded keys | ✓ | ✓ | ✓ | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
-| 3 | Esc response | ✓ | ✓ | ✓ | | ✓ | | | |
-| 4 | `Ctrl-[` and Alt | ✓ | ✓ | ✓ | | ✓ | | | |
-| 5 | Shift / Ctrl arrows | n/a | n/a | n/a | | ✓ | | | |
-| 6 | Cursor shape | ✓ | ✓ | ✓ | | ✓ | | | |
-| 7 | Truecolor | ✓ | ✓ | ✓ | | ✓ | | | |
-| 8 | Italic and bold | ✓ | ✓ | ✓ | | ✓ | | | |
-| 9 | Nerd Font glyphs | ✓ | ✓ | ✓ | | ✓ | | | |
-| 10 | Wide characters | ✓ | ✓ | ✓ | | ✓ | | | |
-| 11 | Emoji clusters | ✓ | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | | ✓ | | | |
-| 12 | Long line | ✓ | ✓ | ✓ | | ✓ | | | |
-| 13 | Mouse | ✓ | ✓ | ✓ | | ✓ | | | |
-| 14 | Bracketed paste | ✓ | ✓ | ✓ | | ✓ | | | |
-| 15 | Synchronized output | ✓ | ✓ | ✓ | | ✓ | | | |
-| 16 | Undercurl | ✓ | ✓ | ✓ | | ✓ | | | |
-| 17 | Resize | ✓ | ✓ | ✓ | | ✓ | | | |
-| 18 | OSC 52 | ✓ | ✓ | ✓ | | ✓ | | | |
-| 19 | `:terminal` | ✓ | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
-| 20 | lazygit round trip | ✓ | ✓ | ✓ | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
-| 21 | Closing unsaved | ✓ | ✓ | ✓ | | ✓ | | | |
+| | Version | 1.3.1 | 0.49.0 | 20240203-110809-5046fc22 | not yet run | 3.6a | not yet run | not yet run | not yet run |
+| 1 | Launch and quit | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 2 | Re-encoded keys | ✓ | ✓ | ✓ | — | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | — | — | — |
+| 3 | Esc response | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 4 | `Ctrl-[` and Alt | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 5 | Shift / Ctrl arrows | n/a | n/a | n/a | — | ✓ | — | — | — |
+| 6 | Cursor shape | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 7 | Truecolor | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 8 | Italic and bold | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 9 | Nerd Font glyphs | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 10 | Wide characters | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 11 | Emoji clusters | ✓ | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | — | ✓ | — | — | — |
+| 12 | Long line | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 13 | Mouse | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 14 | Bracketed paste | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 15 | Synchronized output | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 16 | Undercurl | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 17 | Resize | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 18 | OSC 52 | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
+| 19 | `:terminal` | ✓ | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | — | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | — | — | — |
+| 20 | lazygit round trip | ✓ | ✓ | ✓ | — | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | — | — | — |
+| 21 | Closing unsaved | ✓ | ✓ | ✓ | — | ✓ | — | — | — |
 
 ### Notes
 

@@ -125,7 +125,7 @@ Decisions (the user chose the checklist route):
   cell and its note.
   Done in `2026-09-23-no-known-data-loss-path-is-left-open-for-0-7.md` (`ca45836`): check 14 now
   reads the saved bytes, and the tmux note says what the first run missed.
-- [ ] `scripts/terminal-probe.sh` answers the checks a terminal can report on itself, in one run
+- [x] `scripts/terminal-probe.sh` answers the checks a terminal can report on itself, in one run
   with a pasteable report keyed by check number. It asks the terminal (XTVERSION, the Kitty
   keyboard query after binvim's own push, DECRQM for 2026 / 2004 / 1006, DECRQSS for truecolor,
   undercurl and cursor shape), measures the fixture's clusters with `CSI 6n` against the widths
@@ -146,8 +146,13 @@ Decisions (the user chose the checklist route):
   Terminal, over-SSH and Terminal.app, and finish Kitty (checks 1–6 are in, `05d468f`). Fill the rows from their reports, fix binvim-side failures (each its
   own commit) and file terminal-side ones in `KNOWN_ISSUES.md`. Verify that every cell is
   resolved as the acceptance criteria require.
-- [ ] Link `TERMINALS.md` from `README.md`, mark the matrix done in `ROADMAP.md`, and add a
+  Deviation: 0.7.0 shipped with Ghostty (from the user's daily use), Kitty, WezTerm and tmux
+  filled. Alacritty, Windows Terminal, over-SSH and Terminal.app read "not yet run" (`—`), at the
+  user's call, and this task stays open until they're run.
+- [x] Link `TERMINALS.md` from `README.md`, mark the matrix done in `ROADMAP.md`, and add a
   `CHANGELOG.md` entry for any fix. Verify by reading the diff.
+  Deviation: `ROADMAP.md` records the four columns still to run instead of calling the matrix
+  done. README link in `ce44235`; the fixes' entries were already in the changelog.
 
 ## Files
 
