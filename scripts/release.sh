@@ -719,7 +719,7 @@ step "Mirror install.sh → binvim-web"
 
 ensure_sibling_clean_and_current "$WEB_DIR" "binvim-web" || exit 1
 
-SRC_INSTALL="${ROOT}/install.sh"
+SRC_INSTALL="${ROOT}/scripts/install.sh"
 DST_INSTALL="${WEB_DIR}/install.sh"
 
 if [[ ! -f "$SRC_INSTALL" ]]; then
