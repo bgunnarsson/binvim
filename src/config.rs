@@ -410,14 +410,29 @@ impl Config {
         })
     }
 
-    /// Optional editor background. When set via `[colors] background = "#…"`
-    /// (or a named colour), the buffer body, gutter, and empty rows paint
-    /// against this colour instead of the terminal's default background.
-    /// Themes in `./themes/` ship this so switching theme also switches the
-    /// background; leave it unset for a transparent buffer that inherits the
-    /// terminal's own background.
+    /// The editor background: the buffer body, gutter and empty rows paint
+    /// against it. Unset, it is Catppuccin Base, so a default binvim looks the
+    /// same in every terminal. `background = "Reset"` is `None`: the buffer
+    /// inherits the terminal's own background and text colour.
     pub fn background_color(&self) -> Option<Color> {
-        self.colors.get("background").and_then(|s| parse_color(s))
+        match self.colors.get("background").and_then(|s| parse_color(s)) {
+            None => Some(Color::Rgb {
+                r: 0x1e,
+                g: 0x1e,
+                b: 0x2e,
+            }),
+            Some(Color::Reset) => None,
+            Some(c) => Some(c),
+        }
+    }
+
+    /// The background the chrome neutrals derive from: only one the user set.
+    /// Unset and `"Reset"` both reach each derivation's Catppuccin constant —
+    /// deriving from the default Base would move zero-config chrome off
+    /// Mantle, and a `Reset` fed to `mix` passes straight through as a
+    /// transparent chrome.
+    fn explicit_background(&self) -> Option<Color> {
+        self.user_color("background").filter(|c| *c != Color::Reset)
     }
 
     /// Background for editor *chrome* — popups, status line, tab bar, side
@@ -432,7 +447,7 @@ impl Config {
         if let Some(c) = self.user_color("chrome_bg") {
             return c;
         }
-        match self.background_color() {
+        match self.explicit_background() {
             Some(bg) if is_dark(bg) => mix(
                 bg,
                 Color::Rgb {
@@ -488,7 +503,7 @@ impl Config {
         if let Some(c) = self.user_color("foreground") {
             return c;
         }
-        match self.background_color() {
+        match self.explicit_background() {
             Some(bg) if is_dark(bg) => Color::Rgb {
                 r: 0xcd,
                 g: 0xd6,
@@ -514,7 +529,7 @@ impl Config {
         if let Some(c) = self.user_color("dim") {
             return c;
         }
-        match self.background_color() {
+        match self.explicit_background() {
             Some(bg) if is_dark(bg) => mix(
                 bg,
                 Color::Rgb {
@@ -564,7 +579,7 @@ impl Config {
         if let Some(c) = self.user_color("surface") {
             return c;
         }
-        match self.background_color() {
+        match self.explicit_background() {
             Some(bg) if is_dark(bg) => mix(
                 bg,
                 Color::Rgb {
@@ -599,7 +614,7 @@ impl Config {
         if let Some(c) = self.user_color("border") {
             return c;
         }
-        match self.background_color() {
+        match self.explicit_background() {
             Some(bg) if is_dark(bg) => mix(
                 bg,
                 Color::Rgb {
@@ -1317,6 +1332,49 @@ fn default_capture_color(head: &str) -> Option<Color> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unset_background_is_catppuccin_base_and_reset_hands_it_to_the_terminal() {
+        let bg = |src: &str| Config::parse(src).unwrap().background_color();
+        let base = Color::Rgb {
+            r: 0x1e,
+            g: 0x1e,
+            b: 0x2e,
+        };
+        assert_eq!(bg(""), Some(base));
+        assert_eq!(bg("[colors]\nbackground = \"Reset\""), None);
+        assert_eq!(
+            bg("[colors]\nbackground = \"#ffffff\""),
+            Some(Color::Rgb {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+            })
+        );
+    }
+
+    /// The chrome keeps its zero-config Catppuccin tones whether the buffer
+    /// is painted by default or handed back to the terminal.
+    #[test]
+    fn chrome_is_the_same_for_an_unset_and_a_reset_background() {
+        let unset = Config::parse("").unwrap();
+        let reset = Config::parse("[colors]\nbackground = \"Reset\"").unwrap();
+        let mantle = Color::Rgb {
+            r: 0x18,
+            g: 0x18,
+            b: 0x25,
+        };
+        let text = Color::Rgb {
+            r: 0xcd,
+            g: 0xd6,
+            b: 0xf4,
+        };
+        assert_eq!((unset.chrome_bg(), unset.theme_fg()), (mantle, text));
+        assert_eq!((reset.chrome_bg(), reset.theme_fg()), (mantle, text));
+        assert_eq!(unset.theme_surface(), reset.theme_surface());
+        assert_eq!(unset.theme_border(), reset.theme_border());
+        assert_eq!(unset.theme_dim(), reset.theme_dim());
+    }
 
     /// `osc52` reads naturally as both a switch and a mode, so it takes a
     /// bool or a name. Defaulting to `Auto` is what keeps the escape off a

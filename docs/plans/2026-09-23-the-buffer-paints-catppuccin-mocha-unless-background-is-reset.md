@@ -1,7 +1,7 @@
 ---
 title: The buffer paints Catppuccin Mocha by default, and background = "Reset" hands it back to the terminal
 date: 2026-09-23
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -73,7 +73,7 @@ Decisions:
 
 ## Tasks
 
-- [ ] In `src/config.rs`, add a private `explicit_background()` returning the parsed key with
+- [x] In `src/config.rs`, add a private `explicit_background()` returning the parsed key with
   `Color::Reset` filtered to `None`. Point the five chrome derivations (`chrome_bg`, `theme_fg`,
   `theme_dim`, `theme_surface`, `theme_border`) at it in place of `background_color()`. Then make
   `background_color()` return `Some(Catppuccin Base #1e1e2e)` when the key is absent and `None`
