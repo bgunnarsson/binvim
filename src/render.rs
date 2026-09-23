@@ -5911,6 +5911,11 @@ fn draw_line_with_selection(
         Vec::new()
     };
     let search_matches = app.line_search_matches_in(bs.buffer, line_idx);
+    // Text no capture or token coloured. Where binvim paints the buffer's
+    // background it paints this too, or the terminal's own text colour would
+    // land on binvim's background; with `background = "Reset"` both are the
+    // terminal's.
+    let plain_fg = buf_bg.map(|_| app.config.theme_fg());
     let doc_highlights: Vec<(usize, usize)> = if let Some(path) = bs.buffer.path.as_deref() {
         app.line_document_highlights(path, line_idx)
     } else {
@@ -6302,11 +6307,16 @@ fn draw_line_with_selection(
         // (mutable / immutable / async / parameter / etc.) is strictly
         // richer than any static query. Falls back to tree-sitter when
         // the LSP didn't tag this column.
-        let syntax_color = sem_col_color.get(col).copied().flatten().or_else(|| {
-            bs.highlight_cache
-                .and_then(|cache| cache.byte_colors.get(byte_off).copied())
-                .flatten()
-        });
+        let syntax_color = sem_col_color
+            .get(col)
+            .copied()
+            .flatten()
+            .or_else(|| {
+                bs.highlight_cache
+                    .and_then(|cache| cache.byte_colors.get(byte_off).copied())
+                    .flatten()
+            })
+            .or(plain_fg);
         let diag_severity = if !in_sel && !in_search && !dim {
             diag_at.get(col).copied().flatten()
         } else {

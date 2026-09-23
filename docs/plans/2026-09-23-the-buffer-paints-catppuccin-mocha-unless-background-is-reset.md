@@ -84,12 +84,14 @@ Decisions:
   - The existing `the_default_config_file_holds_the_defaults` still passes.
 
   Verify with `cargo test --bin binvim config::tests`.
-- [ ] In `src/render.rs`'s `draw_line_with_selection`, fall back from `syntax_color` to
+- [x] In `src/render.rs`'s `draw_line_with_selection`, fall back from `syntax_color` to
   `theme_fg()` when the buffer background is painted (`buf_bg.is_some()`), so every branch that
   reads `syntax_color` gets the default. Then check the other text the buffer body prints without
   a colour (markdown table / rule rows, code-lens and inlay rows, virtual text), and give it the
   same default where it prints buffer text rather than chrome. Verify in tmux on a `.txt` and a
   `.md` file (acceptance criteria 1–3), reading `capture-pane -e`.
+  Deviation: nothing else needed it. The markdown table, `<summary>` and fold-placeholder rows
+  already set their own colour (`theme_fg` / `theme_emphasis` / `theme_dim` / `theme_accent`).
 - [ ] Update `src/default_config.toml` (the `background` and `foreground` comments),
   `docs/configuration.md` (the example block's `background` line, the chrome-palette paragraph
   and `foreground`'s role), the `themes/catppuccin-mocha/theme.toml` comment, and `CHANGELOG.md`
