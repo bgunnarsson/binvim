@@ -50,6 +50,9 @@ playground/**/.zig-cache/
 *.swo
 .claude/
 
+# Work plans stay on the machine that wrote them.
+docs/plans/
+
 # Local environment / secrets
 .env
 .env.local
