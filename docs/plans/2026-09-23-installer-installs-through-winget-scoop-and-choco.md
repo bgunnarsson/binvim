@@ -1,7 +1,7 @@
 ---
 title: The installer installs through winget, scoop and choco on Windows
 date: 2026-09-23
-status: in-progress
+status: done
 ---
 
 ## Context
