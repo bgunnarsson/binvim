@@ -13,7 +13,8 @@ symptoms:
   - ":install finishes, but the tool is still missing and the first-run prompt comes back"
   - ":update runs winget upgrade on a tool scoop installed"
 root_cause: "catalog entries were admitted on package metadata (winget's Commands field) instead of on whether the installer puts the binary on PATH, and run_plan assumed every manager exits 0 on a repeat install or an up-to-date upgrade, as brew does, while winget exits 0x8A15002B"
-related: []
+related:
+  - docs/solutions/integration/a-tool-lookup-must-search-where-the-catalog-installs-it.md
 ---
 
 ## Problem
