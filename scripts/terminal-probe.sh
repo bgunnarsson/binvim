@@ -275,6 +275,7 @@ press 'Ctrl-c'
 k_ctrl_c=$key
 press 'Alt-Backspace (Option on a Mac)'
 k_alt_bs=$key
+say '  If the OS takes an arrow for itself (macOS switches desktops), press Esc to skip it.'
 press 'Shift-Right'
 k_shift_right=$key
 press 'Ctrl-Right'
@@ -371,9 +372,11 @@ else
 fi
 row 4 'Ctrl-[ and Alt' "$v" "$alt_note"
 
+# Esc is how the person skips an arrow the OS kept for itself (macOS switches
+# Spaces on Ctrl-Left / Ctrl-Right), so it counts as nothing arriving.
 arrows_ok=yes arrows_taken=''
 arrow() {
-  if [ -z "$2" ]; then
+  if [ -z "$2" ] || [ "$2" = "$esc" ] || [ "$2" = "${csi}27u" ]; then
     arrows_taken="$arrows_taken $1"
   elif [ "$2" != "$3" ]; then
     arrows_ok=no

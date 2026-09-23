@@ -168,25 +168,40 @@ A cell is never a bare "fail".
 | 2 | Re-encoded keys | | ✓ | | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
 | 3 | Esc response | | ✓ | | | ✓ | | | |
 | 4 | `Ctrl-[` and Alt | | ✓ | | | ✓ | | | |
-| 5 | Shift / Ctrl arrows | | ✓ | | | ✓ | | | |
+| 5 | Shift / Ctrl arrows | | n/a | | | ✓ | | | |
 | 6 | Cursor shape | | ✓ | | | ✓ | | | |
-| 7 | Truecolor | | | | | ✓ | | | |
-| 8 | Italic and bold | | | | | ✓ | | | |
-| 9 | Nerd Font glyphs | | | | | ✓ | | | |
-| 10 | Wide characters | | | | | ✓ | | | |
-| 11 | Emoji clusters | | | | | ✓ | | | |
+| 7 | Truecolor | | ✓ | | | ✓ | | | |
+| 8 | Italic and bold | | ✓ | | | ✓ | | | |
+| 9 | Nerd Font glyphs | | ✓ | | | ✓ | | | |
+| 10 | Wide characters | | ✓ | | | ✓ | | | |
+| 11 | Emoji clusters | | ✓ | | | ✓ | | | |
 | 12 | Long line | | | | | ✓ | | | |
-| 13 | Mouse | | | | | ✓ | | | |
-| 14 | Bracketed paste | | | | | ✓ | | | |
-| 15 | Synchronized output | | | | | ✓ | | | |
-| 16 | Undercurl | | | | | ✓ | | | |
+| 13 | Mouse | | ✓ | | | ✓ | | | |
+| 14 | Bracketed paste | | ✓ | | | ✓ | | | |
+| 15 | Synchronized output | | ✓ | | | ✓ | | | |
+| 16 | Undercurl | | ✓ | | | ✓ | | | |
 | 17 | Resize | | | | | ✓ | | | |
-| 18 | OSC 52 | | | | | ✓ | | | |
-| 19 | `:terminal` | | | | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
+| 18 | OSC 52 | | ✓ | | | ✓ | | | |
+| 19 | `:terminal` | | ✓ | | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
 | 20 | lazygit round trip | | | | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
 | 21 | Closing unsaved | | | | | ✓ | | | |
 
 ### Notes
+
+**Kitty** — Kitty 0.49.0 on macOS 26, run on 2026-09-23 with
+`macos_option_as_alt yes`. Checks 1–6 by hand, the rest from
+`scripts/terminal-probe.sh`:
+
+- Kitty takes the keyboard protocol: the flags read 0 before binvim's push and 1
+  after, so `Ctrl-i`, `Ctrl-[`, `Ctrl-w`, `Ctrl-c`, Esc and Alt-Backspace all
+  arrive as `CSI u` keys, and check 19 passes where tmux's needs the
+  `KNOWN_ISSUES.md` entry.
+- 5: Shift-Left and Shift-Right arrive as `CSI 1;2D` / `1;2C` and move one
+  character. Ctrl-Left and Ctrl-Right never reach the terminal: macOS keeps
+  them for switching Spaces unless that shortcut is turned off.
+- 6, 7, 15, 16: Kitty answers the queries itself — DECRQSS read back the bar
+  cursor, the `38;2` colour and `4:3`, and DECRQM 2026 is 2 (supported).
+- 14: Kitty sends a paste's line breaks as LF.
 
 **tmux** — tmux 3.6a on macOS, run on 2026-09-23 against a detached server
 (`tmux -L`, a 120×30 window, `TERM=tmux-256color`, the default config apart from
