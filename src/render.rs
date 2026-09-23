@@ -31,6 +31,35 @@ pub(crate) fn char_width(c: char, tab_width: usize) -> usize {
     }
 }
 
+/// Terminal cell width of one grapheme cluster. A single-char cluster keeps
+/// `char_width`'s answer (tab stop, control char → 1); a longer one is measured
+/// whole, since a terminal draws `👨‍👩‍👧` in 2 cells, not the 6 its codepoints sum
+/// to, and `❤️` (heart + VS16) in 2, not 1.
+pub(crate) fn cluster_width(cluster: &str, tab_width: usize) -> usize {
+    let mut it = cluster.chars();
+    match (it.next(), it.next()) {
+        (Some(c), None) => char_width(c, tab_width),
+        (None, _) => 0,
+        _ => unicode_width::UnicodeWidthStr::width(cluster),
+    }
+}
+
+/// Cell width of each char of a line, by grapheme cluster: a cluster's first
+/// char carries `Some(the whole cluster's width)` and the rest carry `None`.
+/// Walks that step char by char stay char by char and still agree with what
+/// the terminal draws. `None` is not the same as `Some(0)`: a combining mark
+/// with nothing before it to join is a cluster of its own.
+pub(crate) fn cluster_widths(chars: &[char], tab_width: usize) -> Vec<Option<usize>> {
+    use unicode_segmentation::UnicodeSegmentation;
+    let text: String = chars.iter().collect();
+    let mut out = Vec::with_capacity(chars.len());
+    for cluster in text.graphemes(true) {
+        out.push(Some(cluster_width(cluster, tab_width)));
+        out.extend(std::iter::repeat_n(None, cluster.chars().count() - 1));
+    }
+    out
+}
+
 /// How many of a character's cells fall inside the horizontal viewport
 /// `[view_left, view_left + avail)`, given that it starts at `line_visual_pos`
 /// and is `display_w` cells wide.
@@ -911,16 +940,14 @@ fn paint_code_line(
     max_w: usize,
     default_fg: Color,
 ) -> Result<usize> {
+    use unicode_segmentation::UnicodeSegmentation;
     let mut written = 0usize;
-    let mut byte_pos = 0usize;
-    for ch in slice.chars() {
-        let len = ch.len_utf8();
+    for (byte_pos, cluster) in slice.grapheme_indices(true) {
         let abs = byte_offset + byte_pos;
-        byte_pos += len;
         let fg = colors
             .and_then(|c| c.get(abs).copied().flatten())
             .unwrap_or(default_fg);
-        if ch == '\t' {
+        if cluster == "\t" {
             let cells = TAB_WIDTH;
             let avail = max_w.saturating_sub(written);
             let n = cells.min(avail);
@@ -933,12 +960,12 @@ fn paint_code_line(
             if written >= max_w {
                 return Ok(written);
             }
-            let cells = char_width(ch, TAB_WIDTH);
+            let cells = cluster_width(cluster, TAB_WIDTH);
             // `written` counts display cells (CJK/wide = 2, zero-width = 0) so
             // the caller's width-based padding matches `widest_line()`; source
             // text that reaches past `max_w` just over-counts and the caller's
             // `saturating_sub` padding absorbs the straddle.
-            queue!(out, SetForegroundColor(fg), Print(ch.to_string()))?;
+            queue!(out, SetForegroundColor(fg), Print(cluster))?;
             written += cells;
         }
     }
@@ -5048,8 +5075,9 @@ fn home_relative_with(path: &str, home: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        DebugPalette, cursor_visual_col_walk, display_lsp_root, find_match_ranges,
-        home_relative_with, tokenize_console_line, truncate, visible_cells,
+        DebugPalette, TAB_WIDTH, cluster_widths, cursor_visual_col_walk, display_lsp_root,
+        draw_line_with_selection, find_match_ranges, home_relative_with, tokenize_console_line,
+        truncate, visible_cells,
     };
 
     #[test]
@@ -5153,6 +5181,85 @@ mod tests {
         // Cursor on the CJK char (col 2): 'e' (1) + zero-width (0) = 1, then
         // CJK occupies cells 1-2, so its start sits at visual col 1.
         assert_eq!(cursor_visual_col_walk(chars, 2, &[]), 1);
+    }
+
+    const FAMILY: &str = "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}";
+
+    #[test]
+    fn cluster_widths_measure_each_cluster_whole() {
+        // The widths a terminal draws, not the per-codepoint sums (6 / 4 / 1).
+        for (text, width) in [
+            (FAMILY, 2),
+            ("\u{1F44D}\u{1F3FD}", 2),
+            ("\u{2764}\u{FE0F}", 2),
+            ("e\u{301}", 1),
+            ("\u{1F1EE}\u{1F1F8}", 2),
+            ("\u{D55C}", 2),
+        ] {
+            let chars: Vec<char> = text.chars().collect();
+            let widths = cluster_widths(&chars, TAB_WIDTH);
+            assert_eq!(widths[0], Some(width), "{text:?}");
+            assert!(widths[1..].iter().all(Option::is_none), "{text:?}");
+            let line = format!("{text}|");
+            let n = text.chars().count();
+            assert_eq!(
+                cursor_visual_col_walk(line.chars(), n, &[]),
+                width,
+                "{text:?}"
+            );
+        }
+        // A combining mark with nothing to join is a zero-width cluster of its
+        // own, not a continuation.
+        assert_eq!(
+            cluster_widths(&['\u{301}', 'a'], TAB_WIDTH),
+            vec![Some(0), Some(1)]
+        );
+        assert_eq!(cluster_widths(&['\t'], TAB_WIDTH), vec![Some(TAB_WIDTH)]);
+    }
+
+    fn drawn_line(text: &str, view_left: usize, avail: usize) -> String {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer.rope = ropey::Rope::from_str(&format!("{text}\n"));
+        app.window.view_left = view_left;
+        let bs = app.buffer_state(app.active);
+        let mut out = Vec::new();
+        draw_line_with_selection(&mut out, &app, &bs, &app.window, 0, avail, false, None)
+            .expect("draw");
+        let raw = String::from_utf8(out).expect("utf-8");
+        // Drop CSI sequences, keeping only what the terminal prints.
+        let mut printed = String::new();
+        let mut it = raw.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '\u{1b}' && it.peek() == Some(&'[') {
+                for d in it.by_ref() {
+                    if d.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            } else {
+                printed.push(c);
+            }
+        }
+        printed
+    }
+
+    #[test]
+    fn draw_walk_lays_out_a_cluster_by_its_whole_width() {
+        // Pane 4 cells wide: `a` (1) + family (2) + `b` (1) fill it exactly.
+        // Measured per codepoint the family would be 6 and `b` clipped off.
+        let printed = drawn_line(&format!("a{FAMILY}b|"), 0, 4);
+        assert!(printed.starts_with(&format!("a{FAMILY}b")), "{printed:?}");
+        assert!(!printed.contains('|'), "{printed:?}");
+    }
+
+    #[test]
+    fn draw_walk_never_prints_part_of_a_cluster_cut_by_the_left_edge() {
+        // The family spans cells 1-2; scrolled one cell in, its first cell is
+        // off-pane, so a marker fills cell 2 and none of its codepoints print.
+        let printed = drawn_line(&format!("a{FAMILY}b"), 2, 10);
+        assert!(!printed.contains('\u{1F469}'), "{printed:?}");
+        assert!(!printed.contains('\u{200D}'), "{printed:?}");
+        assert!(printed.contains("<b"), "{printed:?}");
     }
 
     #[test]
@@ -6037,6 +6144,10 @@ fn draw_line_with_selection(
         }
     });
     let mut conceal_active: Option<&crate::markdown_render::MarkdownTransform> = None;
+    let widths = cluster_widths(&chars, TAB_WIDTH);
+    // Set when a cluster's first char was painted as an edge marker: the rest
+    // of its chars must not reach the terminal, which would draw the glyph.
+    let mut cluster_hidden = false;
     for (col, c) in chars.iter().enumerate() {
         // Markdown conceal: exit a transform we just walked past.
         if let Some(t) = conceal_active {
@@ -6135,7 +6246,12 @@ fn draw_line_with_selection(
         // glyphs are two cells wide, but the syntax cache positions every other
         // byte-colour by 1. Treating a wide char as 1 cell would draw the cursor
         // (and clip the viewport) short of the CJK text's real end.
-        let display_w = char_width(*c, TAB_WIDTH);
+        if widths[col].is_none() && cluster_hidden {
+            byte_off += c.len_utf8();
+            continue;
+        }
+        cluster_hidden = false;
+        let display_w = widths[col].unwrap_or(0);
         let char_visual_end = line_visual_pos + display_w;
         // Entirely off the left edge — advance trackers, render nothing.
         if char_visual_end <= view_left {
@@ -6339,6 +6455,7 @@ fn draw_line_with_selection(
                 '>'
             };
             queue!(out, Print(marker.to_string().repeat(visible_w)))?;
+            cluster_hidden = true;
         } else {
             queue!(out, Print(c.to_string()))?;
         }
@@ -8256,20 +8373,21 @@ pub(crate) fn cursor_visual_col_walk(
     cursor_col: usize,
     hint_widths: &[usize],
 ) -> usize {
+    // A prefix cut at a cluster boundary segments the same as the whole line,
+    // so measuring only the chars before the cursor is exact.
+    let chars: Vec<char> = chars.take(cursor_col).collect();
+    let widths = cluster_widths(&chars, TAB_WIDTH);
     let mut visual = 0usize;
-    for (i, c) in chars.enumerate() {
-        if i >= cursor_col {
-            break;
-        }
+    for (i, w) in widths.iter().enumerate() {
         // Non-tab chars advance by their terminal display width, not 1 — CJK /
         // wide glyphs are two cells wide. If this walk counted a wide char as 1
         // cell it would (a) place the cursor short of the line end and (b) tell
         // the viewport the line is narrower than it is, so a CJK-heavy line
         // overflows the pane's right edge and its end becomes unreachable.
-        if let Some(w) = hint_widths.get(i) {
-            visual += *w;
+        if let Some(h) = hint_widths.get(i) {
+            visual += *h;
         }
-        visual += char_width(c, TAB_WIDTH);
+        visual += w.unwrap_or(0);
     }
     visual
 }

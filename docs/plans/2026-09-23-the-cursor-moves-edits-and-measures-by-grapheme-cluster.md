@@ -77,10 +77,15 @@ doesn't add.
   char col) over `GraphemeCursor` and rope chunks, in `src/buffer.rs`. Verify with `buffer::tests`
   on the table's strings, on line start and end, on an empty line, and on a line longer than one
   rope chunk.
-- [ ] Add `render::cluster_width` and a line-cluster iterator yielding `(char_col, char_len,
+- [x] Add `render::cluster_width` and a line-cluster iterator yielding `(char_col, char_len,
   width)`, then convert the render walks at `render.rs:936`, `:6138` and `:8271`
   (`cursor_visual_col_walk`). Verify with new `render::tests` for the table's widths through
   `cursor_visual_col_walk`, plus the existing `cursor_visual_col_*` tests unchanged.
+  Deviation: instead of a cluster iterator, `render::cluster_widths` gives each char of a line
+  `Some(cluster width)` at a cluster's start and `None` on its continuation chars, so the draw
+  walk keeps painting char by char (selection, syntax colour and clipping are all per char). A
+  cluster whose first char is clipped to a `<` / `>` edge marker has its other chars skipped, or
+  the terminal would draw the glyph anyway. `paint_code_line` walks clusters directly.
 - [ ] Convert the remaining width walks:
   - `markdown_render.rs:1189` and `:1230`
   - `app/state.rs:1311`
