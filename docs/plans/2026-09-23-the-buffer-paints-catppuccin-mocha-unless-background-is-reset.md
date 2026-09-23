@@ -1,7 +1,7 @@
 ---
 title: The buffer paints Catppuccin Mocha by default, and background = "Reset" hands it back to the terminal
 date: 2026-09-23
-status: in-progress
+status: done
 ---
 
 ## Context
@@ -98,10 +98,13 @@ Decisions:
   (`### Changed`, naming `background = "Reset"` as the way back to the terminal's background).
   Verify with `cargo test --bin binvim config::tests` (the default-config agreement tests) and by
   reading the diff.
-- [ ] Check reload and the full suite: in tmux, a running binvim on a `.txt` file, set
+- [x] Check reload and the full suite: in tmux, a running binvim on a `.txt` file, set
   `background = "Reset"` in its config with `:config`, `:w`, and confirm the buffer loses its
   `48;2` background; remove the line, `:w`, and confirm it comes back (acceptance criterion 4).
   Then run `cargo test -- --test-threads=1`, pinned clippy and `cargo fmt --check`.
+  Deviation: the lines went in with `:$` and `:r <file>`, not a paste. A tmux `paste-buffer -p`
+  put a CR between them (`[colors]\rbackground`), which the reload rejected as invalid TOML.
+  That is a bracketed-paste bug of its own, added as a task to the terminal-matrix plan.
 
 ## Files
 
