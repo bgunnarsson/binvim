@@ -62,7 +62,7 @@ doesn't bind here.
 - `display()` / `upgrade_display()` for the three variants print the exact commands above.
 - The macOS / Linux plan for every bundle is unchanged: no existing `Tool`'s first matching
   installer moves.
-- `README.md`'s External tools table shows the Windows command beside the brew / apt one for each
+- `docs/external-tools.md` shows the Windows command beside the brew / apt one for each
   tool that gained an entry. `WINDOWS.md` section 2's installer item is ticked, with prose
   describing what shipped.
 
@@ -81,7 +81,7 @@ doesn't bind here.
   installer as before. The test compares against a `Choice` list captured before the change, so
   the macOS path is pinned. Add a second test: under `{winget}`, each of the 13 tools picks
   `Winget`, or has no winget id in the table.
-- [ ] Update `README.md`'s External tools table (`README.md:498-560`) with the Windows command
+- [ ] Update `docs/external-tools.md` with the Windows command
   per tool, and tick `WINDOWS.md`'s installer item with prose saying what shipped. Verify by
   reading the diff.
 - [ ] Update binvim.dev's install table in the sibling `binvim-web` repo to match. Verify by
@@ -93,7 +93,7 @@ doesn't bind here.
 - `src/install.rs`: `Installer` (54-84), `manager` (88), `display` (110), `build_command` (140),
   `upgrade_command` / `upgrade_display` (~213 / ~265), `detect_managers` (613), `BUNDLES` (328+),
   `mod tests` (1280+). Reuses `pick_installer` and `build_plan` unchanged.
-- `README.md`, `WINDOWS.md`, `CHANGELOG.md` (Unreleased `### Added`).
+- `docs/external-tools.md`, `WINDOWS.md`, `CHANGELOG.md` (Unreleased `### Added`).
 - `binvim-web`: its install table page.
 
 ## Verification

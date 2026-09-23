@@ -6,6 +6,13 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- **The README is now an index over `docs/`.** Each of its sections — editing,
+  keys, ex commands, Vim compatibility, highlighting, LSP, the debugger,
+  external tools, configuration, install and the project layout — is a file of
+  its own under `docs/`, and the README keeps the pitch, the one-line installs
+  and a link to each.
+
 ### Fixed
 - **Tasks and AI side panes start under cmd.exe and PowerShell.** `:make`,
   `:task` and the AI panes handed every shell POSIX flags (`-l -i -c`), so on

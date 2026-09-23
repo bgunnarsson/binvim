@@ -102,4 +102,4 @@ not evidence of anything.
 
 No key is left undecided. Where binvim departs from Vim on purpose, and what it
 leaves out, is listed under *Where binvim differs on purpose* and *Left out* in
-`README.md`, and stays there rather than being copied here.
+`docs/vim-compatibility.md`, and stays there rather than being copied here.

@@ -9,7 +9,7 @@ status: draft
 0.7 ships when the "terminal matrix [is] documented" (`ROADMAP.md`, milestone table). Horizon 2
 names Ghostty, Kitty, WezTerm, Alacritty, tmux, Windows Terminal and over-SSH, and says the
 published matrix "doubles as a hardening checklist and marketing." Nothing of it exists yet. There
-is no matrix file, and the only terminal-specific notes are OSC 52 (`README.md:659-663`, which
+is no matrix file, and the only terminal-specific notes are OSC 52 (`docs/configuration.md`, which
 already calls Terminal.app unsupported) and the `:health` rows for `TERM`, `COLORTERM` and
 `TERM_PROGRAM` (`src/app/health.rs:389-400`).
 

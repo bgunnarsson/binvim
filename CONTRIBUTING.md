@@ -20,7 +20,7 @@ For anything bigger than a one-line fix, **open an issue first**. binvim is opin
 - New language / LSP support.
 - New keybindings or operators — the parser is a Vim-grammar state machine; new verbs need to fit it, not bolt onto it.
 - New configuration surface — `~/.config/binvim/config.toml` is intentionally minimal.
-- New external-tool dependencies — every external binary in the README install table is one more thing that can be missing on a user's machine.
+- New external-tool dependencies — every external binary in the install table (`docs/external-tools.md`) is one more thing that can be missing on a user's machine.
 - New DAP adapters — the adapter registry in `src/dap/specs.rs` is the only entry point; adapter-specific behaviour belongs there, not in `manager.rs`.
 
 Bug fixes, missing-LSP arms, and tree-sitter additions don't need a pre-discussion — just open the PR.
@@ -76,7 +76,7 @@ The five-file change is always:
 2. `Lang` variant + extension/basename entry in `Lang::detect()` plus matching `ts_language()` / `highlights_query()` arms in `src/lang.rs` (skip the tree-sitter arms only if you don't want highlighting).
 3. Icon + `lang_name` in the two exhaustive `Lang` matches in `src/render.rs`.
 4. Formatter arm in `format_buffer` (`src/format.rs`) plus `tree-sitter-<lang>` crate in `Cargo.toml`.
-5. New rows in the README install table for the LSP and the formatter.
+5. New rows in the install table (`docs/external-tools.md`) for the LSP and the formatter.
 
 There is no plugin system. Every server is hard-wired in `lsp/specs.rs`. That is a deliberate choice; please don't propose a plugin loader as part of an LSP PR.
 

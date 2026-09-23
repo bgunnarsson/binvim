@@ -302,7 +302,7 @@ pub struct Bundle {
 }
 
 /// `emmet-ls` attaches to every markup-flavoured buffer binvim recognises
-/// (HTML, CSS, JSX/TSX, Vue, Svelte, Astro, Razor — see `README.md:75`).
+/// (HTML, CSS, JSX/TSX, Vue, Svelte, Astro, Razor — see `docs/lsp.md`).
 /// Declared once and folded into each of those bundles so picking any one
 /// of them installs Emmet, and the dedupe in `build_plan` collapses the
 /// install to a single npm run no matter how many you picked.
@@ -313,7 +313,7 @@ pub const EMMET_LS: Tool = Tool {
     installers: &[Installer::Npm(&["emmet-ls@0.4.2"])],
 };
 
-/// The catalog. Mirrors the README install table at `README.md:283+`. When a
+/// The catalog. Mirrors the install table in `docs/external-tools.md`. When a
 /// tool appears under multiple languages (prettier, lldb-dap, vscode-
 /// langservers-extracted, biome, EMMET_LS, …) it's repeated literally —
 /// `build_plan` dedupes by `bin` at plan time.

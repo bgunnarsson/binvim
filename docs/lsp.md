@@ -1,0 +1,23 @@
+# LSP
+
+Per-language servers with `initializationOptions`, project-root detection, and a debounced `didChange` (50ms burst window) so rapid typing doesn't flood the server.
+
+| Capability                  | Binding                  | Notes                                                                                                                                  |
+|-----------------------------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------|
+| Completion                  | auto + `Ctrl-N`/`Ctrl-P` | Multi-server fan-out — items from primary + auxiliary servers (e.g. Tailwind alongside tsserver) merge in the popup. Each row shows a colour-coded kind chip and the server-supplied `detail`. |
+| Snippet expansion           | on accept                | LSP items with `insertTextFormat == 2` get their `$N` / `${N:default}` / `$0` placeholders parsed; cursor lands at `$1`, defaults mirror to later bare references. |
+| Hover                       | `K`                      | Markdown parsed into structured lines — fenced code blocks tree-sitter-highlighted with the language tag's grammar.                     |
+| Inlay hints                 | inline                   | `textDocument/inlayHint` annotations render between buffer chars in dim italic. Respects horizontal scroll.                            |
+| Semantic tokens             | inline                   | `textDocument/semanticTokens/full` layered over the tree-sitter pass. LSP modifiers drive visible colour shifts: `let mut foo` in red, `async fn` in lavender, `std::` symbols in sapphire, `static` in teal, `readonly` in peach, `deprecated` in red. Toggle off via `[lsp] semantic_tokens = false`. |
+| Document highlight          | auto on cursor settle    | `textDocument/documentHighlight` paints a Surface2 background on every occurrence of the symbol under the cursor (across the visible buffer, anchored to live cursor position). Toggle off via `[lsp] document_highlight = false`. |
+| Goto-definition             | `gd`                     |                                                                                                                                        |
+| Find references             | `gr`                     | Results open in a fuzzy picker; Enter jumps.                                                                                           |
+| Document symbols            | `<space>o`               | File outline. Hierarchy preserved with `›` separators.                                                                                  |
+| Workspace symbols           | `<space>S`               | Live server-side filter as you type.                                                                                                   |
+| Signature help              | auto on `(` / `,`        | Parameter being typed gets a Catppuccin Yellow highlight inside the popup.                                                             |
+| Code actions                | `<leader>a`              | Picks render with kind tag. Supports both `WorkspaceEdit` and command-shaped actions; round-trips `workspace/applyEdit` from the server. |
+| Rename                      | `<leader>r`              | LSP-aware. Prompt pre-fills the current word; submission applies the `WorkspaceEdit` across every affected file.                        |
+| Diagnostics                 | inline + sign column     | Undercurl on the offending range, severity glyph in the gutter.                                                                        |
+| Server messages             | `:messages`              | Captures `window/showMessage` and `window/logMessage` notifications plus server stderr into a bounded ring (500 entries). Error / warning showMessages also flash through the status line. Severity-coloured scrollable overlay, dismissed with `Esc`/`q`/`:q`. |
+
+**Multi-server fan-out** — primary servers (rust-analyzer, tsserver, gopls, biome, OmniSharp, csharp-ls, pyright, clangd, jdtls, intelephense, …) plus auxiliaries layered on top. Tailwind class-name completion attaches alongside CSS / HTML / JSX / TSX / JS / TS / Astro / Vue / Svelte / Razor whenever Tailwind is detected (v3 `tailwind.config.*` or v4 CSS-first via a `tailwindcss` dependency in `package.json`). Emmet abbreviation expansion (`emmet-ls`) attaches to the same markup-flavoured file set, surfacing `ul>li*3>a[href]`-style snippets in the completion popup; the snippet inserter prepends the current line's leading whitespace to every continuation line so closing tags line up with the opener.
