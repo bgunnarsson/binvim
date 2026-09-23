@@ -14,7 +14,7 @@ Evidence is one of three things:
 The 2026-09-23 checks ran with `HOME`, `XDG_CACHE_HOME` and `XDG_CONFIG_HOME` pointed at a
 scratch directory, set on the pane's own command line, which received the cache files. Their
 outcomes are recorded here, in the rows that cite them. The checklist they came from is in
-`docs/plans/2026-09-23-the-data-loss-audit-is-written-down-and-its-gaps-are-tested.md`.
+`docs/plans/2026-09-23-the-data-loss-audit-is-written-down-and-its-gaps-are-tested.md` (removed once done; `git show b98f700:docs/plans/2026-09-23-the-data-loss-audit-is-written-down-and-its-gaps-are-tested.md`).
 
 Last audited 2026-09-23. A change to any code named below updates its row.
 

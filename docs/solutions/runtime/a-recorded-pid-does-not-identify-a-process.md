@@ -14,7 +14,6 @@ symptoms:
 root_cause: "RecoveryFile.pid is checked with a liveness probe (`tasklist /FI \"PID eq N\"` on Windows, `kill -0` on unix) that answers for any process holding that pid, and operating systems hand a dead process's pid to new ones"
 related:
   - docs/solutions/runtime/open-buffer-runs-for-batch-edits-nobody-sees.md
-  - docs/plans/2026-09-15-overlay-keys-follow-draw-order-and-recovery-gaps-close.md
   - docs/solutions/conventions/an-audit-guarantee-is-read-from-the-code-not-from-the-lore-that-describes-it.md
 ---
 

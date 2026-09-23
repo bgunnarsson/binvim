@@ -14,7 +14,6 @@ symptoms:
   - "every uncaptured cell captures as `\\e[38;2;205;214;244mX\\e[0m\\e[48;2;30;30;46m`"
 root_cause: "code written when the buffer used the terminal's own foreground and background (SGR 39 / 49) relied on the two matching; once binvim paints #1e1e2e by default, a cell that leaves the foreground at 39 pairs the terminal's text colour with binvim's background, and Reverse swaps them into an unreadable fill"
 related:
-  - docs/plans/2026-09-23-the-buffer-paints-catppuccin-mocha-unless-background-is-reset.md
   - docs/solutions/runtime/config-reload-misses-state-derived-from-app-config.md
 ---
 

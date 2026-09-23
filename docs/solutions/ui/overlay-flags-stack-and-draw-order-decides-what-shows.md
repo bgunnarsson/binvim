@@ -9,8 +9,7 @@ symptoms:
   - "a key an overlay advertises works when the overlay is opened from the buffer, and not when it is opened from another overlay's : prompt"
   - "q or Esc on :health does nothing the first time after :health was run from :messages or :registers"
 root_cause: "show_health_page / show_messages_page / show_list_page / show_test_results_page are independent bools that most openers don't clear, and render::draw paints the first set one in a fixed order, while the overlay key block judged which page was up from the other flags being clear"
-related:
-  - docs/plans/2026-09-15-health-offers-toolchain-install.md
+related: []
 ---
 
 ## Problem

@@ -26,7 +26,7 @@ related:
 ## Problem
 
 The 0.7 data-loss audit (`docs/data-loss-audit.md`, plan
-`docs/plans/2026-09-23-the-data-loss-audit-is-written-down-and-its-gaps-are-tested.md`) is a
+`docs/plans/2026-09-23-the-data-loss-audit-is-written-down-and-its-gaps-are-tested.md` (removed once done; `git show b98f700:docs/plans/2026-09-23-the-data-loss-audit-is-written-down-and-its-gaps-are-tested.md`)) is a
 table: each path, its guarantee, the code that keeps it, the evidence. Every cited test existed,
 and all five tmux checks passed. Review still confirmed nine findings, and six were claims the
 code doesn't keep. The ROADMAP line built on the audit said "no path loses text".

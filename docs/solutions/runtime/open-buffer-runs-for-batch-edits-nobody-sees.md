@@ -10,7 +10,6 @@ symptoms:
   - "the 'recovered unsaved changes' notice never shows — the substitution count replaced it"
 root_cause: "open_buffer is the one open path for users and for programmatic edits alike — the project-wide :S loop and apply_concrete_edits open, edit and save files the user never sees — so a behaviour added to open_buffer on the assumption that a person is looking also runs inside those loops"
 related:
-  - docs/plans/2026-09-15-writes-cannot-lose-work-and-clippy-gates-ci.md
   - docs/solutions/runtime/a-recorded-pid-does-not-identify-a-process.md
   - docs/solutions/security/an-upward-search-trusts-what-other-users-own-or-can-write.md
   - docs/solutions/conventions/an-audit-guarantee-is-read-from-the-code-not-from-the-lore-that-describes-it.md

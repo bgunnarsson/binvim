@@ -24,7 +24,7 @@ related:
 
 ## Problem
 
-The plan `docs/plans/2026-09-23-the-cursor-moves-edits-and-measures-by-grapheme-cluster.md` made
+The plan `docs/plans/2026-09-23-the-cursor-moves-edits-and-measures-by-grapheme-cluster.md` (removed once done; `git show b98f700:docs/plans/2026-09-23-the-cursor-moves-edits-and-measures-by-grapheme-cluster.md`) made
 `h` / `l`, the word motions, `x`, `r`, `~`, `a`, charwise ranges and Insert Backspace move by
 grapheme cluster. `Cursor.col` stayed a char index, with the rule that it only rests on a
 cluster's first char. Its tests and the tmux check passed. Review then found five more places,

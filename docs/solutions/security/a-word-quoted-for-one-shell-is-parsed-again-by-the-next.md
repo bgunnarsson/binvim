@@ -24,7 +24,7 @@ related:
 
 The task runner and the AI side panes gave every shell a POSIX line, `-l -i -c "cd … && exec …"`.
 Making them work under cmd.exe and PowerShell (plan
-`docs/plans/2026-09-22-tasks-and-ai-panes-start-under-cmd-and-powershell.md`) meant quoting each
+`docs/plans/2026-09-22-tasks-and-ai-panes-start-under-cmd-and-powershell.md` (removed once done; `git show b98f700:docs/plans/2026-09-22-tasks-and-ai-panes-start-under-cmd-and-powershell.md`)) meant quoting each
 word for the shell's own dialect. Task words come verbatim out of project files: `package.json`
 script names, justfile recipes, cargo aliases. They're the injection surface, while the `:make`
 tail is the user's own text and keeps its shell meaning. Every quoter was correct for the shell it

@@ -63,7 +63,7 @@ starts the same server. The new exposure is a file *above* the project, in a dir
 else can write to.
 
 Widening the check to every other upward search (`2026-09-22`, plan
-`docs/plans/2026-09-22-upward-searches-skip-what-other-users-can-plant.md`) found three more ways
+`docs/plans/2026-09-22-upward-searches-skip-what-other-users-can-plant.md` (removed once done; `git show b98f700:docs/plans/2026-09-22-upward-searches-skip-what-other-users-can-plant.md`)) found three more ways
 the same planting gets through, each confirmed by review and the last observed in a tmux check in
 `/tmp`:
 

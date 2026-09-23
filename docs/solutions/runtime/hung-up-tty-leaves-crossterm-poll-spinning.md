@@ -10,7 +10,6 @@ symptoms:
   - "sample shows the main thread in UnixInternalEventSource::try_read → FileDesc::read, never returning"
 root_cause: "when the tty hangs up, crossterm::event::poll's unix source keeps reading the dead fd in a loop inside try_read and never returns to the caller; before a SIGHUP handler was installed the default action killed the process, which hid it"
 related:
-  - docs/plans/2026-09-15-writes-cannot-lose-work-and-clippy-gates-ci.md
   - docs/solutions/tooling/tmux-send-keys-escape-then-a-key-arrives-as-alt.md
 ---
 

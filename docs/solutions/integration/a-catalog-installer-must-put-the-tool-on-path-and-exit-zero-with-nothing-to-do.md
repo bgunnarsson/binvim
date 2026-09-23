@@ -20,7 +20,7 @@ related:
 ## Problem
 
 Adding winget / scoop / choco to the installer catalog (plan
-`docs/plans/2026-09-23-installer-installs-through-winget-scoop-and-choco.md`) gave eight tools a
+`docs/plans/2026-09-23-installer-installs-through-winget-scoop-and-choco.md` (removed once done; `git show b98f700:docs/plans/2026-09-23-installer-installs-through-winget-scoop-and-choco.md`)) gave eight tools a
 Windows path. Review found three ways it would fail on a real machine, although every package id
 was real and every command was correct.
 
