@@ -1277,6 +1277,54 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_session_naming_a_deleted_file_restores_the_rest() {
+        let dir = crate::paths::test_scratch_dir("hydrate", "deleted");
+        let kept = dir.join("kept.txt");
+        let also = dir.join("also.txt");
+        std::fs::write(&kept, "one\ntwo\nthree\n").unwrap();
+        std::fs::write(&also, "x\n").unwrap();
+        let gone = dir.join("gone.txt");
+        let entry = |p: &std::path::Path, line| crate::session::SessionBuffer {
+            path: p.to_string_lossy().into_owned(),
+            line,
+            col: 0,
+            view_top: 0,
+            jumplist: Vec::new(),
+            jump_idx: 0,
+        };
+        let session = crate::session::Session {
+            cwd: dir.to_string_lossy().into_owned(),
+            buffers: vec![entry(&kept, 2), entry(&gone, 0), entry(&also, 0)],
+            active: 0,
+            cmd_history: Vec::new(),
+            search_history: Vec::new(),
+            macros: std::collections::HashMap::new(),
+        };
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.hydrate_from_session(session);
+        let open: Vec<PathBuf> = (0..app.buffers.len())
+            .filter_map(|i| {
+                let path = if i == app.active {
+                    app.buffer.path.clone()
+                } else {
+                    app.buffers[i].buffer.path.clone()
+                };
+                path.map(|p| std::path::absolute(p).unwrap())
+            })
+            .collect();
+        assert!(
+            open.contains(&std::path::absolute(&kept).unwrap()),
+            "{open:?}"
+        );
+        assert!(
+            open.contains(&std::path::absolute(&also).unwrap()),
+            "{open:?}"
+        );
+        assert!(!open.iter().any(|p| p.ends_with("gone.txt")), "{open:?}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn under_the_cursor_helpers() {
         assert_eq!(char_code('a'), "<a> 97, Hex 61, Oct 141");
         assert_eq!(char_code('é'), "<é> 233, Hex 00e9, Oct 351");

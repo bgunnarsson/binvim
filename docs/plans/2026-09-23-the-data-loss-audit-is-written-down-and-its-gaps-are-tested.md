@@ -90,7 +90,7 @@ Decisions:
 
 - [x] Add `undo::tests` for a truncated and a garbage undo file, beside the recovery test's shape.
   Verify with `cargo test undo::tests`.
-- [ ] Add `session::tests`: round trip, garbage file, cwd mismatch. Session paths are `None` under
+- [x] Add `session::tests`: round trip, garbage file, cwd mismatch. Session paths are `None` under
   `cfg!(test)`, so test the parse/serialize functions on a scratch path, or add a `_from(path)`
   seam as `recover::load_from` does. Add the deleted-file restore case if `App` can be built in a
   test, and otherwise note it for task 3. Verify with `cargo test session::tests`.

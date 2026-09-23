@@ -173,6 +173,12 @@ pub fn save(session: &Session) -> std::io::Result<()> {
     let Some(path) = session_path(Path::new(&session.cwd)) else {
         return Ok(());
     };
+    write_to(&path, session)
+}
+
+/// `save` against an explicit path — the seam tests write through, since
+/// `session_path` is `None` under `cfg!(test)`.
+fn write_to(path: &Path, session: &Session) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         // Sessions carry `:` and `/` history and recorded macros — anything
         // the user typed, occasionally a pasted secret — so the directory is
@@ -181,7 +187,7 @@ pub fn save(session: &Session) -> std::io::Result<()> {
     }
     let json = serde_json::to_string_pretty(session)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    crate::paths::write_atomic(&path, json.as_bytes())
+    crate::paths::write_atomic(path, json.as_bytes())
 }
 
 /// Save `session`, or remove this cwd's saved one when there's nothing worth
@@ -221,12 +227,83 @@ pub fn clear_for_cwd(cwd: &Path) -> std::io::Result<()> {
 /// the live canonicalised cwd (defensive — guards against hash collisions
 /// or stale cache after a directory move).
 pub fn load_for_cwd(cwd: &Path) -> Option<Session> {
-    let path = session_path(cwd)?;
-    let text = std::fs::read_to_string(&path).ok()?;
+    load_from(&session_path(cwd)?, cwd)
+}
+
+/// `load_for_cwd` against an explicit path.
+fn load_from(path: &Path, cwd: &Path) -> Option<Session> {
+    let text = std::fs::read_to_string(path).ok()?;
     let session: Session = serde_json::from_str(&text).ok()?;
     let canon = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     if session.cwd != canon.to_string_lossy() {
         return None;
     }
     Some(session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_in(cwd: &Path, paths: &[&str]) -> Session {
+        Session {
+            cwd: cwd.to_string_lossy().into_owned(),
+            buffers: paths
+                .iter()
+                .map(|p| SessionBuffer {
+                    path: (*p).into(),
+                    line: 3,
+                    col: 1,
+                    view_top: 0,
+                    jumplist: vec![(1, 0)],
+                    jump_idx: 1,
+                })
+                .collect(),
+            active: 0,
+            cmd_history: vec!["w".into()],
+            search_history: vec!["foo".into()],
+            macros: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_saved_session_loads_back_for_its_cwd() {
+        let cwd = crate::paths::test_scratch_dir("session", "round-trip");
+        let file = cwd.join("s.json");
+        write_to(&file, &session_in(&cwd, &["/p/a.rs", "/p/b.rs"])).unwrap();
+        let back = load_from(&file, &cwd).unwrap();
+        let paths: Vec<&str> = back.buffers.iter().map(|b| b.path.as_str()).collect();
+        assert_eq!(paths, ["/p/a.rs", "/p/b.rs"]);
+        assert_eq!((back.buffers[0].line, back.buffers[0].col), (3, 1));
+        assert_eq!(back.buffers[0].jumplist, [(1, 0)]);
+        assert_eq!(back.cmd_history, ["w"]);
+        assert_eq!(back.search_history, ["foo"]);
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    #[test]
+    fn a_truncated_or_garbage_session_file_loads_as_none() {
+        let cwd = crate::paths::test_scratch_dir("session", "corrupt");
+        let file = cwd.join("s.json");
+        write_to(&file, &session_in(&cwd, &["/p/a.rs"])).unwrap();
+        let text = std::fs::read(&file).unwrap();
+        std::fs::write(&file, &text[..text.len() / 2]).unwrap();
+        assert!(load_from(&file, &cwd).is_none());
+        std::fs::write(&file, [0xff, 0x00, b'[']).unwrap();
+        assert!(load_from(&file, &cwd).is_none());
+        assert!(load_from(&cwd.join("missing.json"), &cwd).is_none());
+        std::fs::remove_dir_all(&cwd).ok();
+    }
+
+    #[test]
+    fn a_session_saved_for_another_cwd_is_refused() {
+        let cwd = crate::paths::test_scratch_dir("session", "cwd-a");
+        let other = crate::paths::test_scratch_dir("session", "cwd-b");
+        let file = cwd.join("s.json");
+        write_to(&file, &session_in(&other, &["/p/a.rs"])).unwrap();
+        assert!(load_from(&file, &cwd).is_none());
+        assert!(load_from(&file, &other).is_some());
+        std::fs::remove_dir_all(&cwd).ok();
+        std::fs::remove_dir_all(&other).ok();
+    }
 }
