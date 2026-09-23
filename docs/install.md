@@ -33,7 +33,7 @@ scoop bucket add binvim https://github.com/bgunnarsson/binvim
 scoop install binvim
 ```
 
-Uses the manifest at [`scoop/binvim.json`](../scoop/binvim.json) in this repo — the repo doubles as the bucket. The release script points it at each new release's Windows zip, so `scoop update binvim` picks up a release as soon as it's out.
+Uses the manifest at [`bucket/binvim.json`](../bucket/binvim.json) in this repo — the repo doubles as the bucket. The release script points it at each new release's Windows zip, so `scoop update binvim` picks up a release as soon as it's out.
 
 ## crates.io
 

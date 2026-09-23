@@ -13,7 +13,7 @@ set -euo pipefail
 #                   no bump, no publish, no tag, no tap. For finishing a
 #                   release whose notes step was skipped (e.g. the CI wait
 #                   timed out during an Actions outage). Idempotent.
-#   --scoop-only    point scoop/binvim.json at an already-published
+#   --scoop-only    point bucket/binvim.json at an already-published
 #                   Release's Windows zip, commit, push to main, and exit.
 #                   The Scoop counterpart of --notes-only; the two combine.
 #                   Idempotent.
@@ -38,7 +38,7 @@ set -euo pipefail
 #      check the asset count (expects 12 — 4 targets × tar.gz/sha256/bundle).
 #   5b. Overwrite the auto-generated Release notes with the curated
 #       CHANGELOG section for this version.
-#   5c. Point scoop/binvim.json at the Release's Windows zip (URL +
+#   5c. Point bucket/binvim.json at the Release's Windows zip (URL +
 #       sha256 from its .sha256 sidecar), commit, push to main. This
 #       repo is the Scoop bucket, and `scoop update` installs whatever
 #       version the committed manifest names.
@@ -135,7 +135,7 @@ TAP_DIR="${BINVIM_TAP_DIR:-$(find_sibling \
 WEB_DIR="${BINVIM_WEB_DIR:-$(find_sibling \
     "${PARENT}/${REPO}-web" \
     "${ROOT}/../../sites/${REPO}-web")}"
-SCOOP_MANIFEST="${ROOT}/scoop/binvim.json"
+SCOOP_MANIFEST="${ROOT}/bucket/binvim.json"
 
 # ─── Helpers ──────────────────────────────────────────────────────
 
@@ -238,7 +238,7 @@ push_release_notes() {
     return 0
 }
 
-# Point scoop/binvim.json at this release's Windows zip. This repo is its
+# Point bucket/binvim.json at this release's Windows zip. This repo is its
 # own Scoop bucket, and `scoop update` installs whatever version the
 # committed manifest names. The manifest's `autoupdate` block does not
 # change that — Scoop only applies it when someone runs its checkver
@@ -756,7 +756,7 @@ cat <<EOF
   GitHub Release:  https://github.com/${OWNER}/${REPO}/releases/tag/${TAG}
   crates.io:       https://crates.io/crates/${REPO}/${VERSION}
   Tap:             https://github.com/${OWNER}/homebrew-${REPO}
-  Scoop manifest:  https://github.com/${OWNER}/${REPO}/blob/main/scoop/binvim.json
+  Scoop manifest:  https://github.com/${OWNER}/${REPO}/blob/main/bucket/binvim.json
   install.sh:      https://binvim.dev/install.sh
 
   Try:

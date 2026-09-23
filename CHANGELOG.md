@@ -4,6 +4,15 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **`scoop install binvim` finds the manifest.** Scoop reads a bucket's
+  manifests from its `bucket/` folder or its root, never `scoop/`, so the
+  bucket this repo doubles as offered nothing to install. The manifest is now
+  `bucket/binvim.json`; a bucket added before this picks it up on
+  `scoop update`.
+
 ## [0.7.0] - 2026-09-23
 
 ### Added
