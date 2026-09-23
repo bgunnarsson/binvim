@@ -101,11 +101,20 @@ Decisions (the user chose the checklist route):
   check 20). The last has no unit test: it is a signal disposition, checked in tmux.
   Check 19's `Ctrl-[` in `:terminal` can't pass without the protocol, so it's a `KNOWN_ISSUES.md`
   entry.
-- [ ] Check how crossterm 0.x (the version in `Cargo.lock`) handles
+- [x] Check how crossterm 0.x (the version in `Cargo.lock`) handles
   `PushKeyboardEnhancementFlags` on a terminal that doesn't support it, by reading its source. If
   it can leak, gate the four pushes on `supports_keyboard_enhancement()`. Verify by reading the
   crossterm source path, and, if gated, with a tmux check on `TERM=xterm-256color` without the
   extended-keys option.
+  Result: not gated. In crossterm 0.28.1 (`src/event.rs:493`) `PushKeyboardEnhancementFlags`
+  writes `CSI > 1 u` unconditionally on Unix. That is a well-formed control sequence, which a
+  terminal that doesn't know it consumes and drops, and without the protocol keys simply stay in
+  the legacy encoding. In tmux on `TERM=xterm-256color` with `extended-keys off`, nothing was
+  printed and keys read right (`TERMINALS.md`, tmux note 1). On Windows it is never written:
+  `is_ansi_code_supported()` is `false` and `execute_winapi` returns `Unsupported`, which binvim
+  drops, so Windows Terminal runs without the protocol. `supports_keyboard_enhancement()` would
+  cost a query round trip with a two-second timeout at startup and after every suspend, for no
+  failure seen. The `app.rs` comment now says what happens on Windows (`77dae2b`).
 - [ ] Hand the checklist to the user for Ghostty, Kitty, WezTerm, Alacritty, Windows Terminal,
   over-SSH and Terminal.app. Fill the rows from their reports, fix binvim-side failures (each its
   own commit) and file terminal-side ones in `KNOWN_ISSUES.md`. Verify that every cell is
