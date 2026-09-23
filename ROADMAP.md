@@ -104,8 +104,10 @@ same zero-config IDE a macOS developer does." Three tiers, the first done:
   `-Command` for pwsh, untouched for bash) and the cmd.exe variant of
   `shell_quote` — done, through `terminal::shell_launch` — then
   native **winget / scoop / choco** support in `binvim-install` + `:install`
-  (three `Installer` variants + `detect_managers` probes), and full SCSS
-  highlighting once `tree-sitter-scss` cuts a release with the MSVC fix.
+  (three `Installer` variants + `detect_managers` probes) — done. Full SCSS
+  highlighting waits on a `tree-sitter-scss` release with the MSVC fix, so 0.7
+  ships with Windows SCSS on the CSS grammar (`KNOWN_ISSUES.md`), and it lands
+  in whichever release follows upstream's.
 - **Distribution & trust (0.8–1.0).** winget submission to `microsoft/winget-pkgs`,
   and **code-signing the Windows binary** so SmartScreen stops warning on first
   run — the single biggest trust bounce for a new Windows user. MSI/MSIX,

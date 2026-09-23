@@ -42,12 +42,12 @@ bounded once overall. A file that exhausts it renders unhighlighted.
 `tree-sitter-scss` 1.0.0's `build.rs` passes the GCC-only
 `-Wno-unused-parameter` to whatever C compiler the host picks, which breaks
 `cl.exe` (`D8021: invalid numeric argument`). The dependency is gated behind
-`cfg(not(target_env = "msvc"))` (`Cargo.toml:93`), so Windows SCSS parses as
+`cfg(not(target_env = "msvc"))` (`Cargo.toml:98`), so Windows SCSS parses as
 CSS: selectors and properties highlight fine, while `$var`, `@mixin`,
 `@include`, `#{}`, `%placeholder` and `&` nesting lose their dedicated captures.
 
-A fix exists on upstream master but has not been released. Re-enable everywhere
-once upstream guards the flag with `flag_if_supported`.
+A fix exists on upstream master but has not been released. 0.7 ships with this
+fallback. Re-enable everywhere once upstream releases it (a 1.0.1).
 
 ## Recovery
 
