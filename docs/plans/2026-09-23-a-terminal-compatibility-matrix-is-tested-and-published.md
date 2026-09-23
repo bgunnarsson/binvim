@@ -1,7 +1,7 @@
 ---
 title: A terminal compatibility matrix is tested against a written checklist and published
 date: 2026-09-23
-status: draft
+status: in-progress
 ---
 
 ## Context
@@ -80,11 +80,16 @@ Decisions (the user chose the checklist route):
 
 ## Tasks
 
-- [ ] Write `TERMINALS.md`'s checklist: one numbered check per feature above, with exact keys and
+- [x] Write `TERMINALS.md`'s checklist: one numbered check per feature above, with exact keys and
   pass criteria, and an empty matrix. Include a small `docs/terminal-check.txt` fixture holding
   wide chars, emoji clusters, a long line and a diagnostic-bearing snippet to open during the
   checks. Verify by running the checklist once in tmux myself, to confirm every step is
   executable as written.
+  Deviation: the fixture is `docs/terminal-check.md`, because Markdown's conceal is where binvim
+  draws italic and bold in a buffer, plus `docs/terminal-check.rs` for undercurl, because only an
+  LSP produces diagnostics and a `.txt` file has none. rust-analyzer reports its syntax error.
+  Deviation: the start page has no Nerd Font icons (its logo is box-drawing characters). The
+  glyph check looks at the status line and the file picker instead.
 - [ ] Run the tmux row and, if `ssh localhost` works, the tmux-over-SSH row, recording evidence.
   Fix any binvim-side failure as its own commit with a test where one can be written. Verify each
   fix with the check it failed, and record that in the matrix.
