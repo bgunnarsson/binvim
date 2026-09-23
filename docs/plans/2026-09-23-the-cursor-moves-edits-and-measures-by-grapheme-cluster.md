@@ -86,7 +86,7 @@ doesn't add.
   walk keeps painting char by char (selection, syntax colour and clipping are all per char). A
   cluster whose first char is clipped to a `<` / `>` edge marker has its other chars skipped, or
   the terminal would draw the glyph anyway. `paint_code_line` walks clusters directly.
-- [ ] Convert the remaining width walks:
+- [x] Convert the remaining width walks:
   - `markdown_render.rs:1189` and `:1230`
   - `app/state.rs:1311`
   - the mouse-click column at `app/input.rs:125`
@@ -94,6 +94,9 @@ doesn't add.
   - the two `UnicodeWidthChar` loops at `render.rs:6485-6536`, if they measure buffer text
 
   Verify with a click-on-second-cell test and a markdown `visual_col_for_buffer_col` emoji case.
+  Deviation: the two loops at `render.rs:6485-6536` measure an inline diagnostic's message and a
+  blame author, not buffer text, so they stay per-char. A click past the end of a line that ends
+  in a cluster, and `g$` / `gm` on one, clamp to the cluster's start rather than its last char.
 - [ ] Make `left`, `right`, `line_end`, `advance_one`, `retreat_one` and the `want_col` snap step
   by cluster. Verify with `motion::tests` on the acceptance lines, plus a proptest (next to the
   existing motion proptests) asserting every motion target is a boundary.

@@ -1307,8 +1307,9 @@ impl HoverState {
 /// other wide glyphs are two cells. Used for sizing only — the renderer does
 /// the actual tab expansion.
 fn visual_width(s: &str) -> usize {
-    s.chars()
-        .map(|c| crate::render::char_width(c, crate::render::TAB_WIDTH))
+    use unicode_segmentation::UnicodeSegmentation;
+    s.graphemes(true)
+        .map(|g| crate::render::cluster_width(g, crate::render::TAB_WIDTH))
         .sum()
 }
 

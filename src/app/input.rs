@@ -106,12 +106,21 @@ fn visual_col_to_char_col_with_hints(
         return 0;
     }
     let slice = buffer.rope.line(line);
+    let text: Vec<char> = slice
+        .chars()
+        .take_while(|c| *c != '\n' && *c != '\r')
+        .collect();
+    let widths = crate::render::cluster_widths(&text, crate::render::TAB_WIDTH);
     let mut visual = 0usize;
     let mut chars = 0usize;
-    for c in slice.chars() {
-        if c == '\n' || c == '\r' {
-            break;
-        }
+    let mut last_start = 0usize;
+    for width in widths {
+        // A cluster's continuation chars take no cells and are never a click
+        // target: a click on the family emoji's second cell lands on its start.
+        let Some(w) = width else {
+            chars += 1;
+            continue;
+        };
         let hw = hint_widths.get(chars).copied().unwrap_or(0);
         if hw > 0 {
             if visual + hw > visual_col {
@@ -120,9 +129,8 @@ fn visual_col_to_char_col_with_hints(
             visual += hw;
         }
         // Mirror of the renderer's advance: tabs expand to TAB_WIDTH cells, CJK /
-        // wide glyphs are two cells. Matching the render walk is what makes a
-        // click land on the character the user is actually pointing at.
-        let w = crate::render::char_width(c, crate::render::TAB_WIDTH);
+        // wide glyphs and emoji clusters are two cells. Matching the render walk
+        // is what makes a click land on the character the user is pointing at.
         if visual >= visual_col {
             break;
         }
@@ -130,12 +138,16 @@ fn visual_col_to_char_col_with_hints(
             return chars;
         }
         visual += w;
+        last_start = chars;
         chars += 1;
     }
     if allow_past_eol {
         chars.min(line_len)
-    } else {
+    } else if chars < text.len() {
         chars.min(line_len - 1)
+    } else {
+        // Past the line's end: the last char, which is its cluster's start.
+        last_start.min(line_len - 1)
     }
 }
 
@@ -6928,6 +6940,23 @@ mod tests {
         assert_eq!(
             visual_col_to_char_col_with_hints(&b, 0, 6, 11, &[], true),
             6
+        );
+    }
+
+    #[test]
+    fn a_click_on_any_cell_of_a_cluster_lands_on_its_start() {
+        // `a`, the ZWJ family (chars 1..6, cells 1-2), `b` at char 6, cell 3.
+        let b = buf("a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}b\n");
+        let at = |v, past| visual_col_to_char_col_with_hints(&b, 0, v, 7, &[], past);
+        assert_eq!(at(1, false), 1);
+        assert_eq!(at(2, false), 1, "second cell of the emoji");
+        assert_eq!(at(3, false), 6);
+        assert_eq!(at(9, true), 7);
+        // A line ending in a cluster clamps to the cluster's start in Normal.
+        let b = buf("a\u{1F44D}\u{1F3FD}\n");
+        assert_eq!(
+            visual_col_to_char_col_with_hints(&b, 0, 9, 3, &[], false),
+            1
         );
     }
 

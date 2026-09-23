@@ -1166,6 +1166,7 @@ pub fn visual_col_for_buffer_col(
     let mut visual = 0usize;
     let mut col = 0usize;
     let mut t_idx = 0usize;
+    let widths = crate::render::cluster_widths(chars, tab_width);
     while col < target_col && col < chars.len() {
         while t_idx < meta.transforms.len() && meta.transforms[t_idx].end <= col {
             t_idx += 1;
@@ -1185,8 +1186,7 @@ pub fn visual_col_for_buffer_col(
                 continue;
             }
         }
-        let c = chars[col];
-        visual += crate::render::char_width(c, tab_width);
+        visual += widths[col].unwrap_or(0);
         col += 1;
     }
     visual
@@ -1203,6 +1203,7 @@ pub fn buffer_col_for_visual_col(
     let mut visual = 0usize;
     let mut col = 0usize;
     let mut t_idx = 0usize;
+    let widths = crate::render::cluster_widths(chars, tab_width);
     while col < chars.len() {
         while t_idx < meta.transforms.len() && meta.transforms[t_idx].end <= col {
             t_idx += 1;
@@ -1226,8 +1227,9 @@ pub fn buffer_col_for_visual_col(
                 continue;
             }
         }
-        let c = chars[col];
-        let w = crate::render::char_width(c, tab_width);
+        // A continuation char is 0 wide, so it never takes the click from its
+        // cluster's start.
+        let w = widths[col].unwrap_or(0);
         if visual + w > target_visual {
             return col;
         }
@@ -1417,6 +1419,18 @@ mod tests {
         assert_eq!(buffer_col_for_visual_col(&chars, &m, 1, 4), 1);
         // Visual col 2 is 'i' (source col 2).
         assert_eq!(buffer_col_for_visual_col(&chars, &m, 2, 4), 2);
+    }
+
+    #[test]
+    fn markdown_walks_measure_a_cluster_whole() {
+        // `**` hidden, then the family emoji (5 chars, 2 cells), then `x`.
+        let text = "**\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}x**";
+        let chars: Vec<char> = text.chars().collect();
+        let m = compute_line_meta(text);
+        assert_eq!(visual_col_for_buffer_col(&chars, &m, 2, 4), 0);
+        assert_eq!(visual_col_for_buffer_col(&chars, &m, 7, 4), 2);
+        assert_eq!(buffer_col_for_visual_col(&chars, &m, 1, 4), 2);
+        assert_eq!(buffer_col_for_visual_col(&chars, &m, 2, 4), 7);
     }
 
     #[test]

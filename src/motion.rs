@@ -409,14 +409,20 @@ pub fn to_column(buf: &Buffer, cur: Cursor, count: usize) -> MotionResult {
 /// first.
 fn col_at_visual(buf: &Buffer, line: usize, visual: usize) -> usize {
     let len = buf.line_len(line);
+    let chars: Vec<char> = buf.rope.line(line).chars().take(len).collect();
     let mut used = 0;
-    for (col, c) in buf.rope.line(line).chars().take(len).enumerate() {
-        used += crate::render::char_width(c, crate::render::TAB_WIDTH);
+    for (col, w) in crate::render::cluster_widths(&chars, crate::render::TAB_WIDTH)
+        .into_iter()
+        .enumerate()
+    {
+        // Continuation chars add nothing, so the cluster's start is the col
+        // returned for any of its cells.
+        used += w.unwrap_or(0);
         if used > visual {
             return col;
         }
     }
-    len.saturating_sub(1)
+    buf.grapheme_start_col(line, len.saturating_sub(1))
 }
 
 /// `g0` / `gm` / `g$`: the char at screen column `visual`. binvim scrolls
