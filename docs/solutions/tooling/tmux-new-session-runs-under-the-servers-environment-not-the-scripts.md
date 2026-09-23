@@ -11,6 +11,7 @@ symptoms:
   - "`tmux show-environment -g` prints HOME=/Users/<user> while the script exported another"
 root_cause: "a running tmux server gives `new-session` its own global environment, captured when the server started, not the calling shell's exports, so `export HOME=… XDG_CACHE_HOME=…` before `tmux new-session … \"binvim file\"` changes nothing the pane's command sees"
 related:
+  - docs/solutions/tooling/lazygit-outside-a-repo-prompts-then-opens-another-repo.md
   - docs/solutions/tooling/tmux-send-keys-escape-then-a-key-arrives-as-alt.md
   - docs/solutions/runtime/hung-up-tty-leaves-crossterm-poll-spinning.md
 ---

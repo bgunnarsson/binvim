@@ -11,6 +11,7 @@ symptoms:
   - "a check reads the wrong result (undo directory still 755) as though the code under test failed"
 root_cause: "`tmux send-keys A y Escape ':w' Enter` writes ESC and ':' to the pty together; crossterm reads an ESC immediately followed by another byte as Alt+that key, so binvim stays in Insert mode and types the rest"
 related:
+  - docs/solutions/tooling/lazygit-outside-a-repo-prompts-then-opens-another-repo.md
   - docs/solutions/runtime/hung-up-tty-leaves-crossterm-poll-spinning.md
 ---
 
