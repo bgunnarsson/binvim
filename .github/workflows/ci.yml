@@ -102,3 +102,20 @@ jobs:
 
       - name: cargo fmt --check
         run: cargo fmt --check
+
+  plans:
+    name: no tracked plans
+    # docs/plans/ is gitignored, which stops new files but not one tracked
+    # before the ignore or added with `git add -f`.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: docs/plans holds no tracked files
+        run: |
+          tracked=$(git ls-files docs/plans)
+          if [ -n "$tracked" ]; then
+            echo "docs/plans/ is local only; untrack with git rm --cached:"
+            echo "$tracked"
+            exit 1
+          fi

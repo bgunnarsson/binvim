@@ -1,0 +1,11 @@
+#!/bin/sh
+# Enabled per clone with `git config core.hooksPath .githooks`.
+# docs/plans/ is gitignored, but `git add -f` or a file tracked before the
+# ignore still reaches a commit; this refuses both.
+staged=$(git diff --cached --name-only --diff-filter=ACMR -- docs/plans)
+if [ -n "$staged" ]; then
+    echo "docs/plans/ is local to this machine and never committed:" >&2
+    echo "$staged" | sed 's/^/  /' >&2
+    echo "Unstage with: git rm --cached <path>" >&2
+    exit 1
+fi
