@@ -145,13 +145,13 @@ A cell is never a bare "fail".
 
 | # | Check | Ghostty | Kitty | WezTerm | Alacritty | tmux | Windows Terminal | over SSH | Terminal.app |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| | Version | | | | | 3.6a | | | |
-| 1 | Launch and quit | | | | | ✓ | | | |
-| 2 | Re-encoded keys | | | | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
-| 3 | Esc response | | | | | ✓ | | | |
-| 4 | `Ctrl-[` and Alt | | | | | ✓ | | | |
-| 5 | Shift / Ctrl arrows | | | | | ✓ | | | |
-| 6 | Cursor shape | | | | | ✓ | | | |
+| | Version | | 0.49.0 | | | 3.6a | | | |
+| 1 | Launch and quit | | ✓ | | | ✓ | | | |
+| 2 | Re-encoded keys | | ✓ | | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
+| 3 | Esc response | | ✓ | | | ✓ | | | |
+| 4 | `Ctrl-[` and Alt | | ✓ | | | ✓ | | | |
+| 5 | Shift / Ctrl arrows | | ✓ | | | ✓ | | | |
+| 6 | Cursor shape | | ✓ | | | ✓ | | | |
 | 7 | Truecolor | | | | | ✓ | | | |
 | 8 | Italic and bold | | | | | ✓ | | | |
 | 9 | Nerd Font glyphs | | | | | ✓ | | | |
