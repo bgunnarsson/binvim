@@ -156,5 +156,5 @@ Run on 2026-09-23 against `target/release/binvim` at `f1e53d6`:
   `normal_edits_take_a_whole_cluster`. Not checked by eye in Ghostty.
 - Scaled down: 50 000 lines of emoji text, the first 30 of them 10 000 chars (34 MB), since the
   plan's size is about 2 GB. `l`, `$`, `x`, `5000l` and `0` on the long lines, and `G` / `k` / `$` /
-  `x` at the end, each answered within the harness's 27 ms polling floor. The build before this
-  plan hung on the second `l`, which stepped into the family emoji and moved nothing on screen.
+  `x` at the end, each answered within the harness's 27 ms polling floor. On the build before this
+  plan, the second `l` stepped into the middle of the family emoji and nothing on screen moved.
