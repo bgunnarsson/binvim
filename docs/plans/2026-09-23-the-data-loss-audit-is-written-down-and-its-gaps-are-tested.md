@@ -1,7 +1,7 @@
 ---
 title: The data-loss audit is written down, path by path, and its untested gaps are tested
 date: 2026-09-23
-status: in-progress
+status: done
 ---
 
 ## Context
