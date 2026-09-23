@@ -6,7 +6,7 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 
 | Keys        | Action                                |
 |-------------|---------------------------------------|
-| `<space>`   | File picker                           |
+| `<space><space>` | File picker                      |
 | `<space>?`  | Recent files                          |
 | `<space>G`  | Live grep                             |
 | `<space>gg` | Open lazygit — suspends the editor, hands the terminal to lazygit, refreshes every buffer's git gutter on exit (same as `:lazygit` / `:lg`) |
@@ -14,6 +14,7 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>a`  | Code actions                          |
 | `<space>r`  | Rename (LSP-aware) — opens a modal preview overlay (per-edit checkboxes, before/after snippet per occurrence) before anything touches disk. `j`/`k` move, `<Space>` toggles, `a`/`n` flip all on/off, `o` jumps to the edit site (cancels), `<Enter>` applies only the enabled edits, `<Esc>` cancels |
 | `<space>R`  | Replace all (literal-string in buffer)|
+| `<space>l`  | Run the code lens under the cursor — the run / debug row a server (or binvim's own vitest lenses) puts above a test |
 | `<space>f`  | Format active buffer                  |
 | `<space>i`  | Set up the toolchain for this language — opens `:install` preselected to the current buffer's language bundle (LSP + formatter + DAP), so you review and confirm with `y`. When a file's LSP or formatter is missing on open, a popup (same style as the file picker) lists what's missing — `Enter` opens the installer, `Esc` skips (disable the popup with `[install] prompt_on_open = false`) |
 | `<space>/`  | Toggle line comment(s) — current line in Normal, every selected line in Visual. Per-language prefix (`//`, `#`, `--`); block-only languages (HTML / Markdown / CSS / XML / Razor) wrap with their pair |
@@ -22,6 +23,10 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>ba` | Delete all buffers (refuses dirty)    |
 | `<space>bA` | Delete all buffers (force)            |
 | `<space>bo` | Close other buffers                   |
+| `<space>hp` | Preview the git hunk under the cursor in a hover popup |
+| `<space>hs` | Stage the hunk (`git apply --cached`)  |
+| `<space>hu` | Unstage the hunk                       |
+| `<space>hr` | Discard the hunk — refuses while the buffer is dirty |
 | `<space>bn` | Next buffer                           |
 | `<space>bp` | Previous buffer                       |
 | `<space>ds` | Start debug session                   |
@@ -48,9 +53,13 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>sl` | Re-run the most recent test (same as `:testlast`) |
 | `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
 | `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
-| `<space>jc` / `<space>jC` | Spawn a new Claude tab in the right-side pane — uppercase variant additionally pre-types `@<active-buffer cwd-relative path>` into the input once the tool is ready. Same shift-pair pattern for `<space>jx` / `<space>jX` (Codex) and `<space>jo` / `<space>jO` (opencode). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. |
-| `<space>pi` | Package manager — manage installed packages: pick a project manifest (`.csproj` / `package.json` / `Cargo.toml` / `go.mod` / `requirements.txt`), pick an installed package, then a version to change to. The installed version is highlighted; `Tab` toggles prereleases; type to narrow the version list. |
-| `<space>ps` | Package manager — search & add: pick a manifest, type to search the registry, pick a package, then a version to add. |
+| `<space>jc` / `<space>jC` | Spawn a new Claude tab in the right-side pane — uppercase variant additionally pre-types `@<active-buffer cwd-relative path>` into the input once the tool is ready. Same shift-pair pattern for `<space>jx` / `<space>jX` (Codex), `<space>jo` / `<space>jO` (opencode), `<space>jw` / `<space>jW` (openclaw) and `<space>jh` / `<space>jH` (hermes). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. |
+| `<space>pi` | Package manager — manage installed packages: pick a project manifest when the workspace has more than one (`.csproj` / `package.json` / `Cargo.toml` / `go.mod` / `requirements.txt`), then an installed package, then a version to change to. The installed version is highlighted; `Tab` toggles prereleases; type to narrow the version list. |
+| `<space>ps` | Package manager — search & add: pick a manifest (when there's more than one), type to search the registry, pick a package, then a version to add. |
+| `<space>Al` | Android — pick a defined AVD and launch the emulator |
+| `<space>Ac` | Android — create an AVD: pick a system image, `sdkmanager` fetches it |
+| `<space>Ad` | Android — list the devices `adb` sees |
+| `<space>Ab` | Android — attach a debug session to the app of the enclosing Gradle project, through jdtls and the java-debug plugin |
 
 The package manager detects the ecosystem from the active buffer's workspace. Five backends are wired up:
 
@@ -62,20 +71,20 @@ The package manager detects the ecosystem from the active buffer's workspace. Fi
 
 The Cargo, Go, and Python backends shell out to `curl` for the steps their toolchain can't do (crates.io has no `cargo` command for listing all versions; the Go toolchain has no search; PyPI is HTTP-only), so `curl` must be on `PATH` for those.
 
-Hold `<space>` (or `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>p` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
+Hold `<space>` (or `<space>A` / `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>p` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 
 | Keys                  | Action                                       |
 |-----------------------|----------------------------------------------|
 | `H` / `L`             | Previous / next buffer (same as `:bp`/`:bn`) |
-| `gt` / `gT`           | Same as `H` / `L` (Vim aliases)              |
+| `gt` / `gT`           | Same as `L` / `H` (Vim aliases)              |
 | `Ctrl-^`              | Alternate buffer — the file active before this one (same as `:e#` / `:b#`); `N Ctrl-^` goes to buffer N |
 | `Ctrl-O` / `Ctrl-I`   | Jumplist back / forward — persists across sessions per-buffer |
 | Click a tab           | Switch to it                                 |
 | Middle-click a tab    | Close it (refuses dirty, same as `:bd`)      |
 | Click `×` on a tab    | Close it (refuses dirty)                     |
-| Click `‹` / `›`       | Scroll the visible tab slice by one          |
+| Click `‹` / `›`       | Switch to the first hidden tab on that side, which scrolls the slice |
 
 ## Window splits
 

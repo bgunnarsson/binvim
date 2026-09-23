@@ -14,7 +14,7 @@
 A Vim-grammar TUI editor written in Rust. One binary, no plugin system — everything below ships built in.
 
 - **Editing** — modal editing with operators, motions, text objects, marks, registers, macros and dot-repeat; real multi-cursor and Sublime-style `Ctrl-N` selections; surround, code folding, smart indent, persistent undo, OS-clipboard paste, horizontal scrolling; writes that can't lose work and recovery after a crash. → [Editing](docs/editing.md)
-- **Highlighting** — tree-sitter for Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS, Markdown, C#, Razor, YAML, XML and the `.csproj` family, Bash, `.editorconfig` and `.gitignore`. → [Highlighting](docs/highlighting.md)
+- **Highlighting** — tree-sitter for Rust, TypeScript / TSX / JSX, JavaScript, JSON, Go, Python, C / C++, Java, Ruby, PHP, Lua, TOML, Svelte, Zig, Nix, Elixir, Dockerfile, SQL, HTML, CSS / SCSS, Markdown, C#, Razor, YAML, XML with the `.csproj` family, and Bash, plus hand-scanned colouring for `.editorconfig` and `.gitignore`. → [Highlighting](docs/highlighting.md)
 - **LSP** — several servers per buffer (tsserver plus Tailwind, csharp-ls over Razor): completion, snippets, hover, rename, code actions, inlay hints, semantic tokens over tree-sitter, document highlight, signature help, references, document and workspace symbols, and `:messages` for what the servers say. Opt-in GitHub Copilot ghost completions. → [LSP](docs/lsp.md)
 - **Debugging** — DAP for .NET (netcoredbg), Go (delve), Python (debugpy) and Rust / C / C++ (lldb-dap): project, bin and script pickers, .NET launch profiles, conditional breakpoints, frames, locals with lazy expansion, watches, and the Visual Studio / Rider F-keys. → [Debugger](docs/debugging.md)
 - **Formatting** — one formatter per extension (biome, csharpier, gofmt / goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter) plus `.editorconfig` on every save. → [External tools](docs/external-tools.md)
@@ -52,7 +52,7 @@ Scoop, the Nix flake, building from source, and `binvim-install` — the one-sho
 binvim [path]
 ```
 
-If `path` is omitted and a session exists for this cwd, the session restores (start page + tab row above it). Otherwise the start page renders alone. Press `:` for a command (`:e <path>`, `:q`) or `<space>` to open the file picker.
+If `path` is omitted and a session exists for this cwd, the session restores (start page + tab row above it). Otherwise the start page renders alone. Press `:` for a command (`:e <path>`, `:q`) or `<space><space>` to open the file picker.
 
 ## Documentation
 

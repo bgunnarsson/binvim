@@ -17,7 +17,9 @@ follows [Semantic Versioning](https://semver.org/).
   keys, ex commands, Vim compatibility, highlighting, LSP, the debugger,
   external tools, configuration, install and the project layout — is a file of
   its own under `docs/`, and the README keeps the pitch, the one-line installs
-  and a link to each.
+  and a link to each. Every claim in them was checked against the source
+  and the stale ones corrected — bindings that had moved, defaults and lists
+  that had grown, and colours named for the stock palette only.
 
 ### Fixed
 - **Tasks and AI side panes start under cmd.exe and PowerShell.** `:make`,
