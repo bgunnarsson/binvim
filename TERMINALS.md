@@ -108,6 +108,8 @@ A cell is never a bare "fail".
     In the fixture, `G`, `o`, then paste with the terminal's paste key.
     *Pass:* the three lines arrive as copied, with the indent unchanged (no staircase) and no
     doubled `(` or `"`; the chip still reads `INSERT`. `Esc`, then one `u` removes all three.
+    Paste them again, `:w /tmp/paste.txt`, and run `xxd /tmp/paste.txt` outside binvim.
+    *Pass:* no `0d` byte. A terminal that sends the breaks as CR still lands them as lines.
 15. **Synchronized output.** `:e src/render.rs`, hold `Ctrl-d` for two seconds, then `Ctrl-u`,
     then hold `j`.
     *Pass:* no torn frames (half old screen, half new) and no cursor flashing across the screen.
@@ -207,7 +209,9 @@ from tmux:
   notches scrolled `src/render.rs` by six lines. tmux forwarding an outer
   terminal's mouse wasn't exercised.
 - 14: `paste-buffer -p` delivered the three lines intact and in `INSERT`; one
-  `u` removed them.
+  `u` removed them. The first run misjudged this from the screen. tmux sends
+  the breaks as CR, and binvim wrote them to disk as `\r`. Fixed in `ca45836`.
+  Re-run against a release build, `xxd` of the saved file showed `0a` and no `0d`.
 - 15: `pipe-pane -O` over six `Ctrl-d` and twenty `j` caught 30 frames, each
   inside `?2026h` … `?2026l`.
 - 17: `resize-window` to 70×16 and 130×34 redrew with the status line on the

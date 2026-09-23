@@ -85,25 +85,16 @@ once upstream guards the flag with `flag_if_supported`.
 
 ## Recovery
 
-### A buffer with no file name has no recovery file
+### Without a cache directory, nothing is recovered and an in-place write isn't guarded
 
-A recovery file is keyed by its buffer's path, so a `[No Name]` buffer never
-gets one: `write_recovery_now` and `refresh_recovery_snapshot`
-(`src/app/recover_glue.rs`) skip buffers with no path. Its text is lost if
-binvim crashes, is killed, or its terminal closes before you `:w {file}`. A
-plain `:q` still refuses to quit while it has unsaved changes.
-
-Workaround: give scratch text a name early (`:w /tmp/notes.txt`), and it's
-dumped every four seconds like any other file.
-
-### A write that falls back to writing in place isn't atomic
-
-`paths::write_atomic` writes a temp file and renames it over the target, except
-where a rename would change the file: other hard links to it, a directory you
-can't create files in, an owner the temp file can't take, a failed rename, or a
-dangling symlink. There it writes the file in place, and a write that fails
-partway (a full disk) leaves the file truncated. The text is still in the
-buffer, and in its recovery file, so `:w` again once the cause is fixed.
+Recovery files and the copy a save takes before writing in place both live
+under the cache directory (`~/.cache/binvim`, or `XDG_CACHE_HOME`). When there
+is none (no `HOME`), unsaved text isn't dumped, and a save that has to write in
+place — a hard-linked file, a directory you can't create files in, an owner the
+temp file can't take, a failed rename — goes ahead without a copy
+(`write_in_place`, `src/paths.rs`), so a write failing partway leaves the file
+truncated. The text is still in the buffer, so `:w` again once the cause is
+fixed.
 
 ## Terminals
 

@@ -54,12 +54,13 @@ literally.
   crash recovery of unsaved buffers, atomic saves, session robustness when files
   vanish or change underneath. This bug class ends adoption permanently.
   The audit, path by path with the evidence for each, is
-  [`docs/data-loss-audit.md`](docs/data-loss-audit.md) (2026-09-23). Two gaps stay
-  open: a `[No Name]` buffer gets no recovery dump, and a write that falls back to
-  writing in place can leave the file truncated if it fails partway.
+  [`docs/data-loss-audit.md`](docs/data-loss-audit.md) (2026-09-23). Its two gaps
+  are closed: a `[No Name]` buffer is dumped and `:recover` brings it back, and a
+  save that has to write in place copies the file aside first. What's left needs a
+  machine with no cache directory, and is in `KNOWN_ISSUES.md`.
 - **Correctness on hostile input.** Grapheme clusters / wide chars / emoji /
-  mixed EOL / very long lines / huge files (a "large file mode" that degrades
-  tree-sitter + LSP gracefully rather than stalling). Extend the density of the
+  mixed EOL / very long lines / huge files. Large-file mode is in (past 5 MB or
+  50,000 lines, tree-sitter and LSP are switched off, `Buffer::is_large`). Extend the density of the
   motion/text-object test suites to rendering and width math. Includes the
   known `tree-sitter-md` scanner crash: a narrow `isdigit` on a Unicode
   codepoint in an ordered-list marker (`1€` at line start) aborts on glibc.
