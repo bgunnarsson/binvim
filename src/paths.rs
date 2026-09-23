@@ -346,22 +346,34 @@ pub(crate) fn tidy_private_dir(
 /// (`sudo binvim` on someone else's file), a directory the temp file can't be
 /// created in (a file the user may write but not replace), and a rename that
 /// fails. ACLs and extended
-/// attributes aren't carried over.
+/// attributes aren't carried over. Writing in place truncates first, so the
+/// file is copied aside beforehand (`write_in_place`).
 ///
 /// The temp file sits beside the target, possibly in a directory other users
 /// can write, so it's created exclusively under a name they can't predict: a
 /// symlink or file planted there makes the create fail rather than redirecting
 /// the write, and its mode is right from the moment it exists.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    write_atomic_with(path, bytes, |from, to| std::fs::rename(from, to))
+    // Not under test, like every other persisted path: the in-place tests
+    // would leave their copies in the real cache.
+    let backup_dir = cache_dir()
+        .filter(|_| !cfg!(test))
+        .map(|dir| dir.join("backup"));
+    write_atomic_with(path, bytes, backup_dir.as_deref(), |from, to| {
+        std::fs::rename(from, to)
+    })
 }
 
-/// `write_atomic` with the rename passed in, so a test can make it fail.
+/// `write_atomic` with the backup directory and the rename passed in, so a
+/// test can make the rename fail.
 fn write_atomic_with(
     path: &Path,
     bytes: &[u8],
+    backup_dir: Option<&Path>,
     rename: fn(&Path, &Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
+    let in_place =
+        |target: &Path| write_in_place(target, bytes, backup_dir, |p, b| std::fs::write(p, b));
     let target = match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => match path.canonicalize() {
             Ok(real) => real,
@@ -372,7 +384,7 @@ fn write_atomic_with(
     };
     let existing = std::fs::metadata(&target).ok();
     if existing.as_ref().is_some_and(has_other_links) {
-        return std::fs::write(&target, bytes);
+        return in_place(&target);
     }
     if existing.is_some() {
         // A rename only needs the directory to be writable, so without this a
@@ -383,7 +395,7 @@ fn write_atomic_with(
     let (tmp, file) = match create_temp_beside(&target, existing.as_ref()) {
         Ok(created) => created,
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
-            return std::fs::write(&target, bytes);
+            return in_place(&target);
         }
         Err(e) => return Err(e),
     };
@@ -391,7 +403,7 @@ fn write_atomic_with(
         if !take_owner(&file, meta) {
             drop(file);
             let _ = std::fs::remove_file(&tmp);
-            return std::fs::write(&target, bytes);
+            return in_place(&target);
         }
     }
     let written = (|| {
@@ -415,9 +427,77 @@ fn write_atomic_with(
         // can't be replaced: a file another Windows program holds open, a
         // single-file bind mount (EBUSY). Writing in place still works there,
         // as saves always did.
-        return std::fs::write(&target, bytes);
+        return in_place(&target);
     }
     Ok(())
+}
+
+/// Write `bytes` over `target` keeping its inode. That truncates it first, so
+/// a write failing partway — a full disk — would leave it cut short: its
+/// bytes are copied into `backup_dir` beforehand, and the copy is removed once
+/// the write has gone through, or kept, and named in the error, when it
+/// hasn't. A copy that can't be made stops the write with the file untouched;
+/// the same disk would likely fail the write too. Without a backup directory
+/// (no cache dir) the write goes ahead unguarded. `write` is passed in so a
+/// test can make it fail.
+fn write_in_place(
+    target: &Path,
+    bytes: &[u8],
+    backup_dir: Option<&Path>,
+    write: fn(&Path, &[u8]) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let Some(dir) = backup_dir else {
+        return write(target, bytes);
+    };
+    let original = std::fs::read(target)?;
+    let backup = write_backup(dir, target, &original)?;
+    match write(target, bytes) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&backup);
+            Ok(())
+        }
+        Err(e) => Err(std::io::Error::new(
+            e.kind(),
+            format!("{e} — the file as it was is kept at {}", backup.display()),
+        )),
+    }
+}
+
+/// Copy `bytes`, `target`'s contents, into a new file in `dir`. Named apart
+/// from any copy already there: one left by an earlier failed write holds the
+/// file from before it was truncated, and the file on disk now doesn't.
+fn write_backup(dir: &Path, target: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    // The text may be a private file's, whatever mode the copy comes out as.
+    create_private_dir(dir)?;
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let existing = std::fs::metadata(target).ok();
+    for _ in 0..16 {
+        let backup = dir.join(format!(
+            "{}-{}-{}-{name}",
+            path_key(target),
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        ));
+        let mut file = match create_exclusive(&backup, existing.as_ref()) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        };
+        if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+            let _ = std::fs::remove_file(&backup);
+            return Err(e);
+        }
+        return Ok(backup);
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "no free name for a backup copy",
+    ))
 }
 
 /// Exclusively create a temp file in `target`'s directory, retrying under a
@@ -612,10 +692,63 @@ mod tests {
         let file = dir.join("a.txt");
         std::fs::write(&file, "old").unwrap();
         let inode = std::fs::metadata(&file).unwrap().ino();
-        write_atomic_with(&file, b"new", |_, _| Err(std::io::Error::other("busy"))).unwrap();
+        write_atomic_with(&file, b"new", None, |_, _| {
+            Err(std::io::Error::other("busy"))
+        })
+        .unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"new");
         assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
         assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    #[test]
+    fn an_in_place_write_that_goes_through_leaves_no_backup() {
+        let dir = scratch("inplace-ok");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "old").unwrap();
+        let backups = dir.join("backup");
+        write_atomic_with(&file, b"new", Some(&backups), |_, _| {
+            Err(std::io::Error::other("busy"))
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(&backups).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn an_in_place_write_that_fails_partway_keeps_the_file_as_it_was() {
+        let dir = scratch("inplace-fails");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "old contents").unwrap();
+        let backups = dir.join("backup");
+        let err = write_in_place(&file, b"new contents", Some(&backups), |p, _| {
+            std::fs::write(p, "new")?;
+            Err(std::io::Error::other("disk full"))
+        })
+        .unwrap_err();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        let kept: Vec<PathBuf> = std::fs::read_dir(&backups)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(std::fs::read(&kept[0]).unwrap(), b"old contents");
+        assert!(err.to_string().contains(&kept[0].display().to_string()));
+    }
+
+    #[test]
+    fn no_backup_means_no_in_place_write() {
+        let dir = scratch("inplace-nobackup");
+        let file = dir.join("a.txt");
+        std::fs::write(&file, "old").unwrap();
+        // A file where the backup directory should be, so it can't be made.
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, "").unwrap();
+        let result = write_in_place(&file, b"new", Some(&blocker.join("backup")), |_, _| {
+            panic!("wrote in place without a backup")
+        });
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"old");
     }
 
     #[cfg(unix)]
