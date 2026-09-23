@@ -84,6 +84,13 @@ pub enum Installer {
     /// `composer global require <pkg[:version]>` — pin syntax embedded
     /// in the package string.
     Composer(&'static str),
+    /// `winget install --id <id> --exact` — unpinned, winget owns the version.
+    Winget(&'static str),
+    /// `scoop install <app>`, from scoop's `main` bucket — an app in another
+    /// bucket would need `scoop bucket add` first.
+    Scoop(&'static str),
+    /// `choco install <pkg> -y`.
+    Choco(&'static str),
     Manual(&'static str),
 }
 
@@ -103,6 +110,9 @@ impl Installer {
             Installer::DotnetTool(_, _) => "dotnet",
             Installer::Nix(_) => "nix",
             Installer::Composer(_) => "composer",
+            Installer::Winget(_) => "winget",
+            Installer::Scoop(_) => "scoop",
+            Installer::Choco(_) => "choco",
             Installer::Manual(_) => "",
         }
     }
@@ -127,6 +137,11 @@ impl Installer {
             }
             Installer::Nix(r) => format!("nix profile install {r}"),
             Installer::Composer(p) => format!("composer global require {p}"),
+            Installer::Winget(id) => format!(
+                "winget install --id {id} --exact --accept-source-agreements --accept-package-agreements"
+            ),
+            Installer::Scoop(app) => format!("scoop install {app}"),
+            Installer::Choco(p) => format!("choco install {p} -y"),
             Installer::Manual(s) => format!("manual: {s}"),
         }
     }
@@ -205,6 +220,18 @@ impl Installer {
                 c.args(["global", "require", p]);
                 c
             }
+            Installer::Winget(id) => {
+                let mut c = Command::new("winget");
+                c.args(["install", "--id", id, "--exact"]);
+                c.args(WINGET_AGREEMENTS);
+                c
+            }
+            Installer::Scoop(app) => scoop_command("install", app),
+            Installer::Choco(p) => {
+                let mut c = Command::new("choco");
+                c.args(["install", p, "-y"]);
+                c
+            }
             Installer::Manual(_) => return None,
         };
         cmd.stdin(Stdio::inherit());
@@ -260,6 +287,18 @@ impl Installer {
                 c.args(["profile", "upgrade", nix_profile_name(r)]);
                 c
             }
+            Installer::Winget(id) => {
+                let mut c = Command::new("winget");
+                c.args(["upgrade", "--id", id, "--exact"]);
+                c.args(WINGET_AGREEMENTS);
+                c
+            }
+            Installer::Scoop(app) => scoop_command("update", app),
+            Installer::Choco(p) => {
+                let mut c = Command::new("choco");
+                c.args(["upgrade", p, "-y"]);
+                c
+            }
             // Cargo / Rustup / Go / Gem / Composer re-run their install command
             // (a replace at the pinned version); Npm / Manual return None.
             _ => return self.build_command(),
@@ -284,10 +323,27 @@ impl Installer {
                 format!("dotnet tool update --global {p} --version {v}")
             }
             Installer::Nix(r) => format!("nix profile upgrade {}", nix_profile_name(r)),
+            Installer::Winget(id) => format!(
+                "winget upgrade --id {id} --exact --accept-source-agreements --accept-package-agreements"
+            ),
+            Installer::Scoop(app) => format!("scoop update {app}"),
+            Installer::Choco(p) => format!("choco upgrade {p} -y"),
             // Everything else upgrades by re-running its install command.
             other => other.display(),
         }
     }
+}
+
+/// winget stops to ask about source and package agreements otherwise.
+const WINGET_AGREEMENTS: [&str; 2] = ["--accept-source-agreements", "--accept-package-agreements"];
+
+/// `scoop <verb> <app>`. scoop is a PowerShell shim, not a real exe, so it
+/// runs through PowerShell as `BinvimUpdate::Scoop` does. `app` is a
+/// catalog constant, never text from a project.
+fn scoop_command(verb: &str, app: &str) -> Command {
+    let mut c = Command::new("powershell");
+    c.args(["-NoProfile", "-Command", &format!("scoop {verb} {app}")]);
+    c
 }
 
 /// The profile entry name `nix profile upgrade` matches against — the flake
@@ -613,7 +669,7 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
 pub fn detect_managers() -> BTreeSet<&'static str> {
     let candidates = [
         "brew", "apt-get", "npm", "cargo", "rustup", "go", "pipx", "pip", "gem", "dotnet", "nix",
-        "composer", "sudo",
+        "composer", "sudo", "winget", "scoop", "choco",
     ];
     candidates.into_iter().filter(|c| on_path(c)).collect()
 }
@@ -1325,6 +1381,65 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn windows_managers_install_and_upgrade_by_id() {
+        let agree = "--accept-source-agreements --accept-package-agreements";
+        assert_eq!(
+            Installer::Winget("zig.zig").display(),
+            format!("winget install --id zig.zig --exact {agree}")
+        );
+        assert_eq!(
+            Installer::Winget("zig.zig").upgrade_display(),
+            format!("winget upgrade --id zig.zig --exact {agree}")
+        );
+        assert_eq!(Installer::Scoop("zls").display(), "scoop install zls");
+        assert_eq!(
+            Installer::Scoop("zls").upgrade_display(),
+            "scoop update zls"
+        );
+        assert_eq!(Installer::Choco("llvm").display(), "choco install llvm -y");
+        assert_eq!(
+            Installer::Choco("llvm").upgrade_display(),
+            "choco upgrade llvm -y"
+        );
+    }
+
+    #[test]
+    fn windows_manager_commands_match_their_display() {
+        let argv = |c: Command| {
+            let mut v = vec![c.get_program().to_string_lossy().into_owned()];
+            v.extend(c.get_args().map(|a| a.to_string_lossy().into_owned()));
+            v
+        };
+        let winget = Installer::Winget("zig.zig");
+        assert_eq!(
+            argv(winget.build_command().unwrap()).join(" "),
+            winget.display()
+        );
+        assert_eq!(
+            argv(winget.upgrade_command().unwrap()).join(" "),
+            winget.upgrade_display()
+        );
+        // scoop is a PowerShell shim, so it runs through PowerShell.
+        assert_eq!(
+            argv(Installer::Scoop("zls").build_command().unwrap()),
+            ["powershell", "-NoProfile", "-Command", "scoop install zls"]
+        );
+        assert_eq!(
+            argv(Installer::Scoop("zls").upgrade_command().unwrap()),
+            ["powershell", "-NoProfile", "-Command", "scoop update zls"]
+        );
+        let choco = Installer::Choco("llvm");
+        assert_eq!(
+            argv(choco.build_command().unwrap()).join(" "),
+            choco.display()
+        );
+        assert_eq!(
+            argv(choco.upgrade_command().unwrap()).join(" "),
+            choco.upgrade_display()
+        );
     }
 
     #[test]

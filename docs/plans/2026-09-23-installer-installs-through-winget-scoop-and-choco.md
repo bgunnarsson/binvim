@@ -112,10 +112,14 @@ doesn't bind here.
   choco, from the three indexes named under Decisions. Write the table (tool → id or "none") into
   this plan under a new `## Package ids` section. Verify each id against its manifest or package
   page URL, and cite that URL in the table.
-- [ ] Add the `Winget` / `Scoop` / `Choco` variants with their `manager`, `display`,
+- [x] Add the `Winget` / `Scoop` / `Choco` variants with their `manager`, `display`,
   `build_command`, `upgrade_command` and `upgrade_display` arms, and add the three names to
   `detect_managers`. Verify with new `install::tests` cases asserting each variant's `display()`
   and `upgrade_display()` strings, extending `upgrade_display_uses_manager_upgrade_verbs`.
+  Deviation: scoop runs as `powershell -NoProfile -Command "scoop <verb> <app>"`, not
+  `Command::new("scoop")`. scoop is a PowerShell shim, which `Command` can't spawn directly;
+  `BinvimUpdate::Scoop` already runs it the same way. The tests are new functions beside
+  `upgrade_display_uses_manager_upgrade_verbs` rather than an extension of it.
 - [ ] Append the confirmed ids to the 13 `Tool`s in `BUNDLES`. Verify with a test that, for every
   bundle, `pick_installer` under a manager set of `{brew, npm, cargo, go, pipx}` picks the same
   installer as before. The test compares against a `Choice` list captured before the change, so
