@@ -82,9 +82,8 @@ pub(crate) fn visible_cells(
 
 /// Reset SGR state and immediately re-apply the optional theme background so
 /// subsequent unstyled `Print` calls land on the theme bg instead of the
-/// terminal's default. When `buf_bg` is `None` (no `background` set in
-/// `[colors]`) this is a plain `ResetColor` and matches the pre-theme
-/// behaviour exactly.
+/// terminal's default. When `buf_bg` is `None` (`background = "Reset"`)
+/// this is a plain `ResetColor`, leaving the terminal's own background.
 fn reset_to_buf_bg(out: &mut impl Write, buf_bg: Option<Color>) -> Result<()> {
     queue!(out, ResetColor)?;
     if let Some(c) = buf_bg {
@@ -5717,7 +5716,7 @@ fn draw_buffer(
         // Wipe this pane's row (leaves adjacent panes untouched), then
         // return the cursor to the pane's left edge so the per-line draw
         // below starts in the right column. The pane_blank fills the row
-        // with the theme background (or terminal default if unset).
+        // with the theme background (the terminal's with `"Reset"`).
         queue!(out, MoveTo(left as u16, (row + top) as u16))?;
         apply_buf_bg(out, buf_bg)?;
         queue!(
@@ -5943,6 +5942,10 @@ fn draw_line_with_selection(
     let mut line_visual_pos = 0usize;
     // Visual columns actually written to the terminal in this pass.
     let mut visual_used = 0usize;
+    // Whether `plain_fg` is the colour in effect: a run of uncaptured cells
+    // sets it once instead of paying a set and a reset per character. Any
+    // teardown below resets the colour, and clears this.
+    let mut plain_fg_on = false;
     let mut byte_off = line_byte_start;
     let dim = app.has_modal_overlay();
     let hint_fg = app.config.theme_dim();
@@ -6307,23 +6310,25 @@ fn draw_line_with_selection(
         // (mutable / immutable / async / parameter / etc.) is strictly
         // richer than any static query. Falls back to tree-sitter when
         // the LSP didn't tag this column.
-        let syntax_color = sem_col_color
-            .get(col)
-            .copied()
-            .flatten()
-            .or_else(|| {
-                bs.highlight_cache
-                    .and_then(|cache| cache.byte_colors.get(byte_off).copied())
-                    .flatten()
-            })
-            .or(plain_fg);
+        let syntax_color = sem_col_color.get(col).copied().flatten().or_else(|| {
+            bs.highlight_cache
+                .and_then(|cache| cache.byte_colors.get(byte_off).copied())
+                .flatten()
+        });
         let diag_severity = if !in_sel && !in_search && !dim {
             diag_at.get(col).copied().flatten()
         } else {
             None
         };
         let render_hidden = show_hidden && (*c == '\t' || *c == ' ' || *c == '\u{00A0}');
+        let mut plain_cell = false;
         if in_sel {
+            // Reverse swaps in the foreground as the selection's fill, so it
+            // has to be the theme's: the terminal's own would be black on a
+            // light profile, under text drawn in the buffer's dark background.
+            if let Some(fg) = plain_fg {
+                queue!(out, SetForegroundColor(fg))?;
+            }
             queue!(out, SetAttribute(Attribute::Reverse))?;
         } else if in_search {
             queue!(
@@ -6361,7 +6366,7 @@ fn draw_line_with_selection(
             // Foreground stays on the syntax cache so the underlying
             // token colour still reads through.
             queue!(out, SetBackgroundColor(app.config.doc_highlight_bg()))?;
-            if let Some(fg) = syntax_color {
+            if let Some(fg) = syntax_color.or(plain_fg) {
                 queue!(out, SetForegroundColor(fg))?;
             }
         } else if render_hidden {
@@ -6374,6 +6379,11 @@ fn draw_line_with_selection(
             queue!(out, SetForegroundColor(dim_color))?;
         } else if let Some(fg) = syntax_color {
             queue!(out, SetForegroundColor(fg))?;
+        } else if let Some(fg) = plain_fg {
+            if !plain_fg_on {
+                queue!(out, SetForegroundColor(fg))?;
+            }
+            plain_cell = true;
         }
         // Code-fence rows want a Mantle background across the full
         // line width. Apply it whenever no other branch already set
@@ -6472,30 +6482,39 @@ fn draw_line_with_selection(
         if diag_severity.is_some() {
             queue!(out, SetAttribute(Attribute::NoUnderline))?;
         }
-        if in_sel {
+        let torn_down = if in_sel {
             queue!(out, SetAttribute(Attribute::Reset))?;
             apply_buf_bg(out, buf_bg)?;
+            true
         } else if in_match_pair {
             // Tear down the bold + bg in one shot.
             queue!(out, SetAttribute(Attribute::Reset))?;
             reset_to_buf_bg(out, buf_bg)?;
+            true
         } else if is_multi_cursor {
             reset_to_buf_bg(out, buf_bg)?;
+            true
         } else if md_attrs_set {
             // Bold / italic / underline don't unset themselves on the
             // next char — clear all SGR so the styling stops at the
             // span boundary.
             queue!(out, SetAttribute(Attribute::Reset))?;
             reset_to_buf_bg(out, buf_bg)?;
+            true
         } else if in_search
             || in_yank_flash
+            || in_doc_highlight
             || syntax_color.is_some()
             || dim
             || render_hidden
             || md_style.and_then(|s| s.color).is_some()
         {
             reset_to_buf_bg(out, buf_bg)?;
-        }
+            true
+        } else {
+            false
+        };
+        plain_fg_on = plain_cell && !torn_down;
         visual_used += visible_w;
         line_visual_pos = char_visual_end;
         byte_off += c.len_utf8();
@@ -6503,6 +6522,9 @@ fn draw_line_with_selection(
     if chars.is_empty() {
         if let Some((s, e)) = sel {
             if s < e {
+                if let Some(fg) = plain_fg {
+                    queue!(out, SetForegroundColor(fg))?;
+                }
                 queue!(
                     out,
                     SetAttribute(Attribute::Reverse),
