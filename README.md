@@ -59,7 +59,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 
 ## Terminals
 
-binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux, and PowerShell in Windows Terminal on Windows. Other terminals work too, with the differences recorded in the [terminal matrix](TERMINALS.md): the checks every terminal is held to, and how Kitty, WezTerm, tmux and the rest came out.
+binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux, and PowerShell in Windows Terminal on Windows. It runs inside tmux on macOS and Linux too. Other terminals work too, with the differences recorded in the [terminal matrix](TERMINALS.md): the checks every terminal is held to, and how Kitty, WezTerm, tmux and the rest came out.
 
 ## Documentation
 

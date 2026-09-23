@@ -225,7 +225,8 @@ the probe:
   the other clusters matched. `unicode_version = 14` makes it two cells.
 - 1, 12, 17, 20, 21: by hand in binvim.
 
-**tmux** — tmux 3.6a on macOS, run on 2026-09-23 against a detached server
+**tmux** — the maintainer runs binvim in tmux day to day on macOS and Linux; the
+column itself is tmux 3.6a on macOS, run on 2026-09-23 against a detached server
 (`tmux -L`, a 120×30 window, `TERM=tmux-256color`, the default config apart from
 what is named below). With no client attached, what was checked is what tmux
 parsed from binvim, not how an outer terminal then draws it. Keys went in with
