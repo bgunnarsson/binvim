@@ -94,7 +94,7 @@ Decisions:
   `cfg!(test)`, so test the parse/serialize functions on a scratch path, or add a `_from(path)`
   seam as `recover::load_from` does. Add the deleted-file restore case if `App` can be built in a
   test, and otherwise note it for task 3. Verify with `cargo test session::tests`.
-- [ ] Run the manual checks in tmux with an isolated `HOME` / `XDG_CACHE_HOME`:
+- [x] Run the manual checks in tmux with an isolated `HOME` / `XDG_CACHE_HOME`:
   1. Delete a clean open file, then `:w`.
   2. Delete a dirty open file, wait for the watcher, confirm the buffer's text, then quit and
      reopen from recovery.
@@ -104,6 +104,10 @@ Decisions:
 
   Fix anything that loses text, as its own commit with a test where one can be written. Verify by
   recording each check's outcome in the audit doc.
+  Deviation: all five passed and no text was lost, so nothing needed fixing. A deleted clean file
+  isn't *marked* as not on disk, as the Decisions expected: the buffer just stays as it was, and
+  `:w` recreates the file. That's recorded in the audit as a display gap, not a loss. Check 2's
+  "quit and reopen from recovery" ran as a `kill -9`, because `:q!` discards the dump by design.
 - [ ] Write `docs/data-loss-audit.md` with every row and its evidence, and link it from
   `ROADMAP.md`. Verify each cited test name exists (`cargo test <name> -- --list`).
 
