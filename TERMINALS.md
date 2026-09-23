@@ -163,30 +163,37 @@ A cell is never a bare "fail".
 
 | # | Check | Ghostty | Kitty | WezTerm | Alacritty | tmux | Windows Terminal | over SSH | Terminal.app |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| | Version | | 0.49.0 | 20240203-110809-5046fc22 | | 3.6a | | | |
-| 1 | Launch and quit | | ✓ | ✓ | | ✓ | | | |
-| 2 | Re-encoded keys | | ✓ | ✓ | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
-| 3 | Esc response | | ✓ | ✓ | | ✓ | | | |
-| 4 | `Ctrl-[` and Alt | | ✓ | ✓ | | ✓ | | | |
-| 5 | Shift / Ctrl arrows | | n/a | n/a | | ✓ | | | |
-| 6 | Cursor shape | | ✓ | ✓ | | ✓ | | | |
-| 7 | Truecolor | | ✓ | ✓ | | ✓ | | | |
-| 8 | Italic and bold | | ✓ | ✓ | | ✓ | | | |
-| 9 | Nerd Font glyphs | | ✓ | ✓ | | ✓ | | | |
-| 10 | Wide characters | | ✓ | ✓ | | ✓ | | | |
-| 11 | Emoji clusters | | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | | ✓ | | | |
-| 12 | Long line | | ✓ | ✓ | | ✓ | | | |
-| 13 | Mouse | | ✓ | ✓ | | ✓ | | | |
-| 14 | Bracketed paste | | ✓ | ✓ | | ✓ | | | |
-| 15 | Synchronized output | | ✓ | ✓ | | ✓ | | | |
-| 16 | Undercurl | | ✓ | ✓ | | ✓ | | | |
-| 17 | Resize | | ✓ | ✓ | | ✓ | | | |
-| 18 | OSC 52 | | ✓ | ✓ | | ✓ | | | |
-| 19 | `:terminal` | | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
-| 20 | lazygit round trip | | ✓ | ✓ | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
-| 21 | Closing unsaved | | ✓ | ✓ | | ✓ | | | |
+| | Version | 1.3.1 | 0.49.0 | 20240203-110809-5046fc22 | | 3.6a | | | |
+| 1 | Launch and quit | ✓ | ✓ | ✓ | | ✓ | | | |
+| 2 | Re-encoded keys | ✓ | ✓ | ✓ | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
+| 3 | Esc response | ✓ | ✓ | ✓ | | ✓ | | | |
+| 4 | `Ctrl-[` and Alt | ✓ | ✓ | ✓ | | ✓ | | | |
+| 5 | Shift / Ctrl arrows | n/a | n/a | n/a | | ✓ | | | |
+| 6 | Cursor shape | ✓ | ✓ | ✓ | | ✓ | | | |
+| 7 | Truecolor | ✓ | ✓ | ✓ | | ✓ | | | |
+| 8 | Italic and bold | ✓ | ✓ | ✓ | | ✓ | | | |
+| 9 | Nerd Font glyphs | ✓ | ✓ | ✓ | | ✓ | | | |
+| 10 | Wide characters | ✓ | ✓ | ✓ | | ✓ | | | |
+| 11 | Emoji clusters | ✓ | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | | ✓ | | | |
+| 12 | Long line | ✓ | ✓ | ✓ | | ✓ | | | |
+| 13 | Mouse | ✓ | ✓ | ✓ | | ✓ | | | |
+| 14 | Bracketed paste | ✓ | ✓ | ✓ | | ✓ | | | |
+| 15 | Synchronized output | ✓ | ✓ | ✓ | | ✓ | | | |
+| 16 | Undercurl | ✓ | ✓ | ✓ | | ✓ | | | |
+| 17 | Resize | ✓ | ✓ | ✓ | | ✓ | | | |
+| 18 | OSC 52 | ✓ | ✓ | ✓ | | ✓ | | | |
+| 19 | `:terminal` | ✓ | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
+| 20 | lazygit round trip | ✓ | ✓ | ✓ | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
+| 21 | Closing unsaved | ✓ | ✓ | ✓ | | ✓ | | | |
 
 ### Notes
+
+**Ghostty** — Ghostty 1.3.1 on macOS 26, recorded on 2026-09-23 from the
+maintainer's daily use of binvim in Ghostty, not from a run of the checklist or
+the probe:
+
+- 5: n/a on the same grounds as Kitty and WezTerm on this machine: macOS keeps
+  Ctrl-Left and Ctrl-Right for switching Spaces.
 
 **Kitty** — Kitty 0.49.0 on macOS 26, run on 2026-09-23 with
 `macos_option_as_alt yes`. Checks 1–6 by hand, the rest from
