@@ -161,6 +161,24 @@ impl super::App {
     /// what's open. The snapshot can be a recovery interval old; a buffer
     /// opened since is missing from it, though its recovery file still applies
     /// when it's next opened.
+    /// A child that takes the terminal over (lazygit, yazi, `:install`) runs
+    /// in binvim's process group with raw mode off, so a `Ctrl-C` typed at it
+    /// — at lazygit's "not a git repository" prompt, say — sends SIGINT to
+    /// binvim as well, and by default that ends binvim with its dirty buffers
+    /// unwritten. SIGINT and SIGQUIT keep their default action except while a
+    /// suspend has `interrupts_quit` cleared. The child is unaffected: exec
+    /// resets a handled signal to its default.
+    #[cfg(unix)]
+    pub(super) fn guard_interrupts(&self) {
+        use signal_hook::consts::{SIGINT, SIGQUIT};
+        for signal in [SIGINT, SIGQUIT] {
+            let _ = signal_hook::flag::register_conditional_default(
+                signal,
+                std::sync::Arc::clone(&self.interrupts_quit),
+            );
+        }
+    }
+
     #[cfg(unix)]
     pub(super) fn spawn_signal_recovery(&self) {
         use signal_hook::consts::{SIGHUP, SIGTERM};

@@ -57,6 +57,8 @@ impl super::App {
         // rationale on each step.
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show);
+        self.interrupts_quit
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = disable_raw_mode();
 
         let status = Command::new("lazygit").current_dir(&start_dir).status();
@@ -65,6 +67,8 @@ impl super::App {
         // explicitly — clicks would otherwise stop reaching the editor
         // after lazygit exits.
         let _ = enable_raw_mode();
+        self.interrupts_quit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide);
         let _ = execute!(
             stdout,

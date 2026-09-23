@@ -677,6 +677,8 @@ impl super::App {
         let mut stdout = std::io::stdout();
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show);
+        self.interrupts_quit
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = disable_raw_mode();
 
         // Banner line so the user knows where the output is coming from,
@@ -743,6 +745,8 @@ impl super::App {
 
         // Reclaim the terminal — same incantation lazygit_glue uses.
         let _ = enable_raw_mode();
+        self.interrupts_quit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide);
         let _ = execute!(
             stdout,

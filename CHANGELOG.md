@@ -33,6 +33,11 @@ follows [Semantic Versioning](https://semver.org/).
   that had grown, and colours named for the stock palette only.
 
 ### Fixed
+- **`Ctrl-C` in lazygit, yazi or an `:install` run no longer ends binvim.**
+  While one of them has the terminal, binvim's raw mode is off and the two
+  share a process group, so `Ctrl-C` at a plain prompt (lazygit's "not a git
+  repository", say) interrupted binvim too and lost its unsaved changes. It now
+  reaches only the program you typed it at. Not yet changed on Windows.
 - **`Ctrl-[` leaves Insert mode in Ghostty, Kitty, WezTerm and Alacritty.**
   A terminal speaking the Kitty keyboard protocol reports `Ctrl-[` as itself
   rather than as the Esc byte, and no mode took it as Esc, so it did nothing.

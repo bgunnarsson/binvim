@@ -409,6 +409,8 @@ impl super::App {
         // mode, leave the alternate screen so yazi has a clean canvas.
         let _ = execute!(stdout, PopKeyboardEnhancementFlags);
         let _ = execute!(stdout, DisableMouseCapture, LeaveAlternateScreen, Show);
+        self.interrupts_quit
+            .store(false, std::sync::atomic::Ordering::Relaxed);
         let _ = disable_raw_mode();
 
         let status = Command::new("yazi")
@@ -420,6 +422,8 @@ impl super::App {
         // Reclaim the terminal — must re-enable mouse capture explicitly,
         // otherwise clicks stop working in the editor after yazi exits.
         let _ = enable_raw_mode();
+        self.interrupts_quit
+            .store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide);
         let _ = execute!(
             stdout,

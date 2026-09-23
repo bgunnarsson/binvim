@@ -426,6 +426,9 @@ pub struct App {
     /// every write. `None` when there's nothing to write.
     pub cursor_snapshot:
         std::sync::Arc<std::sync::Mutex<Option<(PathBuf, u64, crate::cursor::Cursor)>>>,
+    /// Whether SIGINT and SIGQUIT end binvim, as they do by default. False
+    /// while a child owns the terminal (`recover_glue::guard_interrupts`).
+    pub interrupts_quit: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// Whether a frame has been drawn since the active buffer became active.
     /// The cursor cache is only written for a buffer that was: the `:S` loop,
     /// LSP workspace edits, `:wa` and session hydrate all switch through
@@ -1054,6 +1057,7 @@ impl App {
             recovery_snapshot: Default::default(),
             session_snapshot: Default::default(),
             cursor_snapshot: Default::default(),
+            interrupts_quit: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             active_shown: false,
             health_scroll: 0,
             health_content_height: std::cell::Cell::new(0),
@@ -1256,6 +1260,8 @@ impl App {
         let mut pty_backlog = false;
         #[cfg(unix)]
         self.spawn_signal_recovery();
+        #[cfg(unix)]
+        self.guard_interrupts();
         while !self.should_quit {
             #[cfg(unix)]
             self.refresh_recovery_snapshot();
