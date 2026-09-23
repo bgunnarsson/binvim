@@ -4,9 +4,9 @@ A workspace for exercising binvim's language support.
 
 ## Features
 
-- **Modal editing** — Vim-style operators and motions.
-- **Tree-sitter highlighting** — 30+ grammars bundled.
-- **LSP everywhere** — auto-discovers the right server per file.
+- **Modal editing**: Vim-style operators and motions.
+- **Tree-sitter highlighting**: 30+ grammars bundled.
+- **LSP everywhere**: auto-discovers the right server per file.
 
 ## Quickstart
 
@@ -42,7 +42,7 @@ const greet = (name: string) => `Hello, ${name}!`;
 ## Quotes
 
 > "It's just a TUI editor, but it's *my* TUI editor."
-> — me, 2026
+> - me, 2026
 
 ## Links
 
