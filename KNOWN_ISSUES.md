@@ -84,7 +84,26 @@ sends the same byte, 0x1b, for both keys, so binvim can't tell them apart and
 
 Workaround: use a terminal that passes check 19, where the pane gets the Esc,
 or run the program that needs it in a split of the host terminal rather than
-in `:terminal`.
+in `:terminal`. WezTerm has the protocol but leaves it off: set
+`config.enable_kitty_keyboard = true` (checked on 20240203-110809-5046fc22,
+where binvim's push then reads back as flags `1`).
+
+### WezTerm draws an emoji made wide by VS16 in one cell
+
+**WezTerm with its default `unicode_version`. Fixed by a WezTerm setting.**
+
+A character that is text-width on its own and turned into an emoji by the
+variation selector U+FE0F, like `❤️` (U+2764 U+FE0F), is two cells wide in
+`unicode-width` and so in binvim. WezTerm's `unicode_version` defaults to 9,
+which predates that rule, so it draws the pair in one cell. On such a line
+binvim and WezTerm disagree about every column after the emoji: the text after
+it is drawn one cell left of where binvim puts the cursor (`TERMINALS.md` check
+11). Emoji that are wide without a selector, such as `👍🏽`, `👨‍👩‍👧` and flags,
+are not affected.
+
+Workaround: set `config.unicode_version = 14` in `wezterm.lua`. On
+20240203-110809-5046fc22 that makes WezTerm draw `❤️` in two cells, matching
+binvim.
 
 ## Tests
 

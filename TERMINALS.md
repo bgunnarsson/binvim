@@ -163,28 +163,28 @@ A cell is never a bare "fail".
 
 | # | Check | Ghostty | Kitty | WezTerm | Alacritty | tmux | Windows Terminal | over SSH | Terminal.app |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| | Version | | 0.49.0 | | | 3.6a | | | |
+| | Version | | 0.49.0 | 20240203-110809-5046fc22 | | 3.6a | | | |
 | 1 | Launch and quit | | ✓ | | | ✓ | | | |
-| 2 | Re-encoded keys | | ✓ | | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
-| 3 | Esc response | | ✓ | | | ✓ | | | |
-| 4 | `Ctrl-[` and Alt | | ✓ | | | ✓ | | | |
-| 5 | Shift / Ctrl arrows | | n/a | | | ✓ | | | |
-| 6 | Cursor shape | | ✓ | | | ✓ | | | |
-| 7 | Truecolor | | ✓ | | | ✓ | | | |
-| 8 | Italic and bold | | ✓ | | | ✓ | | | |
-| 9 | Nerd Font glyphs | | ✓ | | | ✓ | | | |
-| 10 | Wide characters | | ✓ | | | ✓ | | | |
-| 11 | Emoji clusters | | ✓ | | | ✓ | | | |
-| 12 | Long line | | | | | ✓ | | | |
-| 13 | Mouse | | ✓ | | | ✓ | | | |
-| 14 | Bracketed paste | | ✓ | | | ✓ | | | |
-| 15 | Synchronized output | | ✓ | | | ✓ | | | |
-| 16 | Undercurl | | ✓ | | | ✓ | | | |
-| 17 | Resize | | | | | ✓ | | | |
-| 18 | OSC 52 | | ✓ | | | ✓ | | | |
-| 19 | `:terminal` | | ✓ | | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
-| 20 | lazygit round trip | | | | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
-| 21 | Closing unsaved | | | | | ✓ | | | |
+| 2 | Re-encoded keys | | ✓ | ✓ | | ✓ [2f81606](https://github.com/bgunnarsson/binvim/commit/2f81606) | | | |
+| 3 | Esc response | | ✓ | ✓ | | ✓ | | | |
+| 4 | `Ctrl-[` and Alt | | ✓ | ✓ | | ✓ | | | |
+| 5 | Shift / Ctrl arrows | | n/a | n/a | | ✓ | | | |
+| 6 | Cursor shape | | ✓ | ✓ | | ✓ | | | |
+| 7 | Truecolor | | ✓ | ✓ | | ✓ | | | |
+| 8 | Italic and bold | | ✓ | ✓ | | ✓ | | | |
+| 9 | Nerd Font glyphs | | ✓ | ✓ | | ✓ | | | |
+| 10 | Wide characters | | ✓ | ✓ | | ✓ | | | |
+| 11 | Emoji clusters | | ✓ | [KI](KNOWN_ISSUES.md#wezterm-draws-an-emoji-made-wide-by-vs16-in-one-cell) | | ✓ | | | |
+| 12 | Long line | | ✓ | | | ✓ | | | |
+| 13 | Mouse | | ✓ | ✓ | | ✓ | | | |
+| 14 | Bracketed paste | | ✓ | ✓ | | ✓ | | | |
+| 15 | Synchronized output | | ✓ | ✓ | | ✓ | | | |
+| 16 | Undercurl | | ✓ | ✓ | | ✓ | | | |
+| 17 | Resize | | ✓ | | | ✓ | | | |
+| 18 | OSC 52 | | ✓ | ✓ | | ✓ | | | |
+| 19 | `:terminal` | | ✓ | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | [KI](KNOWN_ISSUES.md#ctrl--leaves-the-terminal-pane-on-a-terminal-without-the-kitty-keyboard-protocol) | | | |
+| 20 | lazygit round trip | | ✓ | | | ✓ [a4ace97](https://github.com/bgunnarsson/binvim/commit/a4ace97) | | | |
+| 21 | Closing unsaved | | ✓ | | | ✓ | | | |
 
 ### Notes
 
@@ -201,7 +201,21 @@ A cell is never a bare "fail".
   them for switching Spaces unless that shortcut is turned off.
 - 6, 7, 15, 16: Kitty answers the queries itself — DECRQSS read back the bar
   cursor, the `38;2` colour and `4:3`, and DECRQM 2026 is 2 (supported).
-- 14: Kitty sends a paste's line breaks as LF.
+- 14: Kitty sends a paste's line breaks as LF. Checks 12, 17, 20 and 21 by hand in binvim.
+
+**WezTerm** — WezTerm 20240203-110809-5046fc22 on macOS 26, run on
+2026-09-23 with its default configuration, from `scripts/terminal-probe.sh`:
+
+- WezTerm has the Kitty keyboard protocol but leaves it off: the flags read
+  back as nothing after binvim's push, so keys arrive in the legacy encoding
+  (`Ctrl-i` is Tab, `Ctrl-[` is Esc), which binvim reads correctly everywhere
+  but check 19. With `enable_kitty_keyboard = true` the push reads back as `1`.
+- 5: Shift-Left and Shift-Right arrive as `CSI 1;2D` / `1;2C`. Ctrl-Left and
+  Ctrl-Right are macOS's Spaces shortcut.
+- 6, 7: WezTerm answers no DECRQSS; the bar cursor and the smooth colour bar
+  were judged by eye. DECRQM 2026 is 2 (supported).
+- 11: `❤️` (heart + VS16) measured one cell where `unicode-width` gives two;
+  the other clusters matched. `unicode_version = 14` makes it two cells.
 
 **tmux** — tmux 3.6a on macOS, run on 2026-09-23 against a detached server
 (`tmux -L`, a 120×30 window, `TERM=tmux-256color`, the default config apart from
