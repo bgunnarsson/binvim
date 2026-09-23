@@ -15,6 +15,15 @@ follows [Semantic Versioning](https://semver.org/).
   installed it, found from where its binary lives.
 
 ### Changed
+- **The cursor moves, edits and measures by grapheme cluster.** An emoji built
+  from several codepoints (👨‍👩‍👧, 👍🏽, ❤️) or a letter with a combining accent
+  is one character now: `l` / `h`, the word motions, `$`, `j` / `k`, `x`, `r`,
+  `~`, `a`, `dl`, Visual selections, Insert-mode Backspace and a mouse click all
+  treat it as one, where `l` used to take up to five presses and `x` deleted
+  part of it. Its width is measured whole too, so the text after 👨‍👩‍👧 is no
+  longer drawn four cells to the right. `f` / `t` still match one codepoint, and
+  a terminal that draws a sequence at a width other than Unicode's still
+  misaligns.
 - **The README is now an index over `docs/`.** Each of its sections — editing,
   keys, ex commands, Vim compatibility, highlighting, LSP, the debugger,
   external tools, configuration, install and the project layout — is a file of

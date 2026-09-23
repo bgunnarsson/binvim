@@ -114,9 +114,11 @@ doesn't add.
   secondary cursors and charwise Visual's range and highlight, through a new
   `Buffer::inclusive_end_idx`. `v"ay` doesn't name a register in Visual even on ASCII, so the
   test checks `v`'s range directly rather than a register.
-- [ ] Add a `CHANGELOG.md` Unreleased `### Changed` entry. If the terminal matrix finds a
+- [x] Add a `CHANGELOG.md` Unreleased `### Changed` entry. If the terminal matrix finds a
   terminal that draws clusters differently, add a `KNOWN_ISSUES.md` entry for it. Verify by
   reading the diff.
+  Deviation: the terminal matrix hasn't run yet, so there is no terminal to name in
+  `KNOWN_ISSUES.md`; that entry belongs to the matrix plan.
 
 ## Files
 
