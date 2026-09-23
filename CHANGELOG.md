@@ -24,6 +24,11 @@ follows [Semantic Versioning](https://semver.org/).
   that had grown, and colours named for the stock palette only.
 
 ### Fixed
+- **A global biome is found.** `:install` puts `@biomejs/biome` on `$PATH`, but the
+  JSON language server and the JS / TS / JSON formatter only ever looked in the
+  project's `node_modules/.bin/`, so the tool it had just installed was reported
+  missing. Both now fall back to `$PATH` after `node_modules`, as prettier does;
+  a project-local biome still wins.
 - **Tasks and AI side panes start under cmd.exe and PowerShell.** `:make`,
   `:task` and the AI panes handed every shell POSIX flags (`-l -i -c`), so on
   Windows — or with `pwsh` as your shell anywhere — nothing ran. Each shell now

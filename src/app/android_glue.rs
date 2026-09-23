@@ -1,9 +1,9 @@
 //! `<leader>A` Android emulator manager — the `App`-side glue over
-//! `crate::android`. Lists / launches / creates AVDs and lists running devices,
-//! draining results from background worker threads on an mpsc channel (the same
-//! pattern as `package_glue` / `lsp` / `dap`). The debug-session entry point
-//! lives in `app/dap_glue.rs`'s Android resolver; this file owns the
-//! emulator-management flows.
+//! `crate::android`. Lists / launches / creates AVDs, lists running devices,
+//! and starts a debug session (`<leader>Ab`: gradle `installDebug`, then jdtls
+//! attaches through its java-debug plugin), draining results from background
+//! worker threads on an mpsc channel (the same pattern as `package_glue` /
+//! `lsp` / `dap`).
 //!
 //! Each step that needs a (potentially slow) `sdkmanager` / `avdmanager` / `adb`
 //! call opens its picker immediately in a `(loading…)` state and repopulates

@@ -178,14 +178,15 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             initialization_options: ts_init(),
         }),
         "json" | "jsonc" => {
-            // Biome doesn't support global installs — it lives in node_modules.
-            // Walk up from the file until we find a node_modules/.bin/biome; if
-            // we don't find one, no JSON LSP attaches.
+            // The project's own biome wins over a global one, since its
+            // version is the one `biome.json` was written for. Without either,
+            // no JSON LSP attaches.
             let start = path
                 .parent()
                 .map(|p| p.to_path_buf())
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-            let biome = find_node_modules_bin(&start, "biome")?;
+            let biome =
+                find_node_modules_bin(&start, "biome").or_else(|| which_in_path("biome"))?;
             Some(ServerSpec {
                 key: "biome".into(),
                 language_id: "json".into(),
@@ -768,8 +769,8 @@ pub fn find_workspace_root(start: &Path, markers: &[String]) -> PathBuf {
 }
 
 /// Walk up from `start` looking for `node_modules/.bin/<name>`. Returns the
-/// first match (the closest one to the file). Used for tools like biome that
-/// don't support global installs.
+/// first match (the closest one to the file). Used for tools like biome and
+/// prettier, where the project's pinned version should beat a global one.
 pub fn find_node_modules_bin(start: &Path, name: &str) -> Option<String> {
     let canon = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
     let mut dir: &Path = canon.as_path();

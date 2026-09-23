@@ -352,11 +352,17 @@ fn run_php_cs_fixer(path: &Path, source: &str) -> Result<String, String> {
 /// Run biome against `source`, telling it the buffer's real path so it can
 /// detect language and walk up to find `biome.json` itself. We resolve the
 /// binary the same way the LSP does — closest `node_modules/.bin/biome` from
-/// the file's directory — since biome doesn't support global installs.
+/// the file's directory, then `$PATH` — so the version the project pins
+/// beats the one `:install` put on `$PATH`.
 fn run_biome(path: &Path, source: &str) -> Result<String, String> {
     let start = path.parent().unwrap_or(Path::new("."));
     let biome = find_node_modules_bin(start, "biome")
-        .ok_or_else(|| "biome not found in node_modules".to_string())?;
+        .map(PathBuf::from)
+        .or_else(|| find_on_path("biome"))
+        .ok_or_else(|| {
+            "biome not found — install with `npm i -D @biomejs/biome` in the project (or `npm i -g @biomejs/biome`)"
+                .to_string()
+        })?;
     let canon = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let stdin_path = canon.to_string_lossy().to_string();
 

@@ -33,7 +33,7 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `astro-ls`                      | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
 | `csharp-ls`                     | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
 | `OmniSharp`                     | Razor / `.cshtml` IntelliSense (full)    | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
-| `biome` (project-local)         | JSON LSP + JS / TS / JSON formatter — found only in the project's `node_modules/.bin/`, never on `$PATH` | `npm i -D @biomejs/biome` in the project                                  |
+| `biome`                         | JSON LSP + JS / TS / JSON formatter — project-local `node_modules/.bin/` first, then `$PATH` | `npm i -D @biomejs/biome` in the project, or `npm i -g @biomejs/biome`   |
 | `copilot-language-server`       | GitHub Copilot ghost completions, with `[copilot] enabled = true` — project-local `node_modules/.bin/` first, then `$PATH` | `npm i -g @github/copilot-language-server`                               |
 | `csharpier`                     | `.cs` formatter                          | `dotnet tool install --global csharpier`                                 |
 | `gofmt` / `goimports`           | Go formatter (`goimports` preferred when on `$PATH` — it also organises imports) | Ships with Go; `go install golang.org/x/tools/cmd/goimports@latest` for the imports variant |
@@ -62,4 +62,4 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `emulator`                      | Android emulator runtime                 | `sdkmanager emulator` — binvim locates it under `<sdk root>/emulator`, where the root is `$ANDROID_HOME`, else `$ANDROID_SDK_ROOT`, else the platform default (`~/Library/Android/sdk` on macOS, `%LOCALAPPDATA%\Android\Sdk` on Windows, `~/Android/Sdk` elsewhere); `sdkmanager` / `avdmanager` / `adb` are looked up under the same root when they aren't on `$PATH` |
 | `lazygit`                       | `<leader>gg` / `:lazygit`                | `brew install lazygit` / `go install github.com/jesseduffield/lazygit@latest` |
 
-For `biome`, `prettier`, `tailwindcss-language-server` and `copilot-language-server`, binvim walks up to the closest `node_modules/.bin/` first, so a `devDependency` in your project wins over a global install (biome is looked for there only). Every other tool is resolved from `$PATH`.
+For `biome`, `prettier`, `tailwindcss-language-server` and `copilot-language-server`, binvim walks up to the closest `node_modules/.bin/` first, so a `devDependency` in your project wins over a global install. Every other tool is resolved from `$PATH`.

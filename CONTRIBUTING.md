@@ -46,7 +46,7 @@ If you're testing changes by running `binvim` interactively, remember that **the
 
 These are not stylistic preferences — they are how the codebase is structured, and PRs that fight them tend to get bounced.
 
-- **Mostly flat `src/` layout, with three sub-module dirs.** `app/`, `lsp/`, and `dap/` are split across multiple files (each parent file — `src/app.rs`, `src/lsp.rs`, `src/dap.rs` — is a slim entry that declares children and re-exports the public API). Other modules stay flat — don't introduce new `src/foo/` directories without a real reason. Inside `app/`, sibling-visible methods are `pub(super)`.
+- **Mostly flat `src/` layout, with five sub-module dirs.** `app/`, `lsp/`, `dap/`, `task/` and `test/` are split across multiple files (each parent file — `src/app.rs`, `src/lsp.rs`, `src/dap.rs`, `src/task.rs`, `src/test.rs` — is a slim entry that declares children and re-exports the public API). Other modules stay flat — don't introduce new `src/foo/` directories without a real reason. Inside `app/`, sibling-visible methods are `pub(super)`.
 - **No new files unless necessary.** Prefer extending an existing module. New top-level files need to justify themselves.
 - **Tests live inline, in `#[cfg(test)] mod tests` at the bottom of the file under test.** No separate `tests/` directory, no `tests/integration/`. `motion.rs` and `text_object.rs` have the densest coverage and are the model.
 - **Comments explain *why*, not *what*.** The existing comments in `lang.rs` (priority resolution), `lsp/manager.rs` (debounce/drain cap), and `app/state.rs` (BufferStash shape) are the pattern: load-bearing context that isn't obvious from the code. Don't add what-comments. Don't add multi-paragraph docstrings.

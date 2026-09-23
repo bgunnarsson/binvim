@@ -1,4 +1,4 @@
-//! `<leader>fg` grep picker — debounced, backgrounded ripgrep.
+//! `<leader>G` grep picker — debounced, backgrounded ripgrep.
 //!
 //! The picker re-searches on every keystroke, which is why none of this runs
 //! inline in the key handler. A two-character query over a large workspace
