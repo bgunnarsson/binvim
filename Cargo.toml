@@ -24,7 +24,7 @@ include = [
     "/LICENSE",
     "/README.md",
     "/CHANGELOG.md",
-    "/rustfmt.toml",
+    "/.rustfmt.toml",
     "/build.rs",
     "/vendor/**/*",
 ]

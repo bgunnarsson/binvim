@@ -36,7 +36,7 @@ cargo test motion::tests::word_forward_basic # one test
 cargo run -- path/to/file                    # debug-build run
 ```
 
-CI runs `cargo test`, `cargo clippy` and `cargo fmt --check` on every PR. **Both `cargo fmt --check` and clippy are gating** — run `cargo fmt` before you push, and `cargo +1.98.0 clippy --locked --all-targets -- -D warnings` (CI pins clippy to 1.98.0 and fails on any warning; a newer local clippy flags different things). The formatting config is `rustfmt.toml` at the repo root; `max_width = 100` plus `single_line_let_else_max_width = 100` keeps compact `let … else` and single-line method chains intact.
+CI runs `cargo test`, `cargo clippy` and `cargo fmt --check` on every PR. **Both `cargo fmt --check` and clippy are gating** — run `cargo fmt` before you push, and `cargo +1.98.0 clippy --locked --all-targets -- -D warnings` (CI pins clippy to 1.98.0 and fails on any warning; a newer local clippy flags different things). The formatting config is `.rustfmt.toml` at the repo root; `max_width = 100` plus `single_line_let_else_max_width = 100` keeps compact `let … else` and single-line method chains intact.
 
 If this is your first PR to the repo, GitHub holds the workflow run until the maintainer approves it — a PR sitting with no checks reported is waiting on that, not broken.
 

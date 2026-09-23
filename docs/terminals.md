@@ -49,7 +49,7 @@ target/release/binvim docs/terminal-check.md
 ```
 
 `docs/terminal-check.md` holds the text the checks look at: a line of wide characters, one of
-emoji clusters, one mixing both, a styled line and a long line. `docs/terminal-check.rs` carries a
+emoji clusters, one mixing both, a styled line and a long line. `scripts/terminal-check.rs` carries a
 syntax error for the undercurl check and needs `rust-analyzer` on `PATH`. Lines are named by
 their first word: `:6` jumps to *Wide*, `:7` *Emoji*, `:8` *Mixed*, `:9` *Styles*, `:11` *Long*.
 If a "Set up Markdown" install prompt appears, `Esc` dismisses it.
@@ -134,7 +134,7 @@ A cell is never a bare "fail".
     then hold `j`.
     *Pass:* no torn frames (half old screen, half new) and no cursor flashing across the screen.
     `:bd`.
-16. **Undercurl.** `:e docs/terminal-check.rs` and wait for rust-analyzer.
+16. **Undercurl.** `:e scripts/terminal-check.rs` and wait for rust-analyzer.
     *Pass:* line 4 shows `Syntax Error: expected expression`, and the `;` has a curly underline in
     the error colour (red). A straight underline means the terminal doesn't draw styled
     underlines. No underline and no message means the LSP isn't running — check `:health`.

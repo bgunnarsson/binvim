@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Style policy lives in `rustfmt.toml` at the repo root:
+      # Style policy lives in `.rustfmt.toml` at the repo root:
       # `max_width = 100` + `single_line_let_else_max_width = 100`
       # preserve the compact let-else / single-line forms binvim
       # leans on. The 0.4.4 cut ran `cargo fmt` once to normalise
