@@ -415,7 +415,7 @@ impl Config {
     /// same in every terminal. `background = "Reset"` is `None`: the buffer
     /// inherits the terminal's own background and text colour.
     pub fn background_color(&self) -> Option<Color> {
-        match self.colors.get("background").and_then(|s| parse_color(s)) {
+        match self.user_color("background") {
             None => Some(Color::Rgb {
                 r: 0x1e,
                 g: 0x1e,
@@ -495,8 +495,9 @@ impl Config {
     }
 
     /// Main fg colour for chrome text — status segments, popup body, dashboard
-    /// text. Capture-name lookups in `[colors]` still drive syntax colouring;
-    /// `foreground` controls chrome only. When the user only sets `background`
+    /// text — and for buffer text no capture colours, wherever the buffer's
+    /// background is painted. Capture-name lookups in `[colors]` still drive
+    /// syntax colouring. When the user only sets `background`
     /// we auto-derive a near-white (dark bg) or near-black (light bg) so a
     /// one-line theme still gives readable chrome text.
     pub fn theme_fg(&self) -> Color {
