@@ -22,7 +22,25 @@ the results for the ones that have been through it.
 
 ## How to run it
 
-From the repo root, on the build you're recording:
+Start with the probe, from the repo root in the terminal you're recording:
+
+```sh
+sh scripts/terminal-probe.sh
+```
+
+It asks the terminal what the checks depend on, then asks you to look at one line, press eleven
+keys, click once and paste once. It prints a report, saved to
+`$TMPDIR/binvim-terminal-probe.txt`, with a verdict for checks 2–11, 13–16, 18 and 19. Over SSH,
+copy the script to the remote machine and run it there.
+
+A probe answer stands in for the check because what varies between terminals is the terminal's
+half: which bytes a key sends, which modes it answers to, how wide it draws a cluster, whether it
+slants, curls and pastes. binvim's half was checked by hand on the same inputs in tmux and Kitty.
+A `?` means the terminal didn't answer the query (tmux answers no DECRQM), and that check is run
+by hand below instead.
+
+Then run checks 1, 12, 17, 20 and 21 in binvim itself, plus any the probe marked `?` or ✗. Over
+SSH, check 18's `yy` as well. From the repo root, on the build you're recording:
 
 ```sh
 cargo build --release
