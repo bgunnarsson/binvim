@@ -70,6 +70,7 @@ If `path` is omitted and a session exists for this cwd, the session restores (st
 - [External tools](docs/external-tools.md): every LSP, formatter and debug adapter binvim spawns, with the install command for each.
 - [Configuration](docs/configuration.md): `~/.config/binvim/config.toml` section by section, keymaps, and the theme presets.
 - [Project layout](docs/project-layout.md): what lives where in `src/`.
+- [Data-loss audit](docs/data-loss-audit.md): every way text reaches disk or could be lost, what binvim guarantees there, and the test or check behind each.
 
 Alongside these: [CHANGELOG.md](CHANGELOG.md), [KNOWN_ISSUES.md](KNOWN_ISSUES.md), [ROADMAP.md](ROADMAP.md), [WINDOWS.md](WINDOWS.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 

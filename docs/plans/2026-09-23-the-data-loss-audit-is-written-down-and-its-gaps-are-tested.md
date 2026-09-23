@@ -106,7 +106,8 @@ Decisions:
   recording each check's outcome in the audit doc.
   Deviation: all five passed and no text was lost, so nothing needed fixing. A deleted clean file
   isn't *marked* as not on disk, as the Decisions expected: the buffer just stays as it was, and
-  `:w` recreates the file. That's recorded in the audit as a display gap, not a loss. Check 2's
+  `:w` recreates the file. Review held that to the Decision, and `3a50353` added the `[deleted]`
+  marker (`Buffer.gone`) with a test. Check 2's
   "quit and reopen from recovery" ran as a `kill -9`, because `:q!` discards the dump by design.
 - [x] Write `docs/data-loss-audit.md` with every row and its evidence, and link it from
   `ROADMAP.md`. Verify each cited test name exists (`cargo test <name> -- --list`).

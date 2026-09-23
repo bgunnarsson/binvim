@@ -83,6 +83,28 @@ CSS: selectors and properties highlight fine, while `$var`, `@mixin`,
 A fix exists on upstream master but has not been released. Re-enable everywhere
 once upstream guards the flag with `flag_if_supported`.
 
+## Recovery
+
+### A buffer with no file name has no recovery file
+
+A recovery file is keyed by its buffer's path, so a `[No Name]` buffer never
+gets one: `write_recovery_now` and `refresh_recovery_snapshot`
+(`src/app/recover_glue.rs`) skip buffers with no path. Its text is lost if
+binvim crashes, is killed, or its terminal closes before you `:w {file}`. A
+plain `:q` still refuses to quit while it has unsaved changes.
+
+Workaround: give scratch text a name early (`:w /tmp/notes.txt`), and it's
+dumped every four seconds like any other file.
+
+### A write that falls back to writing in place isn't atomic
+
+`paths::write_atomic` writes a temp file and renames it over the target, except
+where a rename would change the file: other hard links to it, a directory you
+can't create files in, an owner the temp file can't take, a failed rename, or a
+dangling symlink. There it writes the file in place, and a write that fails
+partway (a full disk) leaves the file truncated. The text is still in the
+buffer, and in its recovery file, so `:w` again once the cause is fixed.
+
 ## Tests
 
 ### A grammar that segfaults is only identifiable when tests run sequentially

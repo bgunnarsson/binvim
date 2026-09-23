@@ -54,8 +54,9 @@ literally.
   crash recovery of unsaved buffers, atomic saves, session robustness when files
   vanish or change underneath. This bug class ends adoption permanently.
   The audit, path by path with the evidence for each, is
-  [`docs/data-loss-audit.md`](docs/data-loss-audit.md) (2026-09-23: no path loses
-  text; one display gap, a deleted clean file isn't marked as gone).
+  [`docs/data-loss-audit.md`](docs/data-loss-audit.md) (2026-09-23). Two gaps stay
+  open: a `[No Name]` buffer gets no recovery dump, and a write that falls back to
+  writing in place can leave the file truncated if it fails partway.
 - **Correctness on hostile input.** Grapheme clusters / wide chars / emoji /
   mixed EOL / very long lines / huge files (a "large file mode" that degrades
   tree-sitter + LSP gracefully rather than stalling). Extend the density of the

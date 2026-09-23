@@ -54,8 +54,11 @@ documented behaviour rather than a run.
 against `std::env::current_exe()`'s file name (`tasklist_lists`), so a pid held by
 `svchost.exe` no longer counts. If there's no exe name, the dump is treated as a crash's, which
 is how Windows behaved before the check. A binary renamed between the two runs
-(`binvim-dev.exe`) misses a live instance and falls back to the same behaviour. The unix
-`kill -0` path is unchanged.
+(`binvim-dev.exe`) misses a live instance and falls back to the same behaviour.
+
+`bd2cd6f`: the unix `process_alive` does the same through `ps -o comm= -p <pid>`, whose last
+path component (`ps_comm_is`) must be the executable's name. macOS prints a path and Linux a
+name cut to 15 bytes, so both are handled.
 
 ## Prevention
 
