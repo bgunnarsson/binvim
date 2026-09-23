@@ -40,11 +40,11 @@ A `?` means the terminal didn't answer the query (tmux answers no DECRQM), and t
 by hand below instead.
 
 Then run checks 1, 12, 17, 20 and 21 in binvim itself, plus any the probe marked `?` or ✗. Over
-SSH, check 18's `yy` as well. From the repo root, on the build you're recording:
+SSH, check 18's `yy` as well. From the repo root, on the build you're recording (`:health` shows
+its version):
 
 ```sh
 cargo build --release
-target/release/binvim --version
 target/release/binvim docs/terminal-check.md
 ```
 
