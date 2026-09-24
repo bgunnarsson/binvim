@@ -4,7 +4,7 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.7.1]
+## [0.7.1] - 2026-09-24
 
 ### Fixed
 - **`scoop install binvim` finds the manifest.** Scoop reads a bucket's
