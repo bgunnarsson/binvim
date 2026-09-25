@@ -560,6 +560,12 @@ pub enum Action {
     /// `<leader>jH` — hermes with file-path handoff. Same
     /// pattern as [`Action::AiClaudeHandoff`].
     AiHermesHandoff,
+    /// `<leader>jb` — open (or focus) binai in the right-side
+    /// terminal pane. Equivalent to `:binai`.
+    AiBinai,
+    /// `<leader>jB` — binai with file-path handoff. Same
+    /// pattern as [`Action::AiClaudeHandoff`].
+    AiBinaiHandoff,
     /// `<leader>jq` — close the active right-side AI terminal tab.
     /// If it was the last side tab, hides the pane and snaps focus
     /// back to the bottom pane.
@@ -1829,6 +1835,8 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'W' => Some(Action::AiOpenClawHandoff),
             'h' => Some(Action::AiHermes),
             'H' => Some(Action::AiHermesHandoff),
+            'b' => Some(Action::AiBinai),
+            'B' => Some(Action::AiBinaiHandoff),
             'f' => Some(Action::AiFocus),
             'p' => Some(Action::AiToggle),
             'q' => Some(Action::AiClose),

@@ -30,6 +30,7 @@ const COMMAND_NAMES: &[&str] = &[
     "bd!",
     "bdelete",
     "bdelete!",
+    "binai",
     "bn",
     "bnext",
     "bp",

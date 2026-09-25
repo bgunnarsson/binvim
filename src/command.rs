@@ -343,6 +343,7 @@ pub enum AiTool {
     Opencode,
     OpenClaw,
     Hermes,
+    Binai,
 }
 
 impl AiTool {
@@ -355,6 +356,7 @@ impl AiTool {
             AiTool::Opencode => "opencode",
             AiTool::OpenClaw => "openclaw",
             AiTool::Hermes => "hermes",
+            AiTool::Binai => "binai",
         }
     }
 
@@ -368,6 +370,7 @@ impl AiTool {
             AiTool::Opencode => "opencode",
             AiTool::OpenClaw => "openclaw",
             AiTool::Hermes => "hermes",
+            AiTool::Binai => "binai",
         }
     }
 }
@@ -887,6 +890,7 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "opencode" => ExCommand::AiTool(AiTool::Opencode),
         "openclaw" => ExCommand::AiTool(AiTool::OpenClaw),
         "hermes" => ExCommand::AiTool(AiTool::Hermes),
+        "binai" => ExCommand::AiTool(AiTool::Binai),
         "debug" | "dap" => ExCommand::Debug(DebugSubCmd::Start),
         "dapstop" => ExCommand::Debug(DebugSubCmd::Stop),
         "dapbreak" | "dapb" => parse_dapbreak_args(rest),
