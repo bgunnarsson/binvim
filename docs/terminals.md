@@ -287,3 +287,9 @@ from tmux:
   lazygit.
 - 21: `kill-server` hung up the pane; the relaunch reported recovered changes
   with ` unsaved` on the *Styles* line, and `:e!` removed the recovery file.
+
+**over SSH** — Ghostty on macOS into Linux boxes, recorded on 2026-09-25 from the
+maintainer's use while making config changes on the remote machines, not from a
+run of the checklist or the probe: editing and config reload worked without
+issue. OSC 52 (check 18, the one thing that only differs over SSH) was not
+tested. Not enough to fill in the matrix row below.
