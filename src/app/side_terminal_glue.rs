@@ -286,8 +286,9 @@ impl super::App {
         // load (`.zprofile` + `.zshrc` and equivalents). That's where
         // nvm / asdf / direnv / homebrew shims live — without them, a
         // plain `spawn(codex)` would fail to resolve a `#!/usr/bin/env
-        // node` shebang script's interpreter. A POSIX shell `exec`s
-        // into the tool, so the user never sees a residual prompt.
+        // node` shebang script's interpreter. The shell has nothing
+        // left in its script once the tool exits, so the user never
+        // sees a residual prompt.
         let launch =
             crate::terminal::shell_launch_bare_word(&crate::terminal::default_shell(), command);
         // Compute the `@<path> ` prefix on the spawn path only — the
