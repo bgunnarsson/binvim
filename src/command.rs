@@ -273,12 +273,12 @@ pub enum ExCommand {
     /// tools already on `$PATH` (to the catalog's pinned / newest versions);
     /// tools that aren't installed are left for `:install`.
     Update,
-    /// `:claude` / `:codex` / `:opencode` — open (or focus) the
-    /// right-side AI-assistant terminal pane and start the named
-    /// tool inside a fresh shell tab. Re-running the same command
-    /// focuses the existing tab rather than spawning a duplicate.
-    /// The PTY inherits the editor's cwd, so the tool runs from the
-    /// project root.
+    /// `:claude` / `:codex` / `:opencode` — open the right-side
+    /// AI-assistant terminal pane and start the named tool inside a
+    /// fresh shell tab. Each invocation always opens a fresh instance,
+    /// even if a tab for the same tool is already open. The PTY
+    /// inherits the editor's cwd, so the tool runs from the project
+    /// root.
     AiTool(AiTool),
     Debug(DebugSubCmd),
     /// `:dapwatch <expr>` / `:dapunwatch <idx>` / `:dapunwatch all`.
@@ -347,8 +347,8 @@ pub enum AiTool {
 }
 
 impl AiTool {
-    /// Tab label + dedup key. Re-running `:claude` while a side tab
-    /// labelled "claude" already exists focuses that tab.
+    /// Tab header label. Several tabs may share a label — the label
+    /// names the tool, not a specific instance.
     pub fn label(self) -> &'static str {
         match self {
             AiTool::Claude => "claude",

@@ -744,9 +744,9 @@ pub struct App {
     pub terminal_pane_open: bool,
     /// Right-side terminal pane — dedicated to long-running AI
     /// assistants (`:claude`, `:codex`, `:opencode`). Each entry is
-    /// one PTY-backed shell + grid plus a stable `label` we dedupe
-    /// against so re-running `:claude` re-focuses the existing tab
-    /// instead of spawning a duplicate. Sits on the right edge of
+    /// one PTY-backed shell + grid plus a `label` that only names the
+    /// tab header — re-running `:claude` always opens a fresh tab.
+    /// Sits on the right edge of
     /// the editor band (width ≈ 25 % of the host terminal), parallel
     /// to but independent of the bottom `terminals` pane: both panes
     /// can be open at the same time, and `terminal_focus` selects

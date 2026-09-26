@@ -527,22 +527,22 @@ pub enum Action {
     /// `<leader>dp` for the debug pane: open + focus if not alive,
     /// close if it is.
     TerminalToggle,
-    /// `<leader>jc` — open (or focus) Claude in the right-side
+    /// `<leader>jc` — open Claude in the right-side
     /// terminal pane. Equivalent to `:claude`.
     AiClaude,
-    /// `<leader>jx` — open (or focus) Codex in the right-side
+    /// `<leader>jx` — open Codex in the right-side
     /// terminal pane. Equivalent to `:codex`.
     AiCodex,
-    /// `<leader>jo` — open (or focus) opencode in the right-side
+    /// `<leader>jo` — open opencode in the right-side
     /// terminal pane. Equivalent to `:opencode`.
     AiOpencode,
-    /// `<leader>jw` — open (or focus) openclaw in the right-side
+    /// `<leader>jw` — open openclaw in the right-side
     /// terminal pane. Equivalent to `:openclaw`.
     AiOpenClaw,
-    /// `<leader>jh` — open (or focus) hermes in the right-side
+    /// `<leader>jh` — open hermes in the right-side
     /// terminal pane. Equivalent to `:hermes`.
     AiHermes,
-    /// `<leader>jb` — open (or focus) binai in the right-side
+    /// `<leader>jb` — open binai in the right-side
     /// terminal pane. Equivalent to `:binai`.
     AiBinai,
     /// `<leader>jq` — close the active right-side AI terminal tab.

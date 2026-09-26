@@ -2,10 +2,10 @@
 //! pane pinned to the right edge of the editor band — used by the
 //! AI-assistant commands (`:claude`, `:codex`, `:opencode`). The
 //! lifetime model differs from the bottom pane in one key way:
-//! tabs here carry a stable `label` (the tool name) and re-running
-//! the same command focuses the existing tab instead of spawning a
-//! duplicate. The user mental model is "one Claude per project,"
-//! not "one Claude per invocation."
+//! tabs here carry a `label` (the tool name) purely for the tab
+//! header, and re-running the same command always opens a fresh
+//! tab, so several tabs may share a label. The user mental model
+//! is "one invocation per command," not "one Claude per project."
 //!
 //! Both panes can be open at the same time. `App.terminal_focus`
 //! tracks which one consumes keystrokes while `Mode::Terminal` is
@@ -17,10 +17,9 @@ use std::time::Instant;
 use crate::mode::Mode;
 use crate::terminal::Terminal;
 
-/// One tab in the right-side terminal pane. The `label` doubles as
-/// the tab header AND as the dedup key — re-running `:claude` while
-/// a side terminal labelled "claude" already exists focuses that
-/// tab instead of spawning another one.
+/// One tab in the right-side terminal pane. The `label` is only the
+/// tab header — re-running `:claude` always opens a new tab, so
+/// several tabs may end up labelled "claude" at once.
 pub struct SideTerminal {
     pub terminal: Terminal,
     pub label: String,
@@ -230,12 +229,11 @@ impl super::App {
         word_bounds_in_line(&chars, col)
     }
 
-    /// Open (or focus) the right-side terminal pane and run `command`
-    /// inside a freshly-spawned interactive shell tab labelled
-    /// `label`. If a tab with the same label already exists we
-    /// focus it instead of spawning a duplicate — re-running
-    /// `:claude` is "give me the existing Claude," not "start a
-    /// second one."
+    /// Open the right-side terminal pane and run `command` inside a
+    /// freshly-spawned interactive shell tab labelled `label`. Each
+    /// invocation always opens a fresh tab, even if one labelled
+    /// `label` already exists — re-running `:claude` is "start
+    /// another Claude," not "give me the existing one."
     ///
     /// **Why the shell wrapper.** Direct-spawning the AI tool as the
     /// PTY child gave a perfectly clean splash → UI handoff, but it
