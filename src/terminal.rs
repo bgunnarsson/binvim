@@ -1731,6 +1731,17 @@ fn cmd_program(word: &str) -> Result<String, String> {
         .ok_or_else(|| format!("{word} isn't on PATH"))
 }
 
+/// True when `word` holds only characters a POSIX/fish exec line can
+/// carry unquoted — letters, digits, `_ - . /` — so `shell_launch_bare_word`
+/// can pass it through without `shell_quote`/`fish_quote` turning it into
+/// a literal command name a shell alias for it wouldn't match.
+fn is_bare_word(word: &str) -> bool {
+    !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
+}
+
 /// Run `words` (each quoted, since they come out of project files) and
 /// then `tail` (the user's own typed text, appended as-is) through
 /// `shell`, in `cwd`.
@@ -1748,11 +1759,17 @@ fn cmd_program(word: &str) -> Result<String, String> {
 /// its `&` would run. cmd expands `%BINVIM_LAUNCH%` once and doesn't
 /// rescan the result, so a `%` in a word — or in the tail — stays
 /// literal; `/V:OFF` does the same for `!`.
-pub(crate) fn shell_launch(
+///
+/// `bare` skips `shell_quote`/`fish_quote` on the Posix/Fish exec line —
+/// see `shell_launch_bare_word`. cmd.exe and PowerShell ignore it and
+/// always quote, since only the Posix/Fish exec line reads a shell rc
+/// file that could define an alias for the word.
+fn shell_launch_impl(
     shell: &str,
     cwd: Option<&Path>,
     words: &[&str],
     tail: Option<&str>,
+    bare: bool,
 ) -> Result<Launch, String> {
     let with_tail = |mut line: String| {
         if let Some(tail) = tail {
@@ -1775,7 +1792,11 @@ pub(crate) fn shell_launch(
                 line.push_str(" && ");
             }
             line.push_str("exec ");
-            let quoted: Vec<String> = words.iter().map(|w| quote(w)).collect();
+            let quoted: Vec<String> = if bare {
+                words.iter().map(|w| w.to_string()).collect()
+            } else {
+                words.iter().map(|w| quote(w)).collect()
+            };
             line.push_str(&quoted.join(" "));
             let args = vec!["-l".into(), "-i".into(), "-c".into(), with_tail(line)];
             (args, Vec::new(), None)
@@ -1832,6 +1853,31 @@ pub(crate) fn shell_launch(
         cwd,
         env,
     })
+}
+
+pub(crate) fn shell_launch(
+    shell: &str,
+    cwd: Option<&Path>,
+    words: &[&str],
+    tail: Option<&str>,
+) -> Result<Launch, String> {
+    shell_launch_impl(shell, cwd, words, tail, false)
+}
+
+/// Launch `word` through `shell` unquoted on the Posix/Fish exec line,
+/// so a shell alias for it still expands — `shell_launch` always quotes
+/// `word`, which turns it into a literal command name a same-named alias
+/// wouldn't match. Only `is_bare_word` passes: anything holding a
+/// character that could change the exec line's meaning is refused
+/// rather than let through unquoted. cmd.exe and PowerShell still quote,
+/// per `shell_launch_impl`'s `bare` doc.
+pub(crate) fn shell_launch_bare_word(shell: &str, word: &str) -> Result<Launch, String> {
+    if !is_bare_word(word) {
+        return Err(format!(
+            "{word:?} isn't a bare word (only letters, digits, `_-./` allowed)"
+        ));
+    }
+    shell_launch_impl(shell, None, &[word], None, true)
 }
 
 fn spawn_reader(mut reader: Box<dyn Read + Send>, tx: Sender<Vec<u8>>) {
@@ -1987,6 +2033,20 @@ mod tests {
             launch.args,
             ["-l", "-i", "-c", r"cd '/p' && exec 'npm' 'x\\\'y'"]
         );
+    }
+
+    #[test]
+    fn bare_word_launch_execs_unquoted_so_an_alias_still_expands() {
+        let launch = shell_launch_bare_word("/bin/zsh", "binai").unwrap();
+        assert_eq!(launch.args, ["-l", "-i", "-c", "exec binai"]);
+        assert_eq!(launch.cwd, None);
+        assert!(launch.env.is_empty());
+    }
+
+    #[test]
+    fn bare_word_launch_refuses_a_shell_metacharacter() {
+        let err = shell_launch_bare_word("/bin/zsh", "binai;rm -rf ~").unwrap_err();
+        assert!(err.contains("bare word"), "{err}");
     }
 
     #[test]

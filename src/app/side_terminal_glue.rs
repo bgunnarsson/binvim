@@ -288,12 +288,8 @@ impl super::App {
         // plain `spawn(codex)` would fail to resolve a `#!/usr/bin/env
         // node` shebang script's interpreter. A POSIX shell `exec`s
         // into the tool, so the user never sees a residual prompt.
-        let launch = crate::terminal::shell_launch(
-            &crate::terminal::default_shell(),
-            None,
-            &[command],
-            None,
-        );
+        let launch =
+            crate::terminal::shell_launch_bare_word(&crate::terminal::default_shell(), command);
         // Compute the `@<path> ` prefix on the spawn path only — the
         // re-focus branch above returns early so an ongoing
         // conversation never gets `@path` re-stuffed into it. Honour
