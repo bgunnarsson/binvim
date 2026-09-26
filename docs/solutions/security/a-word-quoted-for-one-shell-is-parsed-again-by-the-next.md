@@ -18,6 +18,7 @@ symptoms:
 root_cause: "each word was quoted for the shell binvim spawns, but four later layers parse the line again with other rules — portable-pty's MSVC argv escaping, PowerShell's legacy re-quoting for .cmd/.bat targets, cmd.exe's current-directory-first program lookup, and fish's single-quote escapes — so a quote that is correct for the first parser is broken by the next"
 related:
   - docs/solutions/security/an-upward-search-trusts-what-other-users-own-or-can-write.md
+  - docs/solutions/runtime/exec-hides-a-word-from-alias-expansion.md
 ---
 
 ## Problem
