@@ -530,42 +530,21 @@ pub enum Action {
     /// `<leader>jc` — open (or focus) Claude in the right-side
     /// terminal pane. Equivalent to `:claude`.
     AiClaude,
-    /// `<leader>jC` — open Claude AND pre-type `@<active-buffer
-    /// path>` into the input field once it's ready. Uppercase
-    /// variant of `<leader>jc` so the per-invocation choice is
-    /// muscle-memory adjacent: `c` for "just Claude", `C` for
-    /// "Claude, with this file."
-    AiClaudeHandoff,
     /// `<leader>jx` — open (or focus) Codex in the right-side
     /// terminal pane. Equivalent to `:codex`.
     AiCodex,
-    /// `<leader>jX` — Codex with file-path handoff. Same pattern
-    /// as [`Action::AiClaudeHandoff`].
-    AiCodexHandoff,
     /// `<leader>jo` — open (or focus) opencode in the right-side
     /// terminal pane. Equivalent to `:opencode`.
     AiOpencode,
-    /// `<leader>jO` — opencode with file-path handoff. Same
-    /// pattern as [`Action::AiClaudeHandoff`].
-    AiOpencodeHandoff,
     /// `<leader>jw` — open (or focus) openclaw in the right-side
     /// terminal pane. Equivalent to `:openclaw`.
     AiOpenClaw,
-    /// `<leader>jW` — openclaw with file-path handoff. Same
-    /// pattern as [`Action::AiClaudeHandoff`].
-    AiOpenClawHandoff,
     /// `<leader>jh` — open (or focus) hermes in the right-side
     /// terminal pane. Equivalent to `:hermes`.
     AiHermes,
-    /// `<leader>jH` — hermes with file-path handoff. Same
-    /// pattern as [`Action::AiClaudeHandoff`].
-    AiHermesHandoff,
     /// `<leader>jb` — open (or focus) binai in the right-side
     /// terminal pane. Equivalent to `:binai`.
     AiBinai,
-    /// `<leader>jB` — binai with file-path handoff. Same
-    /// pattern as [`Action::AiClaudeHandoff`].
-    AiBinaiHandoff,
     /// `<leader>jq` — close the active right-side AI terminal tab.
     /// If it was the last side tab, hides the pane and snaps focus
     /// back to the bottom pane.
@@ -1819,24 +1798,13 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
     // / `:opencode` ex commands.
     if state.awaiting_ai_leader {
         state.awaiting_ai_leader = false;
-        // Lowercase = open / focus the tool as-is. Uppercase = same,
-        // but pre-type the active buffer's `@<path>` into the input
-        // field so the conversation starts with file context. The
-        // shift-pair convention keeps the choice in muscle memory:
-        // `c` / `C`, `x` / `X`, `o` / `O`.
         let action = match ch {
             'c' => Some(Action::AiClaude),
-            'C' => Some(Action::AiClaudeHandoff),
             'x' => Some(Action::AiCodex),
-            'X' => Some(Action::AiCodexHandoff),
             'o' => Some(Action::AiOpencode),
-            'O' => Some(Action::AiOpencodeHandoff),
             'w' => Some(Action::AiOpenClaw),
-            'W' => Some(Action::AiOpenClawHandoff),
             'h' => Some(Action::AiHermes),
-            'H' => Some(Action::AiHermesHandoff),
             'b' => Some(Action::AiBinai),
-            'B' => Some(Action::AiBinaiHandoff),
             'f' => Some(Action::AiFocus),
             'p' => Some(Action::AiToggle),
             'q' => Some(Action::AiClose),

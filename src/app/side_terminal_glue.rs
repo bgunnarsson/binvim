@@ -40,20 +40,6 @@ pub struct SideTerminal {
     /// alt-screen or has a quiet stretch. Without this latch, every
     /// stutter in the tool's output would flash the splash on / off.
     pub loading_done: Cell<bool>,
-    /// The `@<path>` prefix to write into the tool's input box once
-    /// the loading splash has settled. Populated when
-    /// `[ai] path_handoff = true` and the active buffer had a path
-    /// at open-time. The user presses Enter manually to submit —
-    /// we tried auto-submit (drip + discrete `\r`) but it never
-    /// settled reliably across all three tools; each one
-    /// classified the Enter slightly differently depending on
-    /// timing. Pre-typing the path is the part that works
-    /// universally, so we keep just that.
-    pub pending_initial_input: Cell<Option<String>>,
-    /// Captured the first time the loading splash flips off — the
-    /// flush waits a per-tool quiet window AFTER this before
-    /// writing, so the input field is fully wired up by then.
-    pub loading_settled_at: Cell<Option<Instant>>,
 }
 
 /// Which terminal pane consumes keystrokes while `Mode::Terminal`
@@ -267,7 +253,7 @@ impl super::App {
     /// itself with the AI tool via `exec`. The intermediate
     /// prompt + echo never reaches the user because the loading
     /// splash sits on top of the pane until the tool is settled.
-    pub(super) fn open_side_terminal(&mut self, label: &str, command: &str, with_handoff: bool) {
+    pub(super) fn open_side_terminal(&mut self, label: &str, command: &str) {
         // Every invocation spawns a fresh tab — `:claude` /
         // `<leader>jc` opening one tab and re-running to focus the
         // same instance was the old model. Now focus is its own
@@ -291,19 +277,6 @@ impl super::App {
         // sees a residual prompt.
         let launch =
             crate::terminal::shell_launch_bare_word(&crate::terminal::default_shell(), command);
-        // Compute the `@<path> ` prefix on the spawn path only — the
-        // re-focus branch above returns early so an ongoing
-        // conversation never gets `@path` re-stuffed into it. Honour
-        // [ai] path_handoff (default off); when on, anchor the path
-        // on the cwd so generated `@src/foo.rs` references resolve in
-        // the tool's eye against the same root binvim is editing
-        // from. Falls back gracefully when the active buffer has no
-        // path or the strip-prefix doesn't apply.
-        let pending_input = if with_handoff {
-            self.ai_path_handoff_prefix()
-        } else {
-            None
-        };
         match launch
             .map_err(anyhow::Error::msg)
             .and_then(|launch| Terminal::spawn_launch(rows, cols, &launch))
@@ -316,8 +289,6 @@ impl super::App {
                     spawned_at: now,
                     last_byte_at: Cell::new(now),
                     loading_done: Cell::new(false),
-                    pending_initial_input: Cell::new(pending_input),
-                    loading_settled_at: Cell::new(None),
                 });
                 self.active_side_terminal_idx = self.side_terminals.len() - 1;
                 self.terminal_focus = TerminalFocus::Side;
@@ -330,82 +301,6 @@ impl super::App {
                     self.side_terminal_pane_open = false;
                 }
                 self.status_msg = format!("{label}: spawn failed: {e:#}");
-            }
-        }
-    }
-
-    /// Build the `@<rel-path>` payload to write into a freshly-
-    /// spawned side terminal, or `None` when handoff is disabled,
-    /// the active buffer has no path, or the path can't be
-    /// project-relativised. Project-relative anchoring is by cwd
-    /// (matches what the tools expect for their `@<path>`
-    /// expansion); when the path lies outside cwd we fall through
-    /// to the absolute form because that still resolves.
-    ///
-    /// No trailing newline / Enter — the user submits manually.
-    /// Auto-submit was attempted and abandoned: each of the three
-    /// tools classified our programmatic `\r` differently
-    /// depending on timing, and no single tuning made all three
-    /// submit reliably. Pre-typing the path is the part that
-    /// works universally, so we keep just that.
-    fn ai_path_handoff_prefix(&self) -> Option<String> {
-        let path = self.buffer.path.as_ref()?;
-        let cwd = std::env::current_dir().ok();
-        let display = match cwd.as_ref().and_then(|c| path.strip_prefix(c).ok()) {
-            Some(rel) => rel.display().to_string(),
-            None => path.display().to_string(),
-        };
-        if display.is_empty() {
-            return None;
-        }
-        Some(format!("@{display}"))
-    }
-
-    /// Per-frame flush — once the loading splash settles AND the
-    /// per-tool quiet window has elapsed (so the input field is
-    /// fully wired up), write the pending `@<path>` prefix into
-    /// the tool's input box as a single chunk and clear the slot.
-    /// The user then presses Enter to submit.
-    ///
-    /// We tried auto-submit (drip the path at typing cadence,
-    /// follow with a discrete `\r`) and could not find a single
-    /// timing that submitted reliably across Claude / Codex /
-    /// opencode — each tool classified the trailing Enter
-    /// differently depending on context (autocomplete capture,
-    /// debounce window, paste-mode newline). Pre-typing the path
-    /// is the part that works universally, so that's what we
-    /// keep. Two-keypress flow (`:claude` → Enter) instead of
-    /// one, but reliable on all three tools.
-    pub(super) fn side_terminal_flush_pending_inputs(&self) {
-        for s in &self.side_terminals {
-            if side_terminal_loading(s) {
-                continue;
-            }
-            // Anchor the wait window on splash-exit, not on spawn —
-            // splash duration varies per tool, see `side_terminal_loading`.
-            let settled_at = match s.loading_settled_at.get() {
-                Some(t) => t,
-                None => {
-                    let now = Instant::now();
-                    s.loading_settled_at.set(Some(now));
-                    now
-                }
-            };
-            let now = Instant::now();
-            let since_settled = now.duration_since(settled_at);
-            let since_byte = now.duration_since(s.last_byte_at.get());
-            let (quiet_guard, max_wait) = handoff_tuning(&s.label);
-            let ready = since_byte >= quiet_guard || since_settled >= max_wait;
-            if !ready {
-                continue;
-            }
-            // Atomic write of the whole `@<path>` payload. The
-            // per-tool quiet guard already ensured the input field
-            // is ready, so front-of-path truncation isn't a risk
-            // here the way it was when we wrote at the splash
-            // boundary.
-            if let Some(prefix) = s.pending_initial_input.take() {
-                let _ = s.terminal.write_bytes(prefix.as_bytes());
             }
         }
     }
@@ -872,42 +767,6 @@ impl super::App {
 ///     user isn't staring at the loader forever.
 ///
 /// A `MIN_SPLASH` floor under all three keeps a fast-starting tool
-/// Per-tool tuning for the path-handoff drip — returns
-/// `(output_quiet_guard, max_post_splash_wait)`.
-///
-/// Each TUI we target boots and accepts input on its own timeline.
-/// A single shared tuning makes one tool work while another loses
-/// bytes or fails to submit, so the dispatch is tool-aware via the
-/// tab label (which doubles as a stable identity — `:claude` tabs
-/// are always labelled `"claude"`, etc.).
-///
-/// Empirical values, gathered by iterating with the three tools:
-/// - **Claude** boots fast — alt-screen + a render of the welcome
-///   pane, then idle. 300ms quiet is enough; longer waits seem to
-///   put Claude into a state where the trailing `\r` no longer
-///   registers as submit.
-/// - **Codex** takes a bit longer to wire up its input field after
-///   the splash render. 800ms quiet catches it cleanly.
-/// - **opencode** is the slowest — its TUI does a lot of background
-///   initialisation after rendering the splash, and we've seen
-///   front-of-path truncation as late as ~700ms in. 1500ms quiet
-///   gives a comfortable safety margin.
-///
-/// `max_post_splash_wait` is the fallback for tools with periodic
-/// PTY redraws that keep `last_byte_at` updating (cursor blink,
-/// status-line clocks) and would otherwise prevent the quiet guard
-/// from ever tripping. Set ~1s above the quiet guard.
-fn handoff_tuning(label: &str) -> (std::time::Duration, std::time::Duration) {
-    use std::time::Duration;
-    match label {
-        "claude" => (Duration::from_millis(300), Duration::from_millis(1500)),
-        "codex" => (Duration::from_millis(800), Duration::from_millis(2500)),
-        "opencode" => (Duration::from_millis(1500), Duration::from_millis(3500)),
-        // Unknown tool — split the difference.
-        _ => (Duration::from_millis(800), Duration::from_millis(2500)),
-    }
-}
-
 /// from popping through in one frame, which would itself look like
 /// a flash.
 pub fn side_terminal_loading(s: &SideTerminal) -> bool {

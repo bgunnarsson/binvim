@@ -811,9 +811,9 @@ pub fn leader_entries() -> Vec<(String, String)> {
 }
 
 pub fn ai_prefix_entries() -> Vec<(String, String)> {
-    // Lowercase "open new tab" variants first, then their uppercase
-    // handoff siblings, then the pane controls (focus / toggle /
-    // close) — same shape as `<leader>t` for the bottom pane.
+    // "Open new tab" variants first, then the pane controls
+    // (focus / toggle / close) — same shape as `<leader>t` for the
+    // bottom pane.
     vec![
         ("c".into(), "Claude".into()),
         ("x".into(), "Codex".into()),
@@ -821,12 +821,6 @@ pub fn ai_prefix_entries() -> Vec<(String, String)> {
         ("w".into(), "openclaw".into()),
         ("h".into(), "hermes".into()),
         ("b".into(), "binai".into()),
-        ("C".into(), "Claude + @path handoff".into()),
-        ("X".into(), "Codex + @path handoff".into()),
-        ("O".into(), "opencode + @path handoff".into()),
-        ("W".into(), "openclaw + @path handoff".into()),
-        ("H".into(), "hermes + @path handoff".into()),
-        ("B".into(), "binai + @path handoff".into()),
         ("f".into(), "Focus side pane".into()),
         ("p".into(), "Toggle side pane".into()),
         ("q".into(), "Close".into()),

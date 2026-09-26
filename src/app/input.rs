@@ -2585,10 +2585,7 @@ impl super::App {
             ExCommand::Update => self.cmd_update(),
             ExCommand::TaskPicker => self.cmd_task_picker(),
             ExCommand::TaskLast => self.cmd_task_last(),
-            // Ex commands open the tool without the path handoff — the
-            // uppercase leader bindings (`<leader>jC` / `jX` / `jO`) are
-            // the explicit "with file context" path.
-            ExCommand::AiTool(tool) => self.open_side_terminal(tool.label(), tool.command(), false),
+            ExCommand::AiTool(tool) => self.open_side_terminal(tool.label(), tool.command()),
             ExCommand::Debug(sub) => self.dispatch_debug(sub),
             ExCommand::DebugWatch(sub) => self.dispatch_debug_watch(sub),
             ExCommand::DebugWatchesShow => self.dispatch_debug_watches_show(),

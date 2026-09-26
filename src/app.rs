@@ -1562,12 +1562,6 @@ impl App {
                 needs_render = true;
             }
             pty_backlog |= side_more;
-            // After draining, give any side terminal whose loading
-            // splash just flipped off the chance to write its
-            // pending `@<path>` prefix into the freshly-ready
-            // input field. Cheap no-op when [ai] path_handoff is
-            // off — the pending slot would be `None` in that case.
-            self.side_terminal_flush_pending_inputs();
             // Drop the yank flash once its deadline has passed so the next
             // render paints the buffer cleanly.
             if let Some(h) = self.yank_highlight.as_ref() {

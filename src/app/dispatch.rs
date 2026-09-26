@@ -286,62 +286,32 @@ impl super::App {
             Action::AiClaude => {
                 use crate::command::AiTool;
                 let t = AiTool::Claude;
-                self.open_side_terminal(t.label(), t.command(), false);
-            }
-            Action::AiClaudeHandoff => {
-                use crate::command::AiTool;
-                let t = AiTool::Claude;
-                self.open_side_terminal(t.label(), t.command(), true);
+                self.open_side_terminal(t.label(), t.command());
             }
             Action::AiCodex => {
                 use crate::command::AiTool;
                 let t = AiTool::Codex;
-                self.open_side_terminal(t.label(), t.command(), false);
-            }
-            Action::AiCodexHandoff => {
-                use crate::command::AiTool;
-                let t = AiTool::Codex;
-                self.open_side_terminal(t.label(), t.command(), true);
+                self.open_side_terminal(t.label(), t.command());
             }
             Action::AiOpencode => {
                 use crate::command::AiTool;
                 let t = AiTool::Opencode;
-                self.open_side_terminal(t.label(), t.command(), false);
-            }
-            Action::AiOpencodeHandoff => {
-                use crate::command::AiTool;
-                let t = AiTool::Opencode;
-                self.open_side_terminal(t.label(), t.command(), true);
+                self.open_side_terminal(t.label(), t.command());
             }
             Action::AiOpenClaw => {
                 use crate::command::AiTool;
                 let t = AiTool::OpenClaw;
-                self.open_side_terminal(t.label(), t.command(), false);
-            }
-            Action::AiOpenClawHandoff => {
-                use crate::command::AiTool;
-                let t = AiTool::OpenClaw;
-                self.open_side_terminal(t.label(), t.command(), true);
+                self.open_side_terminal(t.label(), t.command());
             }
             Action::AiHermes => {
                 use crate::command::AiTool;
                 let t = AiTool::Hermes;
-                self.open_side_terminal(t.label(), t.command(), false);
-            }
-            Action::AiHermesHandoff => {
-                use crate::command::AiTool;
-                let t = AiTool::Hermes;
-                self.open_side_terminal(t.label(), t.command(), true);
+                self.open_side_terminal(t.label(), t.command());
             }
             Action::AiBinai => {
                 use crate::command::AiTool;
                 let t = AiTool::Binai;
-                self.open_side_terminal(t.label(), t.command(), false);
-            }
-            Action::AiBinaiHandoff => {
-                use crate::command::AiTool;
-                let t = AiTool::Binai;
-                self.open_side_terminal(t.label(), t.command(), true);
+                self.open_side_terminal(t.label(), t.command());
             }
             Action::AiClose => {
                 if self.side_terminals.is_empty() {
