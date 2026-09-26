@@ -1760,10 +1760,12 @@ fn is_bare_word(word: &str) -> bool {
 /// rescan the result, so a `%` in a word — or in the tail — stays
 /// literal; `/V:OFF` does the same for `!`.
 ///
-/// `bare` skips `shell_quote`/`fish_quote` on the Posix/Fish exec line —
-/// see `shell_launch_bare_word`. cmd.exe and PowerShell ignore it and
-/// always quote, since only the Posix/Fish exec line reads a shell rc
-/// file that could define an alias for the word.
+/// `bare` skips both `shell_quote`/`fish_quote` and the leading `exec ` on
+/// the Posix/Fish line — see `shell_launch_bare_word` for why `exec` itself
+/// has to go, not just the quoting. cmd.exe and PowerShell ignore `bare`
+/// and always quote, since only the Posix/Fish line reads a shell rc file
+/// that could define an alias for the word (cmd.exe and PowerShell have no
+/// `exec` step of their own either way).
 fn shell_launch_impl(
     shell: &str,
     cwd: Option<&Path>,
@@ -1791,10 +1793,10 @@ fn shell_launch_impl(
                 line.push_str(&quote(&dir.to_string_lossy()));
                 line.push_str(" && ");
             }
-            line.push_str("exec ");
             let quoted: Vec<String> = if bare {
                 words.iter().map(|w| w.to_string()).collect()
             } else {
+                line.push_str("exec ");
                 words.iter().map(|w| quote(w)).collect()
             };
             line.push_str(&quoted.join(" "));
@@ -1864,13 +1866,26 @@ pub(crate) fn shell_launch(
     shell_launch_impl(shell, cwd, words, tail, false)
 }
 
-/// Launch `word` through `shell` unquoted on the Posix/Fish exec line,
-/// so a shell alias for it still expands — `shell_launch` always quotes
-/// `word`, which turns it into a literal command name a same-named alias
-/// wouldn't match. Only `is_bare_word` passes: anything holding a
-/// character that could change the exec line's meaning is refused
-/// rather than let through unquoted. cmd.exe and PowerShell still quote,
-/// per `shell_launch_impl`'s `bare` doc.
+/// Launch `word` through `shell` unquoted and in command position, with no
+/// `exec`, so a shell alias for it still expands. Quoting alone (what
+/// `shell_launch` does) isn't the whole problem: `exec` isn't either.
+/// Bash and zsh only expand an alias for the first word of a simple
+/// command, and `exec word` puts `word` in `exec`'s argument position, not
+/// command position, so a bash/zsh alias named `word` is never even
+/// considered there — `exec word` runs a real `word` binary off `PATH`,
+/// or fails outright if none exists. Fish's `alias` builtin defines a
+/// shell function, and fish's `exec` can only invoke an external command,
+/// never a function, so `exec word` can't reach a fish alias either.
+/// Dropping `exec` puts `word` itself in command position (the whole `-c`
+/// script, or the first word after `cd … &&`), which is what all three
+/// shells actually check. The cost: this launch doesn't replace the
+/// wrapping shell's process image the way the quoted/`exec`'d task-runner
+/// path does — it forks `word` as an ordinary foreground command, and the
+/// `-l -i -c` shell exits right after, same as if it had `exec`'d, so the
+/// terminal still shows no leftover shell prompt. Only `is_bare_word`
+/// passes: anything holding a character that could change the line's
+/// meaning is refused rather than let through unquoted. cmd.exe and
+/// PowerShell still quote, per `shell_launch_impl`'s `bare` doc.
 pub(crate) fn shell_launch_bare_word(shell: &str, word: &str) -> Result<Launch, String> {
     if !is_bare_word(word) {
         return Err(format!(
@@ -2036,9 +2051,9 @@ mod tests {
     }
 
     #[test]
-    fn bare_word_launch_execs_unquoted_so_an_alias_still_expands() {
+    fn bare_word_launch_puts_the_word_in_command_position_so_an_alias_still_expands() {
         let launch = shell_launch_bare_word("/bin/zsh", "binai").unwrap();
-        assert_eq!(launch.args, ["-l", "-i", "-c", "exec binai"]);
+        assert_eq!(launch.args, ["-l", "-i", "-c", "binai"]);
         assert_eq!(launch.cwd, None);
         assert!(launch.env.is_empty());
     }
@@ -2064,6 +2079,12 @@ mod tests {
     #[test]
     fn bare_word_launch_refuses_a_nul_with_no_whitespace() {
         let err = shell_launch_bare_word("/bin/zsh", "a\0b").unwrap_err();
+        assert!(err.contains("bare word"), "{err}");
+    }
+
+    #[test]
+    fn bare_word_launch_refuses_a_single_quote_with_no_whitespace() {
+        let err = shell_launch_bare_word("/bin/zsh", "a'b").unwrap_err();
         assert!(err.contains("bare word"), "{err}");
     }
 
