@@ -2050,6 +2050,24 @@ mod tests {
     }
 
     #[test]
+    fn bare_word_launch_refuses_an_ampersand_with_no_whitespace() {
+        let err = shell_launch_bare_word("/bin/zsh", "a&b").unwrap_err();
+        assert!(err.contains("bare word"), "{err}");
+    }
+
+    #[test]
+    fn bare_word_launch_refuses_a_quote_with_no_whitespace() {
+        let err = shell_launch_bare_word("/bin/zsh", "a\"b").unwrap_err();
+        assert!(err.contains("bare word"), "{err}");
+    }
+
+    #[test]
+    fn bare_word_launch_refuses_a_nul_with_no_whitespace() {
+        let err = shell_launch_bare_word("/bin/zsh", "a\0b").unwrap_err();
+        assert!(err.contains("bare word"), "{err}");
+    }
+
+    #[test]
     fn cmd_launch_carries_its_line_in_the_environment() {
         let dir = Path::new(r"C:\my project");
         let launch = shell_launch(
