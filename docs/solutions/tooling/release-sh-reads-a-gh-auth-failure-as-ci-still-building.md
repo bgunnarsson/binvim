@@ -56,8 +56,20 @@ The script turns the 401 into a skip:
 The release was finished by hand. With `GITHUB_TOKEN` unset, the implementer
 watched release.yml run 36234512609 to completion, then ran
 `scripts/release.sh 0.7.2 --notes-only` and `--scoop-only`. That produced
-`cbd664d` ("Scoop manifest points at binvim 0.7.2"). The script itself is
-unchanged.
+`cbd664d` ("Scoop manifest points at binvim 0.7.2").
+
+Then the pre-flight was fixed. Both `command -v gh` sites now call
+`require_gh` (`3d04d50`, `d2f9ec8`), which also runs
+`gh api "repos/${OWNER}/${REPO}"` and exits before the bump commit,
+`cargo publish` or the tag push if that call fails. It started out as
+`gh api user`, but review caught that `GET /user` rejects a GitHub App
+installation token (an Actions `GITHUB_TOKEN`). A repository-scoped call
+accepts either kind of token and still gets a 401 for a bad one.
+
+One gap is still open: `gh api` goes to `GH_HOST` when it's set. With an
+authenticated enterprise host in `GH_HOST`, the probe passes, and the later
+`gh run` / `gh release` calls fail after publishing because the `github.com`
+origin doesn't match `GH_HOST`.
 
 ## Prevention
 
@@ -71,7 +83,7 @@ unchanged.
   stderr and fold a non-zero exit into a "not published yet" / "CI still
   building" branch. It has to tell an auth or network failure apart from a
   missing resource, or the pre-flight has to prove auth first.
-- The `gh` pre-flight check at `scripts/release.sh:408` must prove auth, e.g.
-  `gh auth status` or a `gh api user` call, the way the crates.io check probes
-  `/api/v1/me`. A diff that keeps it as `command -v gh` alone leaves this
-  failure in place.
+- `require_gh` in `scripts/release.sh` must make an authenticated API call,
+  and must run before the bump commit, `cargo publish` and the tag push. A diff
+  that cuts it back to `command -v gh`, moves a call to it below a publish
+  step, or makes the probe `gh api user` breaks this.
