@@ -325,14 +325,16 @@ ensure_sibling_clean_and_current() {
 # `gh` on PATH isn't enough — a stale GITHUB_TOKEN/GH_TOKEN env var
 # overrides `gh auth login` and makes every call 401, which every later
 # gh step here reads as "not built yet" rather than "not authenticated".
-# `gh api user` is a real API round-trip, like the crates.io /api/v1/me
-# check, so it actually proves gh can talk to GitHub.
+# A repo-scoped call is a real API round-trip, like the crates.io
+# /api/v1/me check, so it actually proves gh can talk to GitHub — and
+# unlike GET /user it also accepts a GitHub App installation token
+# (an Actions GITHUB_TOKEN), which /user rejects outright.
 require_gh() {
     if ! command -v gh >/dev/null 2>&1; then
         echo "gh CLI not found. Install with: brew install gh" >&2
         exit 1
     fi
-    if ! gh api user >/dev/null 2>&1; then
+    if ! gh api "repos/${OWNER}/${REPO}" >/dev/null 2>&1; then
         echo "gh can't reach the GitHub API — a stale GITHUB_TOKEN / GH_TOKEN overrides 'gh auth login'. Check: gh auth status" >&2
         exit 1
     fi
