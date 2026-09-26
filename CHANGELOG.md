@@ -4,6 +4,24 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.7.2] - 2026-09-26
+
+### Added
+- **binai in the AI side pane.** `:binai` / `<leader>jb` opens binai in a new
+  side tab, alongside Claude, Codex, opencode, openclaw and hermes.
+
+### Changed
+- **The AI side pane no longer pre-types `@<path>`.** The uppercase
+  `<leader>jC` / `jX` / `jO` / `jW` / `jH` handoff keys are gone; the lowercase
+  keys and the ex commands are unchanged.
+
+### Fixed
+- **A shell alias for an AI tool now runs in the side pane.** The tool was
+  launched quoted and through `exec`, so a bash, zsh or fish alias named
+  `claude`, `binai` and so on never expanded. The name is now launched bare
+  (letters, digits and `_ - . /` only), so the alias applies. cmd.exe and
+  PowerShell are unchanged.
+
 ## [0.7.1] - 2026-09-24
 
 ### Fixed
