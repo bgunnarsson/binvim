@@ -7,13 +7,17 @@ paths:
   - "docs/**/*audit*.md"
   - docs/roadmap.md
   - docs/known-issues.md
-tags: [audit, data-loss, guarantee, evidence, write_atomic, recovery, pid, documentation]
+  - "docs/migrating-*.md"
+tags: [audit, data-loss, guarantee, evidence, write_atomic, recovery, pid, documentation, migration-guide]
 symptoms:
   - "The file is replaced whole or not at all. A failed write leaves the old file."
   - "A pid alone isn't trusted: the process's identity is checked too."
   - "Every buffer with unsaved changes is dumped every 4 s."
   - "(2026-09-23: no path loses text; one display gap, a deleted clean file isn't marked as gone)"
   - "an audit row's \"Kept by\" names a function or a command that doesn't exist (`reload_buffer_from_disk`, `:saveas`)"
+  - "saving it applies it without a restart"
+  - "p pastes what you copied in another app"
+  - "A tab per open file"
 root_cause: "docs/data-loss-audit.md's guarantees were compiled from the plans' Context sections, the solution docs and CLAUDE.md's module notes, each of which describes the common path or one platform, so the audit stated them as unconditional; the cited tests were then checked to exist, not checked to prove the sentence beside them"
 related:
   - docs/solutions/runtime/config-reload-misses-state-derived-from-app-config.md
@@ -30,6 +34,10 @@ The 0.7 data-loss audit (`docs/data-loss-audit.md`, plan
 table: each path, its guarantee, the code that keeps it, the evidence. Every cited test existed,
 and all five tmux checks passed. Review still confirmed nine findings, and six were claims the
 code doesn't keep. The ROADMAP line built on the audit said "no path loses text".
+
+The same thing happened on 2026-09-28 in the Neovim and VS Code migration guides
+(`docs/migrating-from-*.md` and their binvim.dev pages). Every key in them passed a grep against
+`src/`, and review still confirmed five claims that binvim doesn't keep.
 
 ## What didn't work
 
@@ -62,6 +70,15 @@ code doesn't keep. The ROADMAP line built on the audit said "no path loses text"
   behaviour to document." Work found no marker, documented it as a display gap and marked the plan
   done.
 
+- **Checking a summary page's keys, not its sentences.** The migration guides' verification
+  grepped every chord and `:command` against `src/`. That confirms `p`, `<C-w>v` and
+  `[copilot] enabled` exist. It does not check "`p` pastes what you copied in another app"
+  (not over SSH, `docs/configuration.md` `[clipboard]`), "a tab per open file" (not a file
+  picked into a split, `docs/keys.md`), "saving it applies it without a restart" beside a
+  recommended `[copilot] enabled` (`docs/configuration.md` says a reload can't apply it), or
+  "language servers, formatters and debugging are built in" (`docs/external-tools.md`: external
+  binaries). Each exception was already in the canonical doc the guide links.
+
 ## Root cause
 
 Verified in the code at each line above, and by review's verifiers. Every source the audit was
@@ -79,6 +96,9 @@ backed, and the check that the tests existed passed.
   text", and the README links the audit.
 - `bd2cd6f`: the unix `process_alive` matches `ps -o comm=` against the executable's name, so the
   pid row is now true.
+- `051ab17` (binvim-web `9100a9d`): the migration guides name the SSH, split-tab and Copilot
+  exceptions, say the tools are installed rather than built in, and link Install instead of
+  repeating its walkthrough.
 - `3a50353`: `Buffer.gone` and the `[deleted]` status-line marker. The plan's Decision is
   implemented instead of being recorded as a gap.
 
@@ -106,3 +126,8 @@ backed, and the check that the tests existed passed.
 - **A plan Decision that says "bug to fix, not a behaviour to document" is fixed before the plan is
   marked done,** or the Decision is revised in the plan with the reason. A task that ticks with
   "recorded as a gap" against such a Decision is a violation.
+- **A page that restates behaviour for newcomers (a migration guide, a README headline) carries
+  the exceptions the canonical doc gives, or drops the claim.** Before committing it, open the
+  section each sentence summarises and look for "except", "until", "restart", "over SSH", "stays
+  out of", "requires". A sentence with no qualifier over behaviour whose canonical section has one
+  is a violation. A grep that the keys exist doesn't check this.
