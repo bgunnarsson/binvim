@@ -74,7 +74,7 @@ src/
   dap.rs           slim entry — re-exports public API
   dap/
     types.rs       wire-side types — DapIncoming / DapEvent / breakpoint / frame / variable structs
-    specs.rs       adapter registry (.NET / Go / Python / lldb for Rust, C, C++), per-adapter target discovery, $PATH lookup
+    specs.rs       adapter registry (.NET / Go / Python / lldb for Rust, and C / C++ in a Cargo project), per-adapter target discovery, $PATH lookup
     client.rs      DapClient — spawn + stdin / stdout / stderr fan-out
     io.rs          reader-thread loop (Content-Length framing, same as LSP)
     manager.rs     DapManager — protocol state machine + drain
