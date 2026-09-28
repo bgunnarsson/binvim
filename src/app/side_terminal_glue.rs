@@ -244,13 +244,13 @@ impl super::App {
     /// with "spawn_command failed." Spawning `$SHELL` first means
     /// `.zshrc` runs, nvm injects its PATH, and the lookup succeeds.
     ///
-    /// **Why `clear; exec`.** The shell prints its first prompt as
-    /// soon as it's ready. We immediately write `clear; exec
-    /// {command}\n` so the shell (a) wipes the prompt + echoed
-    /// command line via `clear`'s `\e[2J\e[H`, and (b) replaces
-    /// itself with the AI tool via `exec`. The intermediate
-    /// prompt + echo never reaches the user because the loading
-    /// splash sits on top of the pane until the tool is settled.
+    /// **Why `shell_launch_bare_word`.** It runs `<shell> -l -i -c
+    /// {command}`, so a bare word like `claude` resolves the way
+    /// the user's interactive shell would resolve it: an alias, a
+    /// function, or a PATH entry only the rc files add. There is
+    /// no `exec` in front of the word, because `exec`'s argument is
+    /// never in command position and an alias there doesn't expand
+    /// — see `docs/solutions/runtime/exec-hides-a-word-from-alias-expansion.md`.
     pub(super) fn open_side_terminal(&mut self, label: &str, command: &str) {
         // Every invocation spawns a fresh tab — `:claude` /
         // `<leader>jc` opening one tab and re-running to focus the
