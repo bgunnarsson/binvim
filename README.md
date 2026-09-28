@@ -68,6 +68,8 @@ binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux,
 - [Keys](docs/keys.md): leader bindings, buffer / tab navigation, window splits.
 - [Ex commands](docs/ex-commands.md): the `:` commands beyond the standard set.
 - [Vim compatibility](docs/vim-compatibility.md): what's supported, where binvim differs on purpose, and what's left out.
+- [Migrating from Neovim](docs/migrating-from-neovim.md): where your plugins' features live, and what replaces `init.lua`.
+- [Migrating from VS Code](docs/migrating-from-vscode.md): modal editing in five minutes, and your shortcuts mapped to binvim's keys.
 - [Tree-sitter highlighting](docs/highlighting.md): the languages and the per-language query tweaks.
 - [LSP](docs/lsp.md): capabilities, their bindings, and multi-server fan-out.
 - [Debugger](docs/debugging.md): the DAP adapters, bindings, breakpoints and the debug pane.
