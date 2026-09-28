@@ -53,7 +53,7 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>sl` | Re-run the most recent test (same as `:testlast`) |
 | `<space>sq` | Cancel the running test adapter (same as `:testcancel`) |
 | `<space>sr` | Toggle the streaming results overlay (same as `:testresults`) |
-| `<space>jc` | Spawn a new Claude tab in the right-side pane. Same pattern for `<space>jx` (Codex), `<space>jo` (opencode), `<space>jw` (openclaw), `<space>jh` (hermes) and `<space>jb` (binai). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. |
+| `<space>jc` | Spawn a new Claude tab in the right-side pane. Same pattern for `<space>jx` (Codex), `<space>jo` (opencode), `<space>jw` (openclaw), `<space>jh` (hermes) and `<space>jb` (binai). Each invocation always opens a fresh instance; use `<space>jf` to focus an existing pane and `<space>jp` to toggle visibility (PTYs keep draining hidden). `<space>jq` closes the active side tab. See [AI side panes](ai-panes.md). |
 | `<space>pi` | Package manager — manage installed packages: pick a project manifest when the workspace has more than one (`.csproj` / `package.json` / `Cargo.toml` / `go.mod` / `requirements.txt`), then an installed package, then a version to change to. The installed version is highlighted; `Tab` toggles prereleases; type to narrow the version list. |
 | `<space>ps` | Package manager — search & add: pick a manifest (when there's more than one), type to search the registry, pick a package, then a version to add. |
 | `<space>Al` | Android — pick a defined AVD and launch the emulator |

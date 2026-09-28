@@ -20,6 +20,14 @@ A Vim-grammar TUI editor written in Rust. One binary, no plugin system; everythi
 - **Formatting**: one formatter per extension (biome, csharpier, gofmt / goimports, ruff, clang-format, shfmt, stylua, prettier, taplo, rufo, php-cs-fixer, google-java-format, zig fmt, nixfmt, mix format, ktfmt, sql-formatter) plus `.editorconfig` on every save. → [External tools](docs/external-tools.md)
 - **Workspace**: fuzzy pickers for files, grep, symbols and more; window splits with pick-on-split (`<C-w>v` → picker → side by side); a tab bar; sessions with per-buffer jumplists; a git gutter with hunk staging; an embedded terminal, task runner and test runner; a `:health` dashboard; and a Catppuccin Mocha palette with ready-made themes. → [Keys](docs/keys.md), [Configuration](docs/configuration.md)
 
+## AI side panes
+
+`<space>jc` opens Claude Code in a pane beside your code; `<space>jx`, `jo`, `jw`, `jh` and `jb` do the same for Codex, opencode, openclaw, hermes and binai. Each is the tool you already have installed, started in your shell (so your aliases apply), in tabs you can hide while they keep working. Files the tool edits reload in the editor unless you have unsaved changes there. binvim passes the tool nothing (no file, no selection), and binvim keeps `Esc`, so the tool gets it as `Ctrl-[` only on terminals with the Kitty keyboard protocol. → [AI side panes](docs/ai-panes.md)
+
+## A debugger that finds your targets
+
+`<space>db` sets a breakpoint and `<space>ds` (or `F5`) starts: binvim picks the adapter from the project, finds its runnable targets (a .NET project and launch profile, a Go `package main`, a Python script, a Cargo binary) and asks only when there is more than one. Locals, frames, watches and conditional breakpoints sit in a pane below the code, and `:debugtest` debugs the test under the cursor for pytest and Go. Android apps attach with `<space>Ab`. Adapters are installed separately, through `:install` or by hand. → [Debugger](docs/debugging.md)
+
 ## How binvim compares
 
 binvim is the first vim IDE. Here's how it stacks up against the editors and IDEs people usually weigh:
@@ -73,6 +81,7 @@ binvim's official terminal is [Ghostty](https://ghostty.org) on macOS and Linux,
 - [Tree-sitter highlighting](docs/highlighting.md): the languages and the per-language query tweaks.
 - [LSP](docs/lsp.md): capabilities, their bindings, and multi-server fan-out.
 - [Debugger](docs/debugging.md): the DAP adapters, bindings, breakpoints and the debug pane.
+- [AI side panes](docs/ai-panes.md): Claude Code, Codex and the other terminal AI tools in a pane beside the editor.
 - [External tools](docs/external-tools.md): every LSP, formatter and debug adapter binvim spawns, with the install command for each.
 - [Configuration](docs/configuration.md): `~/.config/binvim/config.toml` section by section, keymaps, and the theme presets.
 - [Project layout](docs/project-layout.md): what lives where in `src/`.

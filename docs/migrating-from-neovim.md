@@ -37,7 +37,7 @@ Most of a distribution's plugins have a built-in counterpart:
 | bufferline | The tab bar: one tab per buffer, except files opened into a split until `<C-w>T` |
 | undotree | `g-` / `g+`, `:earlier` / `:later`, `:undolist` |
 | copilot.lua | `[copilot] enabled = true` |
-| AI plugins | `<space>jc` for Claude and siblings for Codex, opencode and others, in a side pane ([Keys](keys.md#leader-bindings)) |
+| AI plugins | `<space>jc` for Claude and siblings for Codex, opencode and others, in a side pane ([AI side panes](ai-panes.md)) |
 
 A few keys mean something else here, on purpose. `U` redoes, `Ctrl-J` / `Ctrl-K` move the line, `<C-w>v` / `<C-w>s` open the file picker in the new split (`<C-w>V` / `<C-w>S` split onto the same buffer), and Visual `S` surrounds. `gr` opens references straight away, so Neovim 0.11's `grn` / `gra` / `grr` aren't keys here: rename is `<space>r` and code actions `<space>a`. [Where binvim differs on purpose](vim-compatibility.md#where-binvim-differs-on-purpose) has each one and why.
 

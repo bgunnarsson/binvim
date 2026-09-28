@@ -53,7 +53,7 @@ The leader key is Space: `<space>` then a key runs a command, and holding `<spac
 | Testing view | `<space>ss`, or `:test` |
 | Run task | `<space>mm`, or `:task` |
 | Problems panel | `:health` for the servers; diagnostics sit in the gutter and the line |
-| Chat / AI extensions | `<space>jc` for Claude and siblings for Codex, opencode and others, in a side pane ([Keys](keys.md#leader-bindings)) |
+| Chat / AI extensions | `<space>jc` for Claude and siblings for Codex, opencode and others, in a side pane ([AI side panes](ai-panes.md)) |
 
 ## Your config
 
