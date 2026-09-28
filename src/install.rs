@@ -703,10 +703,9 @@ pub fn detect_managers() -> BTreeSet<&'static str> {
     found
 }
 
-/// The interpreters `PythonModule` runs pip with, in the order the Python
-/// debug adapter tries them (`PYTHON.cmd_candidates` in `src/dap/specs.rs`),
-/// so debugpy is installed into the interpreter that will import it. Keep the
-/// two lists the same.
+/// The interpreters `PythonModule` runs pip with, in order. The Python debug
+/// adapter tries the same list (`PYTHON.cmd_candidates` in `src/dap/specs.rs`),
+/// so debugpy is installed into the interpreter that will import it.
 pub const PYTHON_CANDIDATES: [&str; 2] = ["python3", "python"];
 
 /// The arguments after the interpreter for a `PythonModule` step. `--user` is

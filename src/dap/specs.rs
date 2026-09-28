@@ -377,8 +377,9 @@ const PYTHON: DapAdapterSpec = DapAdapterSpec {
     adapter_id: "debugpy",
     // `python -m debugpy.adapter` is the canonical stdio adapter
     // entrypoint. We try `python3` first because most modern systems
-    // (macOS, recent Debian) ship `python` as 2.x or not at all.
-    cmd_candidates: &["python3", "python"],
+    // (macOS, recent Debian) ship `python` as 2.x or not at all. The
+    // list is `:install`'s, so debugpy lands in the interpreter run here.
+    cmd_candidates: &binvim::install::PYTHON_CANDIDATES,
     args: &["-m", "debugpy.adapter"],
     root_markers: &["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
     prelaunch: |_| None,

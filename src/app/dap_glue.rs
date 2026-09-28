@@ -1513,8 +1513,7 @@ impl super::App {
                 crate::dap::adapter_for_workspace(&root)
             })
         else {
-            self.status_msg =
-                "debugtest: install debugpy (`python3 -m pip install --user debugpy`)".into();
+            self.status_msg = "debugtest: install debugpy (`:install`, Python bundle)".into();
             return;
         };
         if adapter.key != "python" {
