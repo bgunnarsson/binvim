@@ -7,12 +7,17 @@ paths:
   - src/lsp/specs.rs
   - src/format.rs
   - src/install.rs
-tags: [biome, node_modules, PATH, find_node_modules_bin, find_on_path, which_in_path, install, catalog, formatter, lsp, health]
+  - src/dap/specs.rs
+  - src/app/dap_glue.rs
+tags: [debugpy, pipx, pip, venv, PYTHON_CANDIDATES, node_modules, PATH, find_node_modules_bin, find_on_path, which_in_path, install, catalog, formatter, lsp, health]
 symptoms:
   - "biome not found in node_modules"
   - "<leader>f says biome is missing in a JS / TS / JSON buffer right after :install put it on PATH"
   - "no JSON language server attaches to a .json file although `which biome` finds one"
   - ":health lists biome as found while :fmt reports it missing"
+  - "No module named debugpy"
+  - ":install ran `pipx install debugpy` and the Python debugger still can't start"
+  - "Can not perform a '--user' install. User site-packages are not visible in this virtualenv."
 root_cause: "the JSON server spec and the biome formatter searched only the project's node_modules/.bin, on a code comment claiming biome has no global install, while the catalog installs it with `npm install -g`, and :health's formatter probe searched PATH as well, so three probes for one tool resolved it three ways"
 related:
   - docs/solutions/integration/a-catalog-installer-must-put-the-tool-on-path-and-exit-zero-with-nothing-to-do.md
@@ -55,6 +60,23 @@ after `node_modules/.bin`, the order prettier already used, so the version a pro
 comments on `find_node_modules_bin`, `run_biome` and the JSON spec now say why `node_modules`
 comes first instead of claiming a global install is impossible.
 
+## The same mistake, for a module an interpreter imports
+
+The Python debug adapter is `python3 -m debugpy.adapter` (`PYTHON` in `src/dap/specs.rs`), so
+debugpy has to be importable by that interpreter. The catalog's first installer for it was
+`Pipx("debugpy")`, and `pipx install` puts a package in a venv of its own that no other
+interpreter imports from. On any machine with pipx, `:install` succeeded and the adapter could
+not start. Commit `8819827` replaced it with `Installer::PythonModule`, which runs
+`<interpreter> -m pip install --user debugpy` with the interpreter picked from
+`PYTHON_CANDIDATES`, the list the adapter tries. `--user` is left off when the interpreter is
+inside `VIRTUAL_ENV` or `CONDA_PREFIX`, where pip refuses it.
+
+Review then found two more copies of the claim. The `:debugtest` message named
+`python3 -m pip install --user debugpy` as a literal, which fails in an activated venv. The
+adapter's `cmd_candidates` held its own `["python3", "python"]`, kept equal to
+`PYTHON_CANDIDATES` by a comment. Commit `e2f4c73` points the message at `:install` and has the
+adapter read `binvim::install::PYTHON_CANDIDATES`.
+
 ## Prevention
 
 - **The code that probes for a catalog tool's binary searches where every `Installer` entry for
@@ -71,3 +93,11 @@ comes first instead of claiming a global install is impossible.
   where that is documented.** The catalog installing it globally contradicts the claim outright.
   A new comment of that shape with no citation, or one that survives a catalog entry installing
   the tool globally, is a violation.
+- **A module the editor runs as `<interpreter> -m <module>` is installed by that interpreter's
+  own pip, with the interpreter chosen from the list the adapter runs.** A `Pipx(...)`,
+  `Brew(...)` or `Cargo(...)` installer for a Python module the adapter imports is a violation.
+  So is a second literal copy of `PYTHON_CANDIDATES`: the adapter spec reads the constant.
+- **A message that tells the user how to install a catalog tool names `:install`, not a literal
+  command.** The command's flags depend on the environment (`--user` inside a venv fails), and
+  `:install` already chooses them. A new `status_msg` or error string that spells out an
+  install command whose flags `build_command` picks at run time is a violation.
