@@ -8,6 +8,8 @@ paths:
   - docs/roadmap.md
   - docs/known-issues.md
   - "docs/migrating-*.md"
+  - README.md
+  - docs/ai-panes.md
 tags: [audit, data-loss, guarantee, evidence, write_atomic, recovery, pid, documentation, migration-guide]
 symptoms:
   - "The file is replaced whole or not at all. A failed write leaves the old file."
@@ -18,6 +20,9 @@ symptoms:
   - "saving it applies it without a restart"
   - "p pastes what you copied in another app"
   - "A tab per open file"
+  - "DAP for .NET (netcoredbg), Go (delve), Python (debugpy) and Rust / C / C++ (lldb-dap)"
+  - "`pipx install debugpy` or `pip install debugpy`"
+  - "the tab shows the spawn failure"
 root_cause: "docs/data-loss-audit.md's guarantees were compiled from the plans' Context sections, the solution docs and CLAUDE.md's module notes, each of which describes the common path or one platform, so the audit stated them as unconditional; the cited tests were then checked to exist, not checked to prove the sentence beside them"
 related:
   - docs/solutions/runtime/config-reload-misses-state-derived-from-app-config.md
@@ -38,6 +43,11 @@ code doesn't keep. The ROADMAP line built on the audit said "no path loses text"
 The same thing happened on 2026-09-28 in the Neovim and VS Code migration guides
 (`docs/migrating-from-*.md` and their binvim.dev pages). Every key in them passed a grep against
 `src/`, and review still confirmed five claims that binvim doesn't keep.
+
+It happened a third time on 2026-09-28, in the README headlines for the AI side panes and the
+debugger, `docs/ai-panes.md` and the rewritten `docs/debugging.md`. This time the new text carried
+the canonical doc's qualifiers, and the canonical doc was itself wrong: two confirmed findings
+were claims copied faithfully from `docs/debugging.md` and `docs/external-tools.md`.
 
 ## What didn't work
 
@@ -78,6 +88,16 @@ The same thing happened on 2026-09-28 in the Neovim and VS Code migration guides
   recommended `[copilot] enabled` (`docs/configuration.md` says a reload can't apply it), or
   "language servers, formatters and debugging are built in" (`docs/external-tools.md`: external
   binaries). Each exception was already in the canonical doc the guide links.
+- **Checking the new text against the canonical doc, not the canonical doc against the code.**
+  The headline pass copied "Rust / C / C++ (lldb-dap)" from `docs/debugging.md`, but the
+  lldb-dap spec's only root marker is `Cargo.toml` (`src/dap/specs.rs`) and its targets are Cargo
+  bins, so C/C++ debugs only inside a Cargo project. It copied "`pipx install debugpy`" from
+  `docs/external-tools.md`, but the adapter runs as `python3 -m debugpy.adapter`, which cannot
+  import a package pipx installed into its own venv. It said `:debugtest` debugs pytest tests,
+  but the Python adapter is picked by `pyproject.toml` / `setup.py` / `requirements.txt` /
+  `Pipfile`, so a project with only `pytest.ini` has no adapter. It also said a missing tool
+  "shows the spawn failure" in the pane; the tool is started through the login shell, so the
+  shell starts and prints its own "command not found".
 
 ## Root cause
 
@@ -99,6 +119,12 @@ backed, and the check that the tests existed passed.
 - `051ab17` (binvim-web `9100a9d`): the migration guides name the SSH, split-tab and Copilot
   exceptions, say the tools are installed rather than built in, and link Install instead of
   repeating its walkthrough.
+- `120f5be` (binvim-web `f100a7c`): the AI-pane and debugger docs and headlines say Cargo-only
+  C/C++, debugpy outside pipx, the Python markers `:debugtest` needs, the shell's "command not
+  found", which mouse events a tool gets, and that only the active buffer reloads. The same wrong
+  claims in the older docs (`docs/debugging.md`'s adapter row, `docs/external-tools.md`,
+  `docs/project-layout.md`, README's feature bullet, `:install` choosing pipx for debugpy) were
+  left for the user to decide on.
 - `3a50353`: `Buffer.gone` and the `[deleted]` status-line marker. The plan's Decision is
   implemented instead of being recorded as a gap.
 
@@ -131,3 +157,9 @@ backed, and the check that the tests existed passed.
   section each sentence summarises and look for "except", "until", "restart", "over SSH", "stays
   out of", "requires". A sentence with no qualifier over behaviour whose canonical section has one
   is a violation. A grep that the keys exist doesn't check this.
+- **A claim inherited from an existing doc is checked in the code before it is restated,** since
+  the canonical doc may be the one that is wrong. For each language, tool or install command a
+  new page names, open the spec or function that decides it (a `root_markers` list, the command
+  line an adapter is spawned with, how a child process is started) and confirm the claim there.
+  A newcomer page that names a language, install route or error message whose only source is
+  another doc is a violation.
