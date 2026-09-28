@@ -1,6 +1,6 @@
 # Migrating from VS Code
 
-For VS Code users, with or without its Vim extension. binvim runs in a terminal and is modal: keys move and edit rather than type, until you ask to type. Language servers, formatters, debugging, git and a terminal are built in, so there are no extensions to find. This page maps what you do in VS Code to the keys here.
+For VS Code users, with or without its Vim extension. binvim runs in a terminal and is modal: keys move and edit rather than type, until you ask to type. Git, a terminal and the support for language servers, formatters and debuggers are built in, so there are no extensions to find; binvim offers to install the servers and tools themselves. This page maps what you do in VS Code to the keys here.
 
 ## Modal editing in five minutes
 
@@ -12,13 +12,13 @@ If you've used the Vim extension, skip to [What carries over](#what-carries-over
 - **Select** with `v` (characters), `V` (lines) or `Ctrl-V` (a block), then `d`, `c` or `y`.
 - **Commands** start with `:`. `:w` saves, `:q` quits, `:wq` does both, `:q!` quits without saving.
 
-Copying and pasting go through the system clipboard: `y` copies to it, and `p` pastes what you copied in another app. [Editing](editing.md) covers the rest.
+Copying and pasting go through the system clipboard: `y` copies to it, and `p` pastes what you copied in another app. Over SSH that clipboard is the remote machine's: a yank still reaches your own through the terminal, but `p` doesn't read it. [Editing](editing.md) covers the rest.
 
 ## What carries over
 
 - **Many cursors.** `Ctrl-click` adds a cursor. In Visual mode, `Ctrl-N` selects the next occurrence of the selection, as `Ctrl-D` does in VS Code.
-- **A tab per open file**, with a `+` on unsaved ones. Click a tab to switch, or use `H` / `L`.
-- **Language features** from the same language servers VS Code uses: completion, hover, go to definition, rename, code actions, inlay hints and diagnostics. See [LSP](lsp.md).
+- **A tab per open file**, with a `+` on unsaved ones; a file opened into a split gets one with `<C-w>T`. Click a tab to switch, or use `H` / `L`.
+- **Language features** from each language's server: completion, hover, go to definition, rename, code actions, inlay hints and diagnostics. See [LSP](lsp.md).
 - **GitHub Copilot** ghost text, with `[copilot] enabled = true`.
 - **The integrated terminal**, a file tree, a debugger, a test runner and a task runner.
 
@@ -57,7 +57,7 @@ The leader key is Space: `<space>` then a key runs a command, and holding `<spac
 
 ## Your config
 
-binvim doesn't read `settings.json` or `keybindings.json`. Its one config file is `~/.config/binvim/config.toml`: `:config` opens it, and saving it applies it without a restart. `:config default` lists every setting at its default. [Configuration](configuration.md) covers it section by section.
+binvim doesn't read `settings.json` or `keybindings.json`. Its one config file is `~/.config/binvim/config.toml`: `:config` opens it, and saving it applies it without a restart (except `[copilot] enabled`, which takes effect on the next launch). `:config default` lists every setting at its default. [Configuration](configuration.md) covers it section by section.
 
 - **Key bindings** go under `[keymaps.normal]`, `[keymaps.visual]`, `[keymaps.insert]` and `[keymaps.command]`. `"<C-s>" = ":w<CR>"` under `[keymaps.normal]` makes `Ctrl-S` save, and `"<leader>w" = { keys = ":w<CR>", desc = "Save" }` adds a row to the which-key menu. The leader is always Space.
 - **Themes.** The palette is Catppuccin Mocha. [Theme presets](configuration.md#theme-presets) include `visual-studio`, `github-dark`, `github-light`, `one-dark` and more, as `[colors]` blocks to copy into the file.
@@ -65,7 +65,7 @@ binvim doesn't read `settings.json` or `keybindings.json`. Its one config file i
 
 ## Getting language support
 
-Where VS Code suggests an extension, binvim offers to install the language server and formatter. Open a file whose tools are missing and a popup lists them: `Enter` opens `:install` with that language picked, and you confirm with `y`. `<space>i` opens the same thing on demand, and `binvim-install` does it from the shell. `:update` upgrades what you have, and `:health` shows what's attached and what's missing. See [Install](install.md#binvim-install--set-up-lsps-formatters-and-dap-adapters) and [External tools](external-tools.md).
+Where VS Code suggests an extension, binvim offers to install the language server and formatter the first time you open a file that needs them, and `:health` shows what's attached. See [Install](install.md#binvim-install--set-up-lsps-formatters-and-dap-adapters) and [External tools](external-tools.md).
 
 ## What isn't there
 

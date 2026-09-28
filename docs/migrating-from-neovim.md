@@ -34,7 +34,7 @@ Most of a distribution's plugins have a built-in counterpart:
 | neotest | `<space>ss` / `sn` / `sf`, or `:test` |
 | grug-far / spectre | `:S/pat/repl/` across the project |
 | persistence.nvim / auto-session | Sessions save on quit and restore when you start `binvim` with no file |
-| bufferline | The tab bar: one tab per buffer |
+| bufferline | The tab bar: one tab per buffer, except files opened into a split until `<C-w>T` |
 | undotree | `g-` / `g+`, `:earlier` / `:later`, `:undolist` |
 | copilot.lua | `[copilot] enabled = true` |
 | AI plugins | `<space>jc` for Claude and siblings for Codex, opencode and others, in a side pane ([Keys](keys.md#leader-bindings)) |
@@ -43,7 +43,7 @@ A few keys mean something else here, on purpose. `U` redoes, `Ctrl-J` / `Ctrl-K`
 
 ## Your config
 
-binvim doesn't read `init.lua`, `init.vim` or a vimrc. Its one config file is `~/.config/binvim/config.toml`: `:config` opens it, and writing it applies it without a restart. `:config default` lists every setting at its default. [Configuration](configuration.md) covers it section by section.
+binvim doesn't read `init.lua`, `init.vim` or a vimrc. Its one config file is `~/.config/binvim/config.toml`: `:config` opens it, and writing it applies it without a restart (except `[copilot] enabled`, which takes effect on the next launch). `:config default` lists every setting at its default. [Configuration](configuration.md) covers it section by section.
 
 - **Mappings** go under `[keymaps.normal]`, `[keymaps.visual]`, `[keymaps.insert]` and `[keymaps.command]`, and work like `nnoremap` and its siblings. `vim.keymap.set("n", "<leader>w", ":w<CR>")` becomes `"<leader>w" = ":w<CR>"` under `[keymaps.normal]`, and a `desc` puts it in the which-key popup: `"<leader>w" = { keys = ":w<CR>", desc = "Save" }`.
 - **The leader is Space, and can't be changed.** There is no `mapleader`; `<leader>` in a mapping means Space.
@@ -52,7 +52,7 @@ binvim doesn't read `init.lua`, `init.vim` or a vimrc. Its one config file is `~
 
 ## Getting language support
 
-Where you'd add a server to mason, binvim offers to install it. Open a file whose language server or formatter is missing and a popup lists what's missing: `Enter` opens `:install` with that language picked, and you confirm with `y`. `<space>i` opens the same thing on demand, and `binvim-install` does it from the shell. `:update` upgrades what you have, and `:health` shows what's attached and what's missing. See [Install](install.md#binvim-install--set-up-lsps-formatters-and-dap-adapters) and [External tools](external-tools.md).
+Where you'd add a server to mason, binvim offers to install the language server and formatter the first time you open a file that needs them, and `:health` shows what's attached. See [Install](install.md#binvim-install--set-up-lsps-formatters-and-dap-adapters) and [External tools](external-tools.md).
 
 ## What isn't there
 
