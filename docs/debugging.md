@@ -1,7 +1,6 @@
 # Debugger (DAP)
 
-binvim has a debugger built in for .NET, Go, Python and Rust / C / C++, and attaches to Android
-apps: breakpoints in the gutter, stepping, locals, call frames and watch expressions in a pane below the code. It talks the
+binvim has a debugger built in for .NET, Go, Python and Rust, and attaches to Android apps: breakpoints in the gutter, stepping, locals, call frames and watch expressions in a pane below the code. It talks the
 Debug Adapter Protocol to the same adapters VS Code uses; you install the adapter once, and
 binvim finds your project's runnable targets itself.
 
@@ -18,12 +17,14 @@ step with `F10` / `F11` / `Shift-F11` and continue with `F5`. `<space>dq` stops.
   a `launchSettings.json` profile when the project has more than one.
 - **Go** — adapter `dlv` (`go install github.com/go-delve/delve/cmd/dlv@latest`). Starting asks
   which `package main` directory to run, unless the buffer's own directory is one.
-- **Python** — adapter `debugpy` (`pipx install debugpy` or `pip install debugpy`). The `.py`
+- **Python** — adapter `debugpy`, installed into the Python binvim runs: `python3 -m pip install
+  debugpy`. A `pipx` install isn't seen by it, and `:install` picks pipx when you have it. The `.py`
   buffer you are in is run; from another buffer binvim looks for `main.py`, `app.py`,
   `manage.py` and the other names in the table below.
-- **Rust / C / C++** — adapter `lldb-dap`, which ships with LLVM 18+. Starting asks which binary
-  when the workspace has more than one, builds it with `cargo build --bin <name>`, and runs
-  `target/debug/<name>`.
+- **Rust** — adapter `lldb-dap`, which ships with LLVM 18+. Starting asks which binary when the
+  workspace has more than one, builds it with `cargo build --bin <name>`, and runs
+  `target/debug/<name>`. C and C++ are debugged only inside a Cargo project; a CMake or Make
+  project isn't recognised.
 - **Android (Java / Kotlin)** — the java-debug plugin for jdtls
   ([External tools](external-tools.md)). With the app running on a device or emulator,
   `<space>Ab` attaches to the app of the Gradle project you are in.
@@ -66,10 +67,12 @@ Adding a fifth adapter is one row in `dap/specs.rs`'s registry plus a `build_lau
 
 ## Debugging a test
 
-`:debugtest` (also `:dt`) starts the debugger on the test under the cursor, so a breakpoint in
-the test or the code it calls is hit. It works for pytest (needs `debugpy`) and Go tests (needs
-`dlv`). For other test runners (cargo, dotnet, Vitest and the rest) it says so in the status
-line; run those tests with `:testnearest` instead.
+`:debugtest` (also `:dt`) starts the debugger on the test under the cursor, so a breakpoint in the
+test or the code it calls is hit. It works for Go tests (needs `dlv`) and for pytest, with `debugpy`
+installed, in a project with a `pyproject.toml`, `setup.py`, `requirements.txt` or `Pipfile` (the
+files the Python debugger looks for; `pytest.ini` alone isn't enough). For other test runners
+(cargo, dotnet, Vitest and the rest) it says so in the status line; run those tests with
+`:testnearest` instead.
 
 ## Colours
 
@@ -81,6 +84,7 @@ line the debuggee is stopped on) and `"mode.debug"` (the mode chip while the pan
 ## What it doesn't do
 
 - No logpoints, no breakpoints on exceptions, no run-to-cursor.
+- No C or C++ project outside Cargo: CMake and Make projects aren't recognised.
 - No console for evaluating expressions: expressions are evaluated as watches (`:dapwatch`).
 - No attaching to a process you pick: every session launches its target, except Android's
   `<space>Ab`, which attaches to the project's app.

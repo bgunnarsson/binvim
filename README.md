@@ -22,11 +22,11 @@ A Vim-grammar TUI editor written in Rust. One binary, no plugin system; everythi
 
 ## AI side panes
 
-`<space>jc` opens Claude Code in a pane beside your code; `<space>jx`, `jo`, `jw`, `jh` and `jb` do the same for Codex, opencode, openclaw, hermes and binai. Each is the tool you already have installed, started in your shell (so your aliases apply), in tabs you can hide while they keep working. Files the tool edits reload in the editor unless you have unsaved changes there. binvim passes the tool nothing (no file, no selection), and binvim keeps `Esc`, so the tool gets it as `Ctrl-[` only on terminals with the Kitty keyboard protocol. → [AI side panes](docs/ai-panes.md)
+`<space>jc` opens Claude Code in a pane beside your code; `<space>jx`, `jo`, `jw`, `jh` and `jb` do the same for Codex, opencode, openclaw, hermes and binai. Each is the tool you already have installed, started in your shell (so your aliases apply), in tabs you can hide while they keep working. The file you're in reloads when the tool edits it, unless it has unsaved changes. binvim passes the tool nothing (no file, no selection), and binvim keeps `Esc`, so the tool gets it as `Ctrl-[` only on terminals with the Kitty keyboard protocol. → [AI side panes](docs/ai-panes.md)
 
 ## A debugger that finds your targets
 
-`<space>db` sets a breakpoint and `<space>ds` (or `F5`) starts: binvim picks the adapter from the project, finds its runnable targets (a .NET project and launch profile, a Go `package main`, a Python script, a Cargo binary) and asks only when there is more than one. Locals, frames, watches and conditional breakpoints sit in a pane below the code, and `:debugtest` debugs the test under the cursor for pytest and Go. Android apps attach with `<space>Ab`. Adapters are installed separately, through `:install` or by hand. → [Debugger](docs/debugging.md)
+`<space>db` sets a breakpoint and `<space>ds` (or `F5`) starts: binvim picks the adapter from the project, finds its runnable targets (a .NET project and launch profile, a Go `package main`, a Python script, a Cargo binary) and asks only when there is more than one. Locals, frames, watches and conditional breakpoints sit in a pane below the code, and `:debugtest` debugs the Go or pytest test under the cursor (pytest in a project the Python debugger recognises). Android apps attach with `<space>Ab`. Adapters are installed separately, through `:install` or by hand. → [Debugger](docs/debugging.md)
 
 ## How binvim compares
 

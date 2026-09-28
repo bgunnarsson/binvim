@@ -50,7 +50,8 @@ The pane keeps 10,000 lines of scrollback. Typing while scrolled back jumps to t
 
 With the mouse: click a tab header to switch to it, drag to select text and copy it to the system
 clipboard (over SSH that needs OSC 52, see [Terminal compatibility](terminals.md)), double-click
-to select a word, and use the wheel to scroll. A tool that asks for mouse events gets them.
+to select a word, and use the wheel to scroll. A tool that turns on mouse reporting gets clicks
+and the wheel instead; drags and double-clicks stay binvim's, for selecting text.
 
 ## How the tool is started
 
@@ -59,7 +60,7 @@ whatever they set up is there: nvm, asdf, direnv, Homebrew's `PATH`. A shell ali
 with the tool's name is used, so an alias `claude` that adds flags applies in the pane too. The
 tool starts in binvim's working directory, with binvim's environment and `TERM=xterm-256color`.
 
-If the tool can't be started, the status line says `<tool>: spawn failed: …`. When the tool exits,
+If the tool isn't installed, its tab shows your shell's "command not found" message. When the tool exits,
 its tab stays open with its last output until you close it with `<space>jq`.
 
 On Windows the tool is started through your shell as well; under `cmd.exe` it is looked up on
@@ -67,11 +68,12 @@ On Windows the tool is started through your shell as well; under `cmd.exe` it is
 
 ## Edits the tool makes
 
-The tool writes files on disk; binvim does not pass it anything. The buffer on screen is checked
+The tool writes files on disk; binvim does not pass it anything. The active buffer is checked
 against its file about once a second: if the tool changed it and the buffer has no unsaved
 changes, it reloads and the status line says `reloaded <file> (changed on disk)`. A buffer with
 unsaved changes is left alone, and `:w` then refuses to write over the tool's version until you
-use `:w!` (or `:e!` to take the tool's version).
+use `:w!` (or `:e!` to take the tool's version). A file in another split or buffer is checked once
+you move to it.
 
 ## What it doesn't do
 
