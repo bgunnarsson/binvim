@@ -72,9 +72,15 @@ pub enum Installer {
     /// `pipx install <pkg[==version]>` — pin syntax embedded in the
     /// package string.
     Pipx(&'static str),
-    /// `pip install --user <pkg[==version]>` — pin syntax embedded in
-    /// the package string.
-    Pip(&'static str),
+    /// `<python> -m pip install [--user] <pkg[==version]>`, run by the first
+    /// of [`PYTHON_CANDIDATES`] on `$PATH` — for a module (debugpy) that has to
+    /// land in the interpreter that imports it, which pipx's own venv isn't.
+    /// See [`python_module_args`] for when `--user` is left off. pip exits 0 on
+    /// an install that is already satisfied and on an `--upgrade` with nothing
+    /// newer, so it needs no `is_noop_exit` arm. It installs into
+    /// site-packages, never a directory on `$PATH`, so `installed_by` has no
+    /// row for it.
+    PythonModule(&'static str),
     /// `gem install <pkg> [-v <version>]`. `None` skips the flag.
     Gem(&'static str, Option<&'static str>),
     /// `dotnet tool install --global <pkg> [--version <version>]`.
@@ -105,7 +111,7 @@ impl Installer {
             Installer::Rustup(_) => "rustup",
             Installer::Go(_) => "go",
             Installer::Pipx(_) => "pipx",
-            Installer::Pip(_) => "pip",
+            Installer::PythonModule(_) => "python",
             Installer::Gem(_, _) => "gem",
             Installer::DotnetTool(_, _) => "dotnet",
             Installer::Nix(_) => "nix",
@@ -128,7 +134,7 @@ impl Installer {
             Installer::Rustup(c) => format!("rustup component add {c}"),
             Installer::Go(m) => format!("go install {m}"),
             Installer::Pipx(p) => format!("pipx install {p}"),
-            Installer::Pip(p) => format!("pip install --user {p}"),
+            Installer::PythonModule(p) => python_module_display(p, false),
             Installer::Gem(p, None) => format!("gem install {p}"),
             Installer::Gem(p, Some(v)) => format!("gem install {p} -v {v}"),
             Installer::DotnetTool(p, None) => format!("dotnet tool install --global {p}"),
@@ -192,11 +198,7 @@ impl Installer {
                 c.args(["install", p]);
                 c
             }
-            Installer::Pip(p) => {
-                let mut c = Command::new("pip");
-                c.args(["install", "--user", p]);
-                c
-            }
+            Installer::PythonModule(p) => python_module_command(p, false),
             Installer::Gem(p, version) => {
                 let mut c = Command::new("gem");
                 c.args(["install", p]);
@@ -272,11 +274,7 @@ impl Installer {
                 c.args(["install", "--force", p]);
                 c
             }
-            Installer::Pip(p) => {
-                let mut c = Command::new("pip");
-                c.args(["install", "--user", "--upgrade", p]);
-                c
-            }
+            Installer::PythonModule(p) => python_module_command(p, true),
             Installer::DotnetTool(p, version) => {
                 let mut c = Command::new("dotnet");
                 c.args(["tool", "update", "--global", p]);
@@ -328,7 +326,7 @@ impl Installer {
             Installer::BrewCask(p) => format!("brew upgrade --cask {p}"),
             Installer::Apt(p) => format!("sudo apt-get install --only-upgrade -y {p}"),
             Installer::Pipx(p) => format!("pipx install --force {p}"),
-            Installer::Pip(p) => format!("pip install --user --upgrade {p}"),
+            Installer::PythonModule(p) => python_module_display(p, true),
             Installer::DotnetTool(p, None) => format!("dotnet tool update --global {p}"),
             Installer::DotnetTool(p, Some(v)) => {
                 format!("dotnet tool update --global {p} --version {v}")
@@ -430,14 +428,14 @@ pub const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Npm(&["pyright@1.1.409"])] },
         Tool { bin: "ruff", label: "ruff", role: Role::Formatter,
             installers: &[Installer::Pipx("ruff==0.15.13")] },
-        // debugpy has no binary on PATH — we probe `python3 -m debugpy.adapter`.
-        // The sentinel `python3-debugpy` ensures the PATH check fails so the
-        // install runs; the installer itself drops it into the user's
-        // site-packages. Re-runs reinvoke the installer; pip says "already
-        // satisfied" which is harmless. Un-pinned because binvim-web doesn't
-        // track a debugpy version.
+        // debugpy is a module, not a binary, so nothing probes for it: the
+        // sentinel `python3-debugpy` is never on PATH, the install always runs
+        // (pip says "already satisfied", exit 0), and `:update` always lists it
+        // as not installed, so never upgrades it. No pipx: its venv is one
+        // `python3 -m debugpy.adapter` can't import from. Un-pinned because
+        // binvim-web doesn't track a debugpy version.
         Tool { bin: "python3-debugpy", label: "debugpy", role: Role::Dap,
-            installers: &[Installer::Pipx("debugpy"), Installer::Pip("debugpy")] },
+            installers: &[Installer::PythonModule("debugpy")] },
     ]},
     Bundle { name: "C / C++", tools: &[
         Tool { bin: "clangd", label: "clangd", role: Role::Lsp,
@@ -694,10 +692,80 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
 
 pub fn detect_managers() -> BTreeSet<&'static str> {
     let candidates = [
-        "brew", "apt-get", "npm", "cargo", "rustup", "go", "pipx", "pip", "gem", "dotnet", "nix",
+        "brew", "apt-get", "npm", "cargo", "rustup", "go", "pipx", "gem", "dotnet", "nix",
         "composer", "sudo", "winget", "scoop", "choco",
     ];
-    candidates.into_iter().filter(|c| on_path(c)).collect()
+    let mut found: BTreeSet<_> = candidates.into_iter().filter(|c| on_path(c)).collect();
+    // `PythonModule`'s manager names an interpreter, not a binary of its own.
+    if PYTHON_CANDIDATES.iter().any(|c| on_path(c)) {
+        found.insert("python");
+    }
+    found
+}
+
+/// The interpreters `PythonModule` runs pip with, in the order the Python
+/// debug adapter tries them (`PYTHON.cmd_candidates` in `src/dap/specs.rs`),
+/// so debugpy is installed into the interpreter that will import it. Keep the
+/// two lists the same.
+pub const PYTHON_CANDIDATES: [&str; 2] = ["python3", "python"];
+
+/// The arguments after the interpreter for a `PythonModule` step. `--user` is
+/// left off when `interp` sits inside the active venv or conda environment:
+/// pip refuses `--user` there, and the adapter runs that same interpreter, so
+/// the environment is where the module belongs. A variable left set whose
+/// prefix doesn't hold `interp` keeps `--user`.
+pub fn python_module_args(
+    interp: &Path,
+    virtual_env: Option<&Path>,
+    conda_prefix: Option<&Path>,
+    pkg: &str,
+    upgrade: bool,
+) -> Vec<String> {
+    let in_env = [virtual_env, conda_prefix]
+        .into_iter()
+        .flatten()
+        .any(|prefix| !prefix.as_os_str().is_empty() && interp.starts_with(prefix));
+    let mut args = vec!["-m", "pip", "install"];
+    if !in_env {
+        args.push("--user");
+    }
+    if upgrade {
+        args.push("--upgrade");
+    }
+    args.push(pkg);
+    args.into_iter().map(String::from).collect()
+}
+
+/// The program and arguments a `PythonModule` step runs, read from `$PATH`
+/// and the environment. With no interpreter on `$PATH` it names `python3`,
+/// which is what the `NoManager` row prints.
+fn python_module_argv(pkg: &str, upgrade: bool) -> (&'static str, Vec<String>) {
+    let found = PYTHON_CANDIDATES
+        .iter()
+        .find_map(|c| find_on_path(c).map(|path| (*c, path)));
+    let (program, interp) = found.unwrap_or((PYTHON_CANDIDATES[0], PathBuf::new()));
+    let virtual_env = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
+    let conda_prefix = std::env::var_os("CONDA_PREFIX").map(PathBuf::from);
+    let args = python_module_args(
+        &interp,
+        virtual_env.as_deref(),
+        conda_prefix.as_deref(),
+        pkg,
+        upgrade,
+    );
+    (program, args)
+}
+
+fn python_module_command(pkg: &str, upgrade: bool) -> Command {
+    let (program, args) = python_module_argv(pkg, upgrade);
+    let mut c = Command::new(program);
+    c.args(args);
+    c
+}
+
+fn python_module_display(pkg: &str, upgrade: bool) -> String {
+    let (program, args) = python_module_argv(pkg, upgrade);
+    format!("{program} {}", args.join(" "))
 }
 
 pub fn pick_installer<'a>(
@@ -1083,6 +1151,23 @@ pub struct Summary {
     pub failed: Vec<(String, String)>,
 }
 
+/// What to tell the user after a failed step, when this installer has a
+/// common failure the exit code doesn't explain. pip on a Homebrew or
+/// Debian 12+ Python refuses to install outside a venv (PEP 668); binvim
+/// doesn't pass `--break-system-packages` for them, since that override is
+/// meant to be the user's call.
+fn failure_hint(inst: &Installer) -> Option<&'static str> {
+    match inst {
+        Installer::Choco(_) => Some("choco needs an elevated (Administrator) shell"),
+        Installer::PythonModule(_) => Some(
+            "if pip said externally-managed-environment, activate a venv and install it \
+             there before launching binvim, or run the command above with \
+             --break-system-packages",
+        ),
+        _ => None,
+    }
+}
+
 /// Shell out to each plan item's installer, looping over the chosen Node
 /// versions for `Installer::Npm` steps. Stdio is inherited — the caller
 /// (CLI or editor takeover) is responsible for having relinquished the
@@ -1193,8 +1278,9 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
                             }
                             Ok(s) => {
                                 let mut msg = format!("exit code {}", s.code().unwrap_or(-1));
-                                if matches!(inst, Installer::Choco(_)) {
-                                    msg.push_str("; choco needs an elevated (Administrator) shell");
+                                if let Some(hint) = failure_hint(inst) {
+                                    msg.push_str("; ");
+                                    msg.push_str(hint);
                                 }
                                 Err(msg)
                             }
@@ -1459,7 +1545,7 @@ mod tests {
     fn no_unix_host_picks_a_windows_manager() {
         // Every manager a macOS or Linux host can have, all at once.
         let unix = BTreeSet::from([
-            "brew", "apt-get", "sudo", "npm", "cargo", "rustup", "go", "pipx", "pip", "gem",
+            "brew", "apt-get", "sudo", "npm", "cargo", "rustup", "go", "pipx", "python", "gem",
             "dotnet", "nix", "composer",
         ]);
         for tool in BUNDLES.iter().flat_map(|b| b.tools) {
@@ -1624,6 +1710,105 @@ mod tests {
             argv(choco.upgrade_command().unwrap()).join(" "),
             choco.upgrade_display()
         );
+    }
+
+    #[test]
+    fn debugpy_goes_through_python_never_pipx() {
+        let debugpy = BUNDLES
+            .iter()
+            .flat_map(|b| b.tools)
+            .find(|t| t.label == "debugpy")
+            .unwrap();
+        let both = BTreeSet::from(["pipx", "python"]);
+        assert!(matches!(
+            pick_installer(debugpy, &both),
+            Some(Installer::PythonModule("debugpy"))
+        ));
+        let no_python = BTreeSet::from(["pipx", "brew", "npm"]);
+        assert!(pick_installer(debugpy, &no_python).is_none());
+    }
+
+    #[test]
+    fn python_module_args_drop_user_only_inside_the_interpreters_env() {
+        let args = |interp: &str, venv: Option<&str>, conda: Option<&str>, upgrade| {
+            python_module_args(
+                Path::new(interp),
+                venv.map(Path::new),
+                conda.map(Path::new),
+                "debugpy",
+                upgrade,
+            )
+            .join(" ")
+        };
+        assert_eq!(
+            args("/usr/bin/python3", None, None, false),
+            "-m pip install --user debugpy"
+        );
+        assert_eq!(
+            args(
+                "/home/u/proj/.venv/bin/python3",
+                Some("/home/u/proj/.venv"),
+                None,
+                false
+            ),
+            "-m pip install debugpy"
+        );
+        assert_eq!(
+            args(
+                "/opt/conda/envs/x/bin/python",
+                None,
+                Some("/opt/conda/envs/x"),
+                false
+            ),
+            "-m pip install debugpy"
+        );
+        // A variable left over from an environment that isn't the one on PATH.
+        assert_eq!(
+            args(
+                "/usr/bin/python3",
+                Some("/home/u/old/.venv"),
+                Some("/opt/conda"),
+                false
+            ),
+            "-m pip install --user debugpy"
+        );
+        assert_eq!(
+            args("/usr/bin/python3", Some(""), None, false),
+            "-m pip install --user debugpy"
+        );
+        assert_eq!(
+            args("/usr/bin/python3", None, None, true),
+            "-m pip install --user --upgrade debugpy"
+        );
+    }
+
+    #[test]
+    fn python_module_display_matches_its_command() {
+        let argv = |c: Command| {
+            let mut v = vec![c.get_program().to_string_lossy().into_owned()];
+            v.extend(c.get_args().map(|a| a.to_string_lossy().into_owned()));
+            v
+        };
+        let inst = Installer::PythonModule("debugpy");
+        assert_eq!(
+            argv(inst.build_command().unwrap()).join(" "),
+            inst.display()
+        );
+        assert_eq!(
+            argv(inst.upgrade_command().unwrap()).join(" "),
+            inst.upgrade_display()
+        );
+        assert!(inst.display().contains(" -m pip install "));
+    }
+
+    #[test]
+    fn a_failed_python_module_step_names_the_pep_668_way_out() {
+        let hint = failure_hint(&Installer::PythonModule("debugpy")).unwrap();
+        assert!(hint.contains("externally-managed-environment"));
+        assert!(hint.contains("venv"));
+        assert!(hint.contains("--break-system-packages"));
+        assert!(failure_hint(&Installer::Choco("llvm")).is_some());
+        assert!(failure_hint(&Installer::Brew("llvm")).is_none());
     }
 
     #[test]
