@@ -21,7 +21,7 @@
 //! (`j/k`, `Space`, `a`/`n`, `Enter`, `q`/`Esc`) so users moving
 //! between the CLI and the in-editor flow don't have to relearn.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::lang::Lang;
 use crate::mode::Mode;
@@ -29,8 +29,8 @@ use crate::picker::{PickerKind, PickerPayload, PickerState};
 use binvim::install::{
     BUNDLES, BinvimUpdate, Choice, NodeVersion, PlanItem, Role, Tool, build_plan,
     build_update_plan, bundle_index_by_name, detect_binvim_update, detect_managers,
-    discover_node_versions, missing_core_tools, on_path, plan_needs_node, run_binvim_update,
-    run_plan,
+    discover_node_versions, missing_core_tools, plan_needs_node, run_binvim_update, run_plan,
+    tool_installed,
 };
 
 /// Map a detected [`Lang`] to the index of its `BUNDLES` entry, so the
@@ -172,10 +172,11 @@ impl InstallerState {
         // (prettier, lldb-dap, …) is only checked once.
         let installed: HashSet<&'static str> = BUNDLES
             .iter()
-            .flat_map(|b| b.tools.iter().map(|t| t.bin))
-            .collect::<HashSet<_>>()
+            .flat_map(|b| b.tools.iter().map(|t| (t.bin, t)))
+            .collect::<HashMap<_, _>>()
             .into_iter()
-            .filter(|bin| on_path(bin))
+            .filter(|(_, tool)| tool_installed(tool).is_some())
+            .map(|(bin, _)| bin)
             .collect();
         Self {
             stage: InstallerStage::Bundles,
