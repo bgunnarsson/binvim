@@ -281,7 +281,11 @@ fn print_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) {
                 print!("{}", item.tool.label);
                 let_color(
                     SUBTLE,
-                    &format!("  [{}] — already on PATH ({})", item.tool.role.tag(), used),
+                    &format!(
+                        "  [{}] — already installed ({})",
+                        item.tool.role.tag(),
+                        used
+                    ),
                 );
                 println!();
             }

@@ -920,7 +920,7 @@ pub fn plan_rows(state: &InstallerState) -> Vec<PlanRow> {
                 color: PlanRowColor::Green,
                 label: item.tool.label.to_string(),
                 role: item.tool.role.tag(),
-                detail: format!("already on PATH ({used})"),
+                detail: format!("already installed ({used})"),
                 target: String::new(),
             }),
             Choice::Install(inst) => {
