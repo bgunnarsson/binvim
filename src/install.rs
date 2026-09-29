@@ -1039,6 +1039,14 @@ pub enum Choice {
 }
 
 pub fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<PlanItem> {
+    build_plan_with(selected, managers, tool_installed)
+}
+
+fn build_plan_with(
+    selected: &[usize],
+    managers: &BTreeSet<&'static str>,
+    installed: impl Fn(&Tool) -> Option<PathBuf>,
+) -> Vec<PlanItem> {
     let mut by_bin: BTreeMap<&'static str, (Tool, Vec<&'static str>)> = BTreeMap::new();
     for &idx in selected {
         let bundle = &BUNDLES[idx];
@@ -1062,7 +1070,7 @@ pub fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<
         let installer = pick_installer(tool, managers);
         let chosen = match installer {
             Some(inst @ Installer::Npm(_)) => Choice::Install(inst),
-            _ if on_path(tool.bin) => Choice::Already,
+            _ if installed(tool).is_some() => Choice::Already,
             Some(inst) => Choice::Install(inst),
             None => {
                 if let Some(Installer::Manual(s)) = tool.installers.first() {
@@ -1095,6 +1103,14 @@ pub fn build_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<
 /// `NoManager` exactly like install. Tools that aren't installed become
 /// `Choice::NotInstalled` — `:update` deliberately leaves them for `:install`.
 pub fn build_update_plan(selected: &[usize], managers: &BTreeSet<&'static str>) -> Vec<PlanItem> {
+    build_update_plan_with(selected, managers, tool_installed)
+}
+
+fn build_update_plan_with(
+    selected: &[usize],
+    managers: &BTreeSet<&'static str>,
+    installed: impl Fn(&Tool) -> Option<PathBuf>,
+) -> Vec<PlanItem> {
     let mut by_bin: BTreeMap<&'static str, (Tool, Vec<&'static str>)> = BTreeMap::new();
     for &idx in selected {
         let bundle = &BUNDLES[idx];
@@ -1109,7 +1125,7 @@ pub fn build_update_plan(selected: &[usize], managers: &BTreeSet<&'static str>) 
     let mut plan = Vec::new();
     for (_, (tool_copy, used_by)) in by_bin {
         let tool: &'static Tool = find_static_tool(tool_copy.bin).expect("tool came from BUNDLES");
-        let chosen = match find_on_path(tool.bin) {
+        let chosen = match installed(tool) {
             None => Choice::NotInstalled,
             Some(path) => match pick_update_installer(tool, managers, installed_by(&path)) {
                 Some(inst) => Choice::Update(inst),
@@ -1840,6 +1856,47 @@ mod tests {
             asked.into_inner(),
             [(PathBuf::from("/usr/bin/python3"), "debugpy".to_string())]
         );
+    }
+
+    fn debugpy_choice(plan: Vec<PlanItem>) -> Choice {
+        plan.into_iter()
+            .find(|p| p.tool.label == "debugpy")
+            .unwrap()
+            .chosen
+    }
+
+    #[test]
+    fn update_plan_upgrades_an_installed_python_module() {
+        let python = [bundle_index_by_name("Python").unwrap()];
+        for (managers, interp) in [
+            (BTreeSet::from(["python"]), "/usr/bin/python3"),
+            (
+                BTreeSet::from(["python", "brew"]),
+                "/opt/homebrew/bin/python3",
+            ),
+        ] {
+            let installed = |t: &Tool| (t.label == "debugpy").then(|| PathBuf::from(interp));
+            assert!(matches!(
+                debugpy_choice(build_update_plan_with(&python, &managers, installed)),
+                Choice::Update(Installer::PythonModule("debugpy"))
+            ));
+        }
+    }
+
+    #[test]
+    fn install_plan_skips_an_installed_python_module() {
+        let python = [bundle_index_by_name("Python").unwrap()];
+        let managers = BTreeSet::from(["python"]);
+        let installed =
+            |t: &Tool| (t.label == "debugpy").then(|| PathBuf::from("/usr/bin/python3"));
+        assert!(matches!(
+            debugpy_choice(build_plan_with(&python, &managers, installed)),
+            Choice::Already
+        ));
+        assert!(matches!(
+            debugpy_choice(build_plan_with(&python, &managers, |_| None)),
+            Choice::Install(Installer::PythonModule("debugpy"))
+        ));
     }
 
     #[test]
