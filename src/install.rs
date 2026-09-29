@@ -690,6 +690,69 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
     crate::paths::find_on_path(name)
 }
 
+/// Where an installed tool was found, or `None` when it isn't installed. A
+/// tool pip installs as a module (debugpy) is asked of the interpreter that
+/// installs it and that the debug adapter runs, since it never lands on
+/// `$PATH`; the path returned is that interpreter's. The `PythonModule`
+/// payload is taken as the import name, so a package whose pip name differs
+/// from its import name needs a field of its own.
+pub fn tool_installed(tool: &Tool) -> Option<PathBuf> {
+    tool_installed_with(tool, find_on_path, python_has_module)
+}
+
+fn tool_installed_with(
+    tool: &Tool,
+    find: impl Fn(&str) -> Option<PathBuf>,
+    has_module: impl Fn(&Path, &str) -> bool,
+) -> Option<PathBuf> {
+    let module = tool.installers.iter().find_map(|i| match i {
+        Installer::PythonModule(m) => Some(*m),
+        _ => None,
+    });
+    match module {
+        Some(module) => {
+            let (_, interp) = python_interpreter_with(find)?;
+            has_module(&interp, module).then_some(interp)
+        }
+        None => find(tool.bin),
+    }
+}
+
+/// Whether `interp` can find `module`, without importing it and with the
+/// current directory left off `sys.path`, so a `debugpy/` folder in the
+/// project neither runs nor counts. Not `-I`: that also hides user
+/// site-packages, where `pip install --user` puts the module. It runs on the
+/// UI thread, so a wedged interpreter is given two seconds and then counts as
+/// not having the module.
+fn python_has_module(interp: &Path, module: &str) -> bool {
+    const SCRIPT: &str = "import sys, importlib.util; \
+        sys.path[:] = [p for p in sys.path if p]; \
+        sys.exit(importlib.util.find_spec(sys.argv[1]) is None)";
+    let Ok(mut child) = Command::new(interp)
+        .args(["-c", SCRIPT, module])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
 pub fn detect_managers() -> BTreeSet<&'static str> {
     let candidates = [
         "brew", "apt-get", "npm", "cargo", "rustup", "go", "pipx", "gem", "dotnet", "nix",
@@ -1750,6 +1813,50 @@ mod tests {
             Some("python3")
         );
         assert_eq!(python_interpreter_with(|_| None), None);
+    }
+
+    fn catalog_tool(label: &str) -> &'static Tool {
+        BUNDLES
+            .iter()
+            .flat_map(|b| b.tools)
+            .find(|t| t.label == label)
+            .unwrap()
+    }
+
+    #[test]
+    fn module_tool_is_probed_by_import_not_path() {
+        let debugpy = catalog_tool("debugpy");
+        let everywhere = |c: &str| Some(PathBuf::from(format!("/usr/bin/{c}")));
+        assert_eq!(tool_installed_with(debugpy, everywhere, |_, _| false), None);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let found = tool_installed_with(debugpy, everywhere, |interp, module| {
+            asked
+                .borrow_mut()
+                .push((interp.to_path_buf(), module.to_string()));
+            true
+        });
+        assert_eq!(found, Some(PathBuf::from("/usr/bin/python3")));
+        assert_eq!(
+            asked.into_inner(),
+            [(PathBuf::from("/usr/bin/python3"), "debugpy".to_string())]
+        );
+    }
+
+    #[test]
+    fn module_tool_without_interpreter_is_not_installed() {
+        let debugpy = catalog_tool("debugpy");
+        assert_eq!(tool_installed_with(debugpy, |_| None, |_, _| true), None);
+    }
+
+    #[test]
+    fn binary_tool_is_probed_on_path() {
+        let ra = catalog_tool("rust-analyzer");
+        let find = |c: &str| (c == "rust-analyzer").then(|| PathBuf::from("/bin/rust-analyzer"));
+        assert_eq!(
+            tool_installed_with(ra, find, |_, _| panic!("no module probe")),
+            Some(PathBuf::from("/bin/rust-analyzer"))
+        );
+        assert_eq!(tool_installed_with(ra, |_| None, |_, _| true), None);
     }
 
     #[test]
