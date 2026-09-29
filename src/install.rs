@@ -719,16 +719,19 @@ fn tool_installed_with(
 
 /// Whether `interp` can find `module`, without importing it and with the
 /// current directory left off `sys.path`, so a `debugpy/` folder in the
-/// project neither runs nor counts. Not `-I`: that also hides user
-/// site-packages, where `pip install --user` puts the module. It runs on the
-/// UI thread, so a wedged interpreter is given two seconds and then counts as
-/// not having the module.
+/// project neither runs nor counts. `PYTHONPATH` is dropped for the same
+/// reason: a `.` in it would put the project back on the path, and let its
+/// `sitecustomize.py` run at startup, before the script. Not `-I`: that also
+/// hides user site-packages, where `pip install --user` puts the module. It
+/// runs on the UI thread, so a wedged interpreter is given two seconds and then
+/// counts as not having the module.
 fn python_has_module(interp: &Path, module: &str) -> bool {
     const SCRIPT: &str = "import sys, importlib.util; \
         sys.path[:] = [p for p in sys.path if p]; \
         sys.exit(importlib.util.find_spec(sys.argv[1]) is None)";
     let Ok(mut child) = Command::new(interp)
         .args(["-c", SCRIPT, module])
+        .env_remove("PYTHONPATH")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1235,7 +1238,7 @@ pub struct Summary {
     pub installed: usize,
     pub skipped: usize,
     pub manual: usize,
-    /// `:update` only — tools skipped because they weren't on `$PATH`.
+    /// `:update` only — tools skipped because they weren't installed.
     pub not_installed: usize,
     pub failed: Vec<(String, String)>,
 }
