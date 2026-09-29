@@ -428,10 +428,9 @@ pub const BUNDLES: &[Bundle] = &[
             installers: &[Installer::Npm(&["pyright@1.1.409"])] },
         Tool { bin: "ruff", label: "ruff", role: Role::Formatter,
             installers: &[Installer::Pipx("ruff==0.15.13")] },
-        // debugpy is a module, not a binary, so nothing probes for it: the
-        // sentinel `python3-debugpy` is never on PATH, the install always runs
-        // (pip says "already satisfied", exit 0), and `:update` always lists it
-        // as not installed, so never upgrades it. No pipx: its venv is one
+        // debugpy is a module, not a binary: `python3-debugpy` is only its key
+        // in the catalog, and `tool_installed` finds it by asking the
+        // `PYTHON_CANDIDATES` interpreter for the module. No pipx: its venv is one
         // `python3 -m debugpy.adapter` can't import from. Un-pinned because
         // binvim-web doesn't track a debugpy version.
         Tool { bin: "python3-debugpy", label: "debugpy", role: Role::Dap,
@@ -768,7 +767,8 @@ pub fn detect_managers() -> BTreeSet<&'static str> {
 
 /// The interpreters `PythonModule` runs pip with, in order. The Python debug
 /// adapter tries the same list (`PYTHON.cmd_candidates` in `src/dap/specs.rs`),
-/// so debugpy is installed into the interpreter that will import it.
+/// so debugpy is installed into the interpreter that will import it, and
+/// `tool_installed` looks for it there.
 pub const PYTHON_CANDIDATES: [&str; 2] = ["python3", "python"];
 
 /// The first of `PYTHON_CANDIDATES` on `$PATH`, with the path it resolved to.
@@ -1025,7 +1025,7 @@ pub enum Choice {
     /// *upgrade* command (`brew upgrade`, `dotnet tool update`, …) rather
     /// than its install command. Produced only by `build_update_plan`.
     Update(&'static Installer),
-    /// Not on `$PATH`. `:update` only touches tools already installed, so it
+    /// Not installed (`tool_installed`). `:update` only touches tools already installed, so it
     /// leaves these alone and points the user at `:install`. Produced only by
     /// `build_update_plan`.
     NotInstalled,
@@ -1097,8 +1097,9 @@ fn build_plan_with(
 }
 
 /// Plan variant for `:update`. Same dedupe-by-`bin` as [`build_plan`], but the
-/// per-tool resolution flips: only tools already on `$PATH` get an action.
-/// On-PATH tools become `Choice::Update` (the runner uses the installer's
+/// per-tool resolution flips: only tools already installed (`tool_installed`:
+/// on `$PATH`, or a module in its interpreter) get an action. Installed tools
+/// become `Choice::Update` (the runner uses the installer's
 /// upgrade command) when a manager is available, falling back to `Manual` /
 /// `NoManager` exactly like install. Tools that aren't installed become
 /// `Choice::NotInstalled` — `:update` deliberately leaves them for `:install`.
