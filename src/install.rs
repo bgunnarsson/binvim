@@ -708,6 +708,19 @@ pub fn detect_managers() -> BTreeSet<&'static str> {
 /// so debugpy is installed into the interpreter that will import it.
 pub const PYTHON_CANDIDATES: [&str; 2] = ["python3", "python"];
 
+/// The first of `PYTHON_CANDIDATES` on `$PATH`, with the path it resolved to.
+fn python_interpreter() -> Option<(&'static str, PathBuf)> {
+    python_interpreter_with(find_on_path)
+}
+
+fn python_interpreter_with(
+    find: impl Fn(&str) -> Option<PathBuf>,
+) -> Option<(&'static str, PathBuf)> {
+    PYTHON_CANDIDATES
+        .iter()
+        .find_map(|c| find(c).map(|path| (*c, path)))
+}
+
 /// The arguments after the interpreter for a `PythonModule` step. `--user` is
 /// left off when `interp` sits inside the active venv or conda environment:
 /// pip refuses `--user` there, and the adapter runs that same interpreter, so
@@ -739,10 +752,7 @@ pub fn python_module_args(
 /// and the environment. With no interpreter on `$PATH` it names `python3`,
 /// which is what the `NoManager` row prints.
 fn python_module_argv(pkg: &str, upgrade: bool) -> (&'static str, Vec<String>) {
-    let found = PYTHON_CANDIDATES
-        .iter()
-        .find_map(|c| find_on_path(c).map(|path| (*c, path)));
-    let (program, interp) = found.unwrap_or((PYTHON_CANDIDATES[0], PathBuf::new()));
+    let (program, interp) = python_interpreter().unwrap_or((PYTHON_CANDIDATES[0], PathBuf::new()));
     let virtual_env = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
     let conda_prefix = std::env::var_os("CONDA_PREFIX").map(PathBuf::from);
     let args = python_module_args(
@@ -1725,6 +1735,21 @@ mod tests {
         ));
         let no_python = BTreeSet::from(["pipx", "brew", "npm"]);
         assert!(pick_installer(debugpy, &no_python).is_none());
+    }
+
+    #[test]
+    fn python_interpreter_takes_the_first_candidate_found() {
+        let only_python = |c: &str| (c == "python").then(|| PathBuf::from("/usr/bin/python"));
+        assert_eq!(
+            python_interpreter_with(only_python),
+            Some(("python", PathBuf::from("/usr/bin/python")))
+        );
+        let both = |c: &str| Some(PathBuf::from(format!("/usr/bin/{c}")));
+        assert_eq!(
+            python_interpreter_with(both).map(|(name, _)| name),
+            Some("python3")
+        );
+        assert_eq!(python_interpreter_with(|_| None), None);
     }
 
     #[test]
