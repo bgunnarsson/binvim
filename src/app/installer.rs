@@ -2,7 +2,7 @@
 //!
 //! Both commands share this overlay; `InstallerKind` selects the plan
 //! builder and wording. `:install` installs what's missing; `:update`
-//! upgrades tools already on `$PATH` (and leaves the rest for `:install`).
+//! upgrades tools already installed (and leaves the rest for `:install`).
 //!
 //! Full-screen overlay that mirrors the `binvim-install` CLI:
 //!   1. **Bundles** — multi-select checkbox of every language /
@@ -240,7 +240,7 @@ impl super::App {
     }
 
     /// `:update` entry point — same overlay as `:install`, but the plan only
-    /// upgrades tools already on `$PATH` (see `install::build_update_plan`).
+    /// upgrades tools already installed (see `install::build_update_plan`).
     pub(super) fn cmd_update(&mut self) {
         self.open_installer(InstallerKind::Update);
     }
