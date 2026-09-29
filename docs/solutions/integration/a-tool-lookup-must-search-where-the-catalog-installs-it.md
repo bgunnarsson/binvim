@@ -22,6 +22,7 @@ root_cause: "the JSON server spec and the biome formatter searched only the proj
 related:
   - docs/solutions/integration/a-catalog-installer-must-put-the-tool-on-path-and-exit-zero-with-nothing-to-do.md
   - docs/solutions/security/an-upward-search-trusts-what-other-users-own-or-can-write.md
+  - docs/solutions/security/a-python-probe-inherits-pythonpath-and-runs-the-projects-sitecustomize.md
 ---
 
 ## Problem
