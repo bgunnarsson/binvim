@@ -1793,8 +1793,21 @@ impl super::App {
             );
         }
         let original_active = self.active;
-        let mut total_edits = 0usize;
         let files = grouped.len();
+        let outcome = self.edit_and_save_files(grouped);
+        // Restore the original active buffer so the user lands back where
+        // they were when they invoked the action — after a failure too.
+        if original_active < self.buffers.len() && self.active != original_active {
+            let _ = self.switch_to(original_active);
+        }
+        Ok((outcome?, files))
+    }
+
+    fn edit_and_save_files(
+        &mut self,
+        grouped: Vec<(PathBuf, Vec<&crate::app::state::ConcreteEdit>)>,
+    ) -> Result<usize> {
+        let mut total_edits = 0usize;
         for (path, group) in grouped {
             self.open_buffer(path.clone())?;
             self.history.record(&self.buffer.rope, self.window.cursor);
@@ -1814,15 +1827,14 @@ impl super::App {
             }
             total_edits += concrete.len();
             self.clamp_cursor_normal();
-            // Save so the LSP picks up the new contents.
-            let _ = self.buffer.save();
+            // Save so the LSP picks up the new contents. A failed save
+            // stops the batch: the server is told the edit didn't apply,
+            // and this buffer stays open, edited and unsaved.
+            if let Err(e) = self.buffer.save() {
+                anyhow::bail!("saving {}: {e}", path.display());
+            }
         }
-        // Restore the original active buffer so the user lands back where
-        // they were when they invoked the action.
-        if original_active < self.buffers.len() && self.active != original_active {
-            let _ = self.switch_to(original_active);
-        }
-        Ok((total_edits, files))
+        Ok(total_edits)
     }
 
     /// Build a picker out of `textDocument/documentSymbol` results.
@@ -2830,6 +2842,43 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    // A save that fails partway must fail the batch — the server's
+    // applyEdit reply depends on it — and still put the user back on the
+    // buffer they started from.
+    #[cfg(unix)]
+    #[test]
+    fn workspace_edit_save_failure_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("binvim-wsedit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("locked.txt");
+        std::fs::write(&file, "old\n").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o444)).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let mut app = crate::app::App::new(None).expect("App::new");
+        let start = app.active;
+        let edit = crate::app::state::ConcreteEdit {
+            path: file.clone(),
+            start_line: 0,
+            start_col: 0,
+            end_line: 0,
+            end_col: 3,
+            new_text: "new".into(),
+        };
+        let outcome = app.apply_concrete_edits(&[edit]);
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let on_disk = std::fs::read_to_string(&file).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert!(outcome.is_err());
+        assert_eq!(on_disk, "old\n");
+        assert_eq!(app.active, start);
+    }
 
     #[test]
     fn local_completion_sources() {
