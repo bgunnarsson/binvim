@@ -748,10 +748,8 @@ impl super::App {
             MotionVerb::FirstNonBlank => motion::first_non_blank(&self.buffer, self.window.cursor),
             MotionVerb::LastNonBlank => motion::last_non_blank(&self.buffer, self.window.cursor),
             MotionVerb::ViewportTop => self.viewport_motion(0),
-            MotionVerb::ViewportMiddle => self.viewport_motion(self.buffer_rows() / 2),
-            MotionVerb::ViewportBottom => {
-                self.viewport_motion(self.buffer_rows().saturating_sub(1))
-            }
+            MotionVerb::ViewportMiddle => self.viewport_motion(self.pane_rows() / 2),
+            MotionVerb::ViewportBottom => self.viewport_motion(self.pane_rows().saturating_sub(1)),
             MotionVerb::Mark { name, exact } => self.mark_motion(name, exact),
             MotionVerb::FindChar {
                 ch,

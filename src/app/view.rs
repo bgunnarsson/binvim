@@ -67,7 +67,7 @@ impl super::App {
     }
 
     pub(super) fn page_scroll(&mut self, kind: PageScrollKind) {
-        let rows = self.buffer_rows();
+        let rows = self.pane_rows();
         if rows == 0 {
             return;
         }
@@ -118,7 +118,7 @@ impl super::App {
     }
 
     pub(super) fn adjust_viewport_to(&mut self, kind: ViewportAdjust) {
-        let rows = self.buffer_rows();
+        let rows = self.pane_rows();
         let cur = self.window.cursor.line;
         let pane_w = self.active_pane_rect().w as usize;
         let buffer_cols = pane_w.saturating_sub(self.gutter_width());
@@ -209,7 +209,7 @@ impl super::App {
     /// next `adjust_viewport` doesn't snap the view back. Positive = down,
     /// negative = up.
     pub(super) fn scroll_view(&mut self, delta: i64) {
-        let buffer_rows = self.buffer_rows();
+        let buffer_rows = self.pane_rows();
         if buffer_rows == 0 {
             return;
         }
@@ -240,7 +240,7 @@ impl super::App {
     }
 
     pub(super) fn adjust_viewport(&mut self) {
-        let buffer_rows = self.buffer_rows();
+        let buffer_rows = self.pane_rows();
         if buffer_rows > 0 {
             let scrolloff = 3.min(buffer_rows / 2);
             let cur = self.window.cursor.line;
@@ -308,6 +308,13 @@ impl super::App {
     /// Columns the text gets in the active pane, after the gutter.
     pub(super) fn text_area_cols(&self) -> usize {
         (self.active_pane_rect().w as usize).saturating_sub(self.gutter_width())
+    }
+
+    /// Rows of the active window's pane — `buffer_rows` split by the
+    /// layout. Scrolling and `H`/`M`/`L` work in these, or a cursor moved
+    /// down in a horizontal split leaves the pane before the view follows.
+    pub(super) fn pane_rows(&self) -> usize {
+        self.active_pane_rect().h as usize
     }
 
     pub fn buffer_rows(&self) -> usize {
@@ -1212,6 +1219,24 @@ mod tests {
             .into_iter()
             .map(|f| (f.start_line, f.end_line))
             .collect()
+    }
+
+    #[test]
+    fn horizontal_split_scrolls_within_its_own_pane() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.width = 80;
+        app.height = 40;
+        app.buffer = buf(&"x\n".repeat(200));
+        app.window_split(crate::layout::SplitDir::Horizontal);
+        let rows = app.pane_rows();
+        assert!(rows < app.buffer_rows());
+        app.window.cursor.line = 50;
+        app.adjust_viewport();
+        let on_screen = app.window.cursor.line - app.window.view_top;
+        assert!(
+            on_screen < rows,
+            "cursor row {on_screen} outside a {rows}-row pane"
+        );
     }
 
     #[test]
