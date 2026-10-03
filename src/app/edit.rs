@@ -73,54 +73,31 @@ impl super::App {
             // Fall through to the caller's normal backspace path.
             return;
         }
-        // Filter to cursors that have something to delete.
-        let mut positions: Vec<(usize, bool)> = Vec::new();
-        if primary_pos > 0 && self.window.cursor.col > 0 {
-            positions.push((primary_pos, true));
-        }
-        for &p in &self.additional_cursors {
-            if p > 0 {
-                let line = self.buffer.rope.char_to_line(p);
-                let line_start = self.buffer.rope.line_to_char(line);
-                // Skip cursors that sit at column 0 — see doc comment.
-                if p > line_start {
-                    positions.push((p, false));
-                }
-            }
-        }
-        if positions.is_empty() {
+        // Classify every cursor against the unedited buffer: the line
+        // lookups below are meaningless once deletions have shortened it.
+        let at_line_start = |p: usize| {
+            let line = self.buffer.rope.char_to_line(p);
+            p == self.buffer.rope.line_to_char(line)
+        };
+        let mut deletions: Vec<usize> = std::iter::once(primary_pos)
+            .chain(self.additional_cursors.iter().copied())
+            .filter(|&p| p > 0 && !at_line_start(p))
+            .collect();
+        if deletions.is_empty() {
             return;
         }
-        positions.sort_by_key(|x| x.0);
+        deletions.sort_unstable();
+        deletions.dedup();
         // Delete from highest to lowest so lower positions don't shift.
-        for (p, _) in positions.iter().rev() {
-            self.buffer.delete_range(*p - 1, *p);
+        for &p in deletions.iter().rev() {
+            self.buffer.delete_range(p - 1, p);
         }
-        // After all deletions, the cursor at sorted-asc rank R is at
-        // p[R] - 1 (for own delete) - R (for lower-rank deletes that
-        // shifted it down).
-        let mut new_primary = primary_pos.saturating_sub(1);
-        let mut new_additional: Vec<usize> = Vec::with_capacity(self.additional_cursors.len());
-        // Keep any cursors we skipped (column 0) intact.
-        for &p in &self.additional_cursors {
-            if p == 0 {
-                new_additional.push(p);
-                continue;
-            }
-            let line = self.buffer.rope.char_to_line(p);
-            let line_start = self.buffer.rope.line_to_char(line);
-            if p <= line_start {
-                new_additional.push(p);
-            }
-        }
-        for (rank, (p, is_primary)) in positions.iter().enumerate() {
-            let new_pos = p - 1 - rank;
-            if *is_primary {
-                new_primary = new_pos;
-            } else {
-                new_additional.push(new_pos);
-            }
-        }
+        // A cursor moves back one char for each deletion at or before it,
+        // its own included; cursors skipped at column 0 still shift.
+        let remap = |q: usize| q - deletions.partition_point(|&p| p <= q);
+        let new_primary = remap(primary_pos);
+        let mut new_additional: Vec<usize> =
+            self.additional_cursors.iter().map(|&p| remap(p)).collect();
         new_additional.sort();
         new_additional.dedup();
         self.additional_cursors = new_additional;
@@ -2219,6 +2196,37 @@ mod tests {
         codes.dedup();
         assert_eq!(codes.len(), listed, "a digraph code is listed twice");
         assert!(DIGRAPHS.iter().all(|(code, _)| code.chars().count() == 2));
+    }
+
+    // `abc\nxyz` with a cursor at each line's end: the second cursor's
+    // position is past the end of the buffer once the first delete lands,
+    // so cursors are classified before anything is deleted.
+    #[test]
+    fn multi_cursor_backspace_at_line_ends() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer = buf("abc\nxyz");
+        app.window.cursor.line = 0;
+        app.window.cursor.col = 3;
+        app.additional_cursors = vec![7];
+        app.mirror_backspace();
+        assert_eq!(app.buffer.rope.to_string(), "ab\nxy");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 2));
+        assert_eq!(app.additional_cursors, vec![5]);
+    }
+
+    // A cursor at column 0 deletes nothing but still shifts with the
+    // deletions before it.
+    #[test]
+    fn multi_cursor_backspace_shifts_skipped_cursor() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer = buf("abc\nxyz");
+        app.window.cursor.line = 1;
+        app.window.cursor.col = 0;
+        app.additional_cursors = vec![2];
+        app.mirror_backspace();
+        assert_eq!(app.buffer.rope.to_string(), "ac\nxyz");
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 0));
+        assert_eq!(app.additional_cursors, vec![1]);
     }
 
     use super::{retab, shift_block_down_by_one, shift_block_up_by_one, sort_lines};
