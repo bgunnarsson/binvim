@@ -60,6 +60,12 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>Ac` | Android — create an AVD: pick a system image, `sdkmanager` fetches it |
 | `<space>Ad` | Android — list the devices `adb` sees |
 | `<space>Ab` | Android — attach a debug session to the app of the enclosing Gradle project, through jdtls and the java-debug plugin |
+| `<space>na` / `<space>nA` | Notebook — add a code cell below / above the cursor's cell (same as `:cell add` / `:cell add above`) |
+| `<space>nm` / `<space>ny` | Notebook — make the cursor's cell markdown / code (`:cell type markdown` / `code`) |
+| `<space>nd` | Notebook — delete the cursor's cell, header and all (`:cell delete`) |
+| `<space>nj` / `<space>nk` | Notebook — move the cursor's cell down / up past its neighbour (`:cell move down` / `up`) |
+| `<space>ns` | Notebook — split the cell at the cursor's line, which starts the new cell (`:cell split`) |
+| `<space>nJ` | Notebook — join the next cell onto this one (`:cell join`) |
 
 The package manager detects the ecosystem from the active buffer's workspace. Five backends are wired up:
 
@@ -71,7 +77,7 @@ The package manager detects the ecosystem from the active buffer's workspace. Fi
 
 The Cargo, Go, and Python backends shell out to `curl` for the steps their toolchain can't do (crates.io has no `cargo` command for listing all versions; the Go toolchain has no search; PyPI is HTTP-only), so `curl` must be on `PATH` for those.
 
-Hold `<space>` (or `<space>A` / `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>p` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
+Hold `<space>` (or `<space>A` / `<space>b` / `<space>d` / `<space>g` / `<space>h` / `<space>j` / `<space>m` / `<space>n` / `<space>p` / `<space>s` / `<space>t`) for ~250 ms and a which-key popup lists the available next keys.
 
 ## Buffer / tab navigation
 

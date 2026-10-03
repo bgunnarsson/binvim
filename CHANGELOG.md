@@ -4,6 +4,20 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **Jupyter notebooks open as editable cells.** An `.ipynb` opens as one
+  `# %%` header per cell followed by its source. Code cells highlight as
+  Python and get pyright, markdown cells highlight and conceal as Markdown,
+  and in Normal mode each header paints as a bar with the cell's type,
+  execution count and output count. `:w` writes nbformat JSON back with
+  outputs and metadata kept, changes only the cells you edited, and leaves an
+  unedited notebook byte-identical. `]c` / `[c` move between cells, `ic` /
+  `ac` select one, and `:cell` / `<space>n` add, delete, move, retype, split
+  and join them. A file that isn't valid nbformat opens as raw JSON with the
+  reason. Running cells is not in yet.
+
 ## [0.7.2] - 2026-09-26
 
 ### Added

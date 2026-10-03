@@ -62,6 +62,25 @@
 - **Recovery after a crash** — while a buffer has unsaved changes, its text is copied to `~/.cache/binvim/recover/<hash>.json` every four seconds, and straight away when binvim is killed (`SIGTERM`), its terminal is closed (`SIGHUP`) or it crashes. Opening the file again puts that text back as unsaved changes and says so: `u` shows what's on disk, `:w` keeps the recovered text, `:e!` throws it away. The copy is removed once the buffer is written, reverted, closed, or quit with `:q!`. Until then, edits that don't open the file for you to see — `:S`, an LSP rename — leave it alone, and a second binvim opening a file the first still has unsaved changes to says so instead of taking them over. A `kill -9` loses at most the last four seconds; so does anything on Windows, where only the periodic copy runs. Buffers with no file name aren't covered. A `SIGTERM` or `SIGHUP` also saves the session, as it stood at the last copy; a crash doesn't, since the file that caused it would be reopened with it.
 - **Recents in the file picker** — most-recently-opened files surface at the top of the file picker on an empty query, persisted at `~/.cache/binvim/recents`.
 
+## Notebooks
+
+A Jupyter notebook (`.ipynb`) opens as text: one header line per cell, then the cell's source.
+
+```
+# %% id=3f2a91c0
+import numpy as np
+# %% [markdown] id=b71e04d2
+## Results
+```
+
+- **Headers.** `# %%` starts a code cell, `# %% [markdown]` (or `[md]`) a markdown cell and `# %% [raw]` a raw one. The `id=` names the cell in the file, so undo, recovery and a yanked cell keep track of which cell is which. A header typed by hand, or a pasted cell that repeats an id, is given its own id on `:w`, as one undo step. In Normal mode each header paints as a bar with the cell's type, its execution count (`[3]`) and how many outputs it has, and markdown cells show concealed markdown; Insert and Visual show the raw text.
+- **Saving.** `:w` writes nbformat JSON back the way Jupyter does. Outputs, execution counts, metadata and attachments stay with their cells, so editing one cell changes only that cell's `source`. A save with nothing changed leaves the file byte for byte as it was. A code cell turned markdown loses its `outputs` and `execution_count`; a markdown cell turned code gets empty ones. The Python formatter runs on edited code cells only, skipping cells with a `%` or `!` line, and the `.editorconfig` whitespace transforms are off, because trailing spaces mean something in markdown.
+- **Highlighting and LSP.** Code cells highlight as Python and markdown cells as Markdown. pyright sees only the code lines, at the buffer's own line numbers, so a diagnostic lands on the right line and nothing is reported on headers, markdown, or `%matplotlib inline` / `!pip install` lines.
+- **Moving and selecting.** `]c` / `[c` go to the next / previous cell's header, with a count. `ic` takes a cell's source and `ac` the whole cell with its header (`dac`, `yic`); outside notebooks `ic` / `ac` are still the class.
+- **Cell edits.** `:cell` and `<space>n` add, delete, move, retype, split and join cells. See [Ex commands](ex-commands.md) and [Keys](keys.md).
+- **A file that isn't a notebook.** An `.ipynb` that isn't valid JSON, or isn't nbformat 4, opens as raw JSON with a status message naming why, highlighted as JSON, with no LSP; `:w` writes the text as it is.
+- **What's off for now.** The git gutter, hunk actions and blame (git diffs the JSON, not the cells), running cells, and showing outputs. `:w other.py` from a notebook writes the percent text, a jupytext-style script. See the [roadmap](roadmap.md#notebooks-kernels-and-rich-output).
+
 ## Sessions and tabs
 
 - **Sessions** — open buffers + per-buffer cursor + viewport persist to `~/.cache/binvim/sessions/<cwd-hash>.json` on clean shutdown, `SIGTERM` or `SIGHUP`, and restore on launch when no file argument is passed. Buffers whose paths no longer exist are silently dropped. Restored sessions drop you on the start page with the tab row above it advertising what's loaded — any key drops you onto the first tab, and `H`/`L`, `:bn`/`:bp`, `:b<n>` or a tab click pick a specific one. Ex (`:`) and search (`/` / `?`) history rides on the same file (capped at 100 entries each, dedup against the immediate previous); `<Up>` / `<Down>` inside either prompt walks it, and the first `<Up>` snapshots whatever you'd already typed so walking off the bottom brings the draft back. Histories load even when you launch with `binvim foo.rs` — only buffer restoration is gated on a bare invocation.
