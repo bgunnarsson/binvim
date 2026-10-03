@@ -40,8 +40,9 @@ and the Windows deferrals listed under Out of scope.
   Authenticode is the separate question in ticket 03.
 - State as charted: brew, scoop (`bucket/binvim.json`), nix, crates and curl
   exist; winget, AUR and .deb do not. No benchmark, budget or demo recording
-  exists. Only Rust, Go, Python, C/C++ and C# have LSP + debugger + formatter +
-  tree-sitter; Razor, TOML and Docker also lack a formatter.
+  exists. Only Go and Python have LSP + debugger + formatter + tree-sitter all
+  installed by first run; Rust lacks a formatter arm, C#'s debugger is a manual
+  install, C/C++ debugs only under Cargo, and Docker lacks a formatter (ticket 01).
 
 ## Decisions so far
 
@@ -49,12 +50,15 @@ and the Windows deferrals listed under Out of scope.
 - [05](05-what-winget-aur-and-deb-need.md): winget (portable zip + winget-releaser), AUR (`binvim-bin` + deploy-aur) and .deb (`cargo deb --no-build`) can all be driven from the release; each needs one thing from the user's own account.
 - [07](07-drawing-images-on-the-notebook-page.md): kitty Unicode placeholders, then iTerm2 inline images when wholly visible, then half-blocks, then the label; no sixel yet.
 - [08](08-starting-kernels-other-than-python.md): the Python bridge stays and starts a non-Python kernel by `metadata.kernelspec.name` through the stock `KernelSpecManager`.
+- [01](01-which-stacks-are-supported-for-zero-config.md): 1.0 promises six stacks, Rust, Go, Python, C/C++, C#/.NET and TypeScript/JavaScript (with HTML, CSS and JSON), each with LSP + debugger + formatter + tree-sitter installed from the first-run prompt with no manual step on macOS, Linux and Windows, shown by a scripted fresh-environment run per stack per OS; every other language is "also works", outside the promise.
 
 ## Not yet specified
 
 - The tests that make the correctness suite green: waits on 02.
-- Filling the zero-config gaps (debuggers, formatters, first-run checks) for
-  the supported stacks: waits on 01.
+- Building the TS/JS debugger: waits on 16.
+- Installing netcoredbg automatically: waits on 17.
+- Building C/C++ debugging outside Cargo: waits on 18.
+- Building the first-run check and filling its rows on each OS: waits on 20.
 - Closing or accepting the no-cache-directory recovery gap: waits on 10.
 - The budget numbers and the benchmark page: waits on 11's first numbers.
 - Building each distribution channel, and the winget submission: waits on 12.
@@ -66,8 +70,8 @@ and the Windows deferrals listed under Out of scope.
   waits on 14.
 - Full SCSS highlighting on Windows: waits on an upstream `tree-sitter-scss`
   release (1.0.1), then it is a one-line cfg removal (`docs/windows.md`).
-- The 1.0 release itself: the roadmap and README brought up to date, the
-  changelog, the tag. Waits on every ticket above.
+- The 1.0 release itself: the roadmap and README brought up to date (naming
+  the six promised stacks and the "also works" rest), the changelog, the tag. Waits on every ticket above.
 
 ## Out of scope
 
@@ -75,5 +79,7 @@ and the Windows deferrals listed under Out of scope.
   deferred until asked (`docs/windows.md` §3), settled with the user 2026-10-03.
 - A plugin API, Lua, languages for the count, telemetry: the roadmap rules
   them out.
+- Razor in the .NET promise, and a debugger for the "also works" languages:
+  outside the six promised stacks, settled with the user 2026-10-03 (ticket 01).
 - Fixing `tree-sitter-bash`'s scanner on adversarial Unicode: upstream's to fix;
   binvim fuzzes it over ASCII until then (`docs/known-issues.md`).
