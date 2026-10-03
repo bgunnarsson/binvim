@@ -173,9 +173,7 @@ impl super::App {
                     // interior newline. Single-line payloads (e.g.
                     // terminal echo) stay charwise so paste-at-cursor
                     // doesn't open a surprise extra line.
-                    let trimmed_ends_nl = text.ends_with('\n');
-                    let has_interior_nl = text[..text.len().saturating_sub(1)].contains('\n');
-                    let linewise = trimmed_ends_nl && has_interior_nl;
+                    let linewise = text.strip_suffix('\n').is_some_and(|t| t.contains('\n'));
                     return Some(Register { text, linewise });
                 }
             }
