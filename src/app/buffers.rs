@@ -320,6 +320,9 @@ impl super::App {
         if lossy {
             self.status_msg = self.lossy_notice();
         }
+        if let Some(notice) = self.notebook_notice() {
+            self.status_msg = notice;
+        }
         // Last, so its notice is the one left showing.
         self.apply_recovery();
         self.strip_phantom_seed_if_unused();
@@ -392,6 +395,15 @@ impl super::App {
         }
     }
 
+    /// Said when a `.ipynb` couldn't be read as a notebook, which opens it
+    /// as its raw JSON instead of as cells.
+    pub(super) fn notebook_notice(&self) -> Option<String> {
+        let err = self.buffer.notebook_error.as_deref()?;
+        Some(format!(
+            "not opened as a notebook ({err}) — editing raw JSON"
+        ))
+    }
+
     /// Said when a file that isn't valid UTF-8 is opened — nothing else
     /// tells the user its bytes were replaced.
     pub(super) fn lossy_notice(&self) -> String {
@@ -430,6 +442,14 @@ impl super::App {
         // Normalize CRLF → LF (matches Buffer::from_path) so reloaded
         // CRLF files don't leak `\r` chars into the rope.
         let text = raw.replace("\r\n", "\n");
+        let text = if crate::buffer::is_notebook_path(path) {
+            let (text, notebook, error) = crate::buffer::project_notebook(&text);
+            self.buffer.notebook = notebook;
+            self.buffer.notebook_error = error;
+            text
+        } else {
+            text
+        };
         let _ = Rope::from_str(&text); // touch ropey so caches invalidate downstream
         self.buffer.replace_all(&text);
         let meta = std::fs::metadata(path).ok();
@@ -1365,6 +1385,39 @@ mod tests {
         app.buffer.save().unwrap();
         assert!(!app.buffer.gone);
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "keep me\n");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_reloaded_notebook_is_projected_again() {
+        let dir = crate::paths::test_scratch_dir("notebook", "reload");
+        let path = dir.join("nb.ipynb");
+        let json = |src: &str| {
+            format!(
+                "{{\n \"cells\": [\n  {{\n   \"cell_type\": \"code\",\n   \"execution_count\": null,\n   \"id\": \"aa\",\n   \"metadata\": {{}},\n   \"outputs\": [],\n   \"source\": [\n    \"{src}\"\n   ]\n  }}\n ],\n \"metadata\": {{}},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}}\n"
+            )
+        };
+        std::fs::write(&path, json("x = 1")).unwrap();
+        let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        assert_eq!(app.buffer.rope.to_string(), "# %% id=aa\nx = 1\n");
+        std::fs::write(&path, json("x = 2")).unwrap();
+        app.force_reload_from_disk().unwrap();
+        let text = "# %% id=aa\nx = 2\n";
+        assert_eq!(app.buffer.rope.to_string(), text);
+        assert_eq!(app.buffer.clean_hash, Some(crate::undo::hash_text(text)));
+        app.buffer.save().unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), json("x = 2"));
+        // Broken on disk: the reload falls back to the raw JSON, which then
+        // saves as written rather than through the notebook it replaced.
+        std::fs::write(&path, "{\"nbformat\": 3}\n").unwrap();
+        app.force_reload_from_disk().unwrap();
+        assert!(!app.buffer.is_notebook());
+        assert!(app.notebook_notice().is_some());
+        app.buffer.save().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "{\"nbformat\": 3}\n"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

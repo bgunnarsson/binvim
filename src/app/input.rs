@@ -3119,6 +3119,11 @@ impl super::App {
             if let Some(old) = self.buffer.path.clone() {
                 self.discard_recovery(&old);
             }
+            // Cells written under another name are their percent-format
+            // text, which a `.py` reads as-is.
+            if !crate::buffer::is_notebook_path(&path) {
+                self.buffer.notebook = None;
+            }
             self.buffer.path = Some(path);
             // What was recorded describes the old file, and would read as a
             // conflict against the new one.

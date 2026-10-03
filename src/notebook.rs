@@ -357,7 +357,10 @@ fn set_kind(cell: &mut Map<String, Value>, kind: CellKind) {
 }
 
 impl NotebookDoc {
-    fn cells_from_text(&self, text: &str) -> Vec<Value> {
+    /// The cells `text` describes, and which of the text's ids now name which
+    /// of them. A cell the text gave no id, or an id an earlier cell already
+    /// took, has no entry: on disk it carries a fresh id the text doesn't know.
+    fn cells_from_text(&self, text: &str) -> (Vec<Value>, HashMap<String, usize>) {
         let parsed = text_cells(text);
         let mut taken: HashSet<String> = parsed
             .iter()
@@ -367,6 +370,7 @@ impl NotebookDoc {
         taken.extend(self.by_id.keys().cloned());
         let mut used: HashSet<String> = HashSet::new();
         let mut out = Vec::with_capacity(parsed.len());
+        let mut by_id = HashMap::new();
         for tc in parsed {
             let first_use = tc.id.as_ref().is_some_and(|id| used.insert(id.clone()));
             let orig = tc.id.as_ref().and_then(|id| self.by_id.get(id)).copied();
@@ -406,9 +410,14 @@ impl NotebookDoc {
                 m.insert("source".into(), source_value(&tc.source));
                 Value::Object(m)
             };
+            if first_use {
+                if let Some(id) = tc.id {
+                    by_id.insert(id, out.len());
+                }
+            }
             out.push(cell_value);
         }
-        out
+        (out, by_id)
     }
 
     /// The notebook's bytes for `text`. When every cell comes out as it went
@@ -416,22 +425,43 @@ impl NotebookDoc {
     /// changed nothing can't reformat a number Python and serde_json print
     /// differently (`1e-05`).
     pub fn serialize(&self, text: &str) -> Vec<u8> {
-        let cells = self.cells_from_text(text);
+        self.save(text).0
+    }
+
+    /// `serialize`, plus the doc that describes the file once those bytes are
+    /// written. Its ids come from the text, not from re-reading the bytes: a
+    /// synthetic `~3` keeps naming the cell it named before a cell was
+    /// inserted above it, where a re-read would hand it to another cell.
+    pub fn save(&self, text: &str) -> (Vec<u8>, NotebookDoc) {
+        let (cells, by_id) = self.cells_from_text(text);
         if cells == self.cells && !self.original.is_empty() {
-            return self.original.clone();
+            let doc = NotebookDoc {
+                by_id,
+                ..self.clone()
+            };
+            return (self.original.clone(), doc);
         }
         let mut root = self.root.clone();
-        root.insert("cells".into(), Value::Array(cells));
+        root.insert("cells".into(), Value::Array(cells.clone()));
         // nbformat writes `json.dumps(sort_keys=True, indent=1,
         // ensure_ascii=False)` plus a newline; serde_json's default map is
         // sorted, so a Jupyter-written file comes back byte for byte.
         let mut out = Vec::new();
         let fmt = serde_json::ser::PrettyFormatter::with_indent(b" ");
         let mut ser = serde_json::Serializer::with_formatter(&mut out, fmt);
-        serde::Serialize::serialize(&Value::Object(root), &mut ser)
-            .expect("a JSON value always serializes");
+        let value = Value::Object(root);
+        serde::Serialize::serialize(&value, &mut ser).expect("a JSON value always serializes");
+        let Value::Object(mut root) = value else { unreachable!() };
         out.push(b'\n');
-        out
+        root.remove("cells");
+        let doc = NotebookDoc {
+            original: out.clone(),
+            root,
+            cells,
+            by_id,
+            has_ids: self.has_ids,
+        };
+        (out, doc)
     }
 
     /// The original source of the cell `id` names, when it has one on disk.
@@ -696,6 +726,23 @@ mod tests {
         let after = cells(&doc.serialize(&edited));
         assert!(after[0].get("id").is_none());
         assert_eq!(after[0]["execution_count"], 3);
+    }
+
+    #[test]
+    fn synthetic_ids_follow_their_cell_across_saves() {
+        let old = JUPYTER
+            .replace("   \"id\": \"a1b2c3d4\",\n", "")
+            .replace("   \"id\": \"e5f6a7b8\",\n", "")
+            .replace("   \"id\": \"c9d0e1f2\",\n", "")
+            .replace("\"nbformat_minor\": 5", "\"nbformat_minor\": 4");
+        let (text, doc) = project(&old).unwrap();
+        let inserted = format!("# %%\nnew\n{text}");
+        let (_, doc) = doc.save(&inserted);
+        // `~0` still names the code cell with outputs, now second on disk.
+        let edited = inserted.replace("print('hi')", "print(3)");
+        let after = cells(&doc.serialize(&edited));
+        assert_eq!(after[1]["execution_count"], 3);
+        assert_eq!(after[0]["outputs"], serde_json::json!([]));
     }
 
     #[test]

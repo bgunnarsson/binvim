@@ -1228,6 +1228,9 @@ impl App {
         if self.buffer.lossy {
             self.status_msg = self.lossy_notice();
         }
+        if let Some(notice) = self.notebook_notice() {
+            self.status_msg = notice;
+        }
         self.apply_recovery();
         self.announce_unnamed_recovery();
         self.lsp_attach_active();

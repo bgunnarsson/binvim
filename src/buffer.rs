@@ -3,7 +3,7 @@ use ropey::{Rope, RopeSlice};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
@@ -156,6 +156,28 @@ pub struct Buffer {
     pub changes: Vec<usize>,
     /// Where `g;` / `g,` are in `changes`; its length until they move.
     pub change_idx: usize,
+    /// A `.ipynb` read as cells: the notebook as it is on disk, which `save`
+    /// writes the text back into. Describes the file, so it is set wherever
+    /// the rope is replaced from disk.
+    pub notebook: Option<crate::notebook::NotebookDoc>,
+    /// Why a `.ipynb` couldn't be read as cells and opened as its raw JSON.
+    pub notebook_error: Option<String>,
+}
+
+pub fn is_notebook_path(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("ipynb"))
+}
+
+/// A `.ipynb`'s text as cells, or — when it can't be read as a notebook — its
+/// raw JSON untouched, with the reason, so nothing in it is lost.
+pub fn project_notebook(
+    json: &str,
+) -> (String, Option<crate::notebook::NotebookDoc>, Option<String>) {
+    match crate::notebook::project(json) {
+        Ok((text, doc)) => (text, Some(doc), None),
+        Err(e) => (json.to_string(), None, Some(e)),
+    }
 }
 
 /// Vim keeps 100 change-list entries per buffer.
@@ -195,6 +217,8 @@ impl Buffer {
             last_visual: None,
             changes: Vec::new(),
             change_idx: 0,
+            notebook: None,
+            notebook_error: None,
         }
     }
 
@@ -219,6 +243,11 @@ impl Buffer {
             let line_ending = detect_line_ending(&bytes);
             let lossy = std::str::from_utf8(&bytes).is_err();
             let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+            let (text, notebook, notebook_error) = if is_notebook_path(&path) {
+                project_notebook(&text)
+            } else {
+                (text, None, None)
+            };
             let rope = Rope::from_str(&text);
             Ok(Self {
                 rope,
@@ -228,14 +257,22 @@ impl Buffer {
                 disk_len,
                 lossy,
                 line_ending,
+                notebook,
+                notebook_error,
                 ..Self::empty()
             })
         } else {
+            let notebook = is_notebook_path(&path).then(crate::notebook::empty_notebook);
             Ok(Self {
                 path: Some(path),
+                notebook,
                 ..Self::empty()
             })
         }
+    }
+
+    pub fn is_notebook(&self) -> bool {
+        self.notebook.is_some()
     }
 
     pub fn save(&mut self) -> Result<()> {
@@ -243,10 +280,22 @@ impl Buffer {
             .path
             .as_ref()
             .context("no file path set (use :w {filename})")?;
-        let mut bytes = Vec::with_capacity(self.rope.len_bytes());
-        write_rope_with_eol(&self.rope, self.line_ending, &mut bytes)?;
+        let (bytes, notebook) = match &self.notebook {
+            Some(doc) => {
+                let (json, saved) = doc.save(&self.rope.to_string());
+                (json, Some(saved))
+            }
+            None => {
+                let mut bytes = Vec::with_capacity(self.rope.len_bytes());
+                write_rope_with_eol(&self.rope, self.line_ending, &mut bytes)?;
+                (bytes, None)
+            }
+        };
         crate::paths::write_atomic(path, &bytes)
             .with_context(|| format!("writing {}", path.display()))?;
+        if notebook.is_some() {
+            self.notebook = notebook;
+        }
         self.dirty = false;
         self.clean_hash = Some(crate::undo::hash_text(&self.rope.to_string()));
         // Refresh mtime so the watcher doesn't immediately think the file
@@ -871,6 +920,94 @@ mod tests {
         buf.save().unwrap();
         let out = std::fs::read(&tmp).unwrap();
         assert_eq!(out, b"hello\r\nworld\r\n");
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    const NOTEBOOK: &str = r##"{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "aa",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "x = 1"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "id": "bb",
+   "metadata": {},
+   "source": [
+    "# Notes"
+   ]
+  }
+ ],
+ "metadata": {},
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+"##;
+
+    #[test]
+    fn notebook_opens_as_cells_and_saves_byte_identical() {
+        let tmp = std::env::temp_dir().join("binvim_notebook_roundtrip.ipynb");
+        std::fs::write(&tmp, NOTEBOOK).unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        let text = "# %% id=aa\nx = 1\n# %% [markdown] id=bb\n# Notes\n";
+        assert_eq!(buf.rope.to_string(), text);
+        assert!(buf.is_notebook());
+        assert_eq!(buf.notebook_error, None);
+        assert_eq!(buf.clean_hash, Some(crate::undo::hash_text(text)));
+        buf.save().unwrap();
+        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), NOTEBOOK);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn notebook_edit_changes_only_that_cell() {
+        let tmp = std::env::temp_dir().join("binvim_notebook_edit.ipynb");
+        std::fs::write(&tmp, NOTEBOOK).unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        let idx = buf.rope.to_string().find("1").unwrap();
+        buf.insert_at_idx(idx, "4");
+        buf.save().unwrap();
+        let text = buf.rope.to_string();
+        assert_eq!(buf.clean_hash, Some(crate::undo::hash_text(&text)));
+        assert_eq!(
+            std::fs::read_to_string(&tmp).unwrap(),
+            NOTEBOOK.replace("\"x = 1\"", "\"x = 41\"")
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn broken_notebook_opens_as_raw_json_and_saves_unchanged() {
+        let tmp = std::env::temp_dir().join("binvim_notebook_broken.ipynb");
+        let broken = "{\"cells\": [], \"nbformat\": 3}\n";
+        std::fs::write(&tmp, broken).unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert_eq!(buf.rope.to_string(), broken);
+        assert!(!buf.is_notebook());
+        assert!(buf.notebook_error.is_some());
+        buf.save().unwrap();
+        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), broken);
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn new_notebook_path_starts_an_empty_notebook() {
+        let tmp = std::env::temp_dir().join("binvim_notebook_new.ipynb");
+        let _ = std::fs::remove_file(&tmp);
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert!(buf.is_notebook());
+        buf.insert_at_idx(0, "# %%\nprint(1)\n");
+        buf.save().unwrap();
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&tmp).unwrap()).unwrap();
+        assert_eq!(v["cells"][0]["source"], serde_json::json!(["print(1)"]));
+        assert_eq!(v["nbformat"], 4);
         let _ = std::fs::remove_file(&tmp);
     }
 
