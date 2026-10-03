@@ -47,6 +47,7 @@ src/
     config_glue.rs `:config` open / reload / defaults
     update_glue.rs startup update check — spawn / drain / surface
     recover_glue.rs recovery files — periodic dump, apply on open, signal thread
+    notebook_glue.rs notebook cell jumps, `:cell` / `<leader>n` edits, id fix-up on save
   android.rs       Android SDK CLI backend (sdkmanager / avdmanager / adb / emulator) + parsers
   ansi.rs          ANSI / SGR parser + colour tables shared by terminal.rs
   buffer.rs        rope-backed text buffer (+ marks)
@@ -81,6 +82,7 @@ src/
   markdown_render.rs hand-rolled markdown conceal transforms for Normal-mode `.md` buffers
   mode.rs          modes, VisualKind and operators
   motion.rs        motions
+  notebook.rs      Jupyter `.ipynb` ↔ percent-format cell text, lossless save by cell id
   package.rs       package-manager backends (NuGet / npm / Cargo / Go / PyPI) + http_get via curl
   parser.rs        keystroke → action parser
   paths.rs         home / config / cache dirs, write_atomic, others_can_plant
