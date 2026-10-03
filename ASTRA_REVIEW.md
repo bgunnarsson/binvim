@@ -43,3 +43,20 @@ Verdict: **WARNING**.
 Validation: 1,192 tests passed initially; the sole failure passed when rerun outside the sandbox, which had blocked `ps`. Formatting checks passed. Findings above are based on code-path inspection, not added regression tests.
 
 Scope: enumerated 169 first-party source/configuration files and reviewed across editing, integrations, UI/runtime, and persistence/build tooling. This was broad but not exhaustive; substantial portions of the larger modules remain unreviewed. No repository files changed during the review.
+
+## Resolution
+
+All ten findings were confirmed and fixed, each with a regression test except #3's manager wiring:
+
+| # | Commit |
+|---|---|
+| 1 | 2412b84 |
+| 2 | 9565202 |
+| 3 | ce054dd |
+| 4 | f22ac86 |
+| 5 | bf7ca88 — normal-mode `dd` / `cc` on a last line ending in `\n` had the same bug |
+| 6 | 4ab0c16 — CRLF hunks also lost their `\r` |
+| 7 | 42f55c0 |
+| 8 | ffe5fa0 |
+| 9 | 7d5d383 |
+| 10 | f3f8b4b |
