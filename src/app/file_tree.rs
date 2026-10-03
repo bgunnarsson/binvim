@@ -569,6 +569,16 @@ impl super::App {
             return;
         };
         let to = parent.join(trimmed);
+        // `rename` replaces an existing destination without a word. A
+        // case-only rename on a case-insensitive filesystem finds `from`
+        // itself there, which is the one occupant it may displace.
+        let is_self = trimmed.eq_ignore_ascii_case(current_basename)
+            && from.canonicalize().ok() == to.canonicalize().ok();
+        if std::fs::symlink_metadata(&to).is_ok() && !is_self {
+            self.status_msg = format!("rename: {trimmed} already exists");
+            self.mode = Mode::FileTree;
+            return;
+        }
         match std::fs::rename(&from, &to) {
             Ok(()) => {
                 self.adopt_renamed_path(&from, &to);
@@ -911,6 +921,27 @@ mod tests {
                 .iter()
                 .any(|e| e.path != link && e.path.starts_with(&link))
         );
+
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rename_onto_an_existing_file_is_refused() {
+        let root = scratch("rename");
+        std::fs::write(root.join("a.txt"), b"a").unwrap();
+        std::fs::write(root.join("b.txt"), b"b").unwrap();
+
+        let mut app = crate::app::App::new(None).expect("App::new");
+        let mut state = FileTreeState::new(root.clone());
+        state.pending_op = Some(FileTreePendingOp::Rename {
+            from: root.join("a.txt"),
+        });
+        app.file_tree = Some(state);
+        app.finish_file_tree_rename("b.txt".into());
+
+        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"a");
+        assert_eq!(std::fs::read(root.join("b.txt")).unwrap(), b"b");
+        assert!(app.status_msg.contains("already exists"));
 
         std::fs::remove_dir_all(&root).unwrap();
     }
