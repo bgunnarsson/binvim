@@ -37,7 +37,7 @@ and the Windows deferrals listed under Out of scope.
   evidence's weakest row (`docs/solutions/conventions/an-audit-guarantee-is-read-from-the-code-not-from-the-lore-that-describes-it.md`).
 - binvim.dev lives in the sibling repo binvim-web and deploys by hand from Dokploy.
 - Release archives are already cosign-signed (`.github/workflows/release.yml`);
-  Authenticode is the separate question in ticket 03.
+  the Windows binary itself is not Authenticode-signed (ticket 03).
 - State as charted: brew, scoop (`bucket/binvim.json`), nix, crates and curl
   exist; winget, AUR and .deb do not. No benchmark, budget or demo recording
   exists. Only Go and Python have LSP + debugger + formatter + tree-sitter all
@@ -52,6 +52,7 @@ and the Windows deferrals listed under Out of scope.
 - [08](08-starting-kernels-other-than-python.md): the Python bridge stays and starts a non-Python kernel by `metadata.kernelspec.name` through the stock `KernelSpecManager`.
 - [01](01-which-stacks-are-supported-for-zero-config.md): 1.0 promises six stacks, Rust, Go, Python, C/C++, C#/.NET and TypeScript/JavaScript (with HTML, CSS and JSON), each with LSP + debugger + formatter + tree-sitter installed from the first-run prompt with no manual step on macOS, Linux and Windows, shown by a scripted fresh-environment run per stack per OS; every other language is "also works", outside the promise.
 - [02](02-what-the-correctness-matrix-is.md): The correctness matrix is `docs/correctness.md`, eight hostile inputs by six areas, and a cell is green only when a named `cargo test` test (an example or a proptest property) covers that input in that area, or it is marked n/a with a reason; settled with the user 2026-10-03.
+- [03](03-authenticode-signing-for-windows.md): 1.0 ships the Windows binary unsigned, with the SmartScreen warning documented; signing is held off, settled with the user 2026-10-03.
 
 ## Not yet specified
 
@@ -62,7 +63,6 @@ and the Windows deferrals listed under Out of scope.
 - Closing or accepting the no-cache-directory recovery gap: waits on 10.
 - The budget numbers and the benchmark page: waits on 11's first numbers.
 - Building each distribution channel, and the winget submission: waits on 12.
-- Wiring Authenticode into `release.yml`: waits on 03.
 - Building and placing the demo recording: waits on 09.
 - Drawing image outputs on the notebook page, with the iTerm2 and half-block
   fallbacks: waits on 13.
@@ -71,10 +71,13 @@ and the Windows deferrals listed under Out of scope.
 - Full SCSS highlighting on Windows: waits on an upstream `tree-sitter-scss`
   release (1.0.1), then it is a one-line cfg removal (`docs/windows.md`).
 - The 1.0 release itself: the roadmap and README brought up to date (naming
-  the six promised stacks and the "also works" rest), the changelog, the tag. Waits on every ticket above.
+  the six promised stacks and the "also works" rest, and code-signing taken
+  out of the Distribution & trust workstream per 03), the changelog, the tag. Waits on every ticket above.
 
 ## Out of scope
 
+- Authenticode-signing the Windows binary, through any route: held off by the
+  user 2026-10-03; 1.0 documents the SmartScreen warning instead (ticket 03).
 - MSI / MSIX installer, PowerShell as the default shell, WSL path translation:
   deferred until asked (`docs/windows.md` §3), settled with the user 2026-10-03.
 - A plugin API, Lua, languages for the count, telemetry: the roadmap rules
