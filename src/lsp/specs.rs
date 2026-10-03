@@ -282,7 +282,7 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             ],
             initialization_options: Value::Null,
         }),
-        "py" | "pyi" => Some(ServerSpec {
+        "py" | "pyi" | "ipynb" => Some(ServerSpec {
             key: "pyright".into(),
             language_id: "python".into(),
             // basedpyright is a maintained fork some users prefer — try

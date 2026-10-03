@@ -946,6 +946,9 @@ impl super::App {
         let Some(path) = self.buffer.path.clone() else {
             return;
         };
+        let Some(text) = self.lsp_text() else {
+            return;
+        };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let attached = self.lsp.ensure_for_path(&path, &cwd);
         if let Some(dir) = self.lsp.skipped_root.take() {
@@ -957,12 +960,28 @@ impl super::App {
         if !attached {
             return;
         }
-        let text = self.buffer.rope.to_string();
         // Every attached server (primary + auxiliaries like Tailwind) needs
         // its own didOpen — each carries its own languageId, derived from
         // the spec for this path (not the client's stored one).
         self.lsp.did_open_all(&path, &text);
         self.last_sent_version.insert(path, self.buffer.version);
+    }
+
+    /// The active buffer's text as language servers see it. A notebook is
+    /// shown only its code, every other line emptied so positions need no
+    /// translation; a `.ipynb` showing its raw JSON isn't shown at all, since
+    /// pyright would read that JSON as Python.
+    pub(super) fn lsp_text(&self) -> Option<String> {
+        let text = self.buffer.rope.to_string();
+        if self.buffer.is_notebook() {
+            return Some(crate::notebook::lsp_view(&text));
+        }
+        let raw_notebook = self
+            .buffer
+            .path
+            .as_deref()
+            .is_some_and(crate::buffer::is_notebook_path);
+        (!raw_notebook).then_some(text)
     }
 
     /// Force-flush the active buffer to every attached LSP. Used right
@@ -983,11 +1002,13 @@ impl super::App {
         if last == self.buffer.version {
             return;
         }
+        let Some(text) = self.lsp_text() else {
+            return;
+        };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         if !self.lsp.ensure_for_path(&path, &cwd) {
             return;
         }
-        let text = self.buffer.rope.to_string();
         if last == u64::MAX {
             self.lsp.did_open_all(&path, &text);
         } else {
@@ -2842,6 +2863,20 @@ fn subsequence_match(hay: &str, needle: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_notebook_shows_language_servers_only_its_code_lines() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer.path = Some(std::path::PathBuf::from("/nb.ipynb"));
+        let text = "# %% id=a\n%time x\nimport os\n# %% [markdown] id=b\n# Title\n";
+        app.buffer.replace_all(text);
+        // Raw JSON in a .ipynb would read as broken Python.
+        assert_eq!(app.lsp_text(), None);
+        app.buffer.notebook = Some(crate::notebook::empty_notebook());
+        let shown = app.lsp_text().unwrap();
+        assert_eq!(shown, "\n\nimport os\n\n\n");
+        assert_eq!(shown.lines().count(), text.lines().count());
+    }
 
     // A save that fails partway must fail the batch — the server's
     // applyEdit reply depends on it — and still put the user back on the
