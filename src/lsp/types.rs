@@ -70,12 +70,9 @@ pub enum MessageSeverity {
     Log,
 }
 
-/// One decoded semantic token. Coordinates are 0-based; `length` is
-/// the LSP `length` field in UTF-16 code units — same encoding the
-/// server emitted, kept opaque here. The renderer translates against
-/// the buffer's char count by treating each unit as one char (which
-/// matches the spec for ASCII / most identifiers — multi-codeunit
-/// emoji in identifiers is a rare edge we accept misalignment on).
+/// One decoded semantic token. Coordinates are 0-based chars;
+/// `parse_semantic_tokens_response` yields the server's units and the
+/// manager converts `start_col` / `length` before the event leaves it.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SemanticToken {

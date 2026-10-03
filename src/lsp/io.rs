@@ -9,6 +9,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 
 use super::client::{InitState, SemanticTokensLegend};
+use super::position::PositionEncoding;
 use super::types::{Diagnostic, DiagnosticsMessage, LspIncoming, MessageSeverity, Severity};
 
 #[allow(clippy::too_many_arguments)]
@@ -20,6 +21,7 @@ pub(super) fn reader_loop(
     code_lens_provider: Arc<Mutex<bool>>,
     code_lens_resolve_provider: Arc<Mutex<bool>>,
     workspace_folders_supported: Arc<Mutex<bool>>,
+    position_encoding: Arc<Mutex<PositionEncoding>>,
     tx: Sender<LspIncoming>,
 ) {
     let mut reader = BufReader::new(stdout);
@@ -54,6 +56,7 @@ pub(super) fn reader_loop(
             &code_lens_provider,
             &code_lens_resolve_provider,
             &workspace_folders_supported,
+            &position_encoding,
             &tx,
         );
     }
@@ -68,6 +71,7 @@ fn dispatch(
     code_lens_provider: &Arc<Mutex<bool>>,
     code_lens_resolve_provider: &Arc<Mutex<bool>>,
     workspace_folders_supported: &Arc<Mutex<bool>>,
+    position_encoding: &Arc<Mutex<PositionEncoding>>,
     tx: &Sender<LspIncoming>,
 ) {
     // Server-to-client request: has both `id` and `method`. Auto-reply so the server
@@ -120,6 +124,7 @@ fn dispatch(
                 if extract_workspace_folders_supported(&result) {
                     *workspace_folders_supported.lock().unwrap() = true;
                 }
+                *position_encoding.lock().unwrap() = PositionEncoding::from_init_result(&result);
                 let frames = match std::mem::replace(&mut *g, InitState::Ready) {
                     InitState::Buffering(f) => f,
                     InitState::Ready => Vec::new(),

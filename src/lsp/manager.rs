@@ -2,6 +2,7 @@
 //! across the clients attached to a path, and routes responses back to the
 //! main thread as `LspEvent`s.
 
+use ropey::Rope;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ use super::parse::{
     parse_hover_response, parse_locations_response, parse_signature_help_response,
     parse_symbols_response,
 };
+use super::position::{Direction, PosConv};
 use super::specs::{find_workspace_root, resolve_command, specs_for_path};
 use super::types::{
     ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming, path_to_uri, uri_to_path,
@@ -21,10 +23,17 @@ use super::types::{
 pub(super) enum PendingRequest {
     GotoDef,
     Hover,
-    Completion,
+    /// Completion and document-symbol replies carry bare ranges, which
+    /// belong to the requesting document — the path is what their columns
+    /// are converted against.
+    Completion {
+        path: PathBuf,
+    },
     SignatureHelp,
     References,
-    DocumentSymbols,
+    DocumentSymbols {
+        path: PathBuf,
+    },
     WorkspaceSymbols,
     CodeActions,
     Rename,
@@ -122,6 +131,10 @@ pub struct LspManager {
     /// without the cap, a binary that execs and exits turned the
     /// exit-detect → re-attach cycle into ~10 spawns a second, forever.
     crash_counts: HashMap<String, u32>,
+    /// The text last sent to the servers per path — what a server counted
+    /// a position's `character` against, so columns convert between its
+    /// encoding and chars against the same line.
+    docs: HashMap<PathBuf, Rope>,
 }
 
 /// How long a server must survive for its next crash to count as fresh
@@ -168,6 +181,7 @@ impl LspManager {
             skipped_root: None,
             crashed: Vec::new(),
             crash_counts: HashMap::new(),
+            docs: HashMap::new(),
         }
     }
 
@@ -352,7 +366,7 @@ impl LspManager {
             "textDocument/inlineCompletion",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col },
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) },
                 "context": { "triggerKind": 2 },
             }),
         );
@@ -466,13 +480,44 @@ impl LspManager {
                             // diagnostics for those extensions; completions
                             // and hover still flow through.
                             if !suppress_diagnostics_from(client_key, &path) {
-                                self.diagnostics.insert(path, d.diagnostics);
+                                let mut diags = d.diagnostics;
+                                let mut conv = PosConv::new(client.position_encoding(), &self.docs);
+                                if !conv.is_identity() {
+                                    for diag in &mut diags {
+                                        diag.col =
+                                            conv.col(&path, diag.line, diag.col, Direction::ToChar);
+                                        diag.end_col = conv.col(
+                                            &path,
+                                            diag.end_line,
+                                            diag.end_col,
+                                            Direction::ToChar,
+                                        );
+                                    }
+                                }
+                                self.diagnostics.insert(path, diags);
                                 diagnostics_changed = true;
                             }
                         }
                     }
-                    LspIncoming::Response { id, result } => {
+                    LspIncoming::Response { id, mut result } => {
                         if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
+                            let mut conv = PosConv::new(client.position_encoding(), &self.docs);
+                            match &req {
+                                // Lenses are placed by line only, and a
+                                // resolve sends the lens back verbatim.
+                                PendingRequest::CodeLens { .. }
+                                | PendingRequest::CodeLensResolve { .. } => {}
+                                PendingRequest::SemanticTokens { .. } => {}
+                                _ => conv.convert_value(
+                                    &mut result,
+                                    pending_doc_path(&req),
+                                    Direction::ToChar,
+                                ),
+                            }
+                            let token_path = match &req {
+                                PendingRequest::SemanticTokens { path, .. } => Some(path.clone()),
+                                _ => None,
+                            };
                             // Some replies (SemanticTokens) need the
                             // client's legend to decode — snapshot it
                             // here while we still have a `&LspClient`
@@ -482,7 +527,26 @@ impl LspManager {
                                 .lock()
                                 .ok()
                                 .and_then(|g| g.clone());
-                            if let Some(ev) = handle_response(req, &result, legend.as_ref()) {
+                            if let Some(mut ev) = handle_response(req, &result, legend.as_ref()) {
+                                // Token columns are packed deltas, so they
+                                // convert only once decoded.
+                                if let (Some(path), LspEvent::SemanticTokens { tokens, .. }) =
+                                    (token_path, &mut ev)
+                                    && !conv.is_identity()
+                                {
+                                    for t in tokens.iter_mut() {
+                                        let start =
+                                            conv.col(&path, t.line, t.start_col, Direction::ToChar);
+                                        let end = conv.col(
+                                            &path,
+                                            t.line,
+                                            t.start_col + t.length,
+                                            Direction::ToChar,
+                                        );
+                                        t.start_col = start;
+                                        t.length = end.saturating_sub(start);
+                                    }
+                                }
                                 events.push(ev);
                             }
                         }
@@ -494,7 +558,12 @@ impl LspManager {
                             events.push(LspEvent::RequestFailed { kind, path });
                         }
                     }
-                    LspIncoming::ApplyEditRequest { id, edit } => {
+                    LspIncoming::ApplyEditRequest { id, mut edit } => {
+                        PosConv::new(client.position_encoding(), &self.docs).convert_value(
+                            &mut edit,
+                            None,
+                            Direction::ToChar,
+                        );
                         events.push(LspEvent::ApplyEditRequest {
                             client_key: client_key.clone(),
                             id,
@@ -576,7 +645,8 @@ impl LspManager {
         self.diagnostics.get(&canon)
     }
 
-    pub fn did_change_all(&self, path: &Path, version: u64, text: &str) {
+    pub fn did_change_all(&mut self, path: &Path, version: u64, text: &str) {
+        self.docs.insert(path.to_path_buf(), Rope::from_str(text));
         for client in self.clients.values() {
             let _ = client.did_change(path, version, text);
         }
@@ -588,7 +658,8 @@ impl LspManager {
     /// what lets one shared `typescript-language-server` instance serve
     /// both `.ts` (`typescript`) and `.tsx` (`typescriptreact`)
     /// correctly.
-    pub fn did_open_all(&self, path: &Path, text: &str) {
+    pub fn did_open_all(&mut self, path: &Path, text: &str) {
+        self.docs.insert(path.to_path_buf(), Rope::from_str(text));
         for spec in self.specs_for(path) {
             if let Some(client) = self.clients.get(&spec.key) {
                 let _ = client.did_open(path, text, &spec.language_id);
@@ -641,7 +712,7 @@ impl LspManager {
             "textDocument/definition",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col }
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) }
             }),
         );
         self.pending
@@ -659,7 +730,7 @@ impl LspManager {
             "textDocument/hover",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col }
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) }
             }),
         );
         self.pending
@@ -692,7 +763,7 @@ impl LspManager {
                 "textDocument/completion",
                 json!({
                     "textDocument": { "uri": path_to_uri(path) },
-                    "position": { "line": line, "character": col },
+                    "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) },
                     "context": context,
                 }),
             );
@@ -700,7 +771,12 @@ impl LspManager {
         }
         let any = !sent.is_empty();
         for k in sent {
-            self.pending.insert(k, PendingRequest::Completion);
+            self.pending.insert(
+                k,
+                PendingRequest::Completion {
+                    path: path.to_path_buf(),
+                },
+            );
         }
         any
     }
@@ -716,7 +792,7 @@ impl LspManager {
             "textDocument/rename",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col },
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) },
                 "newName": new_name,
             }),
         );
@@ -733,11 +809,16 @@ impl LspManager {
         path: &Path,
         line: usize,
         col: usize,
-        diagnostics: Vec<Value>,
+        mut diagnostics: Vec<Value>,
     ) -> bool {
         let Some(client) = self.client_for_path(path) else {
             return false;
         };
+        let mut conv = PosConv::new(client.position_encoding(), &self.docs);
+        let wire = conv.col(path, line, col, Direction::ToWire);
+        for d in &mut diagnostics {
+            conv.convert_value(d, Some(path), Direction::ToWire);
+        }
         let id = client.alloc_id();
         let _ = client.send_request(
             id,
@@ -745,8 +826,8 @@ impl LspManager {
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
                 "range": {
-                    "start": { "line": line, "character": col },
-                    "end":   { "line": line, "character": col },
+                    "start": { "line": line, "character": wire },
+                    "end":   { "line": line, "character": wire },
                 },
                 "context": {
                     "diagnostics": diagnostics,
@@ -770,8 +851,12 @@ impl LspManager {
             "textDocument/documentSymbol",
             json!({ "textDocument": { "uri": path_to_uri(path) } }),
         );
-        self.pending
-            .insert((client.name.clone(), id), PendingRequest::DocumentSymbols);
+        self.pending.insert(
+            (client.name.clone(), id),
+            PendingRequest::DocumentSymbols {
+                path: path.to_path_buf(),
+            },
+        );
         true
     }
 
@@ -824,7 +909,7 @@ impl LspManager {
             "textDocument/references",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col },
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) },
                 "context": { "includeDeclaration": true },
             }),
         );
@@ -853,7 +938,7 @@ impl LspManager {
             "textDocument/documentHighlight",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col },
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) },
             }),
         );
         self.pending.insert(
@@ -1017,7 +1102,7 @@ impl LspManager {
             "textDocument/signatureHelp",
             json!({
                 "textDocument": { "uri": path_to_uri(path) },
-                "position": { "line": line, "character": col }
+                "position": { "line": line, "character": wire_col(&self.docs, client, path, line, col) }
             }),
         );
         self.pending
@@ -1035,6 +1120,30 @@ impl LspManager {
 /// `RequestFailed` event so the App can free the right in-flight
 /// throttle slot. Returns `None` for kinds whose pending entry
 /// doesn't carry a path.
+/// The document a reply's bare ranges (those with no `uri` of their own)
+/// belong to.
+fn pending_doc_path(req: &PendingRequest) -> Option<&Path> {
+    match req {
+        PendingRequest::Completion { path }
+        | PendingRequest::DocumentSymbols { path }
+        | PendingRequest::InlayHints { path }
+        | PendingRequest::DocumentHighlight { path, .. }
+        | PendingRequest::CopilotInline { path, .. } => Some(path),
+        _ => None,
+    }
+}
+
+/// A position's column in `client`'s encoding, from a char column.
+fn wire_col(
+    docs: &HashMap<PathBuf, Rope>,
+    client: &LspClient,
+    path: &Path,
+    line: usize,
+    col: usize,
+) -> usize {
+    PosConv::new(client.position_encoding(), docs).col(path, line, col, Direction::ToWire)
+}
+
 fn pending_request_path(req: &PendingRequest) -> Option<PathBuf> {
     match req {
         PendingRequest::InlayHints { path } => Some(path.clone()),
@@ -1054,10 +1163,10 @@ fn pending_request_kind(req: &PendingRequest) -> &'static str {
     match req {
         PendingRequest::GotoDef => "GotoDef",
         PendingRequest::Hover => "Hover",
-        PendingRequest::Completion => "Completion",
+        PendingRequest::Completion { .. } => "Completion",
         PendingRequest::SignatureHelp => "SignatureHelp",
         PendingRequest::References => "References",
-        PendingRequest::DocumentSymbols => "DocumentSymbols",
+        PendingRequest::DocumentSymbols { .. } => "DocumentSymbols",
         PendingRequest::WorkspaceSymbols => "WorkspaceSymbols",
         PendingRequest::CodeActions => "CodeActions",
         PendingRequest::Rename => "Rename",
@@ -1098,7 +1207,7 @@ fn handle_response(
             Some(text) => Some(LspEvent::Hover { text }),
             None => Some(LspEvent::NotFound("hover")),
         },
-        PendingRequest::Completion => {
+        PendingRequest::Completion { .. } => {
             let items = parse_completion_response(result);
             if items.is_empty() {
                 Some(LspEvent::NotFound("completions"))
@@ -1118,7 +1227,7 @@ fn handle_response(
                 Some(LspEvent::References { items })
             }
         }
-        PendingRequest::DocumentSymbols => {
+        PendingRequest::DocumentSymbols { .. } => {
             let items = parse_symbols_response(result);
             if items.is_empty() {
                 Some(LspEvent::NotFound("symbols"))

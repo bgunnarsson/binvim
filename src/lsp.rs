@@ -9,11 +9,13 @@
 //! - [`io`]: reader-thread loop and JSON-RPC dispatcher
 //! - [`manager`]: fan-out across clients, route responses to `LspEvent`s
 //! - [`parse`]: pure response parsers
+//! - [`position`]: column conversion to and from the server's position encoding
 
 mod client;
 mod io;
 mod manager;
 mod parse;
+mod position;
 mod specs;
 mod types;
 

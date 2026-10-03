@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use super::io::reader_loop;
+use super::position::PositionEncoding;
 use super::specs::{ServerSpec, resolve_command};
 use super::types::{LspIncoming, MessageSeverity, path_to_uri};
 
@@ -71,6 +72,10 @@ pub struct LspClient {
     /// rust-analyzer / tsserver / gopls all support this; some
     /// niche servers don't.
     pub workspace_folders_supported: Arc<Mutex<bool>>,
+    /// `serverCapabilities.positionEncoding`, captured from the
+    /// `initialize` response. UTF-16 until then, which is also what a
+    /// server that doesn't answer means.
+    pub position_encoding: Arc<Mutex<PositionEncoding>>,
 }
 
 /// Decoded `semanticTokensProvider.legend` from the server's
@@ -115,6 +120,8 @@ impl LspClient {
         let code_lens_resolve_for_reader = code_lens_resolve_provider.clone();
         let workspace_folders_supported: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
         let folders_supported_for_reader = workspace_folders_supported.clone();
+        let position_encoding: Arc<Mutex<PositionEncoding>> = Arc::default();
+        let encoding_for_reader = position_encoding.clone();
         let in_tx_for_reader = in_tx.clone();
         thread::spawn(move || {
             reader_loop(
@@ -125,6 +132,7 @@ impl LspClient {
                 code_lens_for_reader,
                 code_lens_resolve_for_reader,
                 folders_supported_for_reader,
+                encoding_for_reader,
                 in_tx_for_reader,
             );
         });
@@ -166,6 +174,7 @@ impl LspClient {
             code_lens_resolve_provider,
             workspace_folders: Arc::new(Mutex::new(vec![root.to_path_buf()])),
             workspace_folders_supported,
+            position_encoding,
         };
 
         // Send initialize directly (bypassing the queue gate, which only holds
@@ -184,7 +193,7 @@ impl LspClient {
                 "initializationOptions": spec.initialization_options,
                 "capabilities": {
                     "general": {
-                        "positionEncodings": ["utf-8", "utf-16"]
+                        "positionEncodings": ["utf-32", "utf-8", "utf-16"]
                     },
                     "textDocument": {
                         "synchronization": {
@@ -337,6 +346,10 @@ impl LspClient {
 
     pub fn supports_workspace_folders(&self) -> bool {
         *self.workspace_folders_supported.lock().unwrap()
+    }
+
+    pub fn position_encoding(&self) -> PositionEncoding {
+        *self.position_encoding.lock().unwrap()
     }
 
     /// Has the server process exited? Non-blocking — `Some(code)` once the
