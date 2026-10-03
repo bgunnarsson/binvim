@@ -3,6 +3,43 @@
 //! everything here is a text edit and undoes like one.
 
 impl super::App {
+    /// `]c` / `[c`: to the header of the `count`th cell below / above the
+    /// one the cursor is in, stopping at the first or last cell.
+    pub(super) fn cell_jump(&mut self, forward: bool, count: usize) {
+        if !self.buffer.is_notebook() {
+            self.status_msg = "not a notebook".into();
+            return;
+        }
+        let spans = crate::notebook::cell_spans(&self.buffer.rope);
+        let Some(here) = crate::notebook::span_at(&spans, self.window.cursor.line) else {
+            return;
+        };
+        // Inside a cell, `[c` first goes to that cell's own header, the way
+        // `[[` goes to the start of the section it's in.
+        let at_start = self.window.cursor.line == spans[here].start();
+        let target = if forward {
+            (here + count).min(spans.len() - 1)
+        } else if at_start {
+            here.saturating_sub(count)
+        } else {
+            here.saturating_sub(count - 1)
+        };
+        let line = spans[target].start();
+        if line == self.window.cursor.line {
+            self.status_msg = if forward {
+                "no more cells below".into()
+            } else {
+                "no more cells above".into()
+            };
+            return;
+        }
+        self.push_jump();
+        self.window.cursor.line = line;
+        self.window.cursor.col = 0;
+        self.window.cursor.want_col = 0;
+        self.clamp_cursor_normal();
+    }
+
     /// Give every cell header its own id before a save, as one undo step.
     /// A pasted cell repeats its source's id and a typed `# %%` has none;
     /// rewriting them here, rather than only in the JSON, keeps the buffer
@@ -67,6 +104,24 @@ mod tests {
         assert_eq!(file_ids, buffer_ids);
         press(&mut app, "u");
         assert_eq!(app.buffer.rope.to_string(), pasted);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn bracket_c_walks_cell_headers() {
+        let (dir, mut app) = open("jump");
+        app.buffer
+            .replace_all("# %% id=a\nx\n# %% id=b\ny\ny\n# %% id=c\nz\n");
+        press(&mut app, "]c");
+        assert_eq!(app.window.cursor.line, 2);
+        press(&mut app, "j[c");
+        assert_eq!(app.window.cursor.line, 2);
+        press(&mut app, "[c");
+        assert_eq!(app.window.cursor.line, 0);
+        press(&mut app, "5]c");
+        assert_eq!(app.window.cursor.line, 5);
+        press(&mut app, "]c");
+        assert_eq!(app.status_msg, "no more cells below");
         std::fs::remove_dir_all(&dir).ok();
     }
 

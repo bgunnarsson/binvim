@@ -70,6 +70,7 @@ pub fn compute(buf: &Buffer, cur: Cursor, obj: TextObjectVerb) -> Option<TextRan
         TextObjectVerb::Tag { inner } => tag(buf, cur, inner, 1),
         TextObjectVerb::Argument { inner } => argument(buf, cur, inner, 1),
         TextObjectVerb::Function { inner } => syntax_object(buf, cur, false, inner, 1),
+        TextObjectVerb::Class { inner } if buf.is_notebook() => cell(buf, cur, inner),
         TextObjectVerb::Class { inner } => syntax_object(buf, cur, true, inner, 1),
         TextObjectVerb::SearchMatch { .. } => None,
     }
@@ -116,6 +117,7 @@ pub fn compute_counted(
         TextObjectVerb::Tag { inner } => tag(buf, cur, inner, count),
         TextObjectVerb::Argument { inner } => argument(buf, cur, inner, count),
         TextObjectVerb::Function { inner } => syntax_object(buf, cur, false, inner, count),
+        TextObjectVerb::Class { .. } if buf.is_notebook() => Some(first),
         TextObjectVerb::Class { inner } => syntax_object(buf, cur, true, inner, count),
         TextObjectVerb::SearchMatch { .. } => Some(first),
     }
@@ -222,6 +224,19 @@ fn line_span(buf: &Buffer, first: usize, last: usize) -> TextRange {
         end: buf.line_start_idx(last + 1),
         linewise: true,
     }
+}
+
+/// In a notebook, `ic` / `ac` are the cell around the cursor: its source
+/// lines, or those and its header. The cell is what a notebook is edited
+/// in, so it takes the keys over a class.
+fn cell(buf: &Buffer, cur: Cursor, inner: bool) -> Option<TextRange> {
+    let spans = crate::notebook::cell_spans(&buf.rope);
+    let span = &spans[crate::notebook::span_at(&spans, cur.line)?];
+    let first = if inner { span.body.start } else { span.start() };
+    if span.body.end <= first {
+        return None;
+    }
+    Some(line_span(buf, first, span.body.end - 1))
 }
 
 /// `ip` is the run of lines around the cursor — the paragraph, or the blank
@@ -1433,6 +1448,56 @@ mod tests {
     const F_OUT: TextObjectVerb = TextObjectVerb::Function { inner: false };
     const C_IN: TextObjectVerb = TextObjectVerb::Class { inner: true };
     const C_OUT: TextObjectVerb = TextObjectVerb::Class { inner: false };
+
+    fn cell_text(s: &str, line: usize, obj: TextObjectVerb, notebook: bool) -> Option<String> {
+        let mut b = buf(s);
+        b.path = Some(std::path::PathBuf::from(if notebook {
+            "x.ipynb"
+        } else {
+            "x.py"
+        }));
+        if notebook {
+            b.notebook = Some(crate::notebook::empty_notebook());
+        }
+        let r = compute(&b, cur(line, 0), obj)?;
+        assert_eq!(r.linewise, notebook);
+        Some(b.rope.slice(r.start..r.end).to_string())
+    }
+
+    #[test]
+    fn notebook_cells_are_the_class_object() {
+        let s = "# %% id=a\nx = 1\ny = 2\n# %% [markdown] id=b\n\n# %% id=c\nclass K:\n    v = 1\n";
+        // First cell, from its header and from a source line.
+        assert_eq!(
+            cell_text(s, 0, C_IN, true).as_deref(),
+            Some("x = 1\ny = 2\n")
+        );
+        assert_eq!(
+            cell_text(s, 2, C_OUT, true).as_deref(),
+            Some("# %% id=a\nx = 1\ny = 2\n")
+        );
+        // An empty middle cell is its one empty line.
+        assert_eq!(cell_text(s, 4, C_IN, true).as_deref(), Some("\n"));
+        assert_eq!(
+            cell_text(s, 3, C_OUT, true).as_deref(),
+            Some("# %% [markdown] id=b\n\n")
+        );
+        // The last cell, holding a class: the cell wins.
+        assert_eq!(
+            cell_text(s, 7, C_IN, true).as_deref(),
+            Some("class K:\n    v = 1\n")
+        );
+        assert_eq!(
+            cell_text(s, 7, C_OUT, true).as_deref(),
+            Some("# %% id=c\nclass K:\n    v = 1\n")
+        );
+    }
+
+    #[test]
+    fn a_python_file_keeps_ic_as_the_class() {
+        let s = "class K:\n    v = 1\n";
+        assert_eq!(cell_text(s, 1, C_IN, false).as_deref(), Some("v = 1"));
+    }
 
     #[test]
     fn syntax_objects_in_rust() {

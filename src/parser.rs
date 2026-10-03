@@ -487,6 +487,11 @@ pub enum Action {
         forward: bool,
         count: usize,
     },
+    /// `]c` / `[c` — to the next / previous notebook cell's header.
+    CellJump {
+        forward: bool,
+        count: usize,
+    },
     /// `]q` — jump to the next entry in the quickfix list.
     QuickfixNext,
     /// `[q` — jump to the previous entry in the quickfix list.
@@ -1316,6 +1321,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
                 forward: true,
                 count,
             }),
+            'c' => ParseResult::Action(Action::CellJump {
+                forward: true,
+                count,
+            }),
             'h' => ParseResult::Action(Action::HunkNext),
             's' => ParseResult::Action(Action::SpellNext),
             // `]p` puts below at the cursor line's indent, `]P` above.
@@ -1353,6 +1362,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
         return match ch {
             'q' => ParseResult::Action(Action::QuickfixPrev),
             'd' => ParseResult::Action(Action::DiagnosticJump {
+                forward: false,
+                count,
+            }),
+            'c' => ParseResult::Action(Action::CellJump {
                 forward: false,
                 count,
             }),
@@ -2831,6 +2844,20 @@ mod tests {
             last = parse(state, *k, ParseCtx::Normal);
         }
         last
+    }
+
+    #[test]
+    fn bracket_c_jumps_between_cells_with_a_count() {
+        for (input, want_forward, want_count) in
+            [("]c", true, 1), ("3]c", true, 3), ("[c", false, 1)]
+        {
+            match drive(&mut PendingCmd::default(), &keys(input)) {
+                ParseResult::Action(Action::CellJump { forward, count }) => {
+                    assert_eq!((forward, count), (want_forward, want_count), "{input}");
+                }
+                _ => panic!("{input} did not produce CellJump"),
+            }
+        }
     }
 
     #[test]
