@@ -116,7 +116,7 @@ impl Lang {
                 "md" | "markdown" => return Some(Lang::Markdown),
                 "cs" => return Some(Lang::CSharp),
                 "sh" | "bash" | "zsh" | "ksh" => return Some(Lang::Bash),
-                "py" | "pyi" => return Some(Lang::Python),
+                "py" | "pyi" | "ipynb" => return Some(Lang::Python),
                 "c" | "h" => return Some(Lang::C),
                 "cc" | "cpp" | "cxx" | "hh" | "hpp" | "hxx" | "c++" | "h++" => {
                     return Some(Lang::Cpp);
@@ -825,14 +825,52 @@ pub struct HighlightCache {
     pub byte_colors: Vec<Option<Color>>,
 }
 
+/// The language `buf` is highlighted as. A `.ipynb` that didn't open as a
+/// notebook is showing its raw JSON.
+pub fn highlight_lang(buf: &Buffer) -> Option<Lang> {
+    let lang = Lang::detect(buf.path.as_deref()?)?;
+    if lang == Lang::Python
+        && buf.notebook.is_none()
+        && buf
+            .path
+            .as_deref()
+            .is_some_and(crate::buffer::is_notebook_path)
+    {
+        return Some(Lang::Json);
+    }
+    Some(lang)
+}
+
 pub fn compute_highlights(lang: Lang, buf: &Buffer, config: &Config) -> Option<HighlightCache> {
     let source = buf.rope.to_string();
-    let colors = compute_byte_colors(lang, &source, config)?;
+    let colors = if buf.notebook.is_some() {
+        notebook_byte_colors(&source, config)?
+    } else {
+        compute_byte_colors(lang, &source, config)?
+    };
     Some(HighlightCache {
         lang,
         buffer_version: buf.version,
         byte_colors: colors,
     })
+}
+
+/// A notebook's colours: each cell type highlighted on its own, over text
+/// with every other cell blanked, so markdown prose never reads as Python.
+/// Blanking keeps byte offsets, so the two maps line up byte for byte.
+fn notebook_byte_colors(source: &str, config: &Config) -> Option<Vec<Option<Color>>> {
+    use crate::notebook::{CellKind, masked};
+    let mut colors = compute_byte_colors(Lang::Python, &masked(source, CellKind::Code), config)?;
+    if let Some(md) =
+        compute_byte_colors(Lang::Markdown, &masked(source, CellKind::Markdown), config)
+    {
+        for (c, m) in colors.iter_mut().zip(md) {
+            if c.is_none() {
+                *c = m;
+            }
+        }
+    }
+    Some(colors)
 }
 
 /// Wall-clock ceiling on one tree-sitter pass — a parse, the highlight query
@@ -1797,6 +1835,26 @@ mod tests {
         bytes.extend_from_slice(text.as_bytes());
         std::fs::write(&path, bytes).expect("write fixture");
         path
+    }
+
+    #[test]
+    fn notebook_cells_highlight_as_their_own_type() {
+        let mut buf = crate::buffer::Buffer::empty();
+        buf.path = Some(std::path::PathBuf::from("/nb.ipynb"));
+        buf.replace_all("# %%\ndef f(): pass\n# %% [markdown]\ndef is prose here\n");
+        let cfg = Config::default();
+        let keyword = compute_byte_colors(Lang::Python, "def", &cfg).unwrap()[0];
+        assert!(keyword.is_some());
+        // Without notebook state the file is its raw JSON.
+        assert_eq!(highlight_lang(&buf), Some(Lang::Json));
+        buf.notebook = Some(crate::notebook::empty_notebook());
+        assert_eq!(highlight_lang(&buf), Some(Lang::Python));
+        let cache = compute_highlights(Lang::Python, &buf, &cfg).unwrap();
+        let source = buf.rope.to_string();
+        let code_def = source.find("def f").unwrap();
+        let prose_def = source.find("def is").unwrap();
+        assert_eq!(cache.byte_colors[code_def], keyword);
+        assert_ne!(cache.byte_colors[prose_def], keyword);
     }
 
     /// End-to-end: load a Razor view from disk the way the editor does

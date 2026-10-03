@@ -115,11 +115,7 @@ impl super::App {
             if i == self.active || stash.highlight_cache.is_none() {
                 continue;
             }
-            let lang = stash
-                .buffer
-                .path
-                .as_deref()
-                .and_then(crate::lang::Lang::detect);
+            let lang = crate::lang::highlight_lang(&stash.buffer);
             stash.highlight_cache =
                 lang.and_then(|l| crate::lang::compute_highlights(l, &stash.buffer, &self.config));
         }

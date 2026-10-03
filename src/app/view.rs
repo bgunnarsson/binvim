@@ -1080,7 +1080,7 @@ impl super::App {
             self.highlight_cache = None;
             return;
         }
-        let lang = self.buffer.path.as_deref().and_then(lang::Lang::detect);
+        let lang = lang::highlight_lang(&self.buffer);
         let need_refresh = match (&self.highlight_cache, lang) {
             (None, Some(_)) => true,
             (Some(c), Some(l)) => c.lang != l || c.buffer_version != self.buffer.version,
