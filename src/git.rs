@@ -283,9 +283,11 @@ pub fn unidiff_zero_hunk_for_line(
     }
     let text = String::from_utf8(output.stdout).ok()?;
 
-    // Find the hunk containing target_line in the new-side range.
+    // Find the hunk containing target_line in the new-side range. Split on
+    // `\n` rather than `lines()`, which would drop the `\r` of a CRLF
+    // file's diff lines and leave `git apply` unable to match them.
     let mut headers: Vec<(usize, usize, usize)> = Vec::new();
-    for (idx, line) in text.lines().enumerate() {
+    for (idx, line) in text.split('\n').enumerate() {
         if let Some(rest) = line.strip_prefix("@@ ") {
             let mut parts = rest.split_whitespace();
             let _old = parts.next();
@@ -305,7 +307,7 @@ pub fn unidiff_zero_hunk_for_line(
         if in_range {
             let next_idx = headers.get(i + 1).map(|&(j, _, _)| j);
             let body: Vec<&str> = text
-                .lines()
+                .split('\n')
                 .skip(idx)
                 .take(next_idx.map(|n| n - idx).unwrap_or(usize::MAX))
                 .collect();
@@ -323,7 +325,9 @@ pub fn build_patch(rel: &Path, hunk: &str) -> String {
     format!(
         "diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n{hunk}\n",
         path = path_str,
-        hunk = hunk.trim_end()
+        // Only the newlines: trailing whitespace is part of the last
+        // diff line's content.
+        hunk = hunk.trim_end_matches('\n')
     )
 }
 
@@ -498,6 +502,12 @@ fn parse_range(s: &str) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_keeps_the_last_lines_trailing_whitespace() {
+        let patch = build_patch(Path::new("a.txt"), "@@ -1,0 +2 @@\n+new   \r\n");
+        assert!(patch.ends_with("@@ -1,0 +2 @@\n+new   \r\n"));
+    }
 
     #[test]
     fn parses_pure_addition() {
