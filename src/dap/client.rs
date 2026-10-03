@@ -42,7 +42,11 @@ impl DapClient {
     /// drains stderr into a synthetic output channel so adapter crashes
     /// surface to the pane instead of disappearing.
     pub fn spawn_spec(spec: &DapAdapterSpec) -> Option<Self> {
-        let cmd_path = resolve_command(spec.cmd_candidates)?;
+        let cmd_path = spec
+            .cmd_first
+            .and_then(|first| first())
+            .map(|p| p.to_string_lossy().into_owned())
+            .or_else(|| resolve_command(spec.cmd_candidates))?;
         let mut command = Command::new(&cmd_path);
         for arg in spec.args {
             command.arg(arg);

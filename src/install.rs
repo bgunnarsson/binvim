@@ -72,10 +72,12 @@ pub enum Installer {
     /// `pipx install <pkg[==version]>` — pin syntax embedded in the
     /// package string.
     Pipx(&'static str),
-    /// `<python> -m pip install [--user] <pkg[==version]>`, run by the first
-    /// of [`PYTHON_CANDIDATES`] on `$PATH` — for a module (debugpy) that has to
-    /// land in the interpreter that imports it, which pipx's own venv isn't.
-    /// See [`python_module_args`] for when `--user` is left off. pip exits 0 on
+    /// `<venv>/bin/python -m pip install <pkg[==version]>` into a venv binvim
+    /// keeps for the module ([`module_venv`]), made first by the first of
+    /// [`PYTHON_CANDIDATES`] on `$PATH` with `-m venv` — for a module (debugpy)
+    /// that is run as `python -m <module>`, which pipx can't give. A venv of
+    /// binvim's own rather than `pip install --user`, because a Homebrew or
+    /// Debian 12+ Python refuses that outside a venv (PEP 668). pip exits 0 on
     /// an install that is already satisfied and on an `--upgrade` with nothing
     /// newer, so it needs no `is_noop_exit` arm. It installs into
     /// site-packages, never a directory on `$PATH`, so `installed_by` has no
@@ -310,6 +312,20 @@ impl Installer {
         Some(cmd)
     }
 
+    /// A command that has to succeed before [`build_command`](Self::build_command)
+    /// or [`upgrade_command`](Self::upgrade_command) can run: the venv a
+    /// `PythonModule` installs into, when it isn't there yet.
+    pub fn setup_command(&self) -> Option<Command> {
+        let Installer::PythonModule(p) = self else {
+            return None;
+        };
+        let mut cmd = python_module_setup(p, false)?;
+        cmd.stdin(Stdio::inherit());
+        cmd.stdout(Stdio::inherit());
+        cmd.stderr(Stdio::inherit());
+        Some(cmd)
+    }
+
     /// Whether a non-zero exit from this installer means there was nothing to
     /// do. winget exits `UPDATE_NOT_APPLICABLE` when the package is already at
     /// its newest version: an upgrade with nothing newer, or an install of a
@@ -429,9 +445,10 @@ pub const BUNDLES: &[Bundle] = &[
         Tool { bin: "ruff", label: "ruff", role: Role::Formatter,
             installers: &[Installer::Pipx("ruff==0.15.13")] },
         // debugpy is a module, not a binary: `python3-debugpy` is only its key
-        // in the catalog, and `tool_installed` finds it by asking the
-        // `PYTHON_CANDIDATES` interpreter for the module. No pipx: its venv is one
-        // `python3 -m debugpy.adapter` can't import from. Un-pinned because
+        // in the catalog, and `tool_installed` finds it by asking binvim's venv
+        // for it (or the `PYTHON_CANDIDATES` interpreter, for an install made
+        // before the venv). No pipx: pipx exposes a package's scripts, and the
+        // adapter runs as `python -m debugpy.adapter`. Un-pinned because
         // binvim-web doesn't track a debugpy version.
         Tool { bin: "python3-debugpy", label: "debugpy", role: Role::Dap,
             installers: &[Installer::PythonModule("debugpy")] },
@@ -690,19 +707,23 @@ pub fn find_on_path(name: &str) -> Option<PathBuf> {
 }
 
 /// Where an installed tool was found, or `None` when it isn't installed. A
-/// tool pip installs as a module (debugpy) is asked of the interpreter that
-/// installs it and that the debug adapter runs, since it never lands on
-/// `$PATH`; the path returned is that interpreter's. The `PythonModule`
+/// tool pip installs as a module (debugpy) is asked of binvim's venv for it,
+/// then of the first of `PYTHON_CANDIDATES`, where an install made before the
+/// venv put it — the two interpreters the debug adapter may run, in the order
+/// it tries them; the path returned is that interpreter's. The `PythonModule`
 /// payload is taken as the import name, so a package whose pip name differs
 /// from its import name needs a field of its own.
 pub fn tool_installed(tool: &Tool) -> Option<PathBuf> {
-    tool_installed_with(tool, find_on_path, python_has_module)
+    tool_installed_with(tool, find_on_path, python_has_module, |m| {
+        module_venv(m).map(|v| venv_python(&v))
+    })
 }
 
 fn tool_installed_with(
     tool: &Tool,
     find: impl Fn(&str) -> Option<PathBuf>,
     has_module: impl Fn(&Path, &str) -> bool,
+    venv_python_for: impl Fn(&str) -> Option<PathBuf>,
 ) -> Option<PathBuf> {
     let module = tool.installers.iter().find_map(|i| match i {
         Installer::PythonModule(m) => Some(*m),
@@ -710,11 +731,36 @@ fn tool_installed_with(
     });
     match module {
         Some(module) => {
+            if let Some(py) = venv_python_for(module).filter(|py| has_module(py, module)) {
+                return Some(py);
+            }
             let (_, interp) = python_interpreter_with(find)?;
             has_module(&interp, module).then_some(interp)
         }
         None => find(tool.bin),
     }
+}
+
+/// The venv binvim installs a `PythonModule` into: `<data dir>/venvs/<pkg>`.
+pub fn module_venv(pkg: &str) -> Option<PathBuf> {
+    crate::paths::data_dir().map(|d| d.join("venvs").join(pkg))
+}
+
+/// The interpreter inside `venv`.
+pub fn venv_python(venv: &Path) -> PathBuf {
+    if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    }
+}
+
+/// binvim's venv interpreter for `module`, when the venv has it. The debug
+/// adapter runs this before falling back to `PYTHON_CANDIDATES`, so a venv
+/// whose pip step failed doesn't shadow an older working install.
+pub fn module_python(module: &str) -> Option<PathBuf> {
+    let py = venv_python(&module_venv(module)?);
+    (py.is_file() && python_has_module(&py, module)).then_some(py)
 }
 
 /// Whether `interp` can find `module`, without importing it and with the
@@ -787,60 +833,71 @@ fn python_interpreter_with(
         .find_map(|c| find(c).map(|path| (*c, path)))
 }
 
-/// The arguments after the interpreter for a `PythonModule` step. `--user` is
-/// left off when `interp` sits inside the active venv or conda environment:
-/// pip refuses `--user` there, and the adapter runs that same interpreter, so
-/// the environment is where the module belongs. A variable left set whose
-/// prefix doesn't hold `interp` keeps `--user`.
-pub fn python_module_args(
-    interp: &Path,
-    virtual_env: Option<&Path>,
-    conda_prefix: Option<&Path>,
+/// The commands a `PythonModule` step runs, in order: `<base> -m venv <venv>`
+/// when the venv's interpreter isn't there yet (a missing venv, or one whose
+/// base Python was upgraded away from under it, which `-m venv` repairs),
+/// then pip from the venv. With no data directory to keep a venv in, pip from
+/// `base` with `--user`.
+fn python_module_steps(
+    base: &str,
+    venv: Option<&Path>,
+    venv_ready: bool,
     pkg: &str,
     upgrade: bool,
-) -> Vec<String> {
-    let in_env = [virtual_env, conda_prefix]
-        .into_iter()
-        .flatten()
-        .any(|prefix| !prefix.as_os_str().is_empty() && interp.starts_with(prefix));
-    let mut args = vec!["-m", "pip", "install"];
-    if !in_env {
-        args.push("--user");
-    }
+) -> Vec<(String, Vec<String>)> {
+    let mut steps = Vec::new();
+    let (program, mut args) = match venv {
+        Some(venv) => {
+            if !venv_ready {
+                let create = vec!["-m".into(), "venv".into(), venv.display().to_string()];
+                steps.push((base.to_string(), create));
+            }
+            let py = venv_python(venv).display().to_string();
+            (py, vec!["-m", "pip", "install"])
+        }
+        None => (base.to_string(), vec!["-m", "pip", "install", "--user"]),
+    };
     if upgrade {
         args.push("--upgrade");
     }
     args.push(pkg);
-    args.into_iter().map(String::from).collect()
+    steps.push((program, args.into_iter().map(String::from).collect()));
+    steps
 }
 
-/// The program and arguments a `PythonModule` step runs, read from `$PATH`
-/// and the environment. With no interpreter on `$PATH` it names `python3`,
-/// which is what the `NoManager` row prints.
-fn python_module_argv(pkg: &str, upgrade: bool) -> (&'static str, Vec<String>) {
-    let (program, interp) = python_interpreter().unwrap_or((PYTHON_CANDIDATES[0], PathBuf::new()));
-    let virtual_env = std::env::var_os("VIRTUAL_ENV").map(PathBuf::from);
-    let conda_prefix = std::env::var_os("CONDA_PREFIX").map(PathBuf::from);
-    let args = python_module_args(
-        &interp,
-        virtual_env.as_deref(),
-        conda_prefix.as_deref(),
-        pkg,
-        upgrade,
-    );
-    (program, args)
+/// [`python_module_steps`] read from `$PATH` and the data directory. With no
+/// interpreter on `$PATH` it names `python3`, which is what the `NoManager`
+/// row prints.
+fn python_module_argvs(pkg: &str, upgrade: bool) -> Vec<(String, Vec<String>)> {
+    let base = python_interpreter().map_or(PYTHON_CANDIDATES[0], |(name, _)| name);
+    let venv = module_venv(pkg);
+    let ready = venv.as_deref().is_some_and(|v| venv_python(v).is_file());
+    python_module_steps(base, venv.as_deref(), ready, pkg, upgrade)
 }
 
-fn python_module_command(pkg: &str, upgrade: bool) -> Command {
-    let (program, args) = python_module_argv(pkg, upgrade);
+fn argv_command((program, args): (String, Vec<String>)) -> Command {
     let mut c = Command::new(program);
     c.args(args);
     c
 }
 
+fn python_module_command(pkg: &str, upgrade: bool) -> Command {
+    let last = python_module_argvs(pkg, upgrade).pop().expect("pip step");
+    argv_command(last)
+}
+
+/// The venv-creating step, when [`python_module_command`] needs one first.
+fn python_module_setup(pkg: &str, upgrade: bool) -> Option<Command> {
+    let mut steps = python_module_argvs(pkg, upgrade);
+    (steps.len() > 1).then(|| argv_command(steps.remove(0)))
+}
+
 fn python_module_display(pkg: &str, upgrade: bool) -> String {
-    let (program, args) = python_module_argv(pkg, upgrade);
-    format!("{program} {}", args.join(" "))
+    python_module_argvs(pkg, upgrade)
+        .into_iter()
+        .map(|(program, args)| format!("{program} {}", args.join(" ")))
+        .collect::<Vec<_>>()
+        .join(" && ")
 }
 
 pub fn pick_installer<'a>(
@@ -1244,17 +1301,14 @@ pub struct Summary {
 }
 
 /// What to tell the user after a failed step, when this installer has a
-/// common failure the exit code doesn't explain. pip on a Homebrew or
-/// Debian 12+ Python refuses to install outside a venv (PEP 668); binvim
-/// doesn't pass `--break-system-packages` for them, since that override is
-/// meant to be the user's call.
+/// common failure the exit code doesn't explain. Debian and Ubuntu ship
+/// Python without `venv`'s pip bootstrap, in a package of its own.
 fn failure_hint(inst: &Installer) -> Option<&'static str> {
     match inst {
         Installer::Choco(_) => Some("choco needs an elevated (Administrator) shell"),
         Installer::PythonModule(_) => Some(
-            "if pip said externally-managed-environment, activate a venv and install it \
-             there before launching binvim, or run the command above with \
-             --break-system-packages",
+            "if `-m venv` said ensurepip is not available, install your distribution's \
+             python3-venv package and run it again",
         ),
         _ => None,
     }
@@ -1363,7 +1417,13 @@ pub fn run_plan(plan: &[PlanItem], node_versions: &[NodeVersion]) -> Summary {
                     Some(Ok(_)) => Ok("✓ (same command as above)"),
                     Some(Err(msg)) => Err(format!("{msg} (same command as above)")),
                     None => {
-                        let outcome = match cmd.status() {
+                        let setup = inst.setup_command().map(|mut s| s.status());
+                        let status = match setup {
+                            Some(Ok(s)) if !s.success() => Ok(s),
+                            Some(Err(e)) => Err(e),
+                            _ => cmd.status(),
+                        };
+                        let outcome = match status {
                             Ok(s) if s.success() => Ok(done),
                             Ok(s) if s.code().is_some_and(|c| inst.is_noop_exit(c)) => {
                                 Ok("✓ already up to date")
@@ -1847,18 +1907,44 @@ mod tests {
     fn module_tool_is_probed_by_import_not_path() {
         let debugpy = catalog_tool("debugpy");
         let everywhere = |c: &str| Some(PathBuf::from(format!("/usr/bin/{c}")));
-        assert_eq!(tool_installed_with(debugpy, everywhere, |_, _| false), None);
+        assert_eq!(
+            tool_installed_with(debugpy, everywhere, |_, _| false, |_| None),
+            None
+        );
         let asked = std::cell::RefCell::new(Vec::new());
-        let found = tool_installed_with(debugpy, everywhere, |interp, module| {
-            asked
-                .borrow_mut()
-                .push((interp.to_path_buf(), module.to_string()));
-            true
-        });
+        let found = tool_installed_with(
+            debugpy,
+            everywhere,
+            |interp, module| {
+                asked
+                    .borrow_mut()
+                    .push((interp.to_path_buf(), module.to_string()));
+                true
+            },
+            |_| None,
+        );
         assert_eq!(found, Some(PathBuf::from("/usr/bin/python3")));
         assert_eq!(
             asked.into_inner(),
             [(PathBuf::from("/usr/bin/python3"), "debugpy".to_string())]
+        );
+    }
+
+    #[test]
+    fn module_tool_prefers_binvims_venv_and_falls_back_to_path_python() {
+        let debugpy = catalog_tool("debugpy");
+        let everywhere = |c: &str| Some(PathBuf::from(format!("/usr/bin/{c}")));
+        let venv_py = |_: &str| Some(PathBuf::from("/data/venvs/debugpy/bin/python"));
+        assert_eq!(
+            tool_installed_with(debugpy, everywhere, |_, _| true, venv_py),
+            Some(PathBuf::from("/data/venvs/debugpy/bin/python"))
+        );
+        // A venv without the module (its pip step failed) doesn't hide an
+        // install made into the interpreter on PATH.
+        let only_path = |interp: &Path, _: &str| interp.starts_with("/usr/bin");
+        assert_eq!(
+            tool_installed_with(debugpy, everywhere, only_path, venv_py),
+            Some(PathBuf::from("/usr/bin/python3"))
         );
     }
 
@@ -1906,7 +1992,10 @@ mod tests {
     #[test]
     fn module_tool_without_interpreter_is_not_installed() {
         let debugpy = catalog_tool("debugpy");
-        assert_eq!(tool_installed_with(debugpy, |_| None, |_, _| true), None);
+        assert_eq!(
+            tool_installed_with(debugpy, |_| None, |_, _| true, |_| None),
+            None
+        );
     }
 
     #[test]
@@ -1914,91 +2003,77 @@ mod tests {
         let ra = catalog_tool("rust-analyzer");
         let find = |c: &str| (c == "rust-analyzer").then(|| PathBuf::from("/bin/rust-analyzer"));
         assert_eq!(
-            tool_installed_with(ra, find, |_, _| panic!("no module probe")),
+            tool_installed_with(ra, find, |_, _| panic!("no module probe"), |_| None),
             Some(PathBuf::from("/bin/rust-analyzer"))
         );
-        assert_eq!(tool_installed_with(ra, |_| None, |_, _| true), None);
+        assert_eq!(
+            tool_installed_with(ra, |_| None, |_, _| true, |_| None),
+            None
+        );
     }
 
     #[test]
-    fn python_module_args_drop_user_only_inside_the_interpreters_env() {
-        let args = |interp: &str, venv: Option<&str>, conda: Option<&str>, upgrade| {
-            python_module_args(
-                Path::new(interp),
-                venv.map(Path::new),
-                conda.map(Path::new),
-                "debugpy",
-                upgrade,
-            )
-            .join(" ")
+    fn python_module_steps_make_the_venv_once_then_pip_from_it() {
+        let joined = |steps: Vec<(String, Vec<String>)>| {
+            steps
+                .into_iter()
+                .map(|(p, a)| format!("{p} {}", a.join(" ")))
+                .collect::<Vec<_>>()
         };
+        let venv = Path::new("/home/u/.local/share/binvim/venvs/debugpy");
+        let py = venv_python(venv).display().to_string();
         assert_eq!(
-            args("/usr/bin/python3", None, None, false),
-            "-m pip install --user debugpy"
-        );
-        assert_eq!(
-            args(
-                "/home/u/proj/.venv/bin/python3",
-                Some("/home/u/proj/.venv"),
-                None,
+            joined(python_module_steps(
+                "python3",
+                Some(venv),
+                false,
+                "debugpy",
                 false
-            ),
-            "-m pip install debugpy"
+            )),
+            [
+                format!("python3 -m venv {}", venv.display()),
+                format!("{py} -m pip install debugpy"),
+            ]
         );
         assert_eq!(
-            args(
-                "/opt/conda/envs/x/bin/python",
-                None,
-                Some("/opt/conda/envs/x"),
-                false
-            ),
-            "-m pip install debugpy"
-        );
-        // A variable left over from an environment that isn't the one on PATH.
-        assert_eq!(
-            args(
-                "/usr/bin/python3",
-                Some("/home/u/old/.venv"),
-                Some("/opt/conda"),
-                false
-            ),
-            "-m pip install --user debugpy"
+            joined(python_module_steps(
+                "python3",
+                Some(venv),
+                true,
+                "debugpy",
+                true
+            )),
+            [format!("{py} -m pip install --upgrade debugpy")]
         );
         assert_eq!(
-            args("/usr/bin/python3", Some(""), None, false),
-            "-m pip install --user debugpy"
-        );
-        assert_eq!(
-            args("/usr/bin/python3", None, None, true),
-            "-m pip install --user --upgrade debugpy"
+            joined(python_module_steps("python", None, false, "debugpy", false)),
+            ["python -m pip install --user debugpy"]
         );
     }
 
     #[test]
-    fn python_module_display_matches_its_command() {
+    fn python_module_display_matches_its_commands() {
         let argv = |c: Command| {
             let mut v = vec![c.get_program().to_string_lossy().into_owned()];
             v.extend(c.get_args().map(|a| a.to_string_lossy().into_owned()));
-            v
+            v.join(" ")
         };
         let inst = Installer::PythonModule("debugpy");
-        assert_eq!(
-            argv(inst.build_command().unwrap()).join(" "),
-            inst.display()
-        );
-        assert_eq!(
-            argv(inst.upgrade_command().unwrap()).join(" "),
+        let mut shown = Vec::new();
+        shown.extend(inst.setup_command().map(argv));
+        shown.push(argv(inst.build_command().unwrap()));
+        assert_eq!(shown.join(" && "), inst.display());
+        assert!(inst.display().ends_with(" -m pip install debugpy"));
+        assert!(
             inst.upgrade_display()
+                .ends_with(&argv(inst.upgrade_command().unwrap()))
         );
-        assert!(inst.display().contains(" -m pip install "));
     }
 
     #[test]
-    fn a_failed_python_module_step_names_the_pep_668_way_out() {
+    fn a_failed_python_module_step_names_the_missing_venv_package() {
         let hint = failure_hint(&Installer::PythonModule("debugpy")).unwrap();
-        assert!(hint.contains("externally-managed-environment"));
-        assert!(hint.contains("venv"));
-        assert!(hint.contains("--break-system-packages"));
+        assert!(hint.contains("python3-venv"));
         assert!(failure_hint(&Installer::Choco("llvm")).is_some());
         assert!(failure_hint(&Installer::Brew("llvm")).is_none());
     }

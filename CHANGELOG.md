@@ -18,6 +18,13 @@ follows [Semantic Versioning](https://semver.org/).
   and join them. A file that isn't valid nbformat opens as raw JSON with the
   reason. Running cells is not in yet.
 
+### Fixed
+- **`:install` installs debugpy on a Homebrew or Debian 12+ Python.** Those
+  refuse `pip install --user` (PEP 668), so the debugpy step failed with
+  `externally-managed-environment`. debugpy now goes into a venv of binvim's
+  own, `~/.local/share/binvim/venvs/debugpy`; the adapter runs from it and
+  the program being debugged still runs under the `python3` on `$PATH`.
+
 ## [0.7.2] - 2026-09-26
 
 ### Added

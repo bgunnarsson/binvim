@@ -24,6 +24,10 @@ pub struct DapAdapterSpec {
     /// Process candidates in priority order. First one that resolves on
     /// `$PATH` (or as an absolute path) wins.
     pub cmd_candidates: &'static [&'static str],
+    /// A command tried before `cmd_candidates`, for an adapter whose
+    /// interpreter lives somewhere `$PATH` doesn't reach (debugpy in binvim's
+    /// venv).
+    pub cmd_first: Option<fn() -> Option<PathBuf>>,
     /// Args appended to the adapter command. Typically the interpreter
     /// flag (`--interpreter=vscode` for netcoredbg, `dap` for delve).
     pub args: &'static [&'static str],
@@ -114,6 +118,7 @@ const DOTNET: DapAdapterSpec = DapAdapterSpec {
     // wouldn't match.
     adapter_id: "coreclr",
     cmd_candidates: &["netcoredbg"],
+    cmd_first: None,
     args: &["--interpreter=vscode"],
     root_markers: &["*.csproj", "*.sln", "*.slnx", "*.fsproj"],
     prelaunch: dotnet_prelaunch,
@@ -232,6 +237,7 @@ const GO: DapAdapterSpec = DapAdapterSpec {
     key: "go",
     adapter_id: "go",
     cmd_candidates: &["dlv"],
+    cmd_first: None,
     args: &["dap"],
     // `go.mod` is the only universal marker — single-file scripts get
     // surfaced as their containing dir via the active-buffer fallback in
@@ -376,10 +382,12 @@ const PYTHON: DapAdapterSpec = DapAdapterSpec {
     key: "python",
     adapter_id: "debugpy",
     // `python -m debugpy.adapter` is the canonical stdio adapter
-    // entrypoint. We try `python3` first because most modern systems
-    // (macOS, recent Debian) ship `python` as 2.x or not at all. The
-    // list is `:install`'s, so debugpy lands in the interpreter run here.
+    // entrypoint, run from the venv `:install` puts debugpy in. Without
+    // one, `python3` first because most modern systems (macOS, recent
+    // Debian) ship `python` as 2.x or not at all — the list is
+    // `:install`'s, which looks for an older install there too.
     cmd_candidates: &binvim::install::PYTHON_CANDIDATES,
+    cmd_first: Some(|| binvim::install::module_python("debugpy")),
     args: &["-m", "debugpy.adapter"],
     root_markers: &["pyproject.toml", "setup.py", "requirements.txt", "Pipfile"],
     prelaunch: |_| None,
@@ -390,6 +398,21 @@ const PYTHON: DapAdapterSpec = DapAdapterSpec {
 /// defaults to the script's directory unless an explicit workspace root
 /// has been passed in.
 fn python_launch_args(ctx: &LaunchContext) -> Result<Value, String> {
+    let mut payload = python_launch_payload(ctx)?;
+    // The adapter may run from binvim's debugpy venv, which holds none of the
+    // project's packages, so the program is started with the Python on
+    // `$PATH` (an activated venv's). debugpy runs it as `python <debugpy
+    // dir>`, so that interpreter needs no debugpy of its own.
+    let path_python = binvim::install::PYTHON_CANDIDATES
+        .iter()
+        .find_map(|c| crate::paths::find_on_path(c));
+    if let Some(python) = path_python {
+        payload["python"] = json!([python.display().to_string()]);
+    }
+    Ok(payload)
+}
+
+fn python_launch_payload(ctx: &LaunchContext) -> Result<Value, String> {
     // Debug-test mode: launch via `python -m pytest <file>::<test>` so
     // breakpoints are hit inside the test function. Uses debugpy's
     // `module` launch form rather than the standard `program`-path
@@ -493,6 +516,7 @@ const RUST: DapAdapterSpec = DapAdapterSpec {
     // `lldb-dap` is the modern binary name (LLVM 18+). `lldb-vscode` is
     // the legacy name shipped by older Xcode and Homebrew installs.
     cmd_candidates: &["lldb-dap", "lldb-vscode"],
+    cmd_first: None,
     args: &[],
     root_markers: &["Cargo.toml"],
     prelaunch: rust_prelaunch,

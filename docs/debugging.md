@@ -17,11 +17,13 @@ step with `F10` / `F11` / `Shift-F11` and continue with `F5`. `<space>dq` stops.
   a `launchSettings.json` profile when the project has more than one.
 - **Go** — adapter `dlv` (`go install github.com/go-delve/delve/cmd/dlv@latest`). Starting asks
   which `package main` directory to run, unless the buffer's own directory is one.
-- **Python** — adapter `debugpy`, installed into the Python binvim runs: `python3 -m pip install
-  --user debugpy`, or without `--user` inside the venv you launch binvim from. A `pipx` install
-  isn't seen by it. On a Homebrew or Debian 12+ Python, pip refuses outside a venv. The `.py`
-  buffer you are in is run; from another buffer binvim looks for `main.py`, `app.py`,
-  `manage.py` and the other names in the table below.
+- **Python** — adapter `debugpy`. `:install` puts it in a venv of binvim's own,
+  `~/.local/share/binvim/venvs/debugpy`, so it works on a Homebrew or Debian 12+ Python that
+  refuses `pip install --user`. The adapter runs from that venv, and your program runs under the
+  `python3` on your `$PATH` (an activated venv's), which needs no debugpy of its own. A debugpy
+  you installed into that `python3` yourself is used when binvim's venv doesn't have it; a `pipx`
+  install isn't seen. The `.py` buffer you are in is run; from another buffer binvim looks for
+  `main.py`, `app.py`, `manage.py` and the other names in the table below.
 - **Rust** — adapter `lldb-dap`, which ships with LLVM 18+. Starting asks which binary when the
   workspace has more than one, builds it with `cargo build --bin <name>`, and runs
   `target/debug/<name>`. C and C++ are debugged only inside a Cargo project; a CMake or Make
@@ -38,7 +40,7 @@ Built-in debuggers via an adapter-agnostic DAP client. Four adapters ship today:
 |--------------|-------------------------------|---------------------------------------------------------------------------------------------------------------------------|
 | .NET         | [netcoredbg](https://github.com/Samsung/netcoredbg) | `*.csproj` / `*.sln` / `*.slnx` / `*.fsproj` walks up to a `.sln` / `.slnx` / `.git` root. Two-stage picker: runnable project (class libraries filtered out), then `launchSettings.json` profile. |
 | Go           | `dlv dap`                     | `go.mod`. Picker enumerates every directory with `package main` under the workspace root; the buffer's own dir auto-picks when it matches. |
-| Python       | `python3 -m debugpy.adapter`  | `pyproject.toml` / `setup.py` / `requirements.txt` / `Pipfile`. Active `.py` buffer wins; otherwise picks from `main.py` / `__main__.py` / `app.py` / `manage.py` / `run.py` / `server.py` / `cli.py`. |
+| Python       | `<venv>/bin/python -m debugpy.adapter` | `pyproject.toml` / `setup.py` / `requirements.txt` / `Pipfile`. Active `.py` buffer wins; otherwise picks from `main.py` / `__main__.py` / `app.py` / `manage.py` / `run.py` / `server.py` / `cli.py`. |
 | Rust, and C / C++ in a Cargo project | `lldb-dap` (or legacy `lldb-vscode`) | `Cargo.toml`. Picker rows are each `[[bin]]` / `src/main.rs` / `src/bin/*.rs` across the workspace; prelaunch `cargo build --bin <name>`, launch `target/debug/<name>`. |
 
 Adding a fifth adapter is one row in `dap/specs.rs`'s registry plus a `build_launch_args` fn and a `dap_resolve_*` resolver in `app/dap_glue.rs`.
