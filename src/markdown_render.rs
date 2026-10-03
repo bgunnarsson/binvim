@@ -80,6 +80,9 @@ pub enum MarkdownLineKind {
     CodeBlock,
     Table(TableRowKind),
     HtmlSummary,
+    /// A notebook cell header, painted as a full-width bar around the
+    /// label in `replacement` (type, execution count, outputs).
+    CellHeader,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

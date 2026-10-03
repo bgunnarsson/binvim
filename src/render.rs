@@ -6132,6 +6132,29 @@ fn draw_line_with_selection(
                 }
                 return Ok(());
             }
+            crate::markdown_render::MarkdownLineKind::CellHeader => {
+                if let Some(label) = meta.replacement.as_deref() {
+                    let label: String = format!(" {label} ")
+                        .chars()
+                        .take(avail.saturating_sub(2))
+                        .collect();
+                    let lead = "─".repeat(avail.min(2));
+                    let fill = "─".repeat(avail.saturating_sub(2 + label.chars().count()));
+                    queue!(
+                        out,
+                        SetForegroundColor(app.config.theme_dim()),
+                        Print(&lead),
+                        SetForegroundColor(app.config.theme_accent()),
+                        SetAttribute(Attribute::Bold),
+                        Print(&label),
+                        SetAttribute(Attribute::Reset),
+                        SetForegroundColor(app.config.theme_dim()),
+                        Print(&fill),
+                    )?;
+                    reset_to_buf_bg(out, buf_bg)?;
+                }
+                return Ok(());
+            }
             crate::markdown_render::MarkdownLineKind::Default
             | crate::markdown_render::MarkdownLineKind::CodeBlock => {}
         }

@@ -576,14 +576,7 @@ impl super::App {
     pub fn buffer_state(&self, buffer_idx: usize) -> super::state::BufferState<'_> {
         let normal_mode = matches!(self.mode, crate::mode::Mode::Normal);
         if buffer_idx == self.active {
-            let md_active = normal_mode
-                && matches!(
-                    self.buffer
-                        .path
-                        .as_deref()
-                        .and_then(crate::lang::Lang::detect),
-                    Some(crate::lang::Lang::Markdown)
-                );
+            let md_active = normal_mode && renders_markdown(&self.buffer);
             super::state::BufferState {
                 buffer: &self.buffer,
                 highlight_cache: self.highlight_cache.as_ref(),
@@ -619,15 +612,7 @@ impl super::App {
             }
         } else {
             let stash = &self.buffers[buffer_idx];
-            let md_active = normal_mode
-                && matches!(
-                    stash
-                        .buffer
-                        .path
-                        .as_deref()
-                        .and_then(crate::lang::Lang::detect),
-                    Some(crate::lang::Lang::Markdown)
-                );
+            let md_active = normal_mode && renders_markdown(&stash.buffer);
             super::state::BufferState {
                 buffer: &stash.buffer,
                 highlight_cache: stash.highlight_cache.as_ref(),
@@ -881,16 +866,7 @@ impl super::App {
     /// Normal mode so Insert / Visual see the raw source they're
     /// editing.
     pub fn markdown_render_active(&self) -> bool {
-        if !matches!(self.mode, crate::mode::Mode::Normal) {
-            return false;
-        }
-        let Some(path) = self.buffer.path.as_deref() else {
-            return false;
-        };
-        matches!(
-            crate::lang::Lang::detect(path),
-            Some(crate::lang::Lang::Markdown)
-        )
+        matches!(self.mode, crate::mode::Mode::Normal) && renders_markdown(&self.buffer)
     }
 
     /// Read-only lookup of the cached per-line meta. Returns `None`
@@ -1109,10 +1085,7 @@ pub(super) fn compute_markdown_meta(
     prev: Option<crate::app::state::MarkdownMetaCache>,
 ) -> Option<crate::app::state::MarkdownMetaCache> {
     let path = buffer.path.clone()?;
-    if !matches!(
-        crate::lang::Lang::detect(&path),
-        Some(crate::lang::Lang::Markdown)
-    ) {
+    if !renders_markdown(buffer) {
         return None;
     }
     let version = buffer.version;
@@ -1132,12 +1105,74 @@ pub(super) fn compute_markdown_meta(
             .collect();
         lines.push(line);
     }
-    let per_line = crate::markdown_render::compute_buffer_meta(&lines);
+    let per_line = match buffer.notebook.as_ref() {
+        Some(doc) => notebook_meta(doc, &buffer.rope, &lines),
+        None => crate::markdown_render::compute_buffer_meta(&lines),
+    };
     Some(crate::app::state::MarkdownMetaCache {
         path,
         version,
         per_line,
     })
+}
+
+/// Markdown files, and notebooks for their markdown cells and cell bars.
+fn renders_markdown(buffer: &Buffer) -> bool {
+    buffer.is_notebook()
+        || matches!(
+            buffer.path.as_deref().and_then(crate::lang::Lang::detect),
+            Some(crate::lang::Lang::Markdown)
+        )
+}
+
+/// A notebook's meta: each header a `CellHeader` bar, each markdown cell's
+/// lines run through the markdown pass on their own, code lines as they are.
+fn notebook_meta(
+    doc: &crate::notebook::NotebookDoc,
+    rope: &ropey::Rope,
+    lines: &[String],
+) -> Vec<crate::markdown_render::MarkdownLineMeta> {
+    use crate::markdown_render::{MarkdownLineKind, MarkdownLineMeta};
+    use crate::notebook::CellKind;
+    let mut out = vec![MarkdownLineMeta::default(); lines.len()];
+    for span in crate::notebook::cell_spans(rope) {
+        if let Some(h) = span.header {
+            let mut label = span.kind.as_str().to_string();
+            if span.kind == CellKind::Code {
+                let info = span.id.as_deref().and_then(|id| doc.cell_info(id));
+                let (count, outputs) = info.unwrap_or((None, 0));
+                match count {
+                    Some(n) => label.push_str(&format!(" [{n}]")),
+                    None => label.push_str(" [ ]"),
+                }
+                match outputs {
+                    0 => {}
+                    1 => label.push_str(" · 1 output"),
+                    n => label.push_str(&format!(" · {n} outputs")),
+                }
+            }
+            out[h] = MarkdownLineMeta {
+                kind: MarkdownLineKind::CellHeader,
+                replacement: Some(label),
+                ..Default::default()
+            };
+        }
+        if span.kind == CellKind::Markdown {
+            // A blank line ahead of the cell keeps its first line from
+            // reading as the top of a file, where `---` opens frontmatter.
+            let cell: Vec<String> = std::iter::once(String::new())
+                .chain(lines[span.body.clone()].iter().cloned())
+                .collect();
+            let meta = crate::markdown_render::compute_buffer_meta(&cell);
+            for (slot, m) in out[span.body.clone()]
+                .iter_mut()
+                .zip(meta.into_iter().skip(1))
+            {
+                *slot = m;
+            }
+        }
+    }
+    out
 }
 
 /// Indent-based fold computation. Builds a fold range starting at every
@@ -1219,6 +1254,38 @@ mod tests {
             .into_iter()
             .map(|f| (f.start_line, f.end_line))
             .collect()
+    }
+
+    #[test]
+    fn a_notebooks_meta_bars_its_headers_and_conceals_only_markdown_cells() {
+        use crate::markdown_render::MarkdownLineKind;
+        let dir = crate::paths::test_scratch_dir("view", "notebook-meta");
+        let path = dir.join("nb.ipynb");
+        std::fs::write(
+            &path,
+            r#"{"cells": [
+              {"cell_type": "code", "execution_count": 3, "id": "a", "metadata": {}, "outputs": [{"output_type": "stream", "name": "stdout", "text": "1"}], "source": "x = '**no**'"},
+              {"cell_type": "markdown", "id": "b", "metadata": {}, "source": "---\n**bold**"},
+              {"cell_type": "code", "execution_count": null, "id": "c", "metadata": {}, "outputs": [], "source": "y"}
+            ], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}"#,
+        )
+        .unwrap();
+        let buffer = Buffer::from_path(path).unwrap();
+        let meta = compute_markdown_meta(&buffer, None).unwrap().per_line;
+        let header = |i: usize| {
+            assert_eq!(meta[i].kind, MarkdownLineKind::CellHeader);
+            meta[i].replacement.clone().unwrap()
+        };
+        assert_eq!(header(0), "code [3] · 1 output");
+        assert_eq!(header(2), "markdown");
+        assert_eq!(header(5), "code [ ]");
+        assert!(meta[1].transforms.is_empty(), "code cell concealed");
+        assert_eq!(meta[3].kind, MarkdownLineKind::HorizontalRule);
+        assert!(
+            !meta[4].transforms.is_empty(),
+            "markdown cell not concealed"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
