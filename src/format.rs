@@ -81,18 +81,20 @@ fn run_stdin_pipe(bin: &Path, args: &[&str], source: &str, label: &str) -> Resul
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("failed to spawn {label}: {e}"))?;
-    {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| format!("{label} stdin missing"))?;
-        stdin
-            .write_all(source.as_bytes())
-            .map_err(|e| format!("write to {label} stdin: {e}"))?;
-    }
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| format!("{label} stdin missing"))?;
+    // Written from its own thread while the output is read: a tool that
+    // streams (`:%!cat`) fills its stdout pipe long before a large input
+    // is all written, and the two would wait on each other. One that stops
+    // reading early closes the pipe, which its exit status speaks for.
+    let input = source.to_string();
+    let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
     let output = child
         .wait_with_output()
         .map_err(|e| format!("{label} wait: {e}"))?;
+    let _ = writer.join();
     if !output.status.success() {
         let msg = crate::package::clip_lines(&output.stderr, 4)
             .unwrap_or_else(|| "(no error output)".to_string());
@@ -763,6 +765,15 @@ fn csharpier_format_inplace(csharpier: &Path, file: &Path) -> Result<CsharpierOu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Far more than a pipe buffer holds, so `cat` blocks on its output
+    // unless it is read while the input is still being written.
+    #[cfg(unix)]
+    #[test]
+    fn filter_streams_input_larger_than_a_pipe() {
+        let input = "0123456789abcdef\n".repeat(64 * 1024);
+        assert_eq!(filter_through_shell("cat", &input).unwrap(), input);
+    }
 
     #[test]
     fn empty_formatter_output_is_refused_for_a_non_empty_buffer() {
