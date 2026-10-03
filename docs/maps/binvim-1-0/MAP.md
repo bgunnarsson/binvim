@@ -51,10 +51,10 @@ and the Windows deferrals listed under Out of scope.
 - [07](07-drawing-images-on-the-notebook-page.md): kitty Unicode placeholders, then iTerm2 inline images when wholly visible, then half-blocks, then the label; no sixel yet.
 - [08](08-starting-kernels-other-than-python.md): the Python bridge stays and starts a non-Python kernel by `metadata.kernelspec.name` through the stock `KernelSpecManager`.
 - [01](01-which-stacks-are-supported-for-zero-config.md): 1.0 promises six stacks, Rust, Go, Python, C/C++, C#/.NET and TypeScript/JavaScript (with HTML, CSS and JSON), each with LSP + debugger + formatter + tree-sitter installed from the first-run prompt with no manual step on macOS, Linux and Windows, shown by a scripted fresh-environment run per stack per OS; every other language is "also works", outside the promise.
+- [02](02-what-the-correctness-matrix-is.md): The correctness matrix is `docs/correctness.md`, eight hostile inputs by six areas, and a cell is green only when a named `cargo test` test (an example or a proptest property) covers that input in that area, or it is marked n/a with a reason; settled with the user 2026-10-03.
 
 ## Not yet specified
 
-- The tests that make the correctness suite green: waits on 02.
 - Building the TS/JS debugger: waits on 16.
 - Installing netcoredbg automatically: waits on 17.
 - Building C/C++ debugging outside Cargo: waits on 18.
@@ -81,5 +81,9 @@ and the Windows deferrals listed under Out of scope.
   them out.
 - Razor in the .NET promise, and a debugger for the "also works" languages:
   outside the six promised stacks, settled with the user 2026-10-03 (ticket 01).
+- A speed limit on the correctness matrix's large-file and long-line rows: they
+  prove correctness only; speed is 04's budgets (ticket 02).
+- Keeping each line's own ending when a mixed CRLF/LF file is saved: the majority
+  ending is accepted, as in Vim (ticket 02).
 - Fixing `tree-sitter-bash`'s scanner on adversarial Unicode: upstream's to fix;
   binvim fuzzes it over ASCII until then (`docs/known-issues.md`).
