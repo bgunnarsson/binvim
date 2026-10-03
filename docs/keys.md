@@ -70,6 +70,7 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>nR` | Notebook — run every cell, top to bottom (`:cell run all`) |
 | `<space>ni` / `<space>n0` | Notebook — interrupt / restart the kernel (`:kernel interrupt` / `restart`) |
 | `<space>nc` / `<space>nC` | Notebook — clear the cursor's cell's outputs / every cell's (`:cell clear` / `clear all`) |
+| `<space>nv` | Notebook — switch between the page and the text (`:notebook`); the page's own keys are in [Editing](editing.md#notebooks) |
 | `<space>no` | Notebook — open the cell's whole output as a buffer, images in the system viewer (`:cell output`) |
 
 The package manager detects the ecosystem from the active buffer's workspace. Five backends are wired up:

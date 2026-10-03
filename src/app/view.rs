@@ -209,6 +209,10 @@ impl super::App {
     /// next `adjust_viewport` doesn't snap the view back. Positive = down,
     /// negative = up.
     pub(super) fn scroll_view(&mut self, delta: i64) {
+        if self.notebook_page_shown() {
+            self.notebook_page_scroll(delta as isize);
+            return;
+        }
         let buffer_rows = self.pane_rows();
         if buffer_rows == 0 {
             return;
@@ -240,6 +244,20 @@ impl super::App {
     }
 
     pub(super) fn adjust_viewport(&mut self) {
+        if self.notebook_page_shown() {
+            // Typing or selecting needs the text on screen, however the
+            // mode was entered.
+            if matches!(self.mode, Mode::Insert | Mode::Visual(_)) {
+                self.buffer.notebook_text = true;
+            } else {
+                let layout = self.page_layout();
+                if let Some(cell) = layout.cell_of_line(self.window.cursor.line) {
+                    let top = self.window.page_top;
+                    self.window.page_top = layout.keep_in_view(cell, top, self.pane_rows());
+                }
+                return;
+            }
+        }
         let buffer_rows = self.pane_rows();
         if buffer_rows > 0 {
             let scrolloff = 3.min(buffer_rows / 2);

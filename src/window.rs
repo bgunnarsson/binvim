@@ -23,4 +23,6 @@ pub struct Window {
     /// Visual columns hidden off the left edge of the buffer area.
     pub view_left: usize,
     pub visual_anchor: Option<Cursor>,
+    /// First row of a notebook page on screen, in `notebook_page` rows.
+    pub page_top: usize,
 }

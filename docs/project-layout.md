@@ -47,7 +47,7 @@ src/
     config_glue.rs `:config` open / reload / defaults
     update_glue.rs startup update check — spawn / drain / surface
     recover_glue.rs recovery files — periodic dump, apply on open, signal thread
-    notebook_glue.rs notebook cell jumps, `:cell` / `<leader>n` edits, id fix-up on save
+    notebook_glue.rs notebook cell jumps, `:cell` / `<leader>n` edits, id fix-up on save, the page's keys
     kernel_glue.rs `:cell run` / `:kernel` — start, run, interrupt, drain kernel events into outputs
   android.rs       Android SDK CLI backend (sdkmanager / avdmanager / adb / emulator) + parsers
   ansi.rs          ANSI / SGR parser + colour tables shared by terminal.rs
@@ -86,6 +86,7 @@ src/
   mode.rs          modes, VisualKind and operators
   motion.rs        motions
   notebook.rs      Jupyter `.ipynb` ↔ percent-format cell text, lossless save by cell id
+  notebook_page.rs the notebook page — cells laid out as Jupyter draws them, in place of the text
   package.rs       package-manager backends (NuGet / npm / Cargo / Go / PyPI) + http_get via curl
   parser.rs        keystroke → action parser
   paths.rs         home / config / cache dirs, write_atomic, others_can_plant

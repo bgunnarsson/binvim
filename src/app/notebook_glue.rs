@@ -2,6 +2,10 @@
 //! top of `notebook.rs`'s projection. A notebook buffer is ordinary text, so
 //! everything here is a text edit and undoes like one.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+use crate::mode::Mode;
+
 impl super::App {
     /// `]c` / `[c`: to the header of the `count`th cell below / above the
     /// one the cursor is in, stopping at the first or last cell.
@@ -79,6 +83,183 @@ impl super::App {
         };
         self.apply_formatted(&fixed);
     }
+
+    /// Whether the active buffer is drawn as the notebook page.
+    pub(super) fn notebook_page_shown(&self) -> bool {
+        self.buffer.is_notebook() && !self.buffer.notebook_text
+    }
+
+    pub(super) fn page_layout(&self) -> crate::notebook_page::PageLayout {
+        let colors = self
+            .highlight_cache
+            .as_ref()
+            .map(|c| c.byte_colors.as_slice());
+        let width = self.active_pane_rect().w as usize;
+        crate::notebook_page::layout(&self.buffer, colors, width, &self.config)
+    }
+
+    /// `:notebook [page|text]` / `<leader>nv`: show the notebook as its
+    /// page or as the percent text; `None` flips between them.
+    pub(super) fn notebook_view(&mut self, page: Option<bool>) {
+        if !self.buffer.is_notebook() {
+            self.status_msg = "not a notebook".into();
+            return;
+        }
+        let page = page.unwrap_or(self.buffer.notebook_text);
+        self.buffer.notebook_text = !page;
+        if !page {
+            return;
+        }
+        if matches!(self.mode, Mode::Visual(_)) {
+            self.exit_visual();
+        }
+        self.page_pending_d = false;
+        let layout = self.page_layout();
+        if let Some(cell) = layout.cell_of_line(self.window.cursor.line) {
+            self.window.page_top = layout.reveal(cell, self.window.page_top, self.pane_rows());
+        }
+    }
+
+    /// The page's own keys, ahead of the parser. Every key the page doesn't
+    /// pass on is swallowed: the text it would edit isn't on screen.
+    pub(super) fn handle_page_key(&mut self, k: KeyEvent) -> bool {
+        use crate::kernel::{KernelCmd, RunScope};
+        use crate::notebook::{CellEdit, CellKind};
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        if k.modifiers.contains(KeyModifiers::ALT) {
+            return true;
+        }
+        let pending_d = std::mem::take(&mut self.page_pending_d);
+        let layout = self.page_layout();
+        let h = self.pane_rows().max(1);
+        let here = layout.cell_of_line(self.window.cursor.line);
+        let last = layout.spans.len().saturating_sub(1);
+        let half = (h / 2).max(1) as isize;
+        let full = h.saturating_sub(2).max(1) as isize;
+        let edit = |e| Some(Err(e));
+        let run = |c| Some(Ok(c));
+        let act: Option<Result<KernelCmd, CellEdit>> = match k.code {
+            KeyCode::Char(':' | ' ' | 'H' | 'L' | 'u' | 'Z') if !ctrl => return false,
+            KeyCode::Char('r' | 'w' | 'o' | 'i' | 'c') if ctrl => return false,
+            KeyCode::Tab | KeyCode::Esc => return false,
+            KeyCode::Enter => {
+                self.notebook_view(Some(false));
+                return true;
+            }
+            KeyCode::Char('j') | KeyCode::Down if !ctrl => {
+                self.page_select(&layout, here.map_or(0, |c| (c + 1).min(last)));
+                return true;
+            }
+            KeyCode::Char('k') | KeyCode::Up if !ctrl => {
+                self.page_select(&layout, here.map_or(0, |c| c.saturating_sub(1)));
+                return true;
+            }
+            KeyCode::Char('g') | KeyCode::Home if !ctrl => {
+                self.page_select(&layout, 0);
+                return true;
+            }
+            KeyCode::Char('G') | KeyCode::End if !ctrl => {
+                self.page_select(&layout, last);
+                return true;
+            }
+            KeyCode::Char('e') if ctrl => return self.page_scroll_in(&layout, 1),
+            KeyCode::Char('y') if ctrl => return self.page_scroll_in(&layout, -1),
+            KeyCode::Char('d') if ctrl => return self.page_scroll_in(&layout, half),
+            KeyCode::Char('u') if ctrl => return self.page_scroll_in(&layout, -half),
+            KeyCode::Char('f') if ctrl => return self.page_scroll_in(&layout, full),
+            KeyCode::Char('b') if ctrl => return self.page_scroll_in(&layout, -full),
+            KeyCode::PageDown => return self.page_scroll_in(&layout, full),
+            KeyCode::PageUp => return self.page_scroll_in(&layout, -full),
+            _ if ctrl => None,
+            KeyCode::Char('r') => run(KernelCmd::Run(RunScope::Cell)),
+            KeyCode::Char('n') => run(KernelCmd::Run(RunScope::Advance)),
+            KeyCode::Char('R') => run(KernelCmd::Run(RunScope::All)),
+            KeyCode::Char('i') => run(KernelCmd::Interrupt),
+            KeyCode::Char('0') => run(KernelCmd::Restart),
+            KeyCode::Char('c') => run(KernelCmd::Clear { all: false }),
+            KeyCode::Char('C') => run(KernelCmd::Clear { all: true }),
+            KeyCode::Char('o') => run(KernelCmd::Output),
+            KeyCode::Char('a') => edit(CellEdit::Add {
+                kind: CellKind::Code,
+                above: false,
+            }),
+            KeyCode::Char('A') => edit(CellEdit::Add {
+                kind: CellKind::Code,
+                above: true,
+            }),
+            KeyCode::Char('m') => edit(CellEdit::Type(CellKind::Markdown)),
+            KeyCode::Char('y') => edit(CellEdit::Type(CellKind::Code)),
+            KeyCode::Char('J') => edit(CellEdit::Move { down: true }),
+            KeyCode::Char('K') => edit(CellEdit::Move { down: false }),
+            KeyCode::Char('d') if pending_d => edit(CellEdit::Delete),
+            KeyCode::Char('d') => {
+                self.page_pending_d = true;
+                None
+            }
+            _ => None,
+        };
+        match act {
+            Some(Ok(cmd)) => self.kernel_cmd(cmd),
+            Some(Err(e)) => self.cell_edit(e),
+            None => return true,
+        }
+        // An added or moved cell, or the next one a run advanced to, is
+        // brought fully into view rather than left peeking at an edge.
+        if self.notebook_page_shown() {
+            let layout = self.page_layout();
+            if let Some(cell) = layout.cell_of_line(self.window.cursor.line) {
+                self.window.page_top = layout.reveal(cell, self.window.page_top, h);
+            }
+        }
+        true
+    }
+
+    fn page_select(&mut self, layout: &crate::notebook_page::PageLayout, cell: usize) {
+        let Some(line) = layout.cell_line(cell) else { return };
+        self.window.cursor.line = line;
+        self.window.cursor.col = 0;
+        self.window.cursor.want_col = 0;
+        self.clamp_cursor_normal();
+        self.window.page_top = layout.reveal(cell, self.window.page_top, self.pane_rows());
+    }
+
+    fn page_scroll_in(&mut self, layout: &crate::notebook_page::PageLayout, delta: isize) -> bool {
+        let h = self.pane_rows();
+        let top = self
+            .window
+            .page_top
+            .saturating_add_signed(delta)
+            .min(layout.max_top(h));
+        self.window.page_top = top;
+        // A scroll that leaves the marked cell behind marks the first cell
+        // still on screen, so the next frame doesn't scroll back to it.
+        let here = layout.cell_of_line(self.window.cursor.line).unwrap_or(0);
+        if let Some(cell) = layout.visible_cell(here, top, h, delta < 0) {
+            if cell != here {
+                if let Some(line) = layout.cell_line(cell) {
+                    self.window.cursor.line = line;
+                    self.window.cursor.col = 0;
+                    self.window.cursor.want_col = 0;
+                    self.clamp_cursor_normal();
+                }
+            }
+        }
+        true
+    }
+
+    /// The mouse wheel over the page.
+    pub(super) fn notebook_page_scroll(&mut self, delta: isize) {
+        let layout = self.page_layout();
+        self.page_scroll_in(&layout, delta);
+    }
+
+    /// A click on the page's `row`th screen row marks the cell drawn there.
+    pub(super) fn page_click(&mut self, row: usize) {
+        let layout = self.page_layout();
+        if let Some(cell) = layout.cell_at_row(self.window.page_top + row) {
+            self.page_select(&layout, cell);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -99,8 +280,80 @@ mod tests {
             "{\"cells\": [{\"cell_type\": \"code\", \"execution_count\": null, \"id\": \"aa\", \"metadata\": {}, \"outputs\": [], \"source\": \"x = 1\"}], \"metadata\": {}, \"nbformat\": 4, \"nbformat_minor\": 5}\n",
         )
         .unwrap();
-        let app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        // These tests drive the text; the page's tests switch it back.
+        app.buffer.notebook_text = true;
         (dir, app)
+    }
+
+    fn key(app: &mut crate::app::App, code: KeyCode) {
+        app.replay_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn the_page_moves_between_cells_and_enter_shows_the_text() {
+        let (dir, mut app) = open("page");
+        app.buffer.notebook_text = false;
+        app.buffer
+            .replace_all("# %% [markdown] id=a\n# Title\n# %% id=b\nx = 1\ny = 2\n# %% id=c\nz\n");
+        app.window.cursor.line = 0;
+        press(&mut app, "j");
+        assert_eq!(app.window.cursor.line, 3, "to the second cell's code");
+        press(&mut app, "jj");
+        assert_eq!(app.window.cursor.line, 6, "and stops at the last");
+        press(&mut app, "gk");
+        assert_eq!(app.window.cursor.line, 1);
+        // Keys that would edit text nobody can see do nothing.
+        let before = app.buffer.rope.to_string();
+        press(&mut app, "xp~");
+        assert_eq!(app.buffer.rope.to_string(), before);
+        key(&mut app, KeyCode::Enter);
+        assert!(app.buffer.notebook_text);
+        assert_eq!(
+            app.window.cursor.line, 1,
+            "the text opens where the page was"
+        );
+        press(&mut app, "jj");
+        assert_eq!(app.window.cursor.line, 3, "j is a line in the text");
+        app.apply_action(crate::parser::Action::NotebookView);
+        assert!(!app.buffer.notebook_text);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn page_edits_act_on_the_marked_cell_and_undo_as_text() {
+        let (dir, mut app) = open("page_edit");
+        app.buffer.notebook_text = false;
+        app.buffer
+            .replace_all("# %% id=a\nx = 1\n# %% id=b\ny = 2\n");
+        app.window.cursor.line = 1;
+        press(&mut app, "d");
+        assert_eq!(
+            app.buffer.rope.to_string().matches("# %%").count(),
+            2,
+            "one d waits"
+        );
+        press(&mut app, "d");
+        assert_eq!(app.buffer.rope.to_string(), "# %% id=b\ny = 2\n");
+        press(&mut app, "a");
+        assert_eq!(app.buffer.rope.to_string().matches("# %%").count(), 2);
+        assert!(
+            app.window.cursor.line >= 2,
+            "the mark moves to the added cell"
+        );
+        press(&mut app, "uu");
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            "# %% id=a\nx = 1\n# %% id=b\ny = 2\n"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_view_command_refuses_a_plain_buffer() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.apply_action(crate::parser::Action::NotebookView);
+        assert_eq!(app.status_msg, "not a notebook");
     }
 
     fn ids(text: &str) -> Vec<String> {

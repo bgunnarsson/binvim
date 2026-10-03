@@ -27,6 +27,13 @@ follows [Semantic Versioning](https://semver.org/).
   system viewer) round it out. The kernel runs in the project's `.venv` /
   `venv`, the activated virtualenv or conda env, or the first `python3` with
   ipykernel; with none, `:install` offers ipykernel in a venv of binvim's own.
+- **A notebook opens as a page drawn the way Jupyter draws it.** Markdown
+  cells render and wrap, code sits on a shaded slab under its `In [n]:`
+  label, and outputs follow it, with none of the percent text's headers,
+  line numbers or markdown markers. `j` / `k` mark a cell, `r` / `n` / `R`
+  run, `a` / `A` / `dd` / `J` / `K` / `m` / `y` add, delete, move and retype
+  it, and `Enter` opens the text at the marked cell; `:notebook` (`:nb`,
+  `<space>nv`) switches between the two.
 
 ### Fixed
 - **pyright resolves imports against the project's virtualenv.** binvim

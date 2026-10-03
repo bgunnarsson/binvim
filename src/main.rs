@@ -25,6 +25,7 @@ mod markdown_render;
 mod mode;
 mod motion;
 mod notebook;
+mod notebook_page;
 mod package;
 mod parser;
 mod paths;

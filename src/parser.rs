@@ -630,6 +630,8 @@ pub enum Action {
     /// `<leader>n` sub-menu — run cells, clear or show their outputs, or
     /// interrupt / restart the notebook's kernel.
     Kernel(crate::kernel::KernelCmd),
+    /// `<leader>nv` — flip a notebook between its page and its text.
+    NotebookView,
     /// `<leader>gg` — suspend the editor and hand the host terminal
     /// to `lazygit`. On exit binvim reclaims the terminal and
     /// refreshes git gutter state for every open buffer. Same effect
@@ -1827,7 +1829,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'o' => Some(KernelCmd::Output),
             _ => None,
         };
-        let action = edit.map(Action::Cell).or(run.map(Action::Kernel));
+        let action = match ch {
+            'v' => Some(Action::NotebookView),
+            _ => edit.map(Action::Cell).or(run.map(Action::Kernel)),
+        };
         return finish_leader(state, action);
     }
 

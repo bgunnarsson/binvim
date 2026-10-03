@@ -607,6 +607,36 @@ impl Config {
         }
     }
 
+    /// The slab a notebook page draws its code cells on. A smaller step
+    /// than `surface`, which rows of code would read as one selection.
+    pub fn theme_code_bg(&self) -> Color {
+        match self.explicit_background() {
+            Some(bg) if is_dark(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                },
+                0.05,
+            ),
+            Some(bg) => mix(
+                bg,
+                Color::Rgb {
+                    r: 0x00,
+                    g: 0x00,
+                    b: 0x00,
+                },
+                0.04,
+            ),
+            None => Color::Rgb {
+                r: 0x31,
+                g: 0x32,
+                b: 0x44,
+            },
+        }
+    }
+
     /// Borders, dividers, popup outlines, and subtle highlight backgrounds
     /// (document-highlight, match-pair). One step further from the bg than
     /// `surface` so popup outlines visually separate from the surface they

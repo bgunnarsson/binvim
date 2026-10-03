@@ -64,7 +64,25 @@
 
 ## Notebooks
 
-A Jupyter notebook (`.ipynb`) opens as text: one header line per cell, then the cell's source.
+A Jupyter notebook (`.ipynb`) opens as a page drawn the way Jupyter draws it: markdown cells rendered and wrapped to the pane, each code cell on a shaded slab under its `In [n]:` label (`In [*]:` while it runs), its outputs under it. A bar in the first column marks a cell, and the keys act on that cell:
+
+| Key | On the page |
+| --- | --- |
+| `j` / `k`, `↓` / `↑` | Mark the next / previous cell |
+| `g` / `G`, `Home` / `End` | Mark the first / last cell |
+| `Ctrl-e` / `Ctrl-y`, `Ctrl-d` / `Ctrl-u`, `Ctrl-f` / `Ctrl-b`, `PgDn` / `PgUp`, the wheel | Scroll; a cell scrolled off screen hands the mark to one still on it |
+| `Enter` | Open the text, with the cursor in the marked cell |
+| `r` / `n` / `R` | Run the cell / run it and mark the next / run every cell |
+| `i` / `0` | Interrupt / restart the kernel |
+| `c` / `C` / `o` | Clear the cell's outputs / every cell's / open its whole output |
+| `a` / `A` | Add a code cell below / above |
+| `dd` | Delete the cell |
+| `J` / `K` | Move the cell down / up |
+| `m` / `y` | Make the cell markdown / code |
+
+`:`, the `<space>` leader, `u` / `Ctrl-r`, `H` / `L` and `Ctrl-w` work as they do anywhere; other keys do nothing, since the text they'd edit isn't on screen. A click marks the cell under it. `:notebook` (`:nb`, `<space>nv`) switches between the page and the text, and `:notebook page` / `:notebook text` pick one. Each notebook keeps its own choice while it's open.
+
+The text is one header line per cell, then the cell's source:
 
 ```
 # %% id=3f2a91c0

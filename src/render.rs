@@ -133,7 +133,11 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
                         .expect("layout window id not present in App.windows")
                 };
                 let bs = app.buffer_state(window.buffer_idx);
-                draw_buffer(out, app, &bs, window, *rect, is_active)?;
+                if bs.buffer.is_notebook() && !bs.buffer.notebook_text {
+                    draw_notebook_page(out, app, &bs, window, *rect, is_active)?;
+                } else {
+                    draw_buffer(out, app, &bs, window, *rect, is_active)?;
+                }
             }
             draw_pane_dividers(out, app, editor_rect)?;
         }
@@ -971,12 +975,6 @@ fn paint_code_line(
     Ok(written)
 }
 
-/// Paint a phantom row above a buffer line carrying its
-/// `textDocument/codeLens` titles. Empty gutter (no line number, no
-/// git stripe — phantom rows have no buffer position to anchor on),
-/// then the lens titles joined by ` │ ` in the dim theme tone so the
-/// row scans as commentary rather than code. Truncated to the line's
-/// available width.
 /// One row of a notebook cell's output, under the cell: a dim rule in the
 /// first body column, then the text, cut at the pane's edge.
 fn paint_output_row(
@@ -1020,6 +1018,12 @@ fn paint_output_row(
     Ok(())
 }
 
+/// Paint a phantom row above a buffer line carrying its
+/// `textDocument/codeLens` titles. Empty gutter (no line number, no
+/// git stripe — phantom rows have no buffer position to anchor on),
+/// then the lens titles joined by ` │ ` in the dim theme tone so the
+/// row scans as commentary rather than code. Truncated to the line's
+/// available width.
 fn paint_code_lens_row(
     out: &mut impl Write,
     app: &App,
@@ -5673,6 +5677,113 @@ fn draw_pane_dividers(
     Ok(())
 }
 
+/// A notebook buffer as its page (`notebook_page.rs`): the marked cell's
+/// rows carry a bar in the first column, code sits on a slab under its
+/// `In [n]:` label, and the rest is drawn as the layout gives it.
+fn draw_notebook_page(
+    out: &mut impl Write,
+    app: &App,
+    bs: &crate::app::state::BufferState<'_>,
+    win: &crate::window::Window,
+    rect: crate::layout::Rect,
+    is_active: bool,
+) -> Result<()> {
+    use crate::notebook_page::{LabelKind, Style};
+    let colors = bs.highlight_cache.map(|c| c.byte_colors.as_slice());
+    let pane_w = rect.w as usize;
+    let rows = rect.h as usize;
+    let page = crate::notebook_page::layout(bs.buffer, colors, pane_w, &app.config);
+    let top = win.page_top.min(page.max_top(rows));
+    let marked = page.cell_of_line(win.cursor.line);
+    let buf_bg = app.config.background_color();
+    let fg = app.config.theme_fg();
+    let dim = app.config.theme_dim();
+    let accent = app.config.theme_accent();
+    let blank = " ".repeat(pane_w);
+    let field = page.gutter.saturating_sub(2);
+    for screen in 0..rows {
+        let y = rect.y + screen as u16;
+        queue!(out, MoveTo(rect.x, y))?;
+        reset_to_buf_bg(out, buf_bg)?;
+        queue!(out, Print(&blank), MoveTo(rect.x, y))?;
+        if page.spans.is_empty() {
+            if screen == 0 {
+                let hint = "empty notebook — a adds a cell, Enter shows the text";
+                let hint: String = hint.chars().take(pane_w.saturating_sub(2)).collect();
+                queue!(out, SetForegroundColor(dim), Print("  "), Print(hint))?;
+            }
+            continue;
+        }
+        let Some(row) = page.rows.get(top + screen) else {
+            continue;
+        };
+        let on_marked = row.cell.is_some() && row.cell == marked;
+        if on_marked {
+            let bar = if is_active { accent } else { dim };
+            queue!(out, SetForegroundColor(bar), Print('▌'))?;
+        } else {
+            queue!(out, Print(' '))?;
+        }
+        if field > 0 {
+            let (text, color) = match &row.label {
+                Some((label, kind)) => {
+                    let color = match kind {
+                        LabelKind::Busy => app.config.theme_accent_secondary(),
+                        LabelKind::In if on_marked => accent,
+                        LabelKind::In => dim,
+                    };
+                    let cut = label.chars().count().saturating_sub(field);
+                    (label.chars().skip(cut).collect::<String>(), color)
+                }
+                None if row.cont => ("↪".to_string(), dim),
+                None => (String::new(), dim),
+            };
+            queue!(
+                out,
+                SetForegroundColor(color),
+                Print(format!("{text:>field$}"))
+            )?;
+        }
+        let row_bg = row.fill.or(buf_bg);
+        if let Some(fill) = row.fill {
+            queue!(out, SetBackgroundColor(fill))?;
+        }
+        queue!(out, Print(" ".repeat(1 + row.indent)))?;
+        let mut used = page.gutter + row.indent;
+        let mut last: Option<Style> = None;
+        for s in &row.segs {
+            if used + s.width > pane_w {
+                break;
+            }
+            if last != Some(s.style) {
+                queue!(out, SetAttribute(Attribute::Reset))?;
+                apply_buf_bg(out, row_bg)?;
+                queue!(out, SetForegroundColor(s.style.fg.unwrap_or(fg)))?;
+                for (on, attr) in [
+                    (s.style.bold, Attribute::Bold),
+                    (s.style.italic, Attribute::Italic),
+                    (s.style.underline, Attribute::Underlined),
+                    (s.style.strike, Attribute::CrossedOut),
+                ] {
+                    if on {
+                        queue!(out, SetAttribute(attr))?;
+                    }
+                }
+                last = Some(s.style);
+            }
+            queue!(out, Print(&s.text))?;
+            used += s.width;
+        }
+        queue!(out, SetAttribute(Attribute::Reset))?;
+        if row.fill.is_some() {
+            apply_buf_bg(out, row_bg)?;
+            queue!(out, Print(" ".repeat(pane_w.saturating_sub(used))))?;
+        }
+        reset_to_buf_bg(out, buf_bg)?;
+    }
+    Ok(())
+}
+
 fn draw_buffer(
     out: &mut impl Write,
     app: &App,
@@ -8342,6 +8453,12 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
         app.mode,
         Mode::Command | Mode::Search { .. } | Mode::Prompt(_)
     ) {
+        queue!(out, Hide)?;
+        return Ok(());
+    }
+    // The page marks its cell with a bar; a cursor would sit on text the
+    // page may have wrapped or hidden.
+    if app.buffer.is_notebook() && !app.buffer.notebook_text {
         queue!(out, Hide)?;
         return Ok(());
     }

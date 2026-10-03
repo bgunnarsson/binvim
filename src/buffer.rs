@@ -162,6 +162,9 @@ pub struct Buffer {
     pub notebook: Option<crate::notebook::NotebookDoc>,
     /// Why a `.ipynb` couldn't be read as cells and opened as its raw JSON.
     pub notebook_error: Option<String>,
+    /// The notebook shows as its percent text rather than its rendered page
+    /// (`notebook_page.rs`). Kept on the buffer so it survives a switch away.
+    pub notebook_text: bool,
 }
 
 pub fn is_notebook_path(path: &Path) -> bool {
@@ -219,6 +222,7 @@ impl Buffer {
             change_idx: 0,
             notebook: None,
             notebook_error: None,
+            notebook_text: false,
         }
     }
 

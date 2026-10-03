@@ -379,6 +379,9 @@ pub struct App {
     pub signature_help: Option<SignatureHelp>,
     pub whichkey: Option<WhichKeyState>,
     pub leader_pressed_at: Option<Instant>,
+    /// A `d` on the notebook page, waiting for the second `d` that deletes
+    /// the cell.
+    pub page_pending_d: bool,
     pub git_branch: Option<String>,
     /// Working-tree diff against the index for the active buffer, parsed
     /// into per-line hunk markers. Painted as a coloured stripe at column
@@ -1048,6 +1051,7 @@ impl App {
             signature_help: None,
             whichkey: None,
             leader_pressed_at: None,
+            page_pending_d: false,
             git_branch: save::detect_git_branch(
                 &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             ),

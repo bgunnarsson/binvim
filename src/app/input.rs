@@ -919,6 +919,16 @@ impl super::App {
             return; // click landed in a left-side pane (tree), not the editor
         }
         let pane_col = col - pane_left;
+        if self.notebook_page_shown() {
+            let pane_top = self.active_pane_rect().y as usize;
+            if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left))
+                && matches!(self.mode, Mode::Normal)
+                && row >= pane_top
+            {
+                self.page_click(row - pane_top);
+            }
+            return;
+        }
         let gutter = self.gutter_width();
         if pane_col < gutter {
             return; // sign column / line numbers
@@ -1338,6 +1348,15 @@ impl super::App {
             return;
         }
         if self.keymap_take(key, ctx.into()) {
+            return;
+        }
+        if matches!(ctx, parser::ParseCtx::Normal)
+            && self.pending.is_clean()
+            && self.notebook_page_shown()
+            && self.top_overlay().is_none()
+            && !self.show_start_page
+            && self.handle_page_key(key)
+        {
             return;
         }
         // The `q:` / `q/` window: `<CR>` runs the line, `Ctrl-C` closes it.
@@ -2618,6 +2637,7 @@ impl super::App {
             }
             ExCommand::Cell(edit) => self.cell_edit(edit),
             ExCommand::Kernel(cmd) => self.kernel_cmd(cmd),
+            ExCommand::NotebookView(page) => self.notebook_view(page),
             ExCommand::Quickfix(sub) => {
                 use crate::command::QuickfixSubCmd;
                 match sub {

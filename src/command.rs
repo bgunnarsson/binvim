@@ -306,6 +306,9 @@ pub enum ExCommand {
     /// `:cell run|clear|output` and `:kernel start|restart|interrupt|stop`
     /// — running a notebook's cells, dispatched into `app/kernel_glue.rs`.
     Kernel(crate::kernel::KernelCmd),
+    /// `:notebook [page|text]` — which view a notebook buffer shows; bare
+    /// flips it. `Some(true)` is the page.
+    NotebookView(Option<bool>),
     /// `:test` (picker) / `:testnearest` / `:testfile` / `:testlast`
     /// / `:testcancel` / `:testresults`. Dispatched into
     /// `app/test_glue.rs`.
@@ -967,6 +970,12 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
             };
             ExCommand::Kernel(cmd)
         }
+        "notebook" | "nb" => match rest.trim() {
+            "" => ExCommand::NotebookView(None),
+            "page" => ExCommand::NotebookView(Some(true)),
+            "text" => ExCommand::NotebookView(Some(false)),
+            _ => ExCommand::Unknown(line.to_string()),
+        },
         "spell" | "spelltoggle" => ExCommand::SpellToggle,
         "debugtest" | "dt" | "dapdt" => ExCommand::DebugTestNearest,
         "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
@@ -1802,7 +1811,15 @@ mod tests {
         assert_eq!(kernel("kernel restart"), Some(KernelCmd::Restart));
         assert_eq!(kernel("kernel interrupt"), Some(KernelCmd::Interrupt));
         assert_eq!(kernel("kernel stop"), Some(KernelCmd::Stop));
+        let view = |line: &str| match parse(line) {
+            ExCommand::NotebookView(page) => Some(page),
+            _ => None,
+        };
+        assert_eq!(view("notebook"), Some(None));
+        assert_eq!(view("nb page"), Some(Some(true)));
+        assert_eq!(view("notebook text"), Some(Some(false)));
         for bad in [
+            "notebook sideways",
             "cell run sideways",
             "cell clear some",
             "kernel",
