@@ -978,8 +978,9 @@ impl super::App {
         }
         let start = self.buffer.line_start_idx(l1);
         let end = self.buffer.line_start_idx(l2 + 1);
-        let total = self.buffer.total_chars();
-        let extend_back = end == total && l1 > 0;
+        // Only a last line with no newline of its own takes the one
+        // before it; one that ends in `\n` leaves the line above intact.
+        let extend_back = l1 > 0 && end > start && self.buffer.rope.char(end - 1) != '\n';
         let effective_start = if extend_back { start - 1 } else { start };
 
         // Build register text — always presented as linewise (ends with '\n').

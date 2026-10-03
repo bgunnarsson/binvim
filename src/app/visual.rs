@@ -317,10 +317,7 @@ impl super::App {
                 let l2 = anchor.line.max(self.window.cursor.line);
                 let s = self.buffer.line_start_idx(l1);
                 let e = self.buffer.line_start_idx(l2 + 1);
-                let total = self.buffer.total_chars();
-                let extend = e == total && l1 > 0;
-                let s_eff = if extend { s - 1 } else { s };
-                (s_eff, e, true)
+                (s, e, true)
             }
             VisualKind::Block => {
                 // Block ranges are non-contiguous; the d/c/y path bypasses
@@ -422,7 +419,18 @@ impl super::App {
             self.exit_visual();
             return;
         }
-        let removed = self.buffer.rope.slice(start..end).to_string();
+        let mut removed = self.buffer.rope.slice(start..end).to_string();
+        // A last line with no newline after it is deleted with the newline
+        // before it, so no empty line is left behind; the register still
+        // holds the lines themselves, newline-terminated like any linewise
+        // yank.
+        let mut del_start = start;
+        if linewise && !removed.ends_with('\n') {
+            removed.push('\n');
+            if start > 0 {
+                del_start = start - 1;
+            }
+        }
         match op {
             Operator::Yank => {
                 self.write_yank_register(target, removed, linewise);
@@ -433,16 +441,16 @@ impl super::App {
             }
             Operator::Delete => {
                 self.write_register(target, removed, linewise);
-                self.buffer.delete_range(start, end);
-                self.cursor_to_idx(start);
+                self.buffer.delete_range(del_start, end);
+                self.cursor_to_idx(del_start);
                 self.clamp_cursor_normal();
                 self.exit_visual();
             }
             Operator::Change => {
                 self.write_register(target, removed, linewise);
-                self.buffer.delete_range(start, end);
+                self.buffer.delete_range(del_start, end);
                 if linewise {
-                    self.buffer.insert_at_idx(start, "\n");
+                    self.buffer.insert_at_idx(del_start, "\n");
                 }
                 self.cursor_to_idx(start);
                 self.mode = Mode::Insert;

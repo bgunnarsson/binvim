@@ -4128,6 +4128,28 @@ mod tests {
             .unwrap_or_default()
     }
 
+    // A last line that ends in `\n` is deleted or replaced on its own; one
+    // with no newline takes the newline above it, so no empty line is left.
+    #[test]
+    fn linewise_edits_on_the_last_line_keep_the_line_above() {
+        for (text, keys, want, want_reg) in [
+            ("a\nb\n", "yyjVp", "a\na\n", "a\n"),
+            ("a\nb\n", "jVd", "a\n", "b\n"),
+            ("a\nb", "jVd", "a", "b\n"),
+            ("a\nb\n", "jdd", "a\n", "b\n"),
+            ("a\nb", "jdd", "a", "b\n"),
+            ("a\nb\n", "jVy", "a\nb\n", "b\n"),
+            ("a\nb\n", "jVcz", "a\nz\n", "b\n"),
+            ("a\nb", "jVcz", "a\nz", "b\n"),
+            ("a\nb\n", "jccz", "a\nz\n", "b\n"),
+        ] {
+            let mut app = app_with_keymaps(text, "");
+            press(&mut app, keys);
+            assert_eq!(app.buffer.rope.to_string(), want, "{text:?} {keys}");
+            assert_eq!(reg(&app, '"'), want_reg, "{text:?} {keys}");
+        }
+    }
+
     #[test]
     fn normal_edits_take_a_whole_cluster() {
         let text = format!("a{FAMILY}b\n");
