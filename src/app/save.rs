@@ -83,8 +83,15 @@ impl super::App {
             }
         }
         // A notebook's text is cells, not the file: trailing spaces are a
-        // markdown line break, and the final newline is the serializer's.
-        if !self.buffer.is_notebook() {
+        // markdown line break, and the final newline is the serializer's. A
+        // `.ipynb` opened as raw JSON is left alone too, so saving one that
+        // couldn't be read as cells writes exactly the text in the buffer.
+        let notebook_path = self
+            .buffer
+            .path
+            .as_deref()
+            .is_some_and(crate::buffer::is_notebook_path);
+        if !notebook_path {
             if self.editorconfig.trim_trailing_whitespace {
                 self.trim_trailing_whitespace();
             }
@@ -285,6 +292,25 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
             json("Some **very bold**  ")
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_raw_json_notebook_saves_without_editorconfig_transforms() {
+        let dir = crate::paths::test_scratch_dir("notebook", "raw");
+        let path = dir.join("broken.ipynb");
+        let broken = "{\"cells\": [  ";
+        std::fs::write(&path, broken).unwrap();
+        let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        assert!(!app.buffer.is_notebook());
+        app.editorconfig.trim_trailing_whitespace = true;
+        app.editorconfig.insert_final_newline = true;
+        app.buffer.insert_at_idx(0, " ");
+        app.save_active(false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            format!(" {broken}")
         );
         std::fs::remove_dir_all(&dir).ok();
     }
