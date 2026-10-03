@@ -32,7 +32,7 @@ follows [Semantic Versioning](https://semver.org/).
   label, and outputs follow it, with none of the percent text's headers,
   line numbers or markdown markers. `j` / `k` mark a cell, `r` / `n` / `R`
   run, `a` / `A` / `dd` / `J` / `K` / `m` / `y` add, delete, move and retype
-  it, and `Enter` opens the text at the marked cell; `:notebook` (`:nb`,
+  it, and `Enter` opens the text at the marked cell, `Esc` comes back; `:notebook` (`:nb`,
   `<space>nv`) switches between the two.
 
 ### Fixed

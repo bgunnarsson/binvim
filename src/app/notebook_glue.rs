@@ -315,8 +315,14 @@ mod tests {
         );
         press(&mut app, "jj");
         assert_eq!(app.window.cursor.line, 3, "j is a line in the text");
-        app.apply_action(crate::parser::Action::NotebookView);
+        // Esc out of Insert stays in the text; Esc again goes to the page.
+        press(&mut app, "i");
+        key(&mut app, KeyCode::Esc);
+        assert!(app.buffer.notebook_text);
+        key(&mut app, KeyCode::Esc);
         assert!(!app.buffer.notebook_text);
+        app.apply_action(crate::parser::Action::NotebookView);
+        assert!(app.buffer.notebook_text);
         std::fs::remove_dir_all(&dir).ok();
     }
 

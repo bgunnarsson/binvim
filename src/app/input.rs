@@ -1359,6 +1359,19 @@ impl super::App {
         {
             return;
         }
+        // `Esc` in a notebook's text, with nothing for it to cancel, goes
+        // back to the page — the way out that `Enter` on the page came in by.
+        if matches!(ctx, parser::ParseCtx::Normal)
+            && key.code == KeyCode::Esc
+            && key.modifiers.is_empty()
+            && self.pending.is_clean()
+            && self.additional_cursors.is_empty()
+            && self.buffer.is_notebook()
+            && self.buffer.notebook_text
+        {
+            self.notebook_view(Some(true));
+            return;
+        }
         // The `q:` / `q/` window: `<CR>` runs the line, `Ctrl-C` closes it.
         if matches!(ctx, parser::ParseCtx::Normal)
             && self.pending.is_clean()

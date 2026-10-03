@@ -80,7 +80,7 @@ A Jupyter notebook (`.ipynb`) opens as a page drawn the way Jupyter draws it: ma
 | `J` / `K` | Move the cell down / up |
 | `m` / `y` | Make the cell markdown / code |
 
-`:`, the `<space>` leader, `u` / `Ctrl-r`, `H` / `L` and `Ctrl-w` work as they do anywhere; other keys do nothing, since the text they'd edit isn't on screen. A click marks the cell under it. `:notebook` (`:nb`, `<space>nv`) switches between the page and the text, and `:notebook page` / `:notebook text` pick one. Each notebook keeps its own choice while it's open.
+`:`, the `<space>` leader, `u` / `Ctrl-r`, `H` / `L` and `Ctrl-w` work as they do anywhere; other keys do nothing, since the text they'd edit isn't on screen. A click marks the cell under it. `Esc` in the text's Normal mode, with nothing pending to cancel, goes back to the page. `:notebook` (`:nb`, `<space>nv`) switches between the page and the text, and `:notebook page` / `:notebook text` pick one. Each notebook keeps its own choice while it's open.
 
 The text is one header line per cell, then the cell's source:
 
