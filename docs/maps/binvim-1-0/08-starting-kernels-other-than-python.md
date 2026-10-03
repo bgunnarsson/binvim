@@ -2,9 +2,9 @@
 title: How does binvim find and start a notebook's kernel when it is not Python?
 kind: research
 mode: afk
-status: open
+status: claimed
 blocked_by: []
-claimed_by:
+claimed_by: lead
 ---
 
 ## Question

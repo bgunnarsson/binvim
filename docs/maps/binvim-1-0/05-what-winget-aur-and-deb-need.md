@@ -2,9 +2,9 @@
 title: What do winget, AUR and .deb/apt each need from the release, and which can be automated?
 kind: research
 mode: afk
-status: open
+status: claimed
 blocked_by: []
-claimed_by:
+claimed_by: lead
 ---
 
 ## Question

@@ -2,9 +2,9 @@
 title: How can the notebook page draw image outputs through the kitty and iTerm2 protocols, and fall back to text?
 kind: research
 mode: afk
-status: open
+status: claimed
 blocked_by: []
-claimed_by:
+claimed_by: lead
 ---
 
 ## Question

@@ -2,9 +2,9 @@
 title: How are startup time, input latency and memory measured, reproducibly, against a Neovim distro?
 kind: research
 mode: afk
-status: open
+status: claimed
 blocked_by: []
-claimed_by:
+claimed_by: lead
 ---
 
 ## Question
