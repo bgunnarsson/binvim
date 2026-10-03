@@ -452,6 +452,11 @@ pub const BUNDLES: &[Bundle] = &[
         // binvim-web doesn't track a debugpy version.
         Tool { bin: "python3-debugpy", label: "debugpy", role: Role::Dap,
             installers: &[Installer::PythonModule("debugpy")] },
+        // The kernel notebook cells run in, when the notebook has no venv
+        // of its own; ipykernel brings jupyter_client, which the bridge
+        // drives it with. Un-pinned for the same reason as debugpy.
+        Tool { bin: "python3-ipykernel", label: "ipykernel", role: Role::Tool,
+            installers: &[Installer::PythonModule("ipykernel")] },
     ]},
     Bundle { name: "C / C++", tools: &[
         Tool { bin: "clangd", label: "clangd", role: Role::Lsp,
@@ -771,7 +776,7 @@ pub fn module_python(module: &str) -> Option<PathBuf> {
 /// hides user site-packages, where `pip install --user` puts the module. It
 /// runs on the UI thread, so a wedged interpreter is given two seconds and then
 /// counts as not having the module.
-fn python_has_module(interp: &Path, module: &str) -> bool {
+pub fn python_has_module(interp: &Path, module: &str) -> bool {
     const SCRIPT: &str = "import sys, importlib.util; \
         sys.path[:] = [p for p in sys.path if p]; \
         sys.exit(importlib.util.find_spec(sys.argv[1]) is None)";

@@ -37,7 +37,13 @@ pub struct FindRecord {
 pub struct MarkdownMetaCache {
     pub path: std::path::PathBuf,
     pub version: u64,
+    /// `NotebookDoc::rev` when built: kernel output changes the cell bars
+    /// and the rows under cells without changing the buffer's version.
+    pub notebook_rev: u64,
     pub per_line: Vec<crate::markdown_render::MarkdownLineMeta>,
+    /// A notebook's output rows, keyed by the cell's last line — they
+    /// paint below it.
+    pub output_rows: std::collections::HashMap<usize, Vec<crate::notebook::OutputRow>>,
 }
 
 /// Per-buffer state. The active buffer's state lives directly on App fields;
@@ -657,6 +663,14 @@ impl<'a> BufferState<'a> {
             .unwrap_or(false)
     }
 
+    /// A notebook cell's output rows, painted below `line` when it is the
+    /// cell's last line.
+    pub fn output_rows_after(&self, line: usize) -> &'a [crate::notebook::OutputRow] {
+        self.markdown_meta
+            .and_then(|m| m.output_rows.get(&line))
+            .map_or(&[], Vec::as_slice)
+    }
+
     pub fn visible_rows_between(&self, from: usize, to: usize) -> usize {
         if to < from {
             return 0;
@@ -665,7 +679,7 @@ impl<'a> BufferState<'a> {
         let mut i = from;
         while i < to {
             if !self.line_is_folded(i) && !self.line_is_md_hidden(i) {
-                count += 1;
+                count += 1 + self.output_rows_after(i).len();
                 // A line with a code lens carries a phantom row above
                 // it — count both so the cursor's on-screen row stays
                 // aligned with what the user sees.
@@ -855,6 +869,14 @@ pub fn notebook_prefix_entries() -> Vec<(String, String)> {
         ("k".into(), "Move cell up".into()),
         ("s".into(), "Split at cursor".into()),
         ("J".into(), "Join with next".into()),
+        ("r".into(), "Run cell".into()),
+        ("n".into(), "Run cell, next".into()),
+        ("R".into(), "Run all".into()),
+        ("i".into(), "Interrupt kernel".into()),
+        ("0".into(), "Restart kernel".into()),
+        ("c".into(), "Clear output".into()),
+        ("C".into(), "Clear all output".into()),
+        ("o".into(), "Show output".into()),
     ]
 }
 

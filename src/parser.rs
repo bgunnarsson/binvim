@@ -627,6 +627,9 @@ pub enum Action {
     ToggleComment,
     /// `<leader>n` sub-menu — a whole-cell edit in a notebook.
     Cell(crate::notebook::CellEdit),
+    /// `<leader>n` sub-menu — run cells, clear or show their outputs, or
+    /// interrupt / restart the notebook's kernel.
+    Kernel(crate::kernel::KernelCmd),
     /// `<leader>gg` — suspend the editor and hand the host terminal
     /// to `lazygit`. On exit binvim reclaims the terminal and
     /// refreshes git gutter state for every open buffer. Same effect
@@ -1812,7 +1815,20 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'J' => Some(CellEdit::Join),
             _ => None,
         };
-        return finish_leader(state, edit.map(Action::Cell));
+        use crate::kernel::{KernelCmd, RunScope};
+        let run = match ch {
+            'r' => Some(KernelCmd::Run(RunScope::Cell)),
+            'n' => Some(KernelCmd::Run(RunScope::Advance)),
+            'R' => Some(KernelCmd::Run(RunScope::All)),
+            'i' => Some(KernelCmd::Interrupt),
+            '0' => Some(KernelCmd::Restart),
+            'c' => Some(KernelCmd::Clear { all: false }),
+            'C' => Some(KernelCmd::Clear { all: true }),
+            'o' => Some(KernelCmd::Output),
+            _ => None,
+        };
+        let action = edit.map(Action::Cell).or(run.map(Action::Kernel));
+        return finish_leader(state, action);
     }
 
     // Android prefix dispatch (after `<leader>A`).

@@ -91,24 +91,17 @@ literally.
 
 ## Notebooks: kernels and rich output
 
-Jupyter notebooks open as editable cells today (phase 1: highlighting, pyright,
-cell motions, `:cell`, a lossless save). Two phases are left:
+Jupyter notebooks open as editable cells (phase 1: highlighting, pyright, cell
+motions, `:cell`, a lossless save) and run in a Jupyter kernel (phase 2: a
+Python bridge over `jupyter_client` speaking JSON on stdio, run / run all /
+interrupt / restart, outputs as rows under each cell and written into the
+notebook, ipykernel in `:install`). One phase is left:
 
-- **Phase 2 — kernels.** Find kernels with `jupyter kernelspec list --json`,
-  and talk to them through a small Python bridge over `jupyter_client` that
-  speaks JSON on stdio (the `dap/` shape, no ZeroMQ in Rust). Run cell, run
-  all, interrupt and restart; outputs paint as rows under each cell, through
-  the code-lens phantom-row path, and are written into the notebook; and an
-  `ipykernel` tool joins the `:install` catalog. The cell ids in the headers
-  are what lets an output find its cell. Three lessons bind it: an output
-  pane is an overlay, and
-  [overlay flags stack](solutions/ui/overlay-flags-stack-and-draw-order-decides-what-shows.md);
-  a crashed bridge must not be
-  [respawned on its exit event without a bound](solutions/runtime/respawning-a-crashed-child-on-its-exit-event-is-an-unbounded-loop.md);
-  and the bridge is a Python process started in the project, which
-  [inherits PYTHONPATH and runs the project's sitecustomize](solutions/security/a-python-probe-inherits-pythonpath-and-runs-the-projects-sitecustomize.md).
 - **Phase 3 — rich output.** Images and plots through the kitty and iTerm2
   graphics protocols, with a text fallback where a terminal has neither.
+  Today an image output shows as an `[image/png]` row and `:cell output`
+  opens it in the system viewer. Kernels other than the Python one the
+  notebook's interpreter provides (`jupyter kernelspec list`) belong here too.
 
 ## Windows: first-class parity  (cross-cutting, lands across 0.6–1.0)
 

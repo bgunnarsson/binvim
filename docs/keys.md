@@ -66,6 +66,11 @@ Leader bindings, buffer and tab navigation, and window splits. The motions, oper
 | `<space>nj` / `<space>nk` | Notebook — move the cursor's cell down / up past its neighbour (`:cell move down` / `up`) |
 | `<space>ns` | Notebook — split the cell at the cursor's line, which starts the new cell (`:cell split`) |
 | `<space>nJ` | Notebook — join the next cell onto this one (`:cell join`) |
+| `<space>nr` / `<space>nn` | Notebook — run the cursor's cell / run it and move to the next cell (`:cell run`) |
+| `<space>nR` | Notebook — run every cell, top to bottom (`:cell run all`) |
+| `<space>ni` / `<space>n0` | Notebook — interrupt / restart the kernel (`:kernel interrupt` / `restart`) |
+| `<space>nc` / `<space>nC` | Notebook — clear the cursor's cell's outputs / every cell's (`:cell clear` / `clear all`) |
+| `<space>no` | Notebook — open the cell's whole output as a buffer, images in the system viewer (`:cell output`) |
 
 The package manager detects the ecosystem from the active buffer's workspace. Five backends are wired up:
 

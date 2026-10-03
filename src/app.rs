@@ -36,6 +36,7 @@ mod grep_glue;
 mod health;
 mod input;
 pub(crate) mod installer;
+mod kernel_glue;
 mod lazygit_glue;
 mod lsp_glue;
 mod multi_cursor;
@@ -362,6 +363,9 @@ pub struct App {
     /// Debug session manager — owns the user's breakpoint table and the
     /// currently-active DAP session (if any).
     pub dap: DapManager,
+    /// One Jupyter kernel per notebook that has run a cell, keyed by the
+    /// notebook's path. Dropping one shuts its kernel down.
+    pub kernels: HashMap<PathBuf, crate::kernel::Kernel>,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
     /// Wall-clock of the last `did_change` flush. Drives the keystroke
@@ -1036,6 +1040,7 @@ impl App {
             editorconfig: EditorConfig::default(),
             lsp: LspManager::new(),
             dap: DapManager::new(),
+            kernels: HashMap::new(),
             last_sent_version: HashMap::new(),
             last_lsp_sync_at: Instant::now(),
             completion: None,
@@ -1368,6 +1373,11 @@ impl App {
             if self.package.busy {
                 poll_dur = poll_dur.min(Duration::from_millis(16));
             }
+            // A kernel is starting or running cells — output streams in on
+            // its channel and should paint as it arrives.
+            if self.kernels_busy() {
+                poll_dur = poll_dur.min(Duration::from_millis(16));
+            }
             // An Android SDK op (list / create / launch) is in flight on a
             // background thread — same tightening so its result lands promptly.
             if self.android.busy {
@@ -1488,6 +1498,9 @@ impl App {
             let (events, _more) = self.lsp.drain();
             if !events.is_empty() {
                 self.handle_lsp_events(events);
+                needs_render = true;
+            }
+            if self.handle_kernel_events() {
                 needs_render = true;
             }
             let (dap_events, dap_progress) = self.dap.drain();

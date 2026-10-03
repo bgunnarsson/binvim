@@ -48,6 +48,7 @@ src/
     update_glue.rs startup update check — spawn / drain / surface
     recover_glue.rs recovery files — periodic dump, apply on open, signal thread
     notebook_glue.rs notebook cell jumps, `:cell` / `<leader>n` edits, id fix-up on save
+    kernel_glue.rs `:cell run` / `:kernel` — start, run, interrupt, drain kernel events into outputs
   android.rs       Android SDK CLI backend (sdkmanager / avdmanager / adb / emulator) + parsers
   ansi.rs          ANSI / SGR parser + colour tables shared by terminal.rs
   buffer.rs        rope-backed text buffer (+ marks)
@@ -79,6 +80,8 @@ src/
     client.rs      DapClient — spawn + stdin / stdout / stderr fan-out
     io.rs          reader-thread loop (Content-Length framing, same as LSP)
     manager.rs     DapManager — protocol state machine + drain
+  kernel.rs        Jupyter kernel per notebook — kernel_bridge.py over stdio + interpreter lookup
+  kernel_bridge.py the bridge: jupyter_client on one side, JSON lines on the other
   markdown_render.rs hand-rolled markdown conceal transforms for Normal-mode `.md` buffers
   mode.rs          modes, VisualKind and operators
   motion.rs        motions

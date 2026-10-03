@@ -951,6 +951,13 @@ impl super::App {
                 break;
             }
             visible_rows_seen += 1;
+            // A notebook cell's output rows under the line aren't text the
+            // cursor can be put in.
+            let outputs = self.output_rows_after(buf_line);
+            if buf_row < visible_rows_seen + outputs {
+                return;
+            }
+            visible_rows_seen += outputs;
             buf_line += 1;
         }
         if let Some(line) = clicked_lens_line {
@@ -2610,6 +2617,7 @@ impl super::App {
                 }
             }
             ExCommand::Cell(edit) => self.cell_edit(edit),
+            ExCommand::Kernel(cmd) => self.kernel_cmd(cmd),
             ExCommand::Quickfix(sub) => {
                 use crate::command::QuickfixSubCmd;
                 match sub {

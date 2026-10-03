@@ -303,6 +303,9 @@ pub enum ExCommand {
     /// `:cell add|delete|move|type|split|join` — whole-cell edits in a
     /// notebook, dispatched into `app/notebook_glue.rs`.
     Cell(crate::notebook::CellEdit),
+    /// `:cell run|clear|output` and `:kernel start|restart|interrupt|stop`
+    /// — running a notebook's cells, dispatched into `app/kernel_glue.rs`.
+    Kernel(crate::kernel::KernelCmd),
     /// `:test` (picker) / `:testnearest` / `:testfile` / `:testlast`
     /// / `:testcancel` / `:testresults`. Dispatched into
     /// `app/test_glue.rs`.
@@ -951,7 +954,19 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         },
         "cell" => parse_cell(rest)
             .map(ExCommand::Cell)
+            .or_else(|| parse_cell_run(rest).map(ExCommand::Kernel))
             .unwrap_or_else(|| ExCommand::Unknown(line.to_string())),
+        "kernel" => {
+            use crate::kernel::KernelCmd;
+            let cmd = match rest.trim() {
+                "start" => KernelCmd::Start,
+                "restart" => KernelCmd::Restart,
+                "interrupt" | "int" => KernelCmd::Interrupt,
+                "stop" | "shutdown" => KernelCmd::Stop,
+                _ => return ExCommand::Unknown(line.to_string()),
+            };
+            ExCommand::Kernel(cmd)
+        }
         "spell" | "spelltoggle" => ExCommand::SpellToggle,
         "debugtest" | "dt" | "dapdt" => ExCommand::DebugTestNearest,
         "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
@@ -1001,6 +1016,22 @@ fn parse_cell(rest: &str) -> Option<crate::notebook::CellEdit> {
         ("join", []) => Some(CellEdit::Join),
         _ => None,
     }
+}
+
+/// `:cell run [all|above|below]`, `:cell clear [all]`, `:cell output`.
+fn parse_cell_run(rest: &str) -> Option<crate::kernel::KernelCmd> {
+    use crate::kernel::{KernelCmd, RunScope};
+    let words: Vec<&str> = rest.split_whitespace().collect();
+    Some(match words.as_slice() {
+        ["run"] => KernelCmd::Run(RunScope::Cell),
+        ["run", "all"] => KernelCmd::Run(RunScope::All),
+        ["run", "above"] => KernelCmd::Run(RunScope::Above),
+        ["run", "below"] => KernelCmd::Run(RunScope::Below),
+        ["clear"] => KernelCmd::Clear { all: false },
+        ["clear", "all"] => KernelCmd::Clear { all: true },
+        ["output" | "out"] => KernelCmd::Output,
+        _ => return None,
+    })
 }
 
 /// Parse the optional argument tail on `:dapb`. Recognised forms:
@@ -1742,6 +1773,43 @@ mod tests {
             ExCommand::Config(ConfigSubCmd::Default)
         ));
         assert!(matches!(parse("config bogus"), ExCommand::Unknown(_)));
+    }
+
+    #[test]
+    fn cell_run_and_kernel_commands_parse() {
+        use crate::kernel::{KernelCmd, RunScope};
+        let kernel = |line: &str| match parse(line) {
+            ExCommand::Kernel(cmd) => Some(cmd),
+            _ => None,
+        };
+        assert_eq!(kernel("cell run"), Some(KernelCmd::Run(RunScope::Cell)));
+        assert_eq!(kernel("cell run all"), Some(KernelCmd::Run(RunScope::All)));
+        assert_eq!(
+            kernel("cell run above"),
+            Some(KernelCmd::Run(RunScope::Above))
+        );
+        assert_eq!(
+            kernel("cell run below"),
+            Some(KernelCmd::Run(RunScope::Below))
+        );
+        assert_eq!(kernel("cell clear"), Some(KernelCmd::Clear { all: false }));
+        assert_eq!(
+            kernel("cell clear all"),
+            Some(KernelCmd::Clear { all: true })
+        );
+        assert_eq!(kernel("cell output"), Some(KernelCmd::Output));
+        assert_eq!(kernel("kernel start"), Some(KernelCmd::Start));
+        assert_eq!(kernel("kernel restart"), Some(KernelCmd::Restart));
+        assert_eq!(kernel("kernel interrupt"), Some(KernelCmd::Interrupt));
+        assert_eq!(kernel("kernel stop"), Some(KernelCmd::Stop));
+        for bad in [
+            "cell run sideways",
+            "cell clear some",
+            "kernel",
+            "kernel bogus",
+        ] {
+            assert!(matches!(parse(bad), ExCommand::Unknown(_)), "{bad}");
+        }
     }
 
     #[test]

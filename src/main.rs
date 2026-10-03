@@ -16,6 +16,7 @@ mod dap;
 mod editorconfig;
 mod format;
 mod git;
+mod kernel;
 mod keymap;
 mod lang;
 mod layout;

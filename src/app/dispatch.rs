@@ -366,6 +366,7 @@ impl super::App {
             Action::Format => self.format_active(),
             Action::ToggleComment => self.toggle_comment_range(),
             Action::Cell(edit) => self.cell_edit(edit),
+            Action::Kernel(cmd) => self.kernel_cmd(cmd),
             Action::Debug(d) => {
                 use crate::command::DebugSubCmd;
                 use crate::parser::DebugAction;

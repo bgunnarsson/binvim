@@ -751,6 +751,9 @@ impl super::App {
         if let Some(key) = super::recover_glue::recovery_key(&self.buffer) {
             self.discard_recovery_key(&key);
         }
+        if let Some(path) = self.buffer.path.as_deref() {
+            self.kernels.remove(path);
+        }
         if self.buffers.len() == 1 {
             // Last buffer — replace with an empty one and resurface the start
             // page. No switch snapshots it, so its cursor is remembered here.

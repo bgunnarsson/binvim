@@ -977,6 +977,49 @@ fn paint_code_line(
 /// then the lens titles joined by ` │ ` in the dim theme tone so the
 /// row scans as commentary rather than code. Truncated to the line's
 /// available width.
+/// One row of a notebook cell's output, under the cell: a dim rule in the
+/// first body column, then the text, cut at the pane's edge.
+fn paint_output_row(
+    out: &mut impl Write,
+    app: &App,
+    row: &crate::notebook::OutputRow,
+    gutter: usize,
+    avail: usize,
+    buf_bg: Option<Color>,
+) -> Result<()> {
+    use crate::notebook::OutputStyle;
+    queue!(out, Print(" ".repeat(gutter)))?;
+    if avail < 2 {
+        return Ok(());
+    }
+    queue!(out, SetForegroundColor(app.config.theme_dim()), Print("▏ "))?;
+    let mut text = String::new();
+    let mut width = 0;
+    for c in row.text.chars() {
+        let w = char_width(c, TAB_WIDTH);
+        if width + w > avail - 2 {
+            break;
+        }
+        width += w;
+        text.push(c);
+    }
+    let color = match row.style {
+        OutputStyle::Text => app.config.theme_fg(),
+        OutputStyle::Stderr => app.config.diagnostic_warning(),
+        OutputStyle::Error => app.config.diagnostic_error(),
+        OutputStyle::Note => app.config.theme_dim(),
+    };
+    if row.style == OutputStyle::Note {
+        queue!(out, SetAttribute(Attribute::Italic))?;
+    }
+    queue!(out, SetForegroundColor(color), Print(text))?;
+    if row.style == OutputStyle::Note {
+        queue!(out, SetAttribute(Attribute::NoItalic))?;
+    }
+    reset_to_buf_bg(out, buf_bg)?;
+    Ok(())
+}
+
 fn paint_code_lens_row(
     out: &mut impl Write,
     app: &App,
@@ -5712,6 +5755,8 @@ fn draw_buffer(
         None
     };
     let mut pending_ghost: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    // A notebook cell's output rows, queued when its last line paints.
+    let mut pending_outputs: &[crate::notebook::OutputRow] = &[];
     for row in 0..rows {
         // Wipe this pane's row (leaves adjacent panes untouched), then
         // return the cursor to the pane's left edge so the per-line draw
@@ -5739,6 +5784,11 @@ fn draw_buffer(
                 )?;
                 reset_to_buf_bg(out, buf_bg)?;
             }
+            continue;
+        }
+        if let Some((output, rest)) = pending_outputs.split_first() {
+            paint_output_row(out, app, output, gutter, avail, buf_bg)?;
+            pending_outputs = rest;
             continue;
         }
         if pending_lens && line_idx < total_lines {
@@ -5861,6 +5911,7 @@ fn draw_buffer(
             if Some(drawn_line) == ghost_anchor_line {
                 pending_ghost = std::mem::take(&mut ghost_overflow);
             }
+            pending_outputs = bs.output_rows_after(drawn_line);
         } else {
             queue!(
                 out,

@@ -880,6 +880,14 @@ impl super::App {
         self.markdown_meta.as_ref()?.per_line.get(line)
     }
 
+    /// How many notebook output rows paint below `line` in the active buffer.
+    pub fn output_rows_after(&self, line: usize) -> usize {
+        self.markdown_meta
+            .as_ref()
+            .and_then(|m| m.output_rows.get(&line))
+            .map_or(0, Vec::len)
+    }
+
     /// True when `line` should collapse out of the visible render
     /// pass — markdown is in concealed mode AND the meta marks the
     /// row as Hidden (setext underlines, `<details>` chrome,
@@ -993,11 +1001,21 @@ impl super::App {
             0
         };
         while top > 0 && count < target {
-            top -= 1;
-            if bs.line_is_folded(top) || bs.line_is_md_hidden(top) {
+            let above = top - 1;
+            if bs.line_is_folded(above) || bs.line_is_md_hidden(above) {
+                top = above;
                 continue;
             }
-            count += 1;
+            // A cell's outputs paint below its last line, between it and
+            // the cursor. When they don't fit in what's left, the view
+            // starts below them: starting above would push the cursor past
+            // the row it was aiming for, off the bottom of the pane.
+            let outputs = bs.output_rows_after(above).len();
+            if outputs > 0 && count + outputs >= target {
+                break;
+            }
+            top = above;
+            count += outputs + 1;
             if count >= target {
                 break;
             }
@@ -1089,8 +1107,9 @@ pub(super) fn compute_markdown_meta(
         return None;
     }
     let version = buffer.version;
+    let notebook_rev = buffer.notebook.as_ref().map_or(0, |d| d.rev());
     if let Some(cache) = prev.as_ref() {
-        if cache.path == path && cache.version == version {
+        if cache.path == path && cache.version == version && cache.notebook_rev == notebook_rev {
             return prev;
         }
     }
@@ -1105,14 +1124,19 @@ pub(super) fn compute_markdown_meta(
             .collect();
         lines.push(line);
     }
-    let per_line = match buffer.notebook.as_ref() {
+    let (per_line, output_rows) = match buffer.notebook.as_ref() {
         Some(doc) => notebook_meta(doc, &buffer.rope, &lines),
-        None => crate::markdown_render::compute_buffer_meta(&lines),
+        None => (
+            crate::markdown_render::compute_buffer_meta(&lines),
+            Default::default(),
+        ),
     };
     Some(crate::app::state::MarkdownMetaCache {
         path,
         version,
+        notebook_rev,
         per_line,
+        output_rows,
     })
 }
 
@@ -1126,22 +1150,47 @@ fn renders_markdown(buffer: &Buffer) -> bool {
 }
 
 /// A notebook's meta: each header a `CellHeader` bar, each markdown cell's
-/// lines run through the markdown pass on their own, code lines as they are.
+/// lines run through the markdown pass on their own, code lines as they are;
+/// and each code cell's output rows, keyed by the cell's last line.
 fn notebook_meta(
     doc: &crate::notebook::NotebookDoc,
     rope: &ropey::Rope,
     lines: &[String],
-) -> Vec<crate::markdown_render::MarkdownLineMeta> {
+) -> (
+    Vec<crate::markdown_render::MarkdownLineMeta>,
+    std::collections::HashMap<usize, Vec<crate::notebook::OutputRow>>,
+) {
     use crate::markdown_render::{MarkdownLineKind, MarkdownLineMeta};
     use crate::notebook::CellKind;
     let mut out = vec![MarkdownLineMeta::default(); lines.len()];
+    let mut output_rows = std::collections::HashMap::new();
     for span in crate::notebook::cell_spans(rope) {
+        if span.kind == CellKind::Code {
+            let rows = span
+                .id
+                .as_deref()
+                .map(|id| crate::notebook::output_rows(doc.outputs(id)))
+                .unwrap_or_default();
+            if !rows.is_empty() {
+                let last = span
+                    .body
+                    .end
+                    .checked_sub(1)
+                    .filter(|l| *l >= span.body.start);
+                if let Some(anchor) = last.or(span.header) {
+                    output_rows.insert(anchor, rows);
+                }
+            }
+        }
         if let Some(h) = span.header {
             let mut label = span.kind.as_str().to_string();
             if span.kind == CellKind::Code {
                 let info = span.id.as_deref().and_then(|id| doc.cell_info(id));
                 let (count, outputs) = info.unwrap_or((None, 0));
+                let busy = span.id.as_deref().is_some_and(|id| doc.is_busy(id));
                 match count {
+                    // Jupyter's mark for a cell the kernel hasn't finished.
+                    _ if busy => label.push_str(" [*]"),
                     Some(n) => label.push_str(&format!(" [{n}]")),
                     None => label.push_str(" [ ]"),
                 }
@@ -1172,7 +1221,7 @@ fn notebook_meta(
             }
         }
     }
-    out
+    (out, output_rows)
 }
 
 /// Indent-based fold computation. Builds a fold range starting at every
@@ -1285,6 +1334,50 @@ mod tests {
             !meta[4].transforms.is_empty(),
             "markdown cell not concealed"
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_notebooks_outputs_paint_under_their_cell_and_take_screen_rows() {
+        let dir = crate::paths::test_scratch_dir("view", "notebook-outputs");
+        let path = dir.join("nb.ipynb");
+        std::fs::write(
+            &path,
+            r#"{"cells": [
+              {"cell_type": "code", "execution_count": 3, "id": "a", "metadata": {}, "outputs": [{"output_type": "stream", "name": "stdout", "text": "1\n2\n"}], "source": "print(1)\nprint(2)"},
+              {"cell_type": "code", "execution_count": null, "id": "c", "metadata": {}, "outputs": [], "source": "y"}
+            ], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}"#,
+        )
+        .unwrap();
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.buffer = Buffer::from_path(path).unwrap();
+        app.ensure_markdown_meta();
+        let rows: Vec<String> = app.markdown_meta.as_ref().unwrap().output_rows[&2]
+            .iter()
+            .map(|r| r.text.clone())
+            .collect();
+        assert_eq!(rows, ["1", "2"]);
+        // Header, two code lines, two output rows, then the next header.
+        assert_eq!(app.visible_rows_between(0, 3), 5);
+        // Output that doesn't fit above the cursor's target row starts the
+        // view below it, so the cursor stays where it was aimed.
+        assert_eq!(app.view_top_above_cursor(3, 2), 3);
+        assert_eq!(app.view_top_above_cursor(3, 3), 2);
+        assert_eq!(app.view_top_above_cursor(3, 4), 1);
+
+        let doc = app.buffer.notebook.as_mut().unwrap();
+        doc.begin_run("c");
+        doc.push_output(
+            "c",
+            serde_json::json!({"output_type": "stream", "name": "stdout", "text": ["x\n"]}),
+        );
+        app.ensure_markdown_meta();
+        let meta = app.markdown_meta.as_ref().unwrap();
+        assert_eq!(
+            meta.per_line[3].replacement.as_deref(),
+            Some("code [*] · 1 output")
+        );
+        assert_eq!(meta.output_rows[&4][0].text, "x");
         std::fs::remove_dir_all(&dir).ok();
     }
 

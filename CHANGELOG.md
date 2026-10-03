@@ -16,7 +16,17 @@ follows [Semantic Versioning](https://semver.org/).
   unedited notebook byte-identical. `]c` / `[c` move between cells, `ic` /
   `ac` select one, and `:cell` / `<space>n` add, delete, move, retype, split
   and join them. A file that isn't valid nbformat opens as raw JSON with the
-  reason. Running cells is not in yet.
+  reason.
+- **Notebook cells run in a Jupyter kernel.** `:cell run` (`<space>nr`) runs
+  the cursor's cell, `<space>nn` runs it and moves to the next, and
+  `:cell run all|above|below` run several. Output streams in as rows under
+  the cell, the bar shows `[*]` until the cell finishes and then its
+  execution count, and `:w` writes the outputs into the notebook as Jupyter
+  would. `:kernel interrupt|restart|stop`, `:cell clear [all]` and
+  `:cell output` (the cell's full output as a buffer, its images in the
+  system viewer) round it out. The kernel runs in the project's `.venv` /
+  `venv`, the activated virtualenv or conda env, or the first `python3` with
+  ipykernel; with none, `:install` offers ipykernel in a venv of binvim's own.
 
 ### Fixed
 - **`:install` installs debugpy on a Homebrew or Debian 12+ Python.** Those

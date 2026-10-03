@@ -76,6 +76,32 @@ pub struct NotebookDoc {
     by_id: HashMap<String, usize>,
     /// nbformat ≥ 4.5 — cells carry an `id` field.
     has_ids: bool,
+    /// What kernel runs have done to code cells since the file was read or
+    /// last saved, by the id in the text. Kept beside `cells` rather than
+    /// written into them, so a save still sees what changed: an overlay
+    /// that matches the disk cell gives back the original bytes.
+    runs: HashMap<String, CellRun>,
+    /// Cells sent to the kernel and not finished yet. Carried across a
+    /// save, which a long-running cell outlives.
+    busy: HashSet<String>,
+    /// Changes whenever `runs` or `busy` does, from one counter shared by
+    /// every doc, so a cache keyed on it can't mistake a fresh doc (made by
+    /// a save) for the one it was built from.
+    rev: u64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct CellRun {
+    count: Option<u64>,
+    outputs: Vec<Value>,
+    /// `clear_output(wait=True)`: clear when the next output arrives.
+    clear_on_next: bool,
+}
+
+fn next_rev() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static REV: AtomicU64 = AtomicU64::new(1);
+    REV.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Ids made up for cells that have none on disk (nbformat < 4.5). `~` can't
@@ -230,6 +256,9 @@ pub fn project(json: &str) -> Result<(String, NotebookDoc), String> {
             cells,
             by_id,
             has_ids: minor >= 5,
+            runs: HashMap::new(),
+            busy: HashSet::new(),
+            rev: next_rev(),
         },
     ))
 }
@@ -318,6 +347,11 @@ fn text_cells(text: &str) -> Vec<TextCell> {
             source: lines[s.body].join("\n"),
         })
         .collect()
+}
+
+/// The source of the cell `span` covers in `text`, as the save writes it.
+pub fn span_source(text: &str, span: &CellSpan) -> String {
+    text_lines(text)[span.body.clone()].join("\n")
 }
 
 fn is_nbformat_id(id: &str) -> bool {
@@ -448,6 +482,15 @@ impl NotebookDoc {
             if orig.is_none() || cell_kind(&Value::Object(cell.clone())) != Some(tc.kind) {
                 set_kind(&mut cell, tc.kind);
             }
+            if let Some(run) = self.runs.get(&key).filter(|_| first_use) {
+                if tc.kind == CellKind::Code {
+                    cell.insert("outputs".into(), Value::Array(run.outputs.clone()));
+                    cell.insert(
+                        "execution_count".into(),
+                        run.count.map_or(Value::Null, Value::from),
+                    );
+                }
+            }
             let cell_value = Value::Object(cell);
             let cell_value = if source_text(&cell_value) == tc.source {
                 cell_value
@@ -475,6 +518,8 @@ impl NotebookDoc {
         if cells == self.cells && !self.original.is_empty() {
             let doc = NotebookDoc {
                 by_id,
+                runs: HashMap::new(),
+                rev: next_rev(),
                 ..self.clone()
             };
             return (self.original.clone(), doc);
@@ -498,6 +543,9 @@ impl NotebookDoc {
             cells,
             by_id,
             has_ids: self.has_ids,
+            runs: HashMap::new(),
+            busy: self.busy.clone(),
+            rev: next_rev(),
         };
         (out, doc)
     }
@@ -507,15 +555,116 @@ impl NotebookDoc {
         self.by_id.get(id).map(|&i| source_text(&self.cells[i]))
     }
 
-    /// `(execution_count, number of outputs)` of the cell `id` names on disk.
+    /// `(execution_count, number of outputs)` of the cell `id` names, as
+    /// the next save would write them.
     pub fn cell_info(&self, id: &str) -> Option<(Option<u64>, usize)> {
+        if let Some(run) = self.runs.get(id) {
+            return Some((run.count, run.outputs.len()));
+        }
         let cell = &self.cells[*self.by_id.get(id)?];
         let count = cell.get("execution_count").and_then(Value::as_u64);
-        let outputs = cell
-            .get("outputs")
+        Some((count, self.outputs(id).len()))
+    }
+
+    /// The outputs of the cell `id` names, as the next save would write them.
+    pub fn outputs(&self, id: &str) -> &[Value] {
+        if let Some(run) = self.runs.get(id) {
+            return &run.outputs;
+        }
+        self.by_id
+            .get(id)
+            .and_then(|&i| self.cells[i].get("outputs"))
             .and_then(Value::as_array)
-            .map_or(0, Vec::len);
-        Some((count, outputs))
+            .map_or(&[], Vec::as_slice)
+    }
+
+    pub fn rev(&self) -> u64 {
+        self.rev
+    }
+
+    pub fn is_busy(&self, id: &str) -> bool {
+        self.busy.contains(id)
+    }
+
+    fn run_mut(&mut self, id: &str) -> &mut CellRun {
+        self.rev = next_rev();
+        if !self.runs.contains_key(id) {
+            let (count, _) = self.cell_info(id).unwrap_or((None, 0));
+            let outputs = self.outputs(id).to_vec();
+            self.runs.insert(
+                id.to_string(),
+                CellRun {
+                    count,
+                    outputs,
+                    clear_on_next: false,
+                },
+            );
+        }
+        self.runs.get_mut(id).expect("inserted above")
+    }
+
+    /// The cell was sent to the kernel: its old outputs and count go, as
+    /// Jupyter clears them when a cell is run.
+    pub fn begin_run(&mut self, id: &str) {
+        *self.run_mut(id) = CellRun::default();
+        self.busy.insert(id.to_string());
+    }
+
+    pub fn finish_run(&mut self, id: &str) {
+        self.run_mut(id).clear_on_next = false;
+        self.busy.remove(id);
+    }
+
+    /// Every cell stops counting as running — the kernel died or was
+    /// restarted, and nothing more will come for them.
+    pub fn clear_busy(&mut self) {
+        if !self.busy.is_empty() {
+            self.busy.clear();
+            self.rev = next_rev();
+        }
+    }
+
+    pub fn set_count(&mut self, id: &str, count: u64) {
+        self.run_mut(id).count = Some(count);
+    }
+
+    /// Append one nbformat output. Consecutive stream outputs to the same
+    /// stream are merged into one, as Jupyter merges them before it saves.
+    pub fn push_output(&mut self, id: &str, output: Value) {
+        let run = self.run_mut(id);
+        if std::mem::take(&mut run.clear_on_next) {
+            run.outputs.clear();
+        }
+        if let Some(last) = run.outputs.last_mut() {
+            let stream = |v: &Value| {
+                (v.get("output_type")?.as_str()? == "stream")
+                    .then(|| v.get("name").and_then(Value::as_str).map(str::to_string))?
+            };
+            if let (Some(a), Some(b)) = (stream(last), stream(&output)) {
+                if a == b {
+                    let text = multiline(last.get("text")) + &multiline(output.get("text"));
+                    last["text"] = split_lines_value(&text);
+                    return;
+                }
+            }
+        }
+        run.outputs.push(output);
+    }
+
+    /// `clear_output`: now, or with `wait` when the next output arrives, so
+    /// a cell that redraws a progress line doesn't flicker.
+    pub fn clear_outputs(&mut self, id: &str, wait: bool) {
+        let run = self.run_mut(id);
+        if wait {
+            run.clear_on_next = true;
+        } else {
+            run.outputs.clear();
+        }
+    }
+
+    /// `:cell clear`: no outputs and no count, as if never run.
+    pub fn clear_cell(&mut self, id: &str) {
+        *self.run_mut(id) = CellRun::default();
     }
 
     pub fn has_ids(&self) -> bool {
@@ -837,6 +986,242 @@ pub fn edit_cells(text: &str, line: usize, edit: CellEdit) -> Result<(String, us
     Ok((out, cursor))
 }
 
+/// An nbformat multi-line string — one string, or a list of lines.
+fn multiline(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(parts)) => parts.iter().filter_map(Value::as_str).collect(),
+        _ => String::new(),
+    }
+}
+
+/// `text` as nbformat writes it: `str.splitlines(True)`, which breaks at
+/// every line break Python knows, not only `\n`.
+fn split_lines_value(text: &str) -> Value {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let end = match c {
+            '\r' if chars.peek().map(|&(_, n)| n) == Some('\n') => {
+                chars.next();
+                i + 2
+            }
+            '\n' | '\r' | '\u{0b}' | '\u{0c}' | '\u{1c}' | '\u{1d}' | '\u{1e}' | '\u{85}'
+            | '\u{2028}' | '\u{2029}' => i + c.len_utf8(),
+            _ => continue,
+        };
+        out.push(Value::String(text[start..end].to_string()));
+        start = end;
+    }
+    if start < text.len() {
+        out.push(Value::String(text[start..].to_string()));
+    }
+    Value::Array(out)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputStyle {
+    Text,
+    Stderr,
+    Error,
+    /// Something drawn in place of an output that has no text form.
+    Note,
+}
+
+/// One screen row of a cell's outputs, drawn under the cell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutputRow {
+    pub style: OutputStyle,
+    pub text: String,
+}
+
+/// Rows a cell's outputs may take under it before the middle is elided;
+/// `:cell output` shows the whole of it.
+pub const MAX_OUTPUT_ROWS: usize = 30;
+
+/// `line` as a terminal shows it: ANSI escapes dropped (IPython colours
+/// its tracebacks), tabs as spaces, other control characters gone, and only
+/// what follows the last carriage return, which a progress bar redraws over.
+fn display_line(line: &str) -> String {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    let line = line.rsplit('\r').next().unwrap_or(line);
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => {
+                if chars.next() == Some('[') {
+                    for c in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+            }
+            '\t' => out.push_str("    "),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn image_mime(data: &Map<String, Value>) -> Option<&str> {
+    data.keys()
+        .map(String::as_str)
+        .find(|k| k.starts_with("image/"))
+}
+
+/// The text each output shows, with its style. An image shows a note in
+/// its place: its `text/plain` is only `<Figure size 640x480 …>`.
+fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
+    let mut rows = Vec::new();
+    let mut push_text = |style, text: &str| {
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        rows.extend(text.split('\n').map(|l| (style, display_line(l))));
+    };
+    for out in outputs {
+        match out.get("output_type").and_then(Value::as_str) {
+            Some("stream") => {
+                let style = if out.get("name").and_then(Value::as_str) == Some("stderr") {
+                    OutputStyle::Stderr
+                } else {
+                    OutputStyle::Text
+                };
+                push_text(style, &multiline(out.get("text")));
+            }
+            Some("execute_result" | "display_data") => {
+                let Some(data) = out.get("data").and_then(Value::as_object) else {
+                    continue;
+                };
+                if let Some(mime) = image_mime(data) {
+                    push_text(
+                        OutputStyle::Note,
+                        &format!("[{mime}] :cell output opens it"),
+                    );
+                } else if let Some(text) = data.get("text/plain") {
+                    push_text(OutputStyle::Text, &multiline(Some(text)));
+                } else if let Some(mime) = data.keys().next() {
+                    push_text(OutputStyle::Note, &format!("[{mime}]"));
+                }
+            }
+            Some("error") => {
+                let tb: Vec<String> = out
+                    .get("traceback")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let text = if tb.is_empty() {
+                    format!(
+                        "{}: {}",
+                        multiline(out.get("ename")),
+                        multiline(out.get("evalue"))
+                    )
+                } else {
+                    tb.join("\n")
+                };
+                push_text(OutputStyle::Error, &text);
+            }
+            _ => {}
+        }
+    }
+    rows
+}
+
+/// The rows drawn under a cell for its outputs. Past `MAX_OUTPUT_ROWS` the
+/// middle is elided rather than the end, so a traceback keeps the line
+/// that names the error and a log keeps its last lines.
+pub fn output_rows(outputs: &[Value]) -> Vec<OutputRow> {
+    let lines = output_lines(outputs);
+    let row = |(style, text): (OutputStyle, String)| OutputRow { style, text };
+    if lines.len() <= MAX_OUTPUT_ROWS {
+        return lines.into_iter().map(row).collect();
+    }
+    let head = MAX_OUTPUT_ROWS / 2;
+    let tail = MAX_OUTPUT_ROWS - head - 1;
+    let hidden = lines.len() - head - tail;
+    let mut rows: Vec<OutputRow> = lines[..head].iter().cloned().map(row).collect();
+    rows.push(OutputRow {
+        style: OutputStyle::Note,
+        text: format!("… {hidden} more lines — :cell output shows them all"),
+    });
+    rows.extend(lines[lines.len() - tail..].iter().cloned().map(row));
+    rows
+}
+
+/// Every output's text, for `:cell output` to show whole.
+pub fn output_text(outputs: &[Value]) -> String {
+    let mut text: String = output_lines(outputs)
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect::<Vec<_>>()
+        .join("\n");
+    text.push('\n');
+    text
+}
+
+/// The images among `outputs`, as a file extension and the decoded bytes.
+/// SVG is stored as text, every other image as base64.
+pub fn output_images(outputs: &[Value]) -> Vec<(&'static str, Vec<u8>)> {
+    let mut images = Vec::new();
+    for out in outputs {
+        let Some(data) = out.get("data").and_then(Value::as_object) else {
+            continue;
+        };
+        for (mime, ext) in [
+            ("image/png", "png"),
+            ("image/jpeg", "jpg"),
+            ("image/gif", "gif"),
+            ("image/svg+xml", "svg"),
+        ] {
+            let Some(v) = data.get(mime) else { continue };
+            let text = multiline(Some(v));
+            let bytes = if ext == "svg" {
+                Some(text.into_bytes())
+            } else {
+                base64_decode(&text)
+            };
+            if let Some(bytes) = bytes {
+                images.push((ext, bytes));
+                break;
+            }
+        }
+    }
+    images
+}
+
+/// Standard base64, whitespace ignored, as Jupyter stores image data.
+fn base64_decode(text: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    let mut acc = 0u32;
+    let mut bits = 0;
+    for b in text.bytes() {
+        let v = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => break,
+            b if b.is_ascii_whitespace() => continue,
+            _ => return None,
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,6 +1447,162 @@ mod tests {
         );
         assert_eq!(after[1], before[1]);
         assert_eq!(after[2], before[2]);
+    }
+
+    fn stream(name: &str, text: &str) -> Value {
+        serde_json::json!({"output_type": "stream", "name": name, "text": [text]})
+    }
+
+    #[test]
+    fn a_run_replaces_the_cells_outputs_and_the_save_writes_them() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        let rev = doc.rev();
+        doc.begin_run("a1b2c3d4");
+        assert!(doc.is_busy("a1b2c3d4"));
+        assert_ne!(doc.rev(), rev);
+        assert_eq!(doc.cell_info("a1b2c3d4"), Some((None, 0)));
+        doc.set_count("a1b2c3d4", 7);
+        doc.push_output("a1b2c3d4", stream("stdout", "one\n"));
+        doc.push_output("a1b2c3d4", stream("stdout", "two\n"));
+        doc.push_output("a1b2c3d4", stream("stderr", "warn\n"));
+        doc.finish_run("a1b2c3d4");
+        assert!(!doc.is_busy("a1b2c3d4"));
+        assert_eq!(doc.cell_info("a1b2c3d4"), Some((Some(7), 2)));
+        let (bytes, saved) = doc.save(&text);
+        let after = cells(&bytes);
+        assert_eq!(after[0]["execution_count"], 7);
+        assert_eq!(
+            after[0]["outputs"],
+            serde_json::json!([
+                {"output_type": "stream", "name": "stdout", "text": ["one\n", "two\n"]},
+                stream("stderr", "warn\n"),
+            ])
+        );
+        assert_eq!(after[1], cells(JUPYTER.as_bytes())[1]);
+        // The saved doc describes the file: saving again changes nothing.
+        assert_eq!(saved.save(&text).0, bytes);
+        assert_eq!(saved.cell_info("a1b2c3d4"), Some((Some(7), 2)));
+    }
+
+    #[test]
+    fn a_run_that_reproduces_the_disk_outputs_saves_the_original_bytes() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        doc.begin_run("a1b2c3d4");
+        doc.set_count("a1b2c3d4", 3);
+        doc.push_output("a1b2c3d4", stream("stdout", "hi ünïcode\n"));
+        doc.finish_run("a1b2c3d4");
+        assert_eq!(doc.save(&text).0, JUPYTER.as_bytes());
+    }
+
+    #[test]
+    fn a_waiting_clear_takes_effect_at_the_next_output() {
+        let (_, mut doc) = project(JUPYTER).unwrap();
+        doc.begin_run("a1b2c3d4");
+        doc.push_output("a1b2c3d4", stream("stdout", "10%\n"));
+        doc.clear_outputs("a1b2c3d4", true);
+        assert_eq!(doc.outputs("a1b2c3d4").len(), 1);
+        doc.push_output("a1b2c3d4", stream("stdout", "20%\n"));
+        assert_eq!(doc.outputs("a1b2c3d4"), [stream("stdout", "20%\n")]);
+        doc.clear_outputs("a1b2c3d4", false);
+        assert!(doc.outputs("a1b2c3d4").is_empty());
+    }
+
+    #[test]
+    fn clearing_a_cell_drops_its_count_and_outputs_on_save() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        doc.clear_cell("a1b2c3d4");
+        let after = cells(&doc.save(&text).0);
+        assert_eq!(after[0]["execution_count"], Value::Null);
+        assert_eq!(after[0]["outputs"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn a_save_keeps_a_cell_running_and_its_later_output_appends() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        doc.begin_run("a1b2c3d4");
+        doc.push_output("a1b2c3d4", stream("stdout", "a\n"));
+        let (_, mut saved) = doc.save(&text);
+        assert!(saved.is_busy("a1b2c3d4"));
+        saved.push_output("a1b2c3d4", stream("stdout", "b\n"));
+        assert_eq!(
+            saved.outputs("a1b2c3d4"),
+            [
+                serde_json::json!({"output_type": "stream", "name": "stdout", "text": ["a\n", "b\n"]})
+            ]
+        );
+    }
+
+    #[test]
+    fn output_lines_split_the_way_python_splits_them() {
+        assert_eq!(
+            split_lines_value("a\r\nb\rc\u{2028}d"),
+            serde_json::json!(["a\r\n", "b\r", "c\u{2028}", "d"])
+        );
+        assert_eq!(split_lines_value(""), serde_json::json!([]));
+    }
+
+    #[test]
+    fn output_rows_show_what_a_terminal_would() {
+        let error = serde_json::json!({
+            "output_type": "error", "ename": "ValueError", "evalue": "bad",
+            "traceback": ["\u{1b}[0;31mValueError\u{1b}[0m: bad"],
+        });
+        let image = serde_json::json!({
+            "output_type": "display_data", "metadata": {},
+            "data": {"image/png": "iVBORw0KGgo=", "text/plain": ["<Figure>"]},
+        });
+        let result = serde_json::json!({
+            "output_type": "execute_result", "execution_count": 1, "metadata": {},
+            "data": {"text/plain": ["42"]},
+        });
+        let rows = output_rows(&[
+            stream("stdout", "10%\r50%\r100%\n"),
+            stream("stderr", "a\tb\n"),
+            result,
+            image,
+            error,
+        ]);
+        let shown: Vec<(OutputStyle, &str)> =
+            rows.iter().map(|r| (r.style, r.text.as_str())).collect();
+        assert_eq!(
+            shown,
+            [
+                (OutputStyle::Text, "100%"),
+                (OutputStyle::Stderr, "a    b"),
+                (OutputStyle::Text, "42"),
+                (OutputStyle::Note, "[image/png] :cell output opens it"),
+                (OutputStyle::Error, "ValueError: bad"),
+            ]
+        );
+    }
+
+    #[test]
+    fn long_output_elides_its_middle() {
+        let text: String = (0..100).map(|i| format!("line {i}\n")).collect();
+        let rows = output_rows(&[stream("stdout", &text)]);
+        assert_eq!(rows.len(), MAX_OUTPUT_ROWS);
+        assert_eq!(rows[0].text, "line 0");
+        assert_eq!(rows[MAX_OUTPUT_ROWS / 2].style, OutputStyle::Note);
+        assert!(rows[MAX_OUTPUT_ROWS / 2].text.contains("71 more lines"));
+        assert_eq!(rows.last().unwrap().text, "line 99");
+    }
+
+    #[test]
+    fn output_images_decode_base64_and_keep_svg_as_text() {
+        let outputs = [
+            serde_json::json!({"output_type": "display_data", "metadata": {},
+                "data": {"image/png": "aGVs\nbG8=\n"}}),
+            serde_json::json!({"output_type": "display_data", "metadata": {},
+                "data": {"image/svg+xml": ["<svg>\n", "</svg>"]}}),
+        ];
+        assert_eq!(
+            output_images(&outputs),
+            [
+                ("png", b"hello".to_vec()),
+                ("svg", b"<svg>\n</svg>".to_vec())
+            ]
+        );
+        assert_eq!(base64_decode("not*base64"), None);
     }
 
     #[test]
