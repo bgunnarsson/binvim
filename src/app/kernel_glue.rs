@@ -171,7 +171,10 @@ impl super::App {
                 if let Some(k) = self.kernels.get_mut(path) {
                     k.ready = true;
                 }
-                self.status_msg = format!("kernel ready: Python {version} ({})", python.display());
+                let cwd = std::env::current_dir().ok();
+                let home = crate::paths::home_dir();
+                let env = env_label(&python, cwd.as_deref(), home.as_deref());
+                self.status_msg = format!("kernel ready · Python {version} · {env}");
             }
             KernelEvent::Missing(env) => {
                 self.stop_kernel(path);
@@ -311,5 +314,57 @@ impl super::App {
             }
             Err(e) => self.status_msg = format!("{}: {e}", file.display()),
         }
+    }
+}
+
+/// Where the kernel runs, short enough for one line: the virtualenv or conda
+/// env the interpreter belongs to rather than the interpreter inside it,
+/// relative to the working directory under it and with `~` under home.
+fn env_label(python: &Path, cwd: Option<&Path>, home: Option<&Path>) -> String {
+    let env = python
+        .parent()
+        .and_then(Path::parent)
+        .filter(|env| env.join("pyvenv.cfg").is_file() || env.join("conda-meta").is_dir())
+        .unwrap_or(python);
+    if let Some(rel) = cwd.and_then(|cwd| env.strip_prefix(cwd).ok()) {
+        if !rel.as_os_str().is_empty() {
+            return rel.display().to_string();
+        }
+    }
+    match home.and_then(|home| env.strip_prefix(home).ok()) {
+        Some(rel) => Path::new("~").join(rel).display().to_string(),
+        None => env.display().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::env_label;
+    use std::path::Path;
+
+    #[test]
+    fn the_kernel_names_its_env_not_the_interpreter_inside_it() {
+        let dir = std::env::temp_dir().join(format!("binvim-env-label-{}", std::process::id()));
+        let venv = dir.join("proj").join(".venv");
+        std::fs::create_dir_all(venv.join("bin")).unwrap();
+        std::fs::write(venv.join("pyvenv.cfg"), "").unwrap();
+        let python = venv.join("bin").join("python");
+        let proj = dir.join("proj");
+        assert_eq!(env_label(&python, Some(&proj), None), ".venv");
+        assert_eq!(
+            env_label(&python, Some(Path::new("/elsewhere")), Some(&dir)),
+            Path::new("~")
+                .join("proj")
+                .join(".venv")
+                .display()
+                .to_string()
+        );
+        // Not an env: the interpreter itself is the most useful name.
+        let bare = Path::new("/usr/bin/python3");
+        assert_eq!(
+            env_label(bare, Some(Path::new("/elsewhere")), None),
+            "/usr/bin/python3"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
