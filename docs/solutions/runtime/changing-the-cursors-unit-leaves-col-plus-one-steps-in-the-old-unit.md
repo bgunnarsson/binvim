@@ -18,6 +18,7 @@ symptoms:
   - "the cursor rests on a skin-tone modifier, VS16 or ZWJ"
 root_cause: "the grapheme plan made the cursor rest only on a cluster's first char but converted the sites its task list named; code elsewhere meaning the next or previous character as `cursor.col + 1`, `col - 1` or `c2 + 1` kept stepping one codepoint, and the central clamp that snaps a stray col never ran on those paths"
 related:
+  - docs/solutions/runtime/ropey-breaks-lines-at-more-than-lf-so-a-split-on-newline-disagrees-with-the-buffer.md
   - docs/solutions/runtime/a-buffers-disk-fields-are-set-in-three-places-and-the-reload-is-outside-buffer-rs.md
   - docs/solutions/runtime/config-reload-misses-state-derived-from-app-config.md
 ---
