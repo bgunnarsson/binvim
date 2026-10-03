@@ -7,10 +7,10 @@
 
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use super::specs::{LineParseState, TestAdapterSpec};
 use super::types::{
@@ -18,6 +18,11 @@ use super::types::{
 };
 
 const OUTPUT_LOG_CAP: usize = 5000;
+
+/// How long an exited runner's readers get to close the channel before
+/// the session is reaped anyway — a process the runner left behind can
+/// hold its output pipes open indefinitely.
+const READER_GRACE: Duration = Duration::from_secs(2);
 
 #[derive(Default)]
 pub struct TestManager {
@@ -57,6 +62,10 @@ pub struct TestSession {
     pub started_at: Instant,
     pub child: Arc<Mutex<Child>>,
     pub events_rx: Receiver<TestEvent>,
+    /// When `drain` first saw the child exited.
+    pub exited_at: Option<Instant>,
+    /// A `Finished` or `Aborted` has come through, in any drain call.
+    pub saw_end: bool,
 }
 
 impl TestManager {
@@ -104,6 +113,8 @@ impl TestManager {
             started_at: Instant::now(),
             child,
             events_rx,
+            exited_at: None,
+            saw_end: false,
         });
         Ok(started)
     }
@@ -122,31 +133,37 @@ impl TestManager {
         const MAX_PER_CALL: usize = 256;
         let mut events = Vec::new();
         let mut session_dead = false;
-        if let Some(session) = self.session.as_ref() {
+        if let Some(session) = self.session.as_mut() {
+            let mut disconnected = false;
             while events.len() < MAX_PER_CALL {
-                let Ok(ev) = session.events_rx.try_recv() else { break };
-                events.push(ev);
+                match session.events_rx.try_recv() {
+                    Ok(ev) => events.push(ev),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        disconnected = true;
+                        break;
+                    }
+                }
             }
-            // Detect a silent reader-thread death (e.g. the child was
-            // killed externally). If the process has exited AND the
-            // channel is drained, the session is over. At the cap the
-            // channel may still hold events, so the judgment waits for a
-            // later, emptier call.
+            session.saw_end |= events
+                .iter()
+                .any(|e| matches!(e, TestEvent::Finished { .. } | TestEvent::Aborted { .. }));
+            // The child exiting doesn't end the session: its last output
+            // can still sit in the pipes, with the reader threads parsing
+            // the final failures and summary. It ends once those threads
+            // have dropped their senders, or after `READER_GRACE`. At the
+            // cap the channel may still hold events, so the judgment waits
+            // for a later, emptier call.
             if events.len() < MAX_PER_CALL {
-                if let Ok(mut child) = session.child.lock() {
-                    if let Ok(Some(status)) = child.try_wait() {
-                        // Drain any final events the reader thread queued
-                        // before noticing EOF.
-                        while let Ok(ev) = session.events_rx.try_recv() {
-                            events.push(ev);
-                        }
-                        let has_finished = events
-                            .iter()
-                            .any(|e| matches!(e, TestEvent::Finished { .. }));
-                        let has_aborted = events
-                            .iter()
-                            .any(|e| matches!(e, TestEvent::Aborted { .. }));
-                        if !has_finished && !has_aborted && !status.success() {
+                let status = session
+                    .child
+                    .lock()
+                    .ok()
+                    .and_then(|mut c| c.try_wait().ok().flatten());
+                if let Some(status) = status {
+                    let exited_at = *session.exited_at.get_or_insert_with(Instant::now);
+                    if disconnected || exited_at.elapsed() >= READER_GRACE {
+                        if !session.saw_end && !status.success() {
                             events.push(TestEvent::Aborted {
                                 message: format!(
                                     "adapter exited with code {}",
@@ -292,6 +309,45 @@ mod tests {
     use super::*;
     use std::sync::mpsc::channel;
 
+    // The runner exiting while its readers still hold the channel open
+    // keeps the session alive for the late events; their closing it ends
+    // the session.
+    #[test]
+    fn exited_runner_waits_for_its_readers() {
+        let mut child = if cfg!(windows) {
+            std::process::Command::new("cmd")
+                .args(["/C", "exit"])
+                .spawn()
+        } else {
+            std::process::Command::new("true").spawn()
+        }
+        .expect("spawn trivial child");
+        child.wait().unwrap();
+        let (tx, events_rx) = channel();
+        let mut mgr = TestManager::new();
+        mgr.session = Some(TestSession {
+            adapter_key: "x".into(),
+            display_command: "x".into(),
+            started_at: Instant::now(),
+            child: Arc::new(Mutex::new(child)),
+            events_rx,
+            exited_at: None,
+            saw_end: false,
+        });
+        let (a, _) = mgr.drain();
+        assert!(a.is_empty());
+        assert!(mgr.session.is_some());
+        tx.send(TestEvent::Output {
+            stream: OutputStream::Stdout,
+            text: "late".into(),
+        })
+        .unwrap();
+        drop(tx);
+        let (b, _) = mgr.drain();
+        assert_eq!(b.len(), 1);
+        assert!(mgr.session.is_none());
+    }
+
     // A burst bigger than the per-call cap drains across calls with no
     // event lost, and the session isn't reaped while events are queued.
     #[test]
@@ -319,6 +375,8 @@ mod tests {
             started_at: Instant::now(),
             child: Arc::new(Mutex::new(child)),
             events_rx,
+            exited_at: None,
+            saw_end: false,
         });
         let (a, progress) = mgr.drain();
         assert_eq!(a.len(), 256);
