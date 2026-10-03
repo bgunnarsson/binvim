@@ -300,6 +300,9 @@ pub enum ExCommand {
     /// `:config` opens `config.toml`; `:config reload` re-reads it;
     /// `:config default` shows every setting at its default.
     Config(ConfigSubCmd),
+    /// `:cell add|delete|move|type|split|join` — whole-cell edits in a
+    /// notebook, dispatched into `app/notebook_glue.rs`.
+    Cell(crate::notebook::CellEdit),
     /// `:test` (picker) / `:testnearest` / `:testfile` / `:testlast`
     /// / `:testcancel` / `:testresults`. Dispatched into
     /// `app/test_glue.rs`.
@@ -946,6 +949,9 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
             "default" | "defaults" => ExCommand::Config(ConfigSubCmd::Default),
             _ => ExCommand::Unknown(line.to_string()),
         },
+        "cell" => parse_cell(rest)
+            .map(ExCommand::Cell)
+            .unwrap_or_else(|| ExCommand::Unknown(line.to_string())),
         "spell" | "spelltoggle" => ExCommand::SpellToggle,
         "debugtest" | "dt" | "dapdt" => ExCommand::DebugTestNearest,
         "test" | "testpick" => ExCommand::Test(TestSubCmd::Picker),
@@ -955,6 +961,45 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         "testcancel" | "testq" => ExCommand::Test(TestSubCmd::Cancel),
         "testresults" | "testr" => ExCommand::Test(TestSubCmd::Results),
         _ => ExCommand::Unknown(line.to_string()),
+    }
+}
+
+/// `:cell` arguments. `add` takes `above` / `below` and a type in either
+/// order, defaulting to a code cell below.
+fn parse_cell(rest: &str) -> Option<crate::notebook::CellEdit> {
+    use crate::notebook::{CellEdit, CellKind};
+    let kind = |w: &str| match w {
+        "code" | "py" | "python" => Some(CellKind::Code),
+        "markdown" | "md" => Some(CellKind::Markdown),
+        "raw" => Some(CellKind::Raw),
+        _ => None,
+    };
+    let mut words = rest.split_whitespace();
+    let verb = words.next()?;
+    let args: Vec<&str> = words.collect();
+    match (verb, args.as_slice()) {
+        ("add", args) if args.len() <= 2 => {
+            let (mut k, mut above) = (None, None);
+            for &w in args {
+                match w {
+                    "above" if above.is_none() => above = Some(true),
+                    "below" if above.is_none() => above = Some(false),
+                    w if k.is_none() => k = Some(kind(w)?),
+                    _ => return None,
+                }
+            }
+            Some(CellEdit::Add {
+                kind: k.unwrap_or(CellKind::Code),
+                above: above.unwrap_or(false),
+            })
+        }
+        ("delete" | "del", []) => Some(CellEdit::Delete),
+        ("move", ["up"]) => Some(CellEdit::Move { down: false }),
+        ("move", ["down"]) => Some(CellEdit::Move { down: true }),
+        ("type", [w]) => Some(CellEdit::Type(kind(w)?)),
+        ("split", []) => Some(CellEdit::Split),
+        ("join", []) => Some(CellEdit::Join),
+        _ => None,
     }
 }
 
@@ -1697,6 +1742,48 @@ mod tests {
             ExCommand::Config(ConfigSubCmd::Default)
         ));
         assert!(matches!(parse("config bogus"), ExCommand::Unknown(_)));
+    }
+
+    #[test]
+    fn cell_subcommands_parse() {
+        use crate::notebook::{CellEdit, CellKind};
+        let cell = |line: &str| match parse(line) {
+            ExCommand::Cell(edit) => Some(edit),
+            _ => None,
+        };
+        let add = |kind, above| Some(CellEdit::Add { kind, above });
+        assert_eq!(cell("cell add"), add(CellKind::Code, false));
+        assert_eq!(cell("cell add markdown"), add(CellKind::Markdown, false));
+        assert_eq!(cell("cell add above"), add(CellKind::Code, true));
+        assert_eq!(cell("cell add md above"), add(CellKind::Markdown, true));
+        assert_eq!(cell("cell add below raw"), add(CellKind::Raw, false));
+        assert_eq!(cell("cell delete"), Some(CellEdit::Delete));
+        assert_eq!(cell("cell del"), Some(CellEdit::Delete));
+        assert_eq!(cell("cell move up"), Some(CellEdit::Move { down: false }));
+        assert_eq!(cell("cell move down"), Some(CellEdit::Move { down: true }));
+        assert_eq!(cell("cell type code"), Some(CellEdit::Type(CellKind::Code)));
+        assert_eq!(
+            cell("cell type md"),
+            Some(CellEdit::Type(CellKind::Markdown))
+        );
+        assert_eq!(cell("cell split"), Some(CellEdit::Split));
+        assert_eq!(cell("cell join"), Some(CellEdit::Join));
+        for bad in [
+            "cell",
+            "cell bogus",
+            "cell add above below",
+            "cell add code md",
+            "cell add sql",
+            "cell add code above x",
+            "cell delete now",
+            "cell move",
+            "cell move left",
+            "cell type",
+            "cell type sql",
+            "cell split 3",
+        ] {
+            assert!(matches!(parse(bad), ExCommand::Unknown(_)), "{bad}");
+        }
     }
 
     #[test]

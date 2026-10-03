@@ -40,6 +40,33 @@ impl super::App {
         self.clamp_cursor_normal();
     }
 
+    /// `:cell …` / `<leader>n…`: one whole-cell edit, recorded as one undo
+    /// step. After an add or delete the cursor starts its new line at the
+    /// first column; the other edits leave it on the text it was on.
+    pub(super) fn cell_edit(&mut self, edit: crate::notebook::CellEdit) {
+        use crate::notebook::CellEdit;
+        if !self.buffer.is_notebook() {
+            self.status_msg = "not a notebook".into();
+            return;
+        }
+        let text = self.buffer.rope.to_string();
+        let (edited, line) = match crate::notebook::edit_cells(&text, self.window.cursor.line, edit)
+        {
+            Ok(done) => done,
+            Err(msg) => {
+                self.status_msg = msg;
+                return;
+            }
+        };
+        self.apply_formatted(&edited);
+        self.window.cursor.line = line;
+        if matches!(edit, CellEdit::Add { .. } | CellEdit::Delete) {
+            self.window.cursor.col = 0;
+            self.window.cursor.want_col = 0;
+        }
+        self.clamp_cursor_normal();
+    }
+
     /// Give every cell header its own id before a save, as one undo step.
     /// A pasted cell repeats its source's id and a typed `# %%` has none;
     /// rewriting them here, rather than only in the JSON, keeps the buffer
@@ -122,6 +149,134 @@ mod tests {
         assert_eq!(app.window.cursor.line, 5);
         press(&mut app, "]c");
         assert_eq!(app.status_msg, "no more cells below");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    const CELLS: &str = "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\nthere\n# %% id=c\ny\n";
+
+    /// Run `keys` with the cursor on `line` of `CELLS`, check the text and
+    /// cursor line it leaves, then that one `u` puts the text back.
+    fn cell_op(name: &str, line: usize, keys: &str, want: &str, want_line: usize) {
+        let (dir, mut app) = open(name);
+        app.buffer.replace_all(CELLS);
+        app.window.cursor.line = line;
+        if let Some(cmd) = keys.strip_prefix(':') {
+            app.exec_command(cmd);
+        } else {
+            press(&mut app, keys);
+        }
+        assert_eq!(app.buffer.rope.to_string(), want, "{keys}");
+        assert_eq!(app.window.cursor.line, want_line, "{keys}");
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), CELLS, "{keys} then u");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cell_commands_edit_the_text_and_undo_in_one_step() {
+        cell_op(
+            "add",
+            1,
+            ":cell add markdown",
+            "# %% id=a\nx = 1\n# %% [markdown]\n\n# %% [markdown] id=b\nhi\nthere\n# %% id=c\ny\n",
+            3,
+        );
+        cell_op(
+            "add-above",
+            6,
+            " nA",
+            "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\nthere\n# %%\n\n# %% id=c\ny\n",
+            6,
+        );
+        cell_op(
+            "add-below",
+            0,
+            " na",
+            "# %% id=a\nx = 1\n# %%\n\n# %% [markdown] id=b\nhi\nthere\n# %% id=c\ny\n",
+            3,
+        );
+        cell_op("delete", 3, " nd", "# %% id=a\nx = 1\n# %% id=c\ny\n", 2);
+        cell_op(
+            "move",
+            1,
+            " nj",
+            "# %% [markdown] id=b\nhi\nthere\n# %% id=a\nx = 1\n# %% id=c\ny\n",
+            4,
+        );
+        cell_op(
+            "move-up",
+            6,
+            ":cell move up",
+            "# %% id=a\nx = 1\n# %% id=c\ny\n# %% [markdown] id=b\nhi\nthere\n",
+            3,
+        );
+        cell_op(
+            "to-markdown",
+            1,
+            " nm",
+            &CELLS.replacen("# %% id=a", "# %% [markdown] id=a", 1),
+            1,
+        );
+        cell_op(
+            "to-code",
+            3,
+            " ny",
+            &CELLS.replacen("# %% [markdown] id=b", "# %% id=b", 1),
+            3,
+        );
+        cell_op(
+            "split",
+            4,
+            " ns",
+            "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\n# %% [markdown]\nthere\n# %% id=c\ny\n",
+            5,
+        );
+        cell_op(
+            "join",
+            1,
+            " nJ",
+            "# %% id=a\nx = 1\nhi\nthere\n# %% id=c\ny\n",
+            1,
+        );
+    }
+
+    #[test]
+    fn a_cell_edit_that_cannot_apply_says_why_and_changes_nothing() {
+        let (dir, mut app) = open("refused");
+        app.buffer.replace_all(CELLS);
+        app.window.cursor.line = 6;
+        press(&mut app, " nJ");
+        assert_eq!(app.status_msg, "no cell below");
+        assert_eq!(app.buffer.rope.to_string(), CELLS);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_added_markdown_cell_saves_with_an_id_and_no_outputs() {
+        let (dir, mut app) = open("add-save");
+        app.exec_command("cell add markdown");
+        press(&mut app, "itext");
+        app.replay_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.save_active(false).unwrap();
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("nb.ipynb")).unwrap()).unwrap();
+        let added = &json["cells"][1];
+        assert_eq!(added["cell_type"], "markdown");
+        assert_eq!(added["source"], serde_json::json!(["text"]));
+        assert!(added["id"].as_str().is_some_and(|id| id != "aa"));
+        assert!(added.get("outputs").is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn cell_commands_refuse_a_plain_buffer() {
+        let dir = crate::paths::test_scratch_dir("notebook", "plain");
+        let path = dir.join("x.py");
+        std::fs::write(&path, "# %%\nx\n").unwrap();
+        let mut app = crate::app::App::new(Some(path)).expect("App::new");
+        press(&mut app, " nd");
+        assert_eq!(app.status_msg, "not a notebook");
+        assert_eq!(app.buffer.rope.to_string(), "# %%\nx\n");
         std::fs::remove_dir_all(&dir).ok();
     }
 

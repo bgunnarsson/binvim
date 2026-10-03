@@ -1288,6 +1288,8 @@ impl super::App {
             ("Package", state::package_prefix_entries())
         } else if pending.awaiting_android_leader {
             ("Android", state::android_prefix_entries())
+        } else if pending.awaiting_notebook_leader {
+            ("Notebook", state::notebook_prefix_entries())
         } else {
             return None;
         };
@@ -2607,6 +2609,7 @@ impl super::App {
                     ConfigSubCmd::Default => self.config_show_defaults(),
                 }
             }
+            ExCommand::Cell(edit) => self.cell_edit(edit),
             ExCommand::Quickfix(sub) => {
                 use crate::command::QuickfixSubCmd;
                 match sub {

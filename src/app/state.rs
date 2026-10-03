@@ -797,6 +797,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("h".into(), "+Hunk".into()),
         ("j".into(), "+AI".into()),
         ("m".into(), "+Task".into()),
+        ("n".into(), "+Notebook".into()),
         ("p".into(), "+Package".into()),
         ("s".into(), "+Test".into()),
         ("t".into(), "+Terminal".into()),
@@ -840,6 +841,20 @@ pub fn package_prefix_entries() -> Vec<(String, String)> {
     vec![
         ("i".into(), "Install / manage".into()),
         ("s".into(), "Search & add".into()),
+    ]
+}
+
+pub fn notebook_prefix_entries() -> Vec<(String, String)> {
+    vec![
+        ("a".into(), "Add cell below".into()),
+        ("A".into(), "Add cell above".into()),
+        ("m".into(), "To markdown".into()),
+        ("y".into(), "To code".into()),
+        ("d".into(), "Delete cell".into()),
+        ("j".into(), "Move cell down".into()),
+        ("k".into(), "Move cell up".into()),
+        ("s".into(), "Split at cursor".into()),
+        ("J".into(), "Join with next".into()),
     ]
 }
 

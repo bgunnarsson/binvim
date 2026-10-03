@@ -365,6 +365,7 @@ impl super::App {
             Action::ReplaceAllInBuffer => self.start_replace_all_prompt(),
             Action::Format => self.format_active(),
             Action::ToggleComment => self.toggle_comment_range(),
+            Action::Cell(edit) => self.cell_edit(edit),
             Action::Debug(d) => {
                 use crate::command::DebugSubCmd;
                 use crate::parser::DebugAction;

@@ -41,6 +41,7 @@ const COMMAND_NAMES: &[&str] = &[
     "cclose",
     "cdiag",
     "cdiagnostics",
+    "cell",
     "cfirst",
     "checkhealth",
     "claude",

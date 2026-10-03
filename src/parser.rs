@@ -625,6 +625,8 @@ pub enum Action {
     /// uncomments; otherwise it comments at the minimum-indent
     /// column so a uniformly-indented block stays aligned.
     ToggleComment,
+    /// `<leader>n` sub-menu — a whole-cell edit in a notebook.
+    Cell(crate::notebook::CellEdit),
     /// `<leader>gg` — suspend the editor and hand the host terminal
     /// to `lazygit`. On exit binvim reclaims the terminal and
     /// refreshes git gutter state for every open buffer. Same effect
@@ -739,6 +741,9 @@ pub struct PendingCmd {
     /// Set after `<leader>A` — next char picks an Android action (`l` launch
     /// emulator, `c` create AVD, `d` running devices, `b` debug session).
     pub awaiting_android_leader: bool,
+    /// Set after `<leader>n` — next char picks a notebook cell edit
+    /// (`a` / `A` add below / above, `m` / `y` markdown / code, …).
+    pub awaiting_notebook_leader: bool,
     /// Set after `<C-w>` — next char picks a window action
     /// (`v` / `s` split, `h/j/k/l` focus, `q` / `c` close, `o` only, `=` equalize).
     /// Wired in Normal mode only; cancels on any unrecognised follow-up.
@@ -772,6 +777,7 @@ impl PendingCmd {
             || self.awaiting_ai_leader
             || self.awaiting_package_leader
             || self.awaiting_android_leader
+            || self.awaiting_notebook_leader
     }
 
     /// The keys of the leader chord in flight — `" "` after `<space>`,
@@ -791,6 +797,7 @@ impl PendingCmd {
             (self.awaiting_ai_leader, " j"),
             (self.awaiting_package_leader, " p"),
             (self.awaiting_android_leader, " A"),
+            (self.awaiting_notebook_leader, " n"),
         ]
         .into_iter()
         .find_map(|(on, chord)| on.then_some(chord))
@@ -844,6 +851,7 @@ impl PendingCmd {
             && !self.awaiting_ai_leader
             && !self.awaiting_package_leader
             && !self.awaiting_android_leader
+            && !self.awaiting_notebook_leader
             && !self.awaiting_window_leader
     }
 
@@ -1592,6 +1600,12 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             state.awaiting_android_leader = true;
             return ParseResult::Pending;
         }
+        // `n` opens the notebook sub-menu. The keys follow Jupyter's
+        // command mode: `a` / `A` add, `m` / `y` retype, `d` delete.
+        if ch == 'n' {
+            state.awaiting_notebook_leader = true;
+            return ParseResult::Pending;
+        }
         let action = match ch {
             ' ' => Some(Action::OpenPicker {
                 kind: PickerLeader::Files,
@@ -1774,6 +1788,31 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             _ => None,
         };
         return finish_leader(state, action);
+    }
+
+    // Notebook prefix dispatch (after `<leader>n`).
+    if state.awaiting_notebook_leader {
+        use crate::notebook::{CellEdit, CellKind};
+        state.awaiting_notebook_leader = false;
+        let edit = match ch {
+            'a' => Some(CellEdit::Add {
+                kind: CellKind::Code,
+                above: false,
+            }),
+            'A' => Some(CellEdit::Add {
+                kind: CellKind::Code,
+                above: true,
+            }),
+            'm' => Some(CellEdit::Type(CellKind::Markdown)),
+            'y' => Some(CellEdit::Type(CellKind::Code)),
+            'd' => Some(CellEdit::Delete),
+            'j' => Some(CellEdit::Move { down: true }),
+            'k' => Some(CellEdit::Move { down: false }),
+            's' => Some(CellEdit::Split),
+            'J' => Some(CellEdit::Join),
+            _ => None,
+        };
+        return finish_leader(state, edit.map(Action::Cell));
     }
 
     // Android prefix dispatch (after `<leader>A`).

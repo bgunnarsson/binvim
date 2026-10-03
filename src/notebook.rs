@@ -459,6 +459,7 @@ impl NotebookDoc {
     /// in, the file's original bytes are returned untouched, so a save that
     /// changed nothing can't reformat a number Python and serde_json print
     /// differently (`1e-05`).
+    #[cfg(test)]
     pub fn serialize(&self, text: &str) -> Vec<u8> {
         self.save(text).0
     }
@@ -630,6 +631,112 @@ pub fn masked(text: &str, kind: CellKind) -> String {
         }
     }
     out
+}
+
+/// A whole-cell operation from `:cell` or `<leader>n`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CellEdit {
+    Add { kind: CellKind, above: bool },
+    Delete,
+    Move { down: bool },
+    Type(CellKind),
+    Split,
+    Join,
+}
+
+/// Apply `edit` to the cell holding `line`, returning the new text and the
+/// line the cursor belongs on. New headers carry no id: the save's
+/// `fix_ids` pass names them, the same as a header typed by hand.
+pub fn edit_cells(text: &str, line: usize, edit: CellEdit) -> Result<(String, usize), String> {
+    let mut lines: Vec<String> = text_lines(text).into_iter().map(String::from).collect();
+    let spans = cell_spans_text(text);
+    let Some(here) = span_at(&spans, line) else {
+        let CellEdit::Add { kind, .. } = edit else {
+            return Err("no cell here".into());
+        };
+        return Ok((format!("{}\n\n", header_line(kind, None)), 1));
+    };
+    let span = &spans[here];
+    let cursor = match edit {
+        CellEdit::Add { kind, above } => {
+            let at = if above { span.start() } else { span.body.end };
+            lines.splice(at..at, [header_line(kind, None), String::new()]);
+            at + 1
+        }
+        CellEdit::Delete => {
+            lines.drain(span.start()..span.body.end);
+            match (spans.get(here + 1), here.checked_sub(1)) {
+                (Some(_), _) => span.start(),
+                (None, Some(prev)) => spans[prev].start(),
+                (None, None) => 0,
+            }
+        }
+        CellEdit::Move { down } => {
+            let other = if down {
+                spans.get(here + 1).map(|_| here + 1)
+            } else {
+                here.checked_sub(1)
+            }
+            .ok_or(if down {
+                "no cell below"
+            } else {
+                "no cell above"
+            })?;
+            // Text above the first header has no header of its own, so
+            // moved below another cell it would join that cell's body.
+            if span.header.is_none() || spans[other].header.is_none() {
+                return Err("the text above the first header isn't a cell".into());
+            }
+            let (first, second) = if down {
+                (span, &spans[other])
+            } else {
+                (&spans[other], span)
+            };
+            let upper_len = first.body.end - first.start();
+            lines[first.start()..second.body.end].rotate_left(upper_len);
+            let offset = line - span.start();
+            if down {
+                first.start() + (second.body.end - second.start()) + offset
+            } else {
+                first.start() + offset
+            }
+        }
+        CellEdit::Type(kind) => match span.header {
+            Some(_) if span.kind == kind => {
+                return Err(format!("already a {} cell", kind.as_str()));
+            }
+            Some(h) => {
+                lines[h] = header_line(kind, span.id.as_deref());
+                line
+            }
+            None => {
+                lines.insert(span.start(), header_line(kind, None));
+                line + 1
+            }
+        },
+        CellEdit::Split => {
+            if span.header == Some(line) {
+                return Err("the cursor is on the cell's header".into());
+            }
+            if line == span.body.start {
+                return Err("nothing above the cursor in this cell".into());
+            }
+            lines.insert(line, header_line(span.kind, None));
+            line + 1
+        }
+        CellEdit::Join => {
+            let next = spans.get(here + 1).ok_or("no cell below")?;
+            if let Some(h) = next.header {
+                lines.remove(h);
+            }
+            line
+        }
+    };
+    let mut out = lines.join("\n");
+    if text.ends_with('\n') && !out.is_empty() {
+        out.push('\n');
+    }
+    Ok((out, cursor))
 }
 
 #[cfg(test)]
@@ -987,6 +1094,95 @@ mod tests {
         assert!(md.contains("über def"));
         assert!(!md.contains("def f"));
         assert!(!md.contains("# %%"));
+    }
+
+    const CELLS: &str = "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\nthere\n# %% id=c\ny\n";
+
+    fn edit(line: usize, e: CellEdit) -> (String, usize) {
+        edit_cells(CELLS, line, e).unwrap()
+    }
+
+    #[test]
+    fn adding_a_cell_goes_below_or_above_the_cursors_cell() {
+        let below = CellEdit::Add {
+            kind: CellKind::Markdown,
+            above: false,
+        };
+        assert_eq!(
+            edit(3, below),
+            (
+                "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\nthere\n# %% [markdown]\n\n# %% id=c\ny\n".into(),
+                6
+            )
+        );
+        let above = CellEdit::Add {
+            kind: CellKind::Code,
+            above: true,
+        };
+        assert_eq!(edit(1, above), (format!("# %%\n\n{CELLS}"), 1));
+        assert_eq!(edit_cells("", 0, above).unwrap(), ("# %%\n\n".into(), 1));
+    }
+
+    #[test]
+    fn deleting_a_cell_takes_its_header_and_lands_on_a_neighbour() {
+        assert_eq!(
+            edit(3, CellEdit::Delete),
+            ("# %% id=a\nx = 1\n# %% id=c\ny\n".into(), 2)
+        );
+        assert_eq!(
+            edit(6, CellEdit::Delete),
+            (
+                "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\nthere\n".into(),
+                2
+            )
+        );
+        assert_eq!(
+            edit_cells("# %% id=a\nx\n", 1, CellEdit::Delete).unwrap(),
+            (String::new(), 0)
+        );
+        assert!(edit_cells("", 0, CellEdit::Delete).is_err());
+    }
+
+    #[test]
+    fn moving_a_cell_swaps_it_with_its_neighbour_and_the_cursor_follows() {
+        let swapped = "# %% id=a\nx = 1\n# %% id=c\ny\n# %% [markdown] id=b\nhi\nthere\n";
+        assert_eq!(edit(4, CellEdit::Move { down: true }), (swapped.into(), 6));
+        assert_eq!(edit(6, CellEdit::Move { down: false }), (swapped.into(), 3));
+        assert!(edit_cells(CELLS, 6, CellEdit::Move { down: true }).is_err());
+        assert!(edit_cells(CELLS, 0, CellEdit::Move { down: false }).is_err());
+        assert!(edit_cells("pre\n# %% id=a\nx\n", 2, CellEdit::Move { down: false }).is_err());
+    }
+
+    #[test]
+    fn changing_a_cells_type_rewrites_its_header_and_keeps_the_id() {
+        assert_eq!(
+            edit(1, CellEdit::Type(CellKind::Raw)).0,
+            CELLS.replacen("# %% id=a", "# %% [raw] id=a", 1)
+        );
+        assert!(edit_cells(CELLS, 1, CellEdit::Type(CellKind::Code)).is_err());
+        assert_eq!(
+            edit_cells("x\n", 0, CellEdit::Type(CellKind::Markdown)).unwrap(),
+            ("# %% [markdown]\nx\n".into(), 1)
+        );
+    }
+
+    #[test]
+    fn splitting_and_joining_cells() {
+        let split = edit(4, CellEdit::Split);
+        assert_eq!(
+            split,
+            (
+                "# %% id=a\nx = 1\n# %% [markdown] id=b\nhi\n# %% [markdown]\nthere\n# %% id=c\ny\n".into(),
+                5
+            )
+        );
+        assert!(edit_cells(CELLS, 2, CellEdit::Split).is_err());
+        assert!(edit_cells(CELLS, 3, CellEdit::Split).is_err());
+        assert_eq!(
+            edit(1, CellEdit::Join),
+            ("# %% id=a\nx = 1\nhi\nthere\n# %% id=c\ny\n".into(), 1)
+        );
+        assert!(edit_cells(CELLS, 6, CellEdit::Join).is_err());
     }
 
     proptest::proptest! {
