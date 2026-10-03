@@ -119,6 +119,50 @@ pub fn home_join<P: AsRef<std::path::Path>>(rest: P) -> Option<PathBuf> {
     home_dir().map(|h| h.join(rest))
 }
 
+/// The interpreter inside `venv`.
+pub fn venv_python(venv: &Path) -> PathBuf {
+    if cfg!(windows) {
+        venv.join("Scripts").join("python.exe")
+    } else {
+        venv.join("bin").join("python")
+    }
+}
+
+/// The interpreter of the Python environment `dir` belongs to: a `.venv` /
+/// `venv` in it or above it, then an activated `$VIRTUAL_ENV` or
+/// `$CONDA_PREFIX`. The kernel runs notebooks in it and pyright resolves
+/// imports against it, so the two agree on what's installed.
+pub fn python_env(dir: &Path) -> Option<PathBuf> {
+    let markers: Vec<String> = [".venv", "venv"]
+        .iter()
+        .map(|v| venv_python(Path::new(v)).to_string_lossy().into_owned())
+        .collect();
+    let project = find_marker_root(dir, &markers)
+        .and_then(|root| markers.iter().map(|m| root.join(m)).find(|p| p.is_file()));
+    let activated = || {
+        let var = |name| {
+            std::env::var_os(name)
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        };
+        var("VIRTUAL_ENV")
+            .map(|v| venv_python(&v))
+            .or_else(|| {
+                // A conda env keeps python.exe at its root on Windows, not
+                // under Scripts\ like a venv.
+                var("CONDA_PREFIX").map(|p| {
+                    if cfg!(windows) {
+                        p.join("python.exe")
+                    } else {
+                        p.join("bin").join("python")
+                    }
+                })
+            })
+            .filter(|p| p.is_file())
+    };
+    project.or_else(activated)
+}
+
 /// Look up an executable on `$PATH`. Splits with `std::env::split_paths`
 /// (so `;`-separated entries work on Windows, `:` on Unix). On Windows,
 /// when `name` has no extension, also probes `name.exe` / `name.cmd` /

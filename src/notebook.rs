@@ -861,6 +861,26 @@ pub fn lsp_view(text: &str) -> String {
     out
 }
 
+/// The line each code cell ends its last statement on, when Jupyter shows
+/// that statement's value: a bare expression there is the cell's result, not
+/// an unused one. Trailing blank and comment lines don't count, and a `;`
+/// at the end is Jupyter's way of hiding the value, so that line is left out.
+pub fn displayed_lines(text: &str) -> HashSet<usize> {
+    let lines = text_lines(text);
+    cell_spans_text(text)
+        .into_iter()
+        .filter(|s| s.kind == CellKind::Code && !is_cell_magic(&lines[s.body.clone()]))
+        .filter_map(|s| {
+            let last = s.body.rev().find(|&l| {
+                let t = lines[l].trim();
+                !t.is_empty() && !t.starts_with('#')
+            })?;
+            let code = lines[last].trim_end();
+            (!is_ipython_line(code) && !code.ends_with(';')).then_some(last)
+        })
+        .collect()
+}
+
 /// `text` with every byte outside `kind`'s cells (headers included) turned
 /// into a space, newlines kept. Byte offsets are unchanged, so a highlighter
 /// run over it colours exactly the bytes of the buffer it should.
@@ -1779,6 +1799,19 @@ mod tests {
         assert_eq!(spans[2].body, 8..9);
         assert_eq!(span_at(&spans, 5), Some(1));
         assert_eq!(span_at(&spans, 0), Some(0));
+    }
+
+    #[test]
+    fn a_cells_last_statement_is_what_jupyter_displays() {
+        let text = "# %% id=a\nx = 1\nx\n# note\n\n# %% id=b\nprint(x);\n# %% [markdown] id=c\nx\n# %% id=d\n%%bash\necho\n# %% id=e\nf(\n  1)\n";
+        let shown: Vec<usize> = {
+            let mut v: Vec<usize> = displayed_lines(text).into_iter().collect();
+            v.sort();
+            v
+        };
+        // `x` in a, the close of `f(` in e; b hides its value with `;`,
+        // c is markdown and d is a cell magic.
+        assert_eq!(shown, vec![2, 14]);
     }
 
     #[test]

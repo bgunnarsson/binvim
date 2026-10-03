@@ -751,14 +751,7 @@ pub fn module_venv(pkg: &str) -> Option<PathBuf> {
     crate::paths::data_dir().map(|d| d.join("venvs").join(pkg))
 }
 
-/// The interpreter inside `venv`.
-pub fn venv_python(venv: &Path) -> PathBuf {
-    if cfg!(windows) {
-        venv.join("Scripts").join("python.exe")
-    } else {
-        venv.join("bin").join("python")
-    }
-}
+pub use crate::paths::venv_python;
 
 /// binvim's venv interpreter for `module`, when the venv has it. The debug
 /// adapter runs this before falling back to `PYTHON_CANDIDATES`, so a venv

@@ -250,20 +250,11 @@ fn neutral_dir() -> PathBuf {
     }
 }
 
-fn env_python(env: &Path) -> PathBuf {
-    if cfg!(windows) {
-        env.join("Scripts").join("python.exe")
-    } else {
-        env.join("bin").join("python")
-    }
-}
-
 /// The interpreter a notebook in `dir` runs under. An environment the
-/// notebook belongs to wins — a `.venv` / `venv` above it, then an activated
-/// `$VIRTUAL_ENV` or `$CONDA_PREFIX` — because that is where its imports are
-/// installed, and if it lacks ipykernel the answer is to install it there
-/// (`Err(Some(python))`). Without one, the first Python on `$PATH` that has
-/// ipykernel, then the venv `:install` puts ipykernel in.
+/// notebook belongs to wins (`paths::python_env`), because that is where its
+/// imports are installed, and if it lacks ipykernel the answer is to install
+/// it there (`Err(Some(python))`). Without one, the first Python on `$PATH`
+/// that has ipykernel, then the venv `:install` puts ipykernel in.
 pub fn find_interpreter(dir: &Path) -> Result<PathBuf, Option<PathBuf>> {
     find_interpreter_with(dir, |py| {
         binvim::install::python_has_module(py, "ipykernel")
@@ -274,29 +265,7 @@ fn find_interpreter_with(
     dir: &Path,
     has_ipykernel: impl Fn(&Path) -> bool,
 ) -> Result<PathBuf, Option<PathBuf>> {
-    let rel = |venv: &str| env_python(Path::new(venv));
-    let markers: Vec<String> = [".venv", "venv"]
-        .iter()
-        .map(|v| rel(v).to_string_lossy().into_owned())
-        .collect();
-    let project = crate::paths::find_marker_root(dir, &markers)
-        .and_then(|root| markers.iter().map(|m| root.join(m)).find(|p| p.is_file()));
-    let conda = |prefix: PathBuf| {
-        if cfg!(windows) {
-            prefix.join("python.exe")
-        } else {
-            prefix.join("bin").join("python")
-        }
-    };
-    let activated = std::env::var_os("VIRTUAL_ENV")
-        .filter(|v| !v.is_empty())
-        .map(|v| env_python(Path::new(&v)))
-        .or_else(|| {
-            std::env::var_os("CONDA_PREFIX")
-                .filter(|v| !v.is_empty())
-                .map(|v| conda(PathBuf::from(v)))
-        });
-    if let Some(py) = project.or(activated.filter(|p| p.is_file())) {
+    if let Some(py) = crate::paths::python_env(dir) {
         return if has_ipykernel(&py) {
             Ok(py)
         } else {

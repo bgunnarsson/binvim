@@ -13,6 +13,8 @@ pub struct Diagnostic {
     pub end_col: usize,
     pub severity: Severity,
     pub message: String,
+    /// The server's rule name or number (`reportUnusedExpression`, `E501`).
+    pub code: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

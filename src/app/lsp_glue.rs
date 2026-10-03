@@ -85,7 +85,7 @@ impl super::App {
                         self.lsp.send_apply_edit_response(&client_key, id, applied);
                     }
                 }
-                LspEvent::DiagnosticsUpdated => {}
+                LspEvent::DiagnosticsUpdated => self.keep_notebook_results_unflagged(),
                 LspEvent::InlayHints { path, hints } => {
                     self.inlay_hints_in_flight.remove(&path);
                     if hints.is_empty() {
@@ -965,6 +965,38 @@ impl super::App {
         // the spec for this path (not the client's stored one).
         self.lsp.did_open_all(&path, &text);
         self.last_sent_version.insert(path, self.buffer.version);
+    }
+
+    /// pyright sees a notebook as one script, so it flags the bare
+    /// expression a code cell ends with as unused. Jupyter displays it — it's
+    /// how a cell shows a value — so that warning is dropped there.
+    fn keep_notebook_results_unflagged(&mut self) {
+        let active = self.active;
+        let stashed = self
+            .buffers
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != active)
+            .map(|(_, s)| &s.buffer);
+        for buffer in std::iter::once(&self.buffer).chain(stashed) {
+            if !buffer.is_notebook() {
+                continue;
+            }
+            let Some(diags) = buffer
+                .path
+                .as_ref()
+                .and_then(|p| self.lsp.diagnostics.get_mut(p))
+            else {
+                continue;
+            };
+            let unused =
+                |d: &crate::lsp::Diagnostic| d.code.as_deref() == Some("reportUnusedExpression");
+            if !diags.iter().any(unused) {
+                continue;
+            }
+            let shown = crate::notebook::displayed_lines(&buffer.rope.to_string());
+            diags.retain(|d| !(unused(d) && shown.contains(&d.end_line)));
+        }
     }
 
     /// The active buffer's text as language servers see it. A notebook is

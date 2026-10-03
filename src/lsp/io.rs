@@ -4,6 +4,7 @@
 
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::path::{Path, PathBuf};
 use std::process::ChildStdin;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -210,14 +211,20 @@ fn dispatch(
 /// initialization (and ongoing operation) isn't blocked waiting for us.
 fn auto_respond(stdin: &Arc<Mutex<ChildStdin>>, id: u64, method: &str, params: Option<&Value>) {
     let result = match method {
-        // workspace/configuration → array of nulls, sized to params.items.len().
+        // workspace/configuration → one answer per item, null for all but the
+        // sections `configuration_item` knows.
         "workspace/configuration" => {
-            let n = params
+            let items = params
                 .and_then(|p| p.get("items"))
                 .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            json!(vec![Value::Null; n])
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            json!(
+                items
+                    .iter()
+                    .map(|item| configuration_item(item, crate::paths::python_env))
+                    .collect::<Vec<_>>()
+            )
         }
         // workspace/applyEdit is handled out-of-band by the main thread —
         // see `dispatch`. Default arm here just to keep this match
@@ -235,6 +242,32 @@ fn auto_respond(stdin: &Arc<Mutex<ChildStdin>>, id: u64, method: &str, params: O
     if let Ok(mut s) = stdin.lock() {
         let _ = s.write_all(frame.as_bytes());
         let _ = s.flush();
+    }
+}
+
+/// The setting a server asks for in one `workspace/configuration` item.
+/// pyright asks for `python` and, told nothing, resolves imports against
+/// whatever Python is first on `$PATH` — not the project's `.venv`, which
+/// is where the imports are installed and where a notebook's kernel runs.
+fn configuration_item(item: &Value, python_env: impl Fn(&Path) -> Option<PathBuf>) -> Value {
+    if item.get("section").and_then(Value::as_str) != Some("python") {
+        return Value::Null;
+    }
+    let Some(scope) = item
+        .get("scopeUri")
+        .and_then(Value::as_str)
+        .and_then(super::types::uri_to_path)
+    else {
+        return Value::Null;
+    };
+    let dir = if scope.is_file() {
+        scope.parent().unwrap_or(&scope)
+    } else {
+        scope.as_path()
+    };
+    match python_env(dir) {
+        Some(python) => json!({ "pythonPath": python }),
+        None => Value::Null,
     }
 }
 
@@ -344,6 +377,11 @@ fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
+        let code = match d.get("code") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
         out.push(Diagnostic {
             line,
             col,
@@ -351,6 +389,7 @@ fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {
             end_col,
             severity,
             message,
+            code,
         });
     }
     Some(DiagnosticsMessage {
@@ -448,5 +487,43 @@ mod cap_tests {
         fn parse_publish_diagnostics_never_panics(v in arb_json()) {
             let _ = parse_publish_diagnostics(&v);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn pyright_is_told_the_project_env_for_its_python_section() {
+        let proj = std::env::temp_dir().join(format!("binvim-lsp-config-{}", std::process::id()));
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("a.ipynb"), "").unwrap();
+        let python = proj.join(".venv/bin/python");
+        let env = |dir: &Path| (dir == proj).then(|| python.clone());
+        let uri = |path: &Path| format!("file://{}", path.display());
+        let item = |section: &str, uri: &str| json!({ "scopeUri": uri, "section": section });
+        let answer = json!({ "pythonPath": python });
+        assert_eq!(
+            configuration_item(&item("python", &uri(&proj)), env),
+            answer
+        );
+        // A file scope is looked up from its directory.
+        let file = uri(&proj.join("a.ipynb"));
+        assert_eq!(configuration_item(&item("python", &file), env), answer);
+        assert_eq!(
+            configuration_item(&item("python", "file:///other"), env),
+            Value::Null
+        );
+        assert_eq!(
+            configuration_item(&item("python.analysis", &file), env),
+            Value::Null
+        );
+        assert_eq!(
+            configuration_item(&json!({ "section": "python" }), env),
+            Value::Null
+        );
+        std::fs::remove_dir_all(&proj).unwrap();
     }
 }

@@ -4712,6 +4712,7 @@ mod tests {
                 end_col: col + 1,
                 severity: crate::lsp::Severity::Error,
                 message: message.to_string(),
+                code: None,
             })
             .collect();
         app.lsp.diagnostics.insert(path, diags);

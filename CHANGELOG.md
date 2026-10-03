@@ -29,6 +29,14 @@ follows [Semantic Versioning](https://semver.org/).
   ipykernel; with none, `:install` offers ipykernel in a venv of binvim's own.
 
 ### Fixed
+- **pyright resolves imports against the project's virtualenv.** binvim
+  answered pyright's settings request with nothing, so it fell back to the
+  first Python on `$PATH` and flagged every package installed in the
+  project's `.venv` as missing. It's now told the `.venv` / `venv` above the
+  file, or the activated virtualenv or conda env.
+- **A notebook cell's last expression isn't flagged as unused.** Jupyter
+  displays it; pyright, which reads the notebook as one script, warned about
+  it.
 - **`:install` installs debugpy on a Homebrew or Debian 12+ Python.** Those
   refuse `pip install --user` (PEP 668), so the debugpy step failed with
   `externally-managed-environment`. debugpy now goes into a venv of binvim's
