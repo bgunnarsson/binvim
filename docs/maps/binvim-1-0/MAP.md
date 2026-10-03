@@ -45,7 +45,10 @@ and the Windows deferrals listed under Out of scope.
 
 ## Decisions so far
 
-None yet.
+- [04](04-how-to-measure-startup-and-input-latency.md): hyperfine to first frame, a pty harness judged on the parsed screen, and sampled RSS, same machine and files for both editors; CI runs ratios only, published numbers come from the user's hardware.
+- [05](05-what-winget-aur-and-deb-need.md): winget (portable zip + winget-releaser), AUR (`binvim-bin` + deploy-aur) and .deb (`cargo deb --no-build`) can all be driven from the release; each needs one thing from the user's own account.
+- [07](07-drawing-images-on-the-notebook-page.md): kitty Unicode placeholders, then iTerm2 inline images when wholly visible, then half-blocks, then the label; no sixel yet.
+- [08](08-starting-kernels-other-than-python.md): the Python bridge stays and starts a non-Python kernel by `metadata.kernelspec.name` through the stock `KernelSpecManager`.
 
 ## Not yet specified
 
@@ -53,12 +56,14 @@ None yet.
 - Filling the zero-config gaps (debuggers, formatters, first-run checks) for
   the supported stacks: waits on 01.
 - Closing or accepting the no-cache-directory recovery gap: waits on 10.
-- The budget numbers, the benchmark script and the benchmark page: waits on 04.
-- Building each distribution channel, and the winget submission: waits on 05.
+- The budget numbers and the benchmark page: waits on 11's first numbers.
+- Building each distribution channel, and the winget submission: waits on 12.
 - Wiring Authenticode into `release.yml`: waits on 03.
 - Building and placing the demo recording: waits on 09.
-- Drawing image outputs on the notebook page: waits on 07.
-- Choosing and starting a non-Python kernel: waits on 08.
+- Drawing image outputs on the notebook page, with the iTerm2 and half-block
+  fallbacks: waits on 13.
+- Choosing and starting a non-Python kernel, and what follows its language:
+  waits on 14.
 - Full SCSS highlighting on Windows: waits on an upstream `tree-sitter-scss`
   release (1.0.1), then it is a one-line cfg removal (`docs/windows.md`).
 - The 1.0 release itself: the roadmap and README brought up to date, the
