@@ -299,7 +299,7 @@ impl super::App {
         let Some(rec) = recovery_path(&path).and_then(|dest| load_from(&dest)) else {
             return false;
         };
-        match std::fs::read_to_string(&path) {
+        match disk_text(&path) {
             Ok(disk) => recovered_text(&rec, &disk).is_some(),
             Err(_) => true,
         }
@@ -319,7 +319,7 @@ impl super::App {
         if held_by_another_process(&rec) {
             return None;
         }
-        let disk = std::fs::read_to_string(path).ok()?;
+        let disk = disk_text(path).ok()?;
         recovered_text(&rec, &disk).map(str::to_string)
     }
 
@@ -352,6 +352,17 @@ impl super::App {
             self.discard_recovery_key(&key);
         }
     }
+}
+
+/// `path`'s text as a buffer opened on it holds it: a notebook's cells,
+/// not its JSON, since that's what a dump of its buffer holds.
+fn disk_text(path: &Path) -> std::io::Result<String> {
+    let raw = std::fs::read_to_string(path)?;
+    Ok(if crate::buffer::is_notebook_path(path) {
+        crate::buffer::project_notebook(&raw).0
+    } else {
+        raw
+    })
 }
 
 /// What `buf`'s recovery file is kept under, if it has one. A `[No Name]`
@@ -418,6 +429,28 @@ mod tests {
             dump_key(&mut buf),
             Some(RecoveryKey::Path("/tmp/named.txt".into()))
         );
+    }
+
+    #[test]
+    fn a_notebook_dump_is_held_against_its_cells_not_its_json() {
+        let dir = crate::paths::test_scratch_dir("notebook", "recover");
+        let path = dir.join("nb.ipynb");
+        std::fs::write(
+            &path,
+            "{\"cells\": [{\"cell_type\": \"code\", \"id\": \"aa\", \"metadata\": {}, \"source\": \"x\", \"outputs\": [], \"execution_count\": null}], \"metadata\": {}, \"nbformat\": 4, \"nbformat_minor\": 5}",
+        )
+        .unwrap();
+        let disk = disk_text(&path).unwrap();
+        assert_eq!(disk, "# %% id=aa\nx\n");
+        let dump = |text: &str| crate::recover::RecoveryFile {
+            path: path.display().to_string(),
+            saved_at: 0,
+            text: text.into(),
+            pid: 0,
+        };
+        assert_eq!(recovered_text(&dump(&disk), &disk), None);
+        assert!(recovered_text(&dump("# %% id=aa\ny\n"), &disk).is_some());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

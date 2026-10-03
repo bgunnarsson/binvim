@@ -500,6 +500,60 @@ fn line_kinds(text: &str) -> Vec<Option<CellKind>> {
     kinds
 }
 
+/// An IPython `%magic` or `!shell` line, which no Python tool can parse.
+fn is_ipython_line(line: &str) -> bool {
+    let t = line.trim_start();
+    t.starts_with('%') || t.starts_with('!')
+}
+
+/// Code cells in `text` a Python formatter should run over, with their
+/// source: those that differ from the disk cell their id names (edited, new
+/// or pasted), and that hold no IPython line the formatter would refuse.
+/// Formatting only these keeps a save from rewriting cells nobody touched.
+pub fn formattable_edits(doc: &NotebookDoc, text: &str) -> Vec<(Range<usize>, String)> {
+    let lines = text_lines(text);
+    cell_spans_text(text)
+        .into_iter()
+        .filter(|s| s.kind == CellKind::Code)
+        .filter_map(|s| {
+            let body = &lines[s.body.clone()];
+            if body.iter().all(|l| l.trim().is_empty()) || body.iter().any(|l| is_ipython_line(l)) {
+                return None;
+            }
+            let source = body.join("\n");
+            let original = s.id.as_deref().and_then(|id| doc.original_source(id));
+            (original.as_deref() != Some(source.as_str())).then_some((s.body, source))
+        })
+        .collect()
+}
+
+/// `text` with each line range in `edits` replaced by its new source.
+/// Ranges are in buffer lines and must not overlap.
+pub fn replace_bodies(text: &str, edits: &[(Range<usize>, String)]) -> String {
+    let lines = text_lines(text);
+    let mut out = String::with_capacity(text.len());
+    let mut next = 0;
+    let mut sorted: Vec<&(Range<usize>, String)> = edits.iter().collect();
+    sorted.sort_by_key(|(r, _)| r.start);
+    for (range, source) in sorted {
+        for line in &lines[next..range.start] {
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str(source);
+        out.push('\n');
+        next = range.end;
+    }
+    for line in &lines[next..] {
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !text.ends_with('\n') {
+        out.pop();
+    }
+    out
+}
+
 /// What the language server is shown: code lines as they are, every other
 /// line — headers, markdown, raw, IPython `%magic` and `!shell` lines —
 /// emptied. The line count doesn't change, so diagnostics and edits land on
@@ -512,10 +566,7 @@ pub fn lsp_view(text: &str) -> String {
             out.push('\n');
         }
         let keep = match kinds.get(i) {
-            Some(Some(CellKind::Code)) => {
-                let t = line.trim_start();
-                !t.starts_with('%') && !t.starts_with('!')
-            }
+            Some(Some(CellKind::Code)) => !is_ipython_line(line),
             Some(_) => false,
             // The empty line after a final newline.
             None => true,
@@ -613,6 +664,27 @@ mod tests {
     fn cells(bytes: &[u8]) -> Vec<Value> {
         let v: Value = serde_json::from_slice(bytes).unwrap();
         v["cells"].as_array().unwrap().clone()
+    }
+
+    #[test]
+    fn only_edited_and_new_code_cells_are_formattable() {
+        let (text, doc) = project(JUPYTER).unwrap();
+        assert!(formattable_edits(&doc, &text).is_empty());
+        let text = text
+            .replace("print('hi')", "print( 'hi' )")
+            .replace("Some **bold**", "Some  **bold**")
+            + "# %%\nx=1\n# %%\n%time x\n";
+        let edits = formattable_edits(&doc, &text);
+        let sources: Vec<&str> = edits.iter().map(|(_, s)| s.as_str()).collect();
+        assert_eq!(sources, ["import os\nprint( 'hi' )", "x=1"]);
+        let formatted: Vec<_> = edits
+            .into_iter()
+            .map(|(r, s)| (r, s.replace("( 'hi' )", "('hi')").replace("x=1", "x = 1")))
+            .collect();
+        let out = replace_bodies(&text, &formatted);
+        assert!(out.contains("print('hi')\n# %% [markdown]"));
+        assert!(out.ends_with("# %%\nx = 1\n# %%\n%time x\n"));
+        assert_eq!(out.lines().count(), text.lines().count());
     }
 
     #[test]

@@ -5,6 +5,17 @@
 use crate::app::state::HoverState;
 
 impl super::App {
+    /// Hunks and blame are git's view of the file, and a notebook's file is
+    /// its JSON — line numbers that don't match the buffer's. Says so and
+    /// answers `true` when the active buffer is one.
+    fn git_lines_unavailable(&mut self) -> bool {
+        if self.buffer.is_notebook() {
+            self.status_msg =
+                "not available in notebooks — git sees the JSON, not the cells".into();
+        }
+        self.buffer.is_notebook()
+    }
+
     /// Jump the cursor to the next (or previous) git hunk in the active
     /// buffer. Wraps around the buffer if no hunk lies in the requested
     /// direction. No-op when the buffer has no hunks.
@@ -42,6 +53,9 @@ impl super::App {
     /// surrounding context, then slices out the hunk whose new-side
     /// range covers the cursor.
     pub(super) fn hunk_preview(&mut self) {
+        if self.git_lines_unavailable() {
+            return;
+        }
         let Some(path) = self.buffer.path.clone() else {
             self.status_msg = "no path: open a file first".into();
             return;
@@ -75,6 +89,9 @@ impl super::App {
     /// hunk, then pipes it through `git apply --cached --unidiff-zero`.
     /// On success the gutter sign for the hunk disappears.
     pub(super) fn hunk_stage(&mut self) {
+        if self.git_lines_unavailable() {
+            return;
+        }
         let Some(path) = self.buffer.path.clone() else {
             self.status_msg = "no path: open a file first".into();
             return;
@@ -104,6 +121,9 @@ impl super::App {
     /// only makes sense after the user has staged something. Pipes a
     /// reversed patch through `git apply --cached --reverse`.
     pub(super) fn hunk_unstage(&mut self) {
+        if self.git_lines_unavailable() {
+            return;
+        }
         let Some(path) = self.buffer.path.clone() else {
             self.status_msg = "no path: open a file first".into();
             return;
@@ -143,6 +163,9 @@ impl super::App {
             self.status_msg = "blame off".into();
             return;
         }
+        if self.git_lines_unavailable() {
+            return;
+        }
         let Some(path) = self.buffer.path.as_ref() else {
             self.status_msg = "blame: buffer has no path".into();
             return;
@@ -165,6 +188,9 @@ impl super::App {
     /// it to the working tree (not the index), then reloads the buffer
     /// from disk so the user sees the revert immediately.
     pub(super) fn hunk_reset(&mut self) {
+        if self.git_lines_unavailable() {
+            return;
+        }
         if self.buffer.dirty {
             self.status_msg = "reset: buffer has unsaved changes (`:w` first)".into();
             return;

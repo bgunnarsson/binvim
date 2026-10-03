@@ -101,15 +101,10 @@ impl super::App {
         // Active buffer first — `refresh_git_hunks` already exists and
         // reads `self.buffer.path` directly.
         self.refresh_git_hunks();
-        // Each stashed buffer: recompute against its path if it has
-        // one. Mirrors the active-buffer logic in `save::refresh_git_hunks`
-        // but reads from the stash since the live `self.buffer`
-        // isn't the one whose hunks we're updating.
+        // Each stashed buffer, read from the stash since the live
+        // `self.buffer` isn't the one whose hunks we're updating.
         for stash in &mut self.buffers {
-            stash.git_hunks = match stash.buffer.path.as_ref() {
-                Some(p) => crate::git::diff_against_worktree(p).unwrap_or_default(),
-                None => Vec::new(),
-            };
+            stash.git_hunks = super::save::git_hunks_for(&stash.buffer);
         }
     }
 }

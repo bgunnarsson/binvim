@@ -62,7 +62,14 @@ impl super::App {
             );
         }
         let mut format_note: Option<String> = None;
-        if let Some(path) = self.buffer.path.clone() {
+        if let Some(path) = self
+            .buffer
+            .path
+            .clone()
+            .filter(|_| self.buffer.is_notebook())
+        {
+            format_note = self.format_notebook_cells(&path);
+        } else if let Some(path) = self.buffer.path.clone() {
             let source = self.buffer.rope.to_string();
             match crate::format::format_buffer(&path, &source) {
                 Ok(formatted) if formatted != source => {
@@ -74,11 +81,15 @@ impl super::App {
                 Err(msg) => format_note = Some(format!("fmt: {msg}")),
             }
         }
-        if self.editorconfig.trim_trailing_whitespace {
-            self.trim_trailing_whitespace();
-        }
-        if self.editorconfig.insert_final_newline {
-            self.ensure_final_newline();
+        // A notebook's text is cells, not the file: trailing spaces are a
+        // markdown line break, and the final newline is the serializer's.
+        if !self.buffer.is_notebook() {
+            if self.editorconfig.trim_trailing_whitespace {
+                self.trim_trailing_whitespace();
+            }
+            if self.editorconfig.insert_final_newline {
+                self.ensure_final_newline();
+            }
         }
         if let Some(forced) = self.editorconfig.end_of_line {
             self.buffer.line_ending = forced;
@@ -111,6 +122,36 @@ impl super::App {
             });
         }
         Ok(format_note)
+    }
+
+    /// Format each edited code cell on its own, as one undo step. The
+    /// formatter is chosen, and finds its project config, by a `.py` name
+    /// beside the notebook.
+    fn format_notebook_cells(&mut self, path: &std::path::Path) -> Option<String> {
+        let source = self.buffer.rope.to_string();
+        let cells = crate::notebook::formattable_edits(self.buffer.notebook.as_ref()?, &source);
+        let as_py = path.with_extension("py");
+        let mut edits = Vec::new();
+        let mut note = None;
+        for (lines, cell) in cells {
+            match crate::format::format_buffer(&as_py, &cell) {
+                Ok(out) => {
+                    let out = out.strip_suffix('\n').unwrap_or(&out);
+                    if out != cell {
+                        edits.push((lines, out.to_string()));
+                    }
+                }
+                Err(msg) => {
+                    note = Some(format!("fmt: {msg}"));
+                    break;
+                }
+            }
+        }
+        if !edits.is_empty() {
+            self.apply_formatted(&crate::notebook::replace_bodies(&source, &edits));
+            note.get_or_insert_with(|| "formatted".into());
+        }
+        note
     }
 
     fn trim_trailing_whitespace(&mut self) {
@@ -175,10 +216,18 @@ impl super::App {
     /// `git diff -U0` invocation, parsed locally). No-op when the buffer
     /// has no on-disk path or isn't inside a git repo.
     pub(super) fn refresh_git_hunks(&mut self) {
-        self.git_hunks = match self.buffer.path.as_ref() {
-            Some(p) => crate::git::diff_against_worktree(p).unwrap_or_default(),
-            None => Vec::new(),
-        };
+        self.git_hunks = git_hunks_for(&self.buffer);
+    }
+}
+
+/// The gutter's hunks for `buffer`. None for a notebook: git diffs the JSON,
+/// whose line numbers aren't the buffer's.
+pub(super) fn git_hunks_for(buffer: &crate::buffer::Buffer) -> Vec<crate::git::GitHunk> {
+    match buffer.path.as_ref() {
+        Some(p) if !buffer.is_notebook() => {
+            crate::git::diff_against_worktree(p).unwrap_or_default()
+        }
+        _ => Vec::new(),
     }
 }
 
@@ -211,5 +260,31 @@ pub fn detect_git_branch(start: &std::path::Path) -> Option<String> {
             return None;
         }
         dir = parent;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_notebook_save_keeps_a_markdown_cells_trailing_spaces() {
+        let dir = crate::paths::test_scratch_dir("notebook", "trim");
+        let path = dir.join("nb.ipynb");
+        let json = |src: &str| {
+            format!(
+                "{{\n \"cells\": [\n  {{\n   \"cell_type\": \"markdown\",\n   \"id\": \"aa\",\n   \"metadata\": {{}},\n   \"source\": [\n    \"{src}\"\n   ]\n  }}\n ],\n \"metadata\": {{}},\n \"nbformat\": 4,\n \"nbformat_minor\": 5\n}}\n"
+            )
+        };
+        std::fs::write(&path, json("Some **bold**  ")).unwrap();
+        let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        app.editorconfig.trim_trailing_whitespace = true;
+        app.editorconfig.insert_final_newline = true;
+        let idx = app.buffer.rope.to_string().find("bold").unwrap();
+        app.buffer.insert_at_idx(idx, "very ");
+        app.save_active(false).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            json("Some **very bold**  ")
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
