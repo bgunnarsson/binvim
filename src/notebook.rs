@@ -3,7 +3,7 @@
 //! A notebook is projected into "percent" text — one header line per cell
 //! (`# %% id=…`, `# %% [markdown] id=…`, `# %% [raw] id=…`) followed by the
 //! cell's source — and the buffer edits that text. The original JSON stays on
-//! the buffer as a `NotebookDoc`; on save, `serialize` matches the text's cells
+//! the buffer as a `NotebookDoc`; on save, `save` matches the text's cells
 //! back to the originals by the id in each header, so metadata, attachments
 //! and outputs survive edits they were never shown in.
 //!
@@ -150,6 +150,20 @@ fn cell_kind(cell: &Value) -> Option<CellKind> {
         .and_then(CellKind::from_cell_type)
 }
 
+/// A line break ropey counts that `\n`-split text doesn't: a CR not
+/// followed by LF, VT, FF, NEL, or a Unicode line or paragraph separator.
+fn has_other_line_break(s: &str) -> bool {
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\r' if chars.peek() != Some(&'\n') => return true,
+            '\u{0b}' | '\u{0c}' | '\u{85}' | '\u{2028}' | '\u{2029}' => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 pub fn project(json: &str) -> Result<(String, NotebookDoc), String> {
     let value: Value = serde_json::from_str(json).map_err(|e| format!("invalid JSON: {e}"))?;
     let Value::Object(mut root) = value else {
@@ -175,14 +189,28 @@ pub fn project(json: &str) -> Result<(String, NotebookDoc), String> {
         let Some(kind) = cell_kind(cell) else {
             return Err(format!("cell {} has no known cell_type", i + 1));
         };
+        // A later duplicate of an id on disk is named by its position
+        // instead, so it keeps its own outputs rather than the first's.
         let id = match cell.get("id").and_then(Value::as_str) {
-            Some(id) if parse_header(&header_line(kind, Some(id))).is_some() => id.to_string(),
+            Some(id)
+                if parse_header(&header_line(kind, Some(id))).is_some()
+                    && !by_id.contains_key(id) =>
+            {
+                id.to_string()
+            }
             _ => format!("{SYNTHETIC_PREFIX}{i}"),
         };
-        // A later duplicate on disk loses its identity rather than shadowing
-        // the first; it saves as a copy of that cell.
-        by_id.entry(id.clone()).or_insert(i);
+        by_id.insert(id.clone(), i);
         let source = source_text(cell);
+        // The rope breaks lines at more than `\n`, so a lone CR in a source
+        // would let the cell bars find a header the save never sees — code
+        // drawn as concealed markdown.
+        if has_other_line_break(&source) {
+            return Err(format!(
+                "cell {} contains a line break other than \\n",
+                i + 1
+            ));
+        }
         if source.split('\n').any(|l| parse_header(l).is_some()) {
             return Err(format!(
                 "cell {} contains a line that reads as a cell header",
@@ -263,27 +291,7 @@ pub fn cell_spans_text(text: &str) -> Vec<CellSpan> {
 }
 
 pub fn cell_spans(rope: &Rope) -> Vec<CellSpan> {
-    let mut n = rope.len_lines();
-    if rope.len_chars() > 0 && rope.char(rope.len_chars() - 1) == '\n' {
-        n -= 1;
-    }
-    let line_string = |i: usize| -> String {
-        let line = rope.line(i);
-        let s: String = line.chars().collect();
-        s.trim_end_matches('\n').to_string()
-    };
-    let headers: Vec<Option<Header>> = (0..n)
-        .map(|i| {
-            // Only a line starting with `#` can be a header; skip the
-            // allocation for the rest.
-            if rope.line(i).chars().next() == Some('#') {
-                parse_header(&line_string(i))
-            } else {
-                None
-            }
-        })
-        .collect();
-    spans_from(&headers, |i| line_string(i).trim().is_empty())
+    cell_spans_text(&rope.to_string())
 }
 
 /// The cell whose header or body holds `line`.
@@ -393,8 +401,10 @@ fn set_kind(cell: &mut Map<String, Value>, kind: CellKind) {
 
 impl NotebookDoc {
     /// The cells `text` describes, and which of the text's ids now name which
-    /// of them. A cell the text gave no id, or an id an earlier cell already
-    /// took, has no entry: on disk it carries a fresh id the text doesn't know.
+    /// of them. An id an earlier cell already took has no entry: on disk it
+    /// carries a fresh id the text doesn't know. Text above the first header
+    /// is keyed `""`, so the cell its first save made is the cell it names
+    /// from then on, rather than a new one with a new id on every save.
     fn cells_from_text(&self, text: &str) -> (Vec<Value>, HashMap<String, usize>) {
         let parsed = text_cells(text);
         let mut taken: HashSet<String> = parsed
@@ -407,8 +417,9 @@ impl NotebookDoc {
         let mut out = Vec::with_capacity(parsed.len());
         let mut by_id = HashMap::new();
         for tc in parsed {
-            let first_use = tc.id.as_ref().is_some_and(|id| used.insert(id.clone()));
-            let orig = tc.id.as_ref().and_then(|id| self.by_id.get(id)).copied();
+            let key = tc.id.clone().unwrap_or_default();
+            let first_use = used.insert(key.clone());
+            let orig = self.by_id.get(&key).copied();
             let mut cell = match orig {
                 Some(i) => match &self.cells[i] {
                     Value::Object(m) => m.clone(),
@@ -446,26 +457,17 @@ impl NotebookDoc {
                 Value::Object(m)
             };
             if first_use {
-                if let Some(id) = tc.id {
-                    by_id.insert(id, out.len());
-                }
+                by_id.insert(key, out.len());
             }
             out.push(cell_value);
         }
         (out, by_id)
     }
 
-    /// The notebook's bytes for `text`. When every cell comes out as it went
-    /// in, the file's original bytes are returned untouched, so a save that
-    /// changed nothing can't reformat a number Python and serde_json print
-    /// differently (`1e-05`).
-    #[cfg(test)]
-    pub fn serialize(&self, text: &str) -> Vec<u8> {
-        self.save(text).0
-    }
-
-    /// `serialize`, plus the doc that describes the file once those bytes are
-    /// written. Its ids come from the text, not from re-reading the bytes: a
+    /// The notebook's bytes for `text`, and the doc that describes the file
+    /// once they are written. When every cell comes out as it went in, the
+    /// file's original bytes are returned untouched. The doc's ids come from
+    /// the text, not from re-reading the bytes: a
     /// synthetic `~3` keeps naming the cell it named before a cell was
     /// inserted above it, where a re-read would hand it to another cell.
     pub fn save(&self, text: &str) -> (Vec<u8>, NotebookDoc) {
@@ -483,7 +485,7 @@ impl NotebookDoc {
         // ensure_ascii=False)` plus a newline; serde_json's default map is
         // sorted, so a Jupyter-written file comes back byte for byte.
         let mut out = Vec::new();
-        let fmt = serde_json::ser::PrettyFormatter::with_indent(b" ");
+        let fmt = PythonFormatter(serde_json::ser::PrettyFormatter::with_indent(b" "));
         let mut ser = serde_json::Serializer::with_formatter(&mut out, fmt);
         let value = Value::Object(root);
         serde::Serialize::serialize(&value, &mut ser).expect("a JSON value always serializes");
@@ -521,6 +523,83 @@ impl NotebookDoc {
     }
 }
 
+/// serde_json's pretty printer with floats written the way Python's `repr`
+/// writes them (`2.5e-05`, `1e+16`, where serde_json writes `0.000025`), so a
+/// save that changes one cell leaves the numbers in every other cell as
+/// Jupyter wrote them.
+struct PythonFormatter<'a>(serde_json::ser::PrettyFormatter<'a>);
+
+impl serde_json::ser::Formatter for PythonFormatter<'_> {
+    fn write_f64<W: ?Sized + std::io::Write>(&mut self, w: &mut W, v: f64) -> std::io::Result<()> {
+        w.write_all(python_float_repr(v).as_bytes())
+    }
+    fn begin_array<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.begin_array(w)
+    }
+    fn end_array<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.end_array(w)
+    }
+    fn begin_array_value<W: ?Sized + std::io::Write>(
+        &mut self,
+        w: &mut W,
+        first: bool,
+    ) -> std::io::Result<()> {
+        self.0.begin_array_value(w, first)
+    }
+    fn end_array_value<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.end_array_value(w)
+    }
+    fn begin_object<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.begin_object(w)
+    }
+    fn end_object<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.end_object(w)
+    }
+    fn begin_object_key<W: ?Sized + std::io::Write>(
+        &mut self,
+        w: &mut W,
+        first: bool,
+    ) -> std::io::Result<()> {
+        self.0.begin_object_key(w, first)
+    }
+    fn begin_object_value<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.begin_object_value(w)
+    }
+    fn end_object_value<W: ?Sized + std::io::Write>(&mut self, w: &mut W) -> std::io::Result<()> {
+        self.0.end_object_value(w)
+    }
+}
+
+/// `repr(v)` for a finite Python float: the shortest digits that round-trip,
+/// in exponent form when the decimal point falls more than 4 places before
+/// the first digit or more than 16 after it.
+fn python_float_repr(v: f64) -> String {
+    let sci = format!("{v:e}");
+    let (sign, sci) = sci
+        .strip_prefix('-')
+        .map_or(("", sci.as_str()), |rest| ("-", rest));
+    let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
+    let exp: i32 = exp.parse().expect("{:e} exponent is an integer");
+    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+    // The value is 0.<digits> × 10^point.
+    let point = exp + 1;
+    if !(-4 < point && point <= 16) {
+        let (head, tail) = digits.split_at(1);
+        let dot = if tail.is_empty() { "" } else { "." };
+        let esign = if exp < 0 { '-' } else { '+' };
+        return format!("{sign}{head}{dot}{tail}e{esign}{:02}", exp.abs());
+    }
+    let n = digits.len() as i32;
+    if point <= 0 {
+        format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
+    } else if point >= n {
+        format!("{sign}{digits}{}.0", "0".repeat((point - n) as usize))
+    } else {
+        let (int, frac) = digits.split_at(point as usize);
+        format!("{sign}{int}.{frac}")
+    }
+}
+
 /// Line kinds of `text`: `Some(kind)` for a body line, `None` for a header.
 fn line_kinds(text: &str) -> Vec<Option<CellKind>> {
     let n = text_lines(text).len();
@@ -536,10 +615,25 @@ fn line_kinds(text: &str) -> Vec<Option<CellKind>> {
     kinds
 }
 
-/// An IPython `%magic` or `!shell` line, which no Python tool can parse.
+/// An IPython `%magic` or `!shell` line, which no Python tool can parse —
+/// not a continuation line that starts with `% 3` or `!= b`.
 fn is_ipython_line(line: &str) -> bool {
     let t = line.trim_start();
-    t.starts_with('%') || t.starts_with('!')
+    if let Some(rest) = t.strip_prefix('%') {
+        rest.starts_with(|c: char| c == '%' || c.is_ascii_alphabetic())
+    } else if let Some(rest) = t.strip_prefix('!') {
+        !rest.starts_with('=')
+    } else {
+        false
+    }
+}
+
+/// A code cell that opens with a `%%bash` / `%%writefile` cell magic, whose
+/// whole body is for another program.
+fn is_cell_magic(body: &[&str]) -> bool {
+    body.iter()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| l.trim_start().starts_with("%%"))
 }
 
 /// Code cells in `text` a Python formatter should run over, with their
@@ -595,21 +689,25 @@ pub fn replace_bodies(text: &str, edits: &[(Range<usize>, String)]) -> String {
 /// emptied. The line count doesn't change, so diagnostics and edits land on
 /// buffer lines with no translation.
 pub fn lsp_view(text: &str) -> String {
-    let kinds = line_kinds(text);
-    let mut out = String::with_capacity(text.len());
-    for (i, line) in text.split('\n').enumerate() {
-        if i > 0 {
-            out.push('\n');
+    let lines = text_lines(text);
+    let mut keep = vec![false; lines.len()];
+    for span in cell_spans_text(text) {
+        if span.kind != CellKind::Code || is_cell_magic(&lines[span.body.clone()]) {
+            continue;
         }
-        let keep = match kinds.get(i) {
-            Some(Some(CellKind::Code)) => !is_ipython_line(line),
-            Some(_) => false,
-            // The empty line after a final newline.
-            None => true,
-        };
-        if keep {
+        for l in span.body {
+            keep[l] = !is_ipython_line(lines[l]);
+        }
+    }
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in lines.iter().enumerate() {
+        if keep[i] {
             out.push_str(line);
         }
+        out.push('\n');
+    }
+    if !text.ends_with('\n') {
+        out.pop();
     }
     out
 }
@@ -858,7 +956,7 @@ mod tests {
     #[test]
     fn unedited_round_trip_is_byte_identical() {
         let (text, doc) = project(JUPYTER).unwrap();
-        assert_eq!(doc.serialize(&text), JUPYTER.as_bytes());
+        assert_eq!(doc.save(&text).0, JUPYTER.as_bytes());
     }
 
     #[test]
@@ -866,7 +964,7 @@ mod tests {
         let (text, mut doc) = project(JUPYTER).unwrap();
         // Force the serializer path rather than the original-bytes shortcut.
         doc.original.clear();
-        assert_eq!(String::from_utf8(doc.serialize(&text)).unwrap(), JUPYTER);
+        assert_eq!(String::from_utf8(doc.save(&text).0).unwrap(), JUPYTER);
     }
 
     #[test]
@@ -877,14 +975,83 @@ mod tests {
         );
         assert_ne!(json, JUPYTER);
         let (text, doc) = project(&json).unwrap();
-        assert_eq!(doc.serialize(&text), json.as_bytes());
+        assert_eq!(doc.save(&text).0, json.as_bytes());
+    }
+
+    #[test]
+    fn an_edit_leaves_floats_in_other_cells_as_python_wrote_them() {
+        let json = JUPYTER.replace(
+            "\"metadata\": {\n    \"tags\"",
+            "\"metadata\": {\n    \"duration\": 2.5e-05,\n    \"rate\": 1e+16,\n    \"tags\"",
+        );
+        assert_ne!(json, JUPYTER);
+        let (text, doc) = project(&json).unwrap();
+        let out = doc.save(&text.replace("print('hi')", "print('ho')")).0;
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            json.replace("\"print('hi')\"", "\"print('ho')\"")
+        );
+    }
+
+    #[test]
+    fn python_float_repr_matches_python() {
+        for (v, want) in [
+            (2.5e-05, "2.5e-05"),
+            (1e-05, "1e-05"),
+            (0.0001, "0.0001"),
+            (1e16, "1e+16"),
+            (1234567890123456.0, "1234567890123456.0"),
+            (1.5e300, "1.5e+300"),
+            (0.1, "0.1"),
+            (1.0, "1.0"),
+            (0.0, "0.0"),
+            (-0.0, "-0.0"),
+            (-3.25, "-3.25"),
+            (123.456, "123.456"),
+        ] {
+            assert_eq!(python_float_repr(v), want, "{v}");
+        }
+    }
+
+    #[test]
+    fn a_repeated_disk_id_keeps_each_cells_own_outputs() {
+        let json = JUPYTER.replace("\"id\": \"e5f6a7b8\"", "\"id\": \"a1b2c3d4\"");
+        let (text, doc) = project(&json).unwrap();
+        assert!(text.contains("# %% [markdown] id=~1\n"));
+        assert_eq!(fix_ids(&text, true), None);
+        assert_eq!(doc.cell_info("~1"), Some((None, 0)));
+        assert_eq!(doc.save(&text).0, json.as_bytes());
+    }
+
+    #[test]
+    fn text_above_the_first_header_keeps_its_id_across_saves() {
+        let (first, doc) = empty_notebook().save("print(1)\n");
+        let (second, _) = doc.save("print(1)\n");
+        assert_eq!(first, second);
+        let id = cells(&first)[0]["id"].clone();
+        let (_, doc) = doc.save("print(2)\n");
+        let third = doc.save("print(2)\n").0;
+        assert_eq!(cells(&third)[0]["id"], id);
+    }
+
+    #[test]
+    fn a_line_break_other_than_lf_refuses_projection() {
+        for brk in ["\\r", "\\u2028", "\\f"] {
+            let json = JUPYTER.replace(
+                "\"import os\\n\"",
+                &format!("\"x = 1{brk}# %% [markdown] id=zz\\n\""),
+            );
+            assert!(project(&json).unwrap_err().contains("line break"), "{brk}");
+        }
+        let json = JUPYTER.replace("\"import os\\n\"", "\"import os\\r\\n\"");
+        assert!(project(&json).is_ok());
     }
 
     #[test]
     fn edited_cell_keeps_outputs_and_only_its_source_changes() {
         let (text, doc) = project(JUPYTER).unwrap();
         let edited = text.replace("print('hi')", "print('bye')");
-        let out = doc.serialize(&edited);
+        let out = doc.save(&edited).0;
         let before = cells(JUPYTER.as_bytes());
         let after = cells(&out);
         assert_eq!(after[0]["execution_count"], 3);
@@ -906,7 +1073,7 @@ mod tests {
         assert_ne!(json, JUPYTER);
         let (text, doc) = project(&json).unwrap();
         let edited = text.replace("print('hi')", "print(1)");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert_eq!(after[1]["source"], "# Title\n\nSome **bold**  ");
     }
 
@@ -916,7 +1083,7 @@ mod tests {
         let edited = text
             .replace("# %% id=a1b2c3d4", "# %% [markdown] id=a1b2c3d4")
             .replace("# %% [raw] id=c9d0e1f2", "# %% id=c9d0e1f2");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert_eq!(after[0]["cell_type"], "markdown");
         assert!(after[0].get("outputs").is_none());
         assert!(after[0].get("execution_count").is_none());
@@ -929,7 +1096,7 @@ mod tests {
     fn new_cell_gets_an_id_only_at_nbformat_4_5() {
         let (text, doc) = project(JUPYTER).unwrap();
         let edited = format!("{text}# %% [markdown]\nnew\n");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert_eq!(after.len(), 4);
         assert_eq!(after[3]["cell_type"], "markdown");
         assert_eq!(after[3]["source"], serde_json::json!(["new"]));
@@ -939,7 +1106,7 @@ mod tests {
         let old = JUPYTER.replace("\"nbformat_minor\": 5", "\"nbformat_minor\": 4");
         let (text, doc) = project(&old).unwrap();
         let edited = format!("{text}# %%\nnew\n");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert!(after[3].get("id").is_none());
         assert_eq!(after[3]["outputs"], serde_json::json!([]));
     }
@@ -952,7 +1119,7 @@ mod tests {
         let (text, doc) = project(&old).unwrap();
         assert!(text.starts_with("# %% id=~0\n"));
         let edited = text.replace("print('hi')", "print(2)");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert!(after[0].get("id").is_none());
         assert_eq!(after[0]["execution_count"], 3);
     }
@@ -969,7 +1136,7 @@ mod tests {
         let (_, doc) = doc.save(&inserted);
         // `~0` still names the code cell with outputs, now second on disk.
         let edited = inserted.replace("print('hi')", "print(3)");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert_eq!(after[1]["execution_count"], 3);
         assert_eq!(after[0]["outputs"], serde_json::json!([]));
     }
@@ -978,7 +1145,7 @@ mod tests {
     fn pasted_duplicate_is_a_copy_with_a_fresh_id() {
         let (text, doc) = project(JUPYTER).unwrap();
         let edited = format!("{text}# %% id=a1b2c3d4\nimport os\nprint('hi')\n");
-        let after = cells(&doc.serialize(&edited));
+        let after = cells(&doc.save(&edited).0);
         assert_eq!(after.len(), 4);
         assert_eq!(after[0]["id"], "a1b2c3d4");
         assert_ne!(after[3]["id"], "a1b2c3d4");
@@ -990,16 +1157,16 @@ mod tests {
         let json = JUPYTER.replace("\"print('hi')\"", "\"print('hi')\\n\"");
         let (text, doc) = project(&json).unwrap();
         assert!(text.contains("print('hi')\n\n# %% [markdown]"));
-        assert_eq!(doc.serialize(&text), json.as_bytes());
+        assert_eq!(doc.save(&text).0, json.as_bytes());
         let mut doc = doc;
         doc.original.clear();
-        assert_eq!(doc.serialize(&text), json.as_bytes());
+        assert_eq!(doc.save(&text).0, json.as_bytes());
     }
 
     #[test]
     fn empty_notebook_round_trips() {
         let doc = empty_notebook();
-        let out = doc.serialize("");
+        let out = doc.save("").0;
         let (text, _) = project(std::str::from_utf8(&out).unwrap()).unwrap();
         assert_eq!(text, "");
         assert_eq!(cells(&out), Vec::<Value>::new());
@@ -1008,11 +1175,11 @@ mod tests {
     #[test]
     fn text_above_the_first_header_saves_as_a_code_cell() {
         let doc = empty_notebook();
-        let after = cells(&doc.serialize("x = 1\n"));
+        let after = cells(&doc.save("x = 1\n").0);
         assert_eq!(after.len(), 1);
         assert_eq!(after[0]["cell_type"], "code");
         assert_eq!(after[0]["source"], serde_json::json!(["x = 1"]));
-        assert!(cells(&doc.serialize("\n\n")).is_empty());
+        assert!(cells(&doc.save("\n\n").0).is_empty());
     }
 
     #[test]
@@ -1080,6 +1247,16 @@ mod tests {
         let view = lsp_view(text);
         assert_eq!(view, "\n\nx = 1\n\n\n\n");
         assert_eq!(view.split('\n').count(), text.split('\n').count());
+    }
+
+    #[test]
+    fn lsp_view_keeps_continuation_lines_and_drops_cell_magics() {
+        let text = "# %% id=a\nok = (a\n      != b)\ny = (x\n     % 3)\n! ls\n\
+                    # %% id=b\n%%bash\necho hi\n";
+        assert_eq!(
+            lsp_view(text),
+            "\nok = (a\n      != b)\ny = (x\n     % 3)\n\n\n\n\n"
+        );
     }
 
     #[test]
@@ -1192,7 +1369,7 @@ mod tests {
             text in "(# %%( \\[markdown\\]| \\[raw\\])?( id=[a-z~0-9]{1,3})?\n|[a-zé %#\\[\\]=]{0,8}\n){0,12}"
         ) {
             let (_, doc) = project(JUPYTER).unwrap();
-            let out = doc.serialize(&text);
+            let out = doc.save(&text).0;
             let (round, _) = project(std::str::from_utf8(&out).unwrap()).unwrap();
             proptest::prop_assert_eq!(cell_spans_text(&round).len(), cell_spans_text(&text).len());
             let _ = lsp_view(&text);
