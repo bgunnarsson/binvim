@@ -340,6 +340,41 @@ pub fn fresh_id(taken: &HashSet<String>) -> String {
     }
 }
 
+/// `text` with a fresh id on every header that has none or repeats an
+/// earlier one, or `None` when every header already has its own. Done to the
+/// text before a save so the buffer, its undo history and the next save all
+/// agree on which cell is which. Without nbformat ids the fresh ones are
+/// synthetic, which are never written.
+pub fn fix_ids(text: &str, has_ids: bool) -> Option<String> {
+    let lines = text_lines(text);
+    let mut taken: HashSet<String> = lines.iter().filter_map(|l| parse_header(l)?.id).collect();
+    let mut seen = HashSet::new();
+    let mut changed = false;
+    let mut out = String::with_capacity(text.len() + 64);
+    for line in &lines {
+        match parse_header(line) {
+            Some(h) if h.id.as_ref().is_none_or(|id| !seen.insert(id.clone())) => {
+                let id = fresh_id(&taken);
+                let id = if has_ids {
+                    id
+                } else {
+                    format!("{SYNTHETIC_PREFIX}{id}")
+                };
+                taken.insert(id.clone());
+                seen.insert(id.clone());
+                out.push_str(&header_line(h.kind, Some(&id)));
+                changed = true;
+            }
+            _ => out.push_str(line),
+        }
+        out.push('\n');
+    }
+    if !text.ends_with('\n') {
+        out.pop();
+    }
+    changed.then_some(out)
+}
+
 /// Make `cell` the shape nbformat's schema wants for `kind`: code cells carry
 /// `outputs` and `execution_count` and no `attachments`; markdown and raw
 /// cells carry no outputs.
@@ -685,6 +720,21 @@ mod tests {
         assert!(out.contains("print('hi')\n# %% [markdown]"));
         assert!(out.ends_with("# %%\nx = 1\n# %%\n%time x\n"));
         assert_eq!(out.lines().count(), text.lines().count());
+    }
+
+    #[test]
+    fn fix_ids_rewrites_missing_and_repeated_ids_only() {
+        let text = "# %% id=aa\nx\n# %% id=aa\ny\n# %% [markdown]\nz\n# %% id=bb\n";
+        let fixed = fix_ids(text, true).unwrap();
+        let ids: Vec<String> = fixed.lines().filter_map(|l| parse_header(l)?.id).collect();
+        assert_eq!(ids.len(), 4);
+        assert_eq!((ids[0].as_str(), ids[3].as_str()), ("aa", "bb"));
+        assert!(ids.iter().collect::<HashSet<_>>().len() == 4);
+        assert!(fixed.contains("# %% [markdown] id="));
+        assert!(is_nbformat_id(&ids[1]));
+        assert_eq!(fix_ids(&fixed, true), None);
+        let synthetic = fix_ids("# %%\nx\n", false).unwrap();
+        assert!(synthetic.starts_with("# %% id=~"));
     }
 
     #[test]

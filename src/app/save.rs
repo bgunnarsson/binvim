@@ -38,7 +38,7 @@ impl super::App {
     /// re-seat the cursor inside the (possibly shorter) result. Shared by
     /// `:format` and the on-save path — the undo/replace/clamp sequence is
     /// load-bearing and must not drift between them.
-    fn apply_formatted(&mut self, formatted: &str) {
+    pub(super) fn apply_formatted(&mut self, formatted: &str) {
         self.history.record(&self.buffer.rope, self.window.cursor);
         self.buffer.replace_all(formatted);
         self.clamp_cursor_normal();
@@ -61,6 +61,7 @@ impl super::App {
                 "file is not valid UTF-8 — writing replaces its invalid bytes (:w! writes it anyway)"
             );
         }
+        self.notebook_fix_ids();
         let mut format_note: Option<String> = None;
         if let Some(path) = self
             .buffer

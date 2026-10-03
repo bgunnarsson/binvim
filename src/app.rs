@@ -39,6 +39,7 @@ pub(crate) mod installer;
 mod lazygit_glue;
 mod lsp_glue;
 mod multi_cursor;
+mod notebook_glue;
 mod package_glue;
 pub(crate) mod pair;
 mod picker_glue;
