@@ -3594,6 +3594,9 @@ impl super::App {
                 .rope
                 .slice(line_start..(line_start + line_len))
                 .to_string();
+            if self.is_cell_header(&line_text) {
+                continue;
+            }
             let (new_text, n) = super::search::substitute_line(re, &line_text, global, with);
             if n == 0 {
                 continue;
@@ -3612,6 +3615,13 @@ impl super::App {
             self.clamp_cursor_normal();
         }
         (total, lines)
+    }
+
+    /// A notebook's cell header, which `:s` and `:S` leave alone: a header a
+    /// substitution broke would turn its cell into the text above it, and
+    /// the save would fold every cell into one and drop their outputs.
+    fn is_cell_header(&self, line: &str) -> bool {
+        self.buffer.is_notebook() && crate::notebook::parse_header(line).is_some()
     }
 
     /// `:s///c` — sets up the walk and asks about the first match. Each
@@ -3704,6 +3714,12 @@ impl super::App {
                 .rope
                 .slice(line_start..line_start + line_len)
                 .to_string();
+            if self.buffer.is_notebook() && crate::notebook::parse_header(&text).is_some() {
+                c.line += 1;
+                c.from = 0;
+                c.last_end = None;
+                continue;
+            }
             let (replacement, groups) = (&c.replacement, &c.groups);
             let hit =
                 super::search::next_hit(&c.re, &text, c.from, c.last_end, &|caps, matched| {
@@ -3859,16 +3875,27 @@ impl super::App {
             self.status_msg = "S: ripgrep not on PATH".into();
             return;
         };
-        if !out.status.success() && out.stdout.is_empty() {
-            self.status_msg = format!("S: pattern not found: {pattern}");
-            return;
-        }
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let files: Vec<PathBuf> = stdout
+        let mut files: Vec<PathBuf> = stdout
             .lines()
             .filter(|l| !l.is_empty())
             .map(|l| cwd.join(l))
             .collect();
+        // ripgrep reads a notebook's JSON, not the cells `:s` runs over: an
+        // anchored pattern, or one with a quote or a tab, never matches there.
+        // Every notebook is a candidate; the substitution decides.
+        if let Ok(nb) = std::process::Command::new("rg")
+            .args(["--files", "--color=never", "--iglob", "*.ipynb", "."])
+            .current_dir(&cwd)
+            .output()
+        {
+            for l in String::from_utf8_lossy(&nb.stdout).lines() {
+                let path = cwd.join(l);
+                if !l.is_empty() && !files.contains(&path) {
+                    files.push(path);
+                }
+            }
+        }
         if files.is_empty() {
             self.status_msg = format!("S: pattern not found: {pattern}");
             return;

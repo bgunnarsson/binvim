@@ -444,6 +444,12 @@ impl super::App {
         let text = raw.replace("\r\n", "\n");
         let text = if crate::buffer::is_notebook_path(path) {
             let (text, notebook, error) = crate::buffer::project_notebook(&text);
+            // Without nbformat ids a cell is named `~N` by its position, and
+            // the re-read numbers them afresh: undo text from before the
+            // reload would hand each cell another's outputs on save.
+            if notebook.as_ref().is_some_and(|doc| !doc.has_ids()) {
+                self.history = History::default();
+            }
             self.buffer.notebook = notebook;
             self.buffer.notebook_error = error;
             text

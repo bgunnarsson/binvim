@@ -269,6 +269,44 @@ mod tests {
     }
 
     #[test]
+    fn substitute_leaves_cell_headers_alone() {
+        let (dir, mut app) = open("subst");
+        app.exec_command("%s/[xa]/q/g");
+        assert_eq!(app.buffer.rope.to_string(), "# %% id=aa\nq = 1\n");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reloading_a_notebook_without_ids_drops_undo_that_would_misname_cells() {
+        let dir = crate::paths::test_scratch_dir("notebook", "reload-ids");
+        let path = dir.join("nb.ipynb");
+        let nb = |cells: &[&str]| {
+            let cells: Vec<String> = cells
+                .iter()
+                .map(|s| {
+                    format!(
+                        "{{\"cell_type\": \"markdown\", \"metadata\": {{}}, \"source\": \"{s}\"}}"
+                    )
+                })
+                .collect();
+            format!(
+                "{{\"cells\": [{}], \"metadata\": {{}}, \"nbformat\": 4, \"nbformat_minor\": 4}}\n",
+                cells.join(", ")
+            )
+        };
+        std::fs::write(&path, nb(&["a", "b"])).unwrap();
+        let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
+        press(&mut app, "Gx");
+        std::fs::write(&path, nb(&["b"])).unwrap();
+        app.force_reload_from_disk().unwrap();
+        let reloaded = app.buffer.rope.to_string();
+        assert_eq!(reloaded, "# %% [markdown] id=~0\nb\n");
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), reloaded);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn cell_commands_refuse_a_plain_buffer() {
         let dir = crate::paths::test_scratch_dir("notebook", "plain");
         let path = dir.join("x.py");

@@ -283,6 +283,15 @@ impl Buffer {
         let (bytes, notebook) = match &self.notebook {
             Some(doc) => {
                 let (json, saved) = doc.save(&self.rope.to_string());
+                // JSON escapes every newline inside a string, so each one in
+                // the bytes is between tokens and takes the file's ending.
+                let json = match self.line_ending {
+                    LineEnding::Crlf => String::from_utf8(json)
+                        .expect("serde_json and the original are UTF-8")
+                        .replace('\n', "\r\n")
+                        .into_bytes(),
+                    LineEnding::Lf => json,
+                };
                 (json, Some(saved))
             }
             None => {
@@ -978,6 +987,25 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&tmp).unwrap(),
             NOTEBOOK.replace("\"x = 1\"", "\"x = 41\"")
+        );
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn crlf_notebook_saves_with_crlf() {
+        let tmp = std::env::temp_dir().join("binvim_notebook_crlf.ipynb");
+        let crlf = NOTEBOOK.replace('\n', "\r\n");
+        std::fs::write(&tmp, &crlf).unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert!(buf.is_notebook());
+        buf.save().unwrap();
+        assert_eq!(std::fs::read_to_string(&tmp).unwrap(), crlf);
+        let idx = buf.rope.to_string().find("x = 1").unwrap();
+        buf.insert_at_idx(idx + 4, "4");
+        buf.save().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&tmp).unwrap(),
+            crlf.replace("\"x = 1\"", "\"x = 41\"")
         );
         let _ = std::fs::remove_file(&tmp);
     }
