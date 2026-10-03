@@ -84,6 +84,10 @@ pub struct NotebookDoc {
     /// Cells sent to the kernel and not finished yet. Carried across a
     /// save, which a long-running cell outlives.
     busy: HashSet<String>,
+    /// Outputs made with a display id, which `update_display` redraws in
+    /// place: the cell and the index into its outputs. Carried across a
+    /// save, since the cell that updates them may still be running.
+    displays: HashMap<String, Vec<(String, usize)>>,
     /// Changes whenever `runs` or `busy` does, from one counter shared by
     /// every doc, so a cache keyed on it can't mistake a fresh doc (made by
     /// a save) for the one it was built from.
@@ -258,6 +262,7 @@ pub fn project(json: &str) -> Result<(String, NotebookDoc), String> {
             has_ids: minor >= 5,
             runs: HashMap::new(),
             busy: HashSet::new(),
+            displays: HashMap::new(),
             rev: next_rev(),
         },
     ))
@@ -545,6 +550,7 @@ impl NotebookDoc {
             has_ids: self.has_ids,
             runs: HashMap::new(),
             busy: self.busy.clone(),
+            displays: self.displays.clone(),
             rev: next_rev(),
         };
         (out, doc)
@@ -606,6 +612,7 @@ impl NotebookDoc {
     /// The cell was sent to the kernel: its old outputs and count go, as
     /// Jupyter clears them when a cell is run.
     pub fn begin_run(&mut self, id: &str) {
+        self.forget_displays(id);
         *self.run_mut(id) = CellRun::default();
         self.busy.insert(id.to_string());
     }
@@ -631,10 +638,11 @@ impl NotebookDoc {
     /// Append one nbformat output. Consecutive stream outputs to the same
     /// stream are merged into one, as Jupyter merges them before it saves.
     pub fn push_output(&mut self, id: &str, output: Value) {
-        let run = self.run_mut(id);
-        if std::mem::take(&mut run.clear_on_next) {
-            run.outputs.clear();
+        if std::mem::take(&mut self.run_mut(id).clear_on_next) {
+            self.forget_displays(id);
+            self.run_mut(id).outputs.clear();
         }
+        let run = self.run_mut(id);
         if let Some(last) = run.outputs.last_mut() {
             let stream = |v: &Value| {
                 (v.get("output_type")?.as_str()? == "stream")
@@ -651,19 +659,56 @@ impl NotebookDoc {
         run.outputs.push(output);
     }
 
+    /// A display output that `update_display` can later redraw by
+    /// `display_id`.
+    pub fn push_display(&mut self, id: &str, output: Value, display_id: String) {
+        self.push_output(id, output);
+        let index = self.run_mut(id).outputs.len() - 1;
+        self.displays
+            .entry(display_id)
+            .or_default()
+            .push((id.to_string(), index));
+    }
+
+    /// `update_display`: every output shown under `display_id`, in any
+    /// cell, takes the new data and metadata. One with no display to
+    /// update shows nowhere, as in Jupyter.
+    pub fn update_display(&mut self, display_id: &str, output: &Value) {
+        let Some(targets) = self.displays.get(display_id).cloned() else {
+            return;
+        };
+        for (cell, index) in targets {
+            if let Some(out) = self.run_mut(&cell).outputs.get_mut(index) {
+                for key in ["data", "metadata"] {
+                    if let Some(v) = output.get(key) {
+                        out[key] = v.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    fn forget_displays(&mut self, id: &str) {
+        self.displays.retain(|_, targets| {
+            targets.retain(|(cell, _)| cell != id);
+            !targets.is_empty()
+        });
+    }
+
     /// `clear_output`: now, or with `wait` when the next output arrives, so
     /// a cell that redraws a progress line doesn't flicker.
     pub fn clear_outputs(&mut self, id: &str, wait: bool) {
-        let run = self.run_mut(id);
         if wait {
-            run.clear_on_next = true;
+            self.run_mut(id).clear_on_next = true;
         } else {
-            run.outputs.clear();
+            self.forget_displays(id);
+            self.run_mut(id).outputs.clear();
         }
     }
 
     /// `:cell clear`: no outputs and no count, as if never run.
     pub fn clear_cell(&mut self, id: &str) {
+        self.forget_displays(id);
         *self.run_mut(id) = CellRun::default();
     }
 
@@ -1094,7 +1139,9 @@ fn image_mime(data: &Map<String, Value>) -> Option<&str> {
 }
 
 /// The text each output shows, with its style. An image shows a note in
-/// its place: its `text/plain` is only `<Figure size 640x480 …>`.
+/// its place: its `text/plain` is only `<Figure size 640x480 …>`. Markdown
+/// shows its source, since its `text/plain` is only
+/// `<IPython.core.display.Markdown object>`.
 fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
     let mut rows = Vec::new();
     let mut push_text = |style, text: &str| {
@@ -1120,7 +1167,9 @@ fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
                         OutputStyle::Note,
                         &format!("[{mime}] :cell output opens it"),
                     );
-                } else if let Some(text) = data.get("text/plain") {
+                } else if let Some(text) =
+                    data.get("text/markdown").or_else(|| data.get("text/plain"))
+                {
                     push_text(OutputStyle::Text, &multiline(Some(text)));
                 } else if let Some(mime) = data.keys().next() {
                     push_text(OutputStyle::Note, &format!("[{mime}]"));
@@ -1525,6 +1574,34 @@ mod tests {
         assert_eq!(doc.outputs("a1b2c3d4"), [stream("stdout", "20%\n")]);
         doc.clear_outputs("a1b2c3d4", false);
         assert!(doc.outputs("a1b2c3d4").is_empty());
+    }
+
+    fn markdown(text: &str) -> Value {
+        serde_json::json!({"output_type": "display_data", "metadata": {},
+            "data": {"text/markdown": [text], "text/plain": ["<IPython.core.display.Markdown object>"]}})
+    }
+
+    #[test]
+    fn an_update_redraws_its_display_in_place_and_shows_the_markdown() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        doc.begin_run("a1b2c3d4");
+        doc.push_output("a1b2c3d4", stream("stdout", "Found 17 links\n"));
+        doc.push_display("a1b2c3d4", markdown(""), "d1".into());
+        doc.update_display("d1", &markdown("# Brochure"));
+        doc.update_display("unknown", &markdown("nowhere"));
+        let rows: Vec<String> = output_rows(doc.outputs("a1b2c3d4"))
+            .into_iter()
+            .map(|r| r.text)
+            .collect();
+        assert_eq!(rows, ["Found 17 links", "# Brochure"]);
+        // A save mid-run keeps the display updatable.
+        let (_, mut saved) = doc.save(&text);
+        saved.update_display("d1", &markdown("# Final"));
+        assert_eq!(saved.outputs("a1b2c3d4")[1], markdown("# Final"));
+        // Running the cell again drops the display it made.
+        saved.begin_run("a1b2c3d4");
+        saved.update_display("d1", &markdown("gone"));
+        assert!(saved.outputs("a1b2c3d4").is_empty());
     }
 
     #[test]

@@ -52,7 +52,7 @@ def to_output(msg_type, content):
             "data": split_bundle(content.get("data", {})),
             "metadata": content.get("metadata", {}),
         }
-    if msg_type == "display_data":
+    if msg_type in ("display_data", "update_display_data"):
         return {
             "output_type": "display_data",
             "data": split_bundle(content.get("data", {})),
@@ -198,8 +198,18 @@ def iopub(msg, pending):
         emit({"ev": "clear", "cell": cell, "wait": bool(content.get("wait"))})
     else:
         out = to_output(msg_type, content)
-        if out is not None:
-            emit({"ev": "output", "cell": cell, "output": out})
+        if out is None:
+            return
+        # A display made with display_id=True can be redrawn later, from
+        # this cell or another, by update_display -- how a streamed reply
+        # replaces its placeholder. The id is transient: nbformat doesn't
+        # save it, so it travels beside the output rather than in it.
+        display_id = (content.get("transient") or {}).get("display_id")
+        if msg_type == "update_display_data":
+            if display_id is not None:
+                emit({"ev": "update", "display_id": display_id, "output": out})
+        else:
+            emit({"ev": "output", "cell": cell, "output": out, "display_id": display_id})
 
 
 if __name__ == "__main__":

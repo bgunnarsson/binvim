@@ -58,7 +58,10 @@ pub enum KernelEvent {
     Missing(Option<PathBuf>),
     Busy(String),
     Count(String, u64),
-    Output(String, Value),
+    /// An output, with the display id it can be updated by.
+    Output(String, Value, Option<String>),
+    /// `update_display`: the new output for every display with this id.
+    Update(String, Value),
     Clear(String, bool),
     Done(String),
     /// The kernel or the bridge is gone; nothing more comes from it.
@@ -226,7 +229,17 @@ fn parse_event(line: &str) -> Option<KernelEvent> {
         },
         "busy" => KernelEvent::Busy(cell()?),
         "count" => KernelEvent::Count(cell()?, v.get("count")?.as_u64()?),
-        "output" => KernelEvent::Output(cell()?, v.get("output")?.clone()),
+        "output" => KernelEvent::Output(
+            cell()?,
+            v.get("output")?.clone(),
+            v.get("display_id")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+        ),
+        "update" => KernelEvent::Update(
+            v.get("display_id")?.as_str()?.to_string(),
+            v.get("output")?.clone(),
+        ),
         "clear" => KernelEvent::Clear(
             cell()?,
             v.get("wait").and_then(Value::as_bool).unwrap_or(false),
@@ -305,6 +318,18 @@ mod tests {
             Some(KernelEvent::Dead("gone".into()))
         );
         assert_eq!(parse_event("not json"), None);
+        assert_eq!(
+            parse_event(r#"{"ev":"output","cell":"a","output":{},"display_id":"d"}"#),
+            Some(KernelEvent::Output(
+                "a".into(),
+                serde_json::json!({}),
+                Some("d".into())
+            ))
+        );
+        assert_eq!(
+            parse_event(r#"{"ev":"update","display_id":"d","output":{}}"#),
+            Some(KernelEvent::Update("d".into(), serde_json::json!({})))
+        );
         assert_eq!(parse_event(r#"{"ev":"busy"}"#), None);
     }
 

@@ -200,7 +200,13 @@ impl super::App {
             }
             KernelEvent::Busy(_) => {}
             KernelEvent::Count(id, n) => self.with_doc(path, |doc| doc.set_count(&id, n)),
-            KernelEvent::Output(id, out) => self.with_doc(path, |doc| doc.push_output(&id, out)),
+            KernelEvent::Output(id, out, display) => self.with_doc(path, |doc| match display {
+                Some(display) => doc.push_display(&id, out, display),
+                None => doc.push_output(&id, out),
+            }),
+            KernelEvent::Update(display, out) => {
+                self.with_doc(path, |doc| doc.update_display(&display, &out));
+            }
             KernelEvent::Clear(id, wait) => {
                 self.with_doc(path, |doc| doc.clear_outputs(&id, wait));
             }
