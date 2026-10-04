@@ -521,7 +521,8 @@ impl Page<'_> {
                 self.push(segs, false, Some(config.theme_code_bg()));
             }
             MarkdownLineKind::Default => {
-                let segs = self.markdown_segs(text, byte, meta);
+                let mut segs = self.markdown_segs(text, byte, meta);
+                link_urls(&mut segs);
                 self.push(segs, true, None);
             }
         }
@@ -558,6 +559,7 @@ impl Page<'_> {
     /// A markdown line with its markers hidden or swapped for glyphs and
     /// its emphasis applied, as the concealed view of a `.md` file draws it.
     fn markdown_segs(&self, text: &str, byte: Option<usize>, meta: &MarkdownLineMeta) -> Vec<Seg> {
+        let links = markdown_links(text, meta);
         let mut segs = Vec::new();
         let mut col = 0;
         let mut off = 0;
@@ -599,10 +601,20 @@ impl Page<'_> {
                 underline: range.is_some_and(|r| r.underline),
                 strike: range.is_some_and(|r| r.strikethrough),
             };
+            let link = links
+                .iter()
+                .find(|(r, _)| r.contains(&here))
+                .map(|(_, url)| url.clone());
             if g == "\t" {
-                segs.extend((0..TAB_WIDTH).map(|_| seg(" ", style)));
+                segs.extend((0..TAB_WIDTH).map(|_| Seg {
+                    link: link.clone(),
+                    ..seg(" ", style)
+                }));
             } else {
-                segs.push(seg(g, style));
+                segs.push(Seg {
+                    link,
+                    ..seg(g, style)
+                });
             }
         }
         segs
@@ -979,6 +991,28 @@ fn link_urls(segs: &mut [Seg]) {
     }
 }
 
+/// The `[text](url)` links on a markdown line: the char range of each one's
+/// text, which is all the page shows of it, and the URL its concealed
+/// `](url)` holds.
+fn markdown_links(text: &str, meta: &MarkdownLineMeta) -> Vec<(Range<usize>, Arc<str>)> {
+    let chars: Vec<char> = text.chars().collect();
+    meta.styles
+        .iter()
+        .filter(|r| {
+            r.underline && chars.get(r.end) == Some(&']') && chars.get(r.end + 1) == Some(&'(')
+        })
+        .filter_map(|r| {
+            let hidden = meta.transforms.iter().find(|t| t.start == r.end)?;
+            let url: String = chars
+                .get(r.end + 2..hidden.end.checked_sub(1)?)?
+                .iter()
+                .collect();
+            let url = url.split_whitespace().next()?.to_string();
+            Some((r.start..r.end, url.into()))
+        })
+        .collect()
+}
+
 fn plain_segs(text: &str, style: Style) -> Vec<Seg> {
     text.graphemes(true)
         .map(|g| {
@@ -1206,6 +1240,27 @@ Consider how you could <a href="https://x.dev">apply</a> it.</span>
             .collect();
         assert_eq!(linked, "http://127.0.0.1:7861");
         assert!(segs.iter().all(|s| s.style.underline == s.link.is_some()));
+    }
+
+    #[test]
+    fn a_markdown_cells_urls_and_links_open_on_a_click() {
+        let buf = notebook(
+            "links",
+            r##"{"cell_type": "markdown", "id": "m", "metadata": {}, "source": "https://colab.research.google.com/drive/1Dj?usp=sharing\n\nSee [the docs](https://x.dev \"Docs\") now."}"##,
+        );
+        let page = layout(&buf, None, 120, &Config::default(), None);
+        let linked = |row: usize, url: &str| -> String {
+            page.rows[row]
+                .segs
+                .iter()
+                .filter(|s| s.link.as_deref() == Some(url))
+                .map(|s| s.text.as_str())
+                .collect()
+        };
+        let colab = "https://colab.research.google.com/drive/1Dj?usp=sharing";
+        assert_eq!(linked(0, colab), colab);
+        assert_eq!(text(&page.rows[2]), "See the docs now.");
+        assert_eq!(linked(2, "https://x.dev"), "the docs");
     }
 
     #[test]
