@@ -2319,7 +2319,7 @@ impl super::App {
                 Err(e) => self.status_msg = format!("error: {e}"),
             },
             ExCommand::WriteQuitIfModified => {
-                let saved = if self.buffer.dirty {
+                let saved = if self.buffer.unsaved() {
                     self.save_active(false).map(|_| ())
                 } else {
                     Ok(())

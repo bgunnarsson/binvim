@@ -1883,7 +1883,10 @@ impl super::App {
             // Save so the LSP picks up the new contents. A failed save
             // stops the batch: the server is told the edit didn't apply,
             // and this buffer stays open, edited and unsaved.
-            if let Err(e) = self.buffer.save() {
+            if let Err(e) = self
+                .buffer
+                .save_with_outputs(self.config.notebook.save_outputs)
+            {
                 anyhow::bail!("saving {}: {e}", path.display());
             }
         }

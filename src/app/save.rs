@@ -102,7 +102,8 @@ impl super::App {
         if let Some(forced) = self.editorconfig.end_of_line {
             self.buffer.line_ending = forced;
         }
-        self.buffer.save()?;
+        self.buffer
+            .save_with_outputs(self.config.notebook.save_outputs)?;
         self.history.mark_written();
         if let Some(path) = self.buffer.path.clone() {
             self.discard_recovery(&path);

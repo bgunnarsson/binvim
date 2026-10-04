@@ -66,7 +66,7 @@ impl super::App {
         let had = self.kernels.remove(path).is_some();
         self.served.retain(|(p, _)| p != path);
         if let Some(doc) = self.notebook_buffer(path).and_then(|b| b.notebook.as_mut()) {
-            doc.clear_busy();
+            doc.kernel_gone();
         }
         had
     }
@@ -114,7 +114,7 @@ impl super::App {
                 doc.begin_run(id);
                 kernel.execute(id, code);
             }
-            self.buffer.dirty = true;
+            self.buffer.outputs_dirty |= self.config.notebook.save_outputs;
         }
         if scope == RunScope::Advance {
             match spans.get(here + 1) {
@@ -241,13 +241,14 @@ impl super::App {
         }
     }
 
-    /// Change the run overlay of the notebook at `path`; the change is one
-    /// the next save writes, so the buffer becomes dirty.
+    /// Change the run overlay of the notebook at `path`; the next save
+    /// writes the change, unless `[notebook] save_outputs` is off.
     fn with_doc(&mut self, path: &Path, f: impl FnOnce(&mut crate::notebook::NotebookDoc)) {
+        let save_outputs = self.config.notebook.save_outputs;
         let Some(buffer) = self.notebook_buffer(path) else { return };
         let Some(doc) = buffer.notebook.as_mut() else { return };
         f(doc);
-        buffer.dirty = true;
+        buffer.outputs_dirty |= save_outputs;
     }
 
     /// True while a kernel is starting or has cells to finish, so the run
@@ -281,7 +282,7 @@ impl super::App {
             }
         }
         if changed {
-            self.buffer.dirty = true;
+            self.buffer.outputs_dirty |= self.config.notebook.save_outputs;
         }
     }
 

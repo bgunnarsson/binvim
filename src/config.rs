@@ -174,12 +174,8 @@ pub struct StartPageConfig {
     pub lines: Vec<String>,
     /// Print the logo (or `lines`) and a parting line to the shell after a
     /// clean quit.
-    #[serde(default = "default_goodbye")]
+    #[serde(default = "default_true")]
     pub goodbye: bool,
-}
-
-fn default_goodbye() -> bool {
-    true
 }
 
 impl Default for StartPageConfig {
@@ -256,13 +252,17 @@ impl Default for HoverConfig {
 /// `![…](…)`, a plot a cell printed — in terminals that can (kitty,
 /// Ghostty); off, or elsewhere, they're a line naming the image.
 /// `open_in_browser` opens what a run serves or renders as HTML in the
-/// browser as it comes, rather than on `:cell output`.
+/// browser as it comes, rather than on `:cell output`. `save_outputs` writes
+/// code cells' outputs and run counts into the file; off, a save strips them,
+/// as nbstripout does, and a run leaves nothing to save.
 #[derive(Debug, Deserialize)]
 pub struct NotebookConfig {
     #[serde(default = "default_true")]
     pub images: bool,
     #[serde(default = "default_true")]
     pub open_in_browser: bool,
+    #[serde(default = "default_true")]
+    pub save_outputs: bool,
 }
 
 fn default_true() -> bool {
@@ -274,6 +274,7 @@ impl Default for NotebookConfig {
         Self {
             images: true,
             open_in_browser: true,
+            save_outputs: true,
         }
     }
 }

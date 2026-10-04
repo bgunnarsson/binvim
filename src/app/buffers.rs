@@ -464,6 +464,7 @@ impl super::App {
         self.buffer.gone = false;
         self.buffer.clean_hash = Some(crate::undo::hash_text(&text));
         self.buffer.dirty = false;
+        self.buffer.outputs_dirty = false;
         let last = self.buffer.line_count().saturating_sub(1);
         if self.window.cursor.line > last {
             self.window.cursor.line = last;
@@ -566,9 +567,9 @@ impl super::App {
         let dirty: Vec<usize> = (0..self.buffers.len())
             .filter(|&i| {
                 if i == self.active {
-                    self.buffer.dirty
+                    self.buffer.unsaved()
                 } else {
-                    self.buffers[i].buffer.dirty
+                    self.buffers[i].buffer.unsaved()
                 }
             })
             .collect();

@@ -84,11 +84,15 @@ pub struct NotebookDoc {
     /// Cells sent to the kernel and not finished yet. Carried across a
     /// save, which a long-running cell outlives.
     busy: HashSet<String>,
+    /// Code cells run in the kernel running now. Any other cell's outputs
+    /// and count are what the file had, from a kernel that's gone, so they
+    /// say nothing about what the kernel knows. Carried across a save.
+    live: HashSet<String>,
     /// Outputs made with a display id, which `update_display` redraws in
     /// place: the cell and the index into its outputs. Carried across a
     /// save, since the cell that updates them may still be running.
     displays: HashMap<String, Vec<(String, usize)>>,
-    /// Changes whenever `runs` or `busy` does, from one counter shared by
+    /// Changes whenever `runs`, `busy` or `live` does, from one counter shared by
     /// every doc, so a cache keyed on it can't mistake a fresh doc (made by
     /// a save) for the one it was built from.
     rev: u64,
@@ -262,6 +266,7 @@ pub fn project(json: &str) -> Result<(String, NotebookDoc), String> {
             has_ids: minor >= 5,
             runs: HashMap::new(),
             busy: HashSet::new(),
+            live: HashSet::new(),
             displays: HashMap::new(),
             rev: next_rev(),
         },
@@ -444,7 +449,11 @@ impl NotebookDoc {
     /// carries a fresh id the text doesn't know. Text above the first header
     /// is keyed `""`, so the cell its first save made is the cell it names
     /// from then on, rather than a new one with a new id on every save.
-    fn cells_from_text(&self, text: &str) -> (Vec<Value>, HashMap<String, usize>) {
+    fn cells_from_text(
+        &self,
+        text: &str,
+        keep_outputs: bool,
+    ) -> (Vec<Value>, HashMap<String, usize>) {
         let parsed = text_cells(text);
         let mut taken: HashSet<String> = parsed
             .iter()
@@ -487,7 +496,10 @@ impl NotebookDoc {
             if orig.is_none() || cell_kind(&Value::Object(cell.clone())) != Some(tc.kind) {
                 set_kind(&mut cell, tc.kind);
             }
-            if let Some(run) = self.runs.get(&key).filter(|_| first_use) {
+            if tc.kind == CellKind::Code && !keep_outputs {
+                cell.insert("outputs".into(), Value::Array(Vec::new()));
+                cell.insert("execution_count".into(), Value::Null);
+            } else if let Some(run) = self.runs.get(&key).filter(|_| first_use) {
                 if tc.kind == CellKind::Code {
                     cell.insert("outputs".into(), Value::Array(run.outputs.clone()));
                     cell.insert(
@@ -518,12 +530,25 @@ impl NotebookDoc {
     /// the text, not from re-reading the bytes: a
     /// synthetic `~3` keeps naming the cell it named before a cell was
     /// inserted above it, where a re-read would hand it to another cell.
+    #[cfg(test)]
     pub fn save(&self, text: &str) -> (Vec<u8>, NotebookDoc) {
-        let (cells, by_id) = self.cells_from_text(text);
+        self.save_with(text, true)
+    }
+
+    /// `save`, with code cells written without outputs or counts unless
+    /// `keep_outputs` (`[notebook] save_outputs`). Stripped, the outputs on
+    /// screen stay there: the returned doc keeps them as its run overlay.
+    pub fn save_with(&self, text: &str, keep_outputs: bool) -> (Vec<u8>, NotebookDoc) {
+        let (cells, by_id) = self.cells_from_text(text, keep_outputs);
+        let runs = if keep_outputs {
+            HashMap::new()
+        } else {
+            self.shown_runs(&cells, &by_id)
+        };
         if cells == self.cells && !self.original.is_empty() {
             let doc = NotebookDoc {
                 by_id,
-                runs: HashMap::new(),
+                runs,
                 rev: next_rev(),
                 ..self.clone()
             };
@@ -548,12 +573,37 @@ impl NotebookDoc {
             cells,
             by_id,
             has_ids: self.has_ids,
-            runs: HashMap::new(),
+            runs,
             busy: self.busy.clone(),
+            live: self.live.clone(),
             displays: self.displays.clone(),
             rev: next_rev(),
         };
         (out, doc)
+    }
+
+    /// What every code cell of a save shows now, as a run overlay for the
+    /// doc that save makes.
+    fn shown_runs(
+        &self,
+        cells: &[Value],
+        by_id: &HashMap<String, usize>,
+    ) -> HashMap<String, CellRun> {
+        by_id
+            .iter()
+            .filter(|&(_, &i)| cell_kind(&cells[i]) == Some(CellKind::Code))
+            .filter_map(|(id, _)| {
+                let run = match self.runs.get(id) {
+                    Some(run) => run.clone(),
+                    None => CellRun {
+                        count: self.cell_info(id)?.0,
+                        outputs: self.outputs(id).to_vec(),
+                        clear_on_next: false,
+                    },
+                };
+                (run.count.is_some() || !run.outputs.is_empty()).then(|| (id.clone(), run))
+            })
+            .collect()
     }
 
     /// The original source of the cell `id` names, when it has one on disk.
@@ -592,6 +642,15 @@ impl NotebookDoc {
         self.busy.contains(id)
     }
 
+    /// The cell's outputs or count came from the file, not from a run in
+    /// the kernel running now.
+    pub fn is_stale(&self, id: &str) -> bool {
+        !self.live.contains(id)
+            && self
+                .cell_info(id)
+                .is_some_and(|(count, n)| count.is_some() || n > 0)
+    }
+
     fn run_mut(&mut self, id: &str) -> &mut CellRun {
         self.rev = next_rev();
         if !self.runs.contains_key(id) {
@@ -615,6 +674,7 @@ impl NotebookDoc {
         self.forget_displays(id);
         *self.run_mut(id) = CellRun::default();
         self.busy.insert(id.to_string());
+        self.live.insert(id.to_string());
     }
 
     pub fn finish_run(&mut self, id: &str) {
@@ -622,11 +682,13 @@ impl NotebookDoc {
         self.busy.remove(id);
     }
 
-    /// Every cell stops counting as running — the kernel died or was
-    /// restarted, and nothing more will come for them.
-    pub fn clear_busy(&mut self) {
-        if !self.busy.is_empty() {
+    /// The kernel died, stopped or was restarted: nothing more will come
+    /// for the cells it was running, and what any cell shows is now from a
+    /// kernel that's gone.
+    pub fn kernel_gone(&mut self) {
+        if !self.busy.is_empty() || !self.live.is_empty() {
             self.busy.clear();
+            self.live.clear();
             self.rev = next_rev();
         }
     }
@@ -1102,6 +1164,9 @@ pub struct OutputRow {
     /// The output an image's note stands for, by index, so a terminal that
     /// draws images can draw it instead.
     pub image: Option<usize>,
+    /// From the file rather than the kernel running now (`is_stale`), so
+    /// drawn dim.
+    pub stale: bool,
 }
 
 /// A row's style, text and `OutputRow::image`.
@@ -1232,7 +1297,12 @@ fn output_lines(outputs: &[Value]) -> Vec<OutputLine> {
 /// that names the error and a log keeps its last lines.
 pub fn output_rows(outputs: &[Value]) -> Vec<OutputRow> {
     let lines = output_lines(outputs);
-    let row = |(style, text, image): OutputLine| OutputRow { style, text, image };
+    let row = |(style, text, image): OutputLine| OutputRow {
+        style,
+        text,
+        image,
+        stale: false,
+    };
     if lines.len() <= MAX_OUTPUT_ROWS {
         return lines.into_iter().map(row).collect();
     }
@@ -1244,6 +1314,7 @@ pub fn output_rows(outputs: &[Value]) -> Vec<OutputRow> {
         style: OutputStyle::Note,
         text: format!("… {hidden} more lines — :cell output shows them all"),
         image: None,
+        stale: false,
     });
     rows.extend(lines[lines.len() - tail..].iter().cloned().map(row));
     rows
@@ -1674,6 +1745,44 @@ mod tests {
         saved.begin_run("a1b2c3d4");
         saved.update_display("d1", &markdown("gone"));
         assert!(saved.outputs("a1b2c3d4").is_empty());
+    }
+
+    #[test]
+    fn outputs_from_the_file_are_stale_until_the_kernel_runs_the_cell() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        assert!(doc.is_stale("a1b2c3d4"));
+        doc.begin_run("a1b2c3d4");
+        doc.set_count("a1b2c3d4", 1);
+        doc.finish_run("a1b2c3d4");
+        assert!(!doc.is_stale("a1b2c3d4"));
+        let (_, mut saved) = doc.save(&text);
+        assert!(
+            !saved.is_stale("a1b2c3d4"),
+            "a save doesn't change the kernel"
+        );
+        let rev = saved.rev();
+        saved.kernel_gone();
+        assert!(saved.is_stale("a1b2c3d4"));
+        assert_ne!(saved.rev(), rev);
+    }
+
+    #[test]
+    fn a_save_without_outputs_strips_the_file_but_keeps_them_on_screen() {
+        let (text, mut doc) = project(JUPYTER).unwrap();
+        doc.begin_run("a1b2c3d4");
+        doc.set_count("a1b2c3d4", 9);
+        doc.push_output("a1b2c3d4", stream("stdout", "fresh\n"));
+        doc.finish_run("a1b2c3d4");
+        let (bytes, saved) = doc.save_with(&text, false);
+        let after = cells(&bytes);
+        assert_eq!(after[0]["execution_count"], Value::Null);
+        assert_eq!(after[0]["outputs"], serde_json::json!([]));
+        assert_eq!(after[0]["source"], cells(JUPYTER.as_bytes())[0]["source"]);
+        assert_eq!(saved.cell_info("a1b2c3d4"), Some((Some(9), 1)));
+        // Stripped already: a second save writes the same bytes.
+        assert_eq!(saved.save_with(&text, false).0, bytes);
+        // Kept on, the overlay is written back.
+        assert_eq!(cells(&saved.save(&text).0)[0]["execution_count"], 9);
     }
 
     #[test]

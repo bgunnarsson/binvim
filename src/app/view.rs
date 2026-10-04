@@ -1187,7 +1187,12 @@ fn notebook_meta(
             let rows = span
                 .id
                 .as_deref()
-                .map(|id| crate::notebook::output_rows(doc.outputs(id)))
+                .map(|id| {
+                    let stale = doc.is_stale(id);
+                    let mut rows = crate::notebook::output_rows(doc.outputs(id));
+                    rows.iter_mut().for_each(|r| r.stale = stale);
+                    rows
+                })
                 .unwrap_or_default();
             if !rows.is_empty() {
                 let last = span
@@ -1216,6 +1221,9 @@ fn notebook_meta(
                     0 => {}
                     1 => label.push_str(" · 1 output"),
                     n => label.push_str(&format!(" · {n} outputs")),
+                }
+                if !busy && span.id.as_deref().is_some_and(|id| doc.is_stale(id)) {
+                    label.push_str(" · saved");
                 }
             }
             out[h] = MarkdownLineMeta {
@@ -1343,7 +1351,7 @@ mod tests {
             assert_eq!(meta[i].kind, MarkdownLineKind::CellHeader);
             meta[i].replacement.clone().unwrap()
         };
-        assert_eq!(header(0), "code [3] · 1 output");
+        assert_eq!(header(0), "code [3] · 1 output · saved");
         assert_eq!(header(2), "markdown");
         assert_eq!(header(5), "code [ ]");
         assert!(meta[1].transforms.is_empty(), "code cell concealed");

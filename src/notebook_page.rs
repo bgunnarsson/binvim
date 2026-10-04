@@ -59,6 +59,9 @@ pub enum LabelKind {
     /// Sent to the kernel and not finished — Jupyter's `In [*]:`, with a
     /// stop button where the play button was.
     Busy,
+    /// The count is the file's, from a kernel that's gone — drawn dim, with
+    /// the cell's outputs.
+    Saved,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -277,8 +280,10 @@ impl Page<'_> {
         let id = span.id.as_deref();
         let (count, _) = id.and_then(|id| doc?.cell_info(id)).unwrap_or((None, 0));
         let busy = id.is_some_and(|id| doc.is_some_and(|d| d.is_busy(id)));
+        let stale = id.is_some_and(|id| doc.is_some_and(|d| d.is_stale(id)));
         let label = match count {
             _ if busy => ("■ [*]".to_string(), LabelKind::Busy),
+            Some(n) if stale => (format!("▶ [{n}]"), LabelKind::Saved),
             Some(n) => (format!("▶ [{n}]"), LabelKind::In),
             None => ("▶ [ ]".to_string(), LabelKind::In),
         };
@@ -302,6 +307,7 @@ impl Page<'_> {
                 continue;
             }
             let (fg, italic) = match out.style {
+                _ if stale => (self.config.theme_dim(), out.style == OutputStyle::Note),
                 OutputStyle::Text => (self.config.theme_fg(), false),
                 OutputStyle::Stderr => (self.config.diagnostic_warning(), false),
                 OutputStyle::Error => (self.config.diagnostic_error(), false),
@@ -1147,7 +1153,7 @@ mod tests {
             ["Title", "", "bold text", "", "print('hi')", "hi", "", ""]
         );
         assert_eq!(page.cells, [0..3, 4..6, 7..8]);
-        assert_eq!(page.rows[4].label, Some(("▶ [4]".into(), LabelKind::In)));
+        assert_eq!(page.rows[4].label, Some(("▶ [4]".into(), LabelKind::Saved)));
         assert!(page.rows[4].fill.is_some(), "code sits on a slab");
         assert!(page.rows[5].fill.is_none(), "output doesn't");
         assert_eq!(page.rows[7].label, Some(("▶ [ ]".into(), LabelKind::In)));

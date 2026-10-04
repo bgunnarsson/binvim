@@ -1002,6 +1002,7 @@ fn paint_output_row(
         text.push(c);
     }
     let color = match row.style {
+        _ if row.stale => app.config.theme_dim(),
         OutputStyle::Text => app.config.theme_fg(),
         OutputStyle::Stderr => app.config.diagnostic_warning(),
         OutputStyle::Error => app.config.diagnostic_error(),
@@ -5436,8 +5437,30 @@ pub(crate) struct TabSlot {
     pub end_col: usize,
     pub close_col: Option<usize>,
     pub label: String,
-    pub dirty: bool,
+    pub mark: TabMark,
     pub active: bool,
+}
+
+/// What a tab's buffer has that its file doesn't.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TabMark {
+    Clean,
+    /// Only a notebook run's outputs — a dimmer mark, since `:q` doesn't
+    /// stop for them.
+    Outputs,
+    Dirty,
+}
+
+impl TabMark {
+    fn of(buffer: &crate::buffer::Buffer) -> Self {
+        if buffer.dirty {
+            TabMark::Dirty
+        } else if buffer.outputs_dirty {
+            TabMark::Outputs
+        } else {
+            TabMark::Clean
+        }
+    }
 }
 
 /// Per-tab chrome cost (excluding the filename itself):
@@ -5453,7 +5476,7 @@ fn tab_width(label_chars: usize, dirty: bool) -> usize {
 /// on the result drive the chevron rendering.
 pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
     let total_w = app.width as usize;
-    let mut entries: Vec<(usize, String, bool)> = Vec::with_capacity(app.buffers.len());
+    let mut entries: Vec<(usize, String, TabMark)> = Vec::with_capacity(app.buffers.len());
     for (i, stash) in app.buffers.iter().enumerate() {
         // Split-companion buffers (opened via <C-w>v + picker, never
         // visited as their own tab) stay out of the tabline — they're
@@ -5463,30 +5486,27 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
         if !app.buffer_has_tab(i) {
             continue;
         }
-        let (path, dirty, display_name) = if i == app.active {
-            (
-                app.buffer.path.as_ref(),
-                app.buffer.dirty,
-                app.buffer.display_name.as_deref(),
-            )
+        let buffer = if i == app.active {
+            &app.buffer
         } else {
-            (
-                stash.buffer.path.as_ref(),
-                stash.buffer.dirty,
-                stash.buffer.display_name.as_deref(),
-            )
+            &stash.buffer
         };
+        let (path, mark, display_name) = (
+            buffer.path.as_ref(),
+            TabMark::of(buffer),
+            buffer.display_name.as_deref(),
+        );
         let label = path
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             .map(|s| s.to_string())
             .or_else(|| display_name.map(|s| s.to_string()))
             .unwrap_or_else(|| "[No Name]".into());
-        entries.push((i, label, dirty));
+        entries.push((i, label, mark));
     }
     let widths: Vec<usize> = entries
         .iter()
-        .map(|(_, label, dirty)| tab_width(label.chars().count(), *dirty))
+        .map(|(_, label, mark)| tab_width(label.chars().count(), *mark != TabMark::Clean))
         .collect();
     let total_widths: usize = widths.iter().sum();
     // Position of the active tab within the filtered `entries` list
@@ -5515,7 +5535,7 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
         if col + w > total_w {
             break;
         }
-        let (idx, label, dirty) = &entries[i];
+        let (idx, label, mark) = &entries[i];
         // close_col = end_col - 2 (last interior column = `×`, then one
         // trailing space pad). Always set — slots are never narrower
         // than `tab_width` returns.
@@ -5526,7 +5546,7 @@ pub(crate) fn tab_layout(app: &App) -> Vec<TabSlot> {
             end_col: col + w,
             close_col,
             label: label.clone(),
-            dirty: *dirty,
+            mark: *mark,
             // No tab is the "active" one while the start page is up —
             // we're not actually rendering any buffer. Highlighting one
             // would be misleading.
@@ -5581,10 +5601,15 @@ fn draw_tab_bar(out: &mut impl Write, app: &App) -> Result<()> {
         }
         // ` label[ +]  × `
         queue!(out, Print(' '), Print(&slot.label))?;
-        if slot.dirty {
+        let mark_fg = match slot.mark {
+            TabMark::Clean => None,
+            TabMark::Outputs => Some(app.config.theme_dim()),
+            TabMark::Dirty => Some(dirty_fg),
+        };
+        if let Some(mark_fg) = mark_fg {
             queue!(
                 out,
-                SetForegroundColor(dirty_fg),
+                SetForegroundColor(mark_fg),
                 Print(" +"),
                 SetForegroundColor(fg),
             )?;
@@ -5730,6 +5755,7 @@ fn draw_notebook_page(
                 Some((label, kind)) => {
                     let color = match kind {
                         LabelKind::Busy => app.config.theme_accent_secondary(),
+                        LabelKind::Saved => dim,
                         LabelKind::In if on_marked => accent,
                         LabelKind::In => dim,
                     };
@@ -8240,7 +8266,12 @@ fn draw_status_line(out: &mut impl Write, app: &App) -> Result<()> {
         })
         .unwrap_or_default();
     let gone = if app.buffer.gone { " [deleted]" } else { "" };
-    let dirty = format!("{gone}{}", if app.buffer.dirty { "●" } else { " " });
+    let mark = match TabMark::of(&app.buffer) {
+        TabMark::Clean => " ",
+        TabMark::Outputs => "○",
+        TabMark::Dirty => "●",
+    };
+    let dirty = format!("{gone}{mark}");
     let path = app.buffer.path.as_deref();
     let lang = path.and_then(Lang::detect);
     let right_text = match lang {

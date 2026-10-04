@@ -109,6 +109,10 @@ pub struct Buffer {
     pub rope: Rope,
     pub path: Option<PathBuf>,
     pub dirty: bool,
+    /// A notebook's cells were run since the last save and the next one
+    /// writes their outputs. Apart from `dirty` because losing outputs costs
+    /// a rerun, not work: `:w` writes them, `:q` doesn't stop for them.
+    pub outputs_dirty: bool,
     /// Bumped on every mutation; used to invalidate the syntax-highlight cache.
     pub version: u64,
     /// Hash of the text as last read from or written to disk — the key the
@@ -206,6 +210,7 @@ impl Buffer {
             rope: Rope::new(),
             path: None,
             dirty: false,
+            outputs_dirty: false,
             version: 0,
             clean_hash: None,
             disk_mtime: None,
@@ -275,18 +280,31 @@ impl Buffer {
         }
     }
 
+    /// Anything a write would put on disk that isn't there: edits, or a
+    /// notebook run's outputs.
+    pub fn unsaved(&self) -> bool {
+        self.dirty || self.outputs_dirty
+    }
+
     pub fn is_notebook(&self) -> bool {
         self.notebook.is_some()
     }
 
+    #[cfg(test)]
     pub fn save(&mut self) -> Result<()> {
+        self.save_with_outputs(true)
+    }
+
+    /// Write the buffer to its path. A notebook's code cells keep their
+    /// outputs and counts only with `keep_outputs` (`[notebook] save_outputs`).
+    pub fn save_with_outputs(&mut self, keep_outputs: bool) -> Result<()> {
         let path = self
             .path
             .as_ref()
             .context("no file path set (use :w {filename})")?;
         let (bytes, notebook) = match &self.notebook {
             Some(doc) => {
-                let (json, saved) = doc.save(&self.rope.to_string());
+                let (json, saved) = doc.save_with(&self.rope.to_string(), keep_outputs);
                 // JSON escapes every newline inside a string, so each one in
                 // the bytes is between tokens and takes the file's ending.
                 let json = match self.line_ending {
@@ -310,6 +328,7 @@ impl Buffer {
             self.notebook = notebook;
         }
         self.dirty = false;
+        self.outputs_dirty = false;
         self.clean_hash = Some(crate::undo::hash_text(&self.rope.to_string()));
         // Refresh mtime so the watcher doesn't immediately think the file
         // changed under us.
