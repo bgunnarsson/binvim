@@ -749,6 +749,8 @@ impl super::App {
         self.interrupts_quit
             .store(true, std::sync::atomic::Ordering::Relaxed);
         let _ = execute!(stdout, EnterAlternateScreen, EnableMouseCapture, Hide);
+        // A fresh alternate screen holds none of the images sent to the old one.
+        self.images.get_mut().forget_sent();
         let _ = execute!(
             stdout,
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),

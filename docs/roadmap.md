@@ -97,10 +97,9 @@ Python bridge over `jupyter_client` speaking JSON on stdio, run / run all /
 interrupt / restart, outputs as rows under each cell and written into the
 notebook, ipykernel in `:install`). One phase is left:
 
-- **Phase 3 — rich output.** Images and plots through the kitty and iTerm2
-  graphics protocols, with a text fallback where a terminal has neither.
-  Today an image output shows as an `[image/png]` row and `:cell output`
-  opens it in the system viewer. Kernels other than the Python one the
+- **Phase 3 — rich output.** The notebook page draws images and plots
+  through kitty's Unicode placeholders (Ghostty, kitty), with a text note
+  elsewhere. Left: iTerm2's protocol, and tmux passthrough. Kernels other than the Python one the
   notebook's interpreter provides (`jupyter kernelspec list`) belong here too.
 
 ## Windows: first-class parity  (cross-cutting, lands across 0.6–1.0)

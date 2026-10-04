@@ -80,6 +80,11 @@
 # SSH only, true always, false never.
 # osc52 = "auto"
 
+[notebook]
+# Draw images on the notebook page — an <img> in a markdown cell, a plot a
+# cell printed — where the terminal can (kitty, Ghostty).
+# images = true
+
 [keymaps]
 # Milliseconds a mapped key waits for the rest of a longer mapping.
 # timeout = 1000

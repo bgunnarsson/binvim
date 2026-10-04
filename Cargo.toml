@@ -86,6 +86,9 @@ dirs = "5"
 # terminal grid. No allocation per byte, no dependence on a renderer.
 portable-pty = "0.9"
 vte = "0.15"
+# Decodes the JPEG and GIF images the notebook page draws, and shrinks
+# large ones: the kitty graphics protocol takes PNG and nothing else.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 
 # tree-sitter-scss 1.0.0's build.rs passes the GCC-only flag
 # `-Wno-unused-parameter` to whatever C compiler the host picks, which

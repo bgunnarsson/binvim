@@ -366,6 +366,11 @@ pub struct App {
     /// One Jupyter kernel per notebook that has run a cell, keyed by the
     /// notebook's path. Dropping one shuts its kernel down.
     pub kernels: HashMap<PathBuf, crate::kernel::Kernel>,
+    /// Images the notebook page draws, and which the terminal holds. A
+    /// `RefCell` because layout and drawing take `&App`.
+    pub images: std::cell::RefCell<crate::graphics::ImageStore>,
+    /// Whether the terminal draws kitty-protocol images, read once at start.
+    pub graphics: bool,
     /// Last buffer version we shipped to the LSP, keyed by path.
     pub last_sent_version: HashMap<PathBuf, u64>,
     /// Wall-clock of the last `did_change` flush. Drives the keystroke
@@ -1044,6 +1049,8 @@ impl App {
             lsp: LspManager::new(),
             dap: DapManager::new(),
             kernels: HashMap::new(),
+            images: Default::default(),
+            graphics: crate::graphics::terminal_supports(),
             last_sent_version: HashMap::new(),
             last_lsp_sync_at: Instant::now(),
             completion: None,

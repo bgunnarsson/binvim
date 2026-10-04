@@ -19,6 +19,7 @@ pub struct Config {
     pub install: InstallConfig,
     pub update: UpdateConfig,
     pub clipboard: ClipboardConfig,
+    pub notebook: NotebookConfig,
     pub keymaps: crate::keymap::Keymaps,
     /// Problems found while loading, one line each, sorted. The section or
     /// entry they name was left at its default and the rest of the file
@@ -44,6 +45,7 @@ const SECTIONS: &[&str] = &[
     "install",
     "update",
     "clipboard",
+    "notebook",
     "keymaps",
 ];
 
@@ -233,6 +235,25 @@ impl Default for HoverConfig {
     }
 }
 
+/// The notebook page. `images` draws images — a markdown cell's `<img>` or
+/// `![…](…)`, a plot a cell printed — in terminals that can (kitty,
+/// Ghostty); off, or elsewhere, they're a line naming the image.
+#[derive(Debug, Deserialize)]
+pub struct NotebookConfig {
+    #[serde(default = "default_notebook_images")]
+    pub images: bool,
+}
+
+fn default_notebook_images() -> bool {
+    true
+}
+
+impl Default for NotebookConfig {
+    fn default() -> Self {
+        Self { images: true }
+    }
+}
+
 /// GitHub Copilot integration. Off by default — set `enabled = true`
 /// under a `[copilot]` block in `~/.config/binvim/config.toml` to
 /// attach `copilot-language-server` as an auxiliary LSP for every
@@ -332,6 +353,7 @@ impl Default for Config {
             install: InstallConfig::default(),
             update: UpdateConfig::default(),
             clipboard: ClipboardConfig::default(),
+            notebook: NotebookConfig::default(),
             keymaps: crate::keymap::Keymaps::default(),
             errors: Vec::new(),
         }
@@ -378,6 +400,7 @@ impl Config {
                 "install" => section(&name, value, &mut config.install, &mut errors),
                 "update" => section(&name, value, &mut config.update, &mut errors),
                 "clipboard" => section(&name, value, &mut config.clipboard, &mut errors),
+                "notebook" => section(&name, value, &mut config.notebook, &mut errors),
                 "keymaps" => section(&name, value, &mut config.keymaps, &mut errors),
                 _ => errors.push(format!(
                     "[{name}]: not a config section — the sections are {}",
@@ -1614,6 +1637,7 @@ mod tests {
             ("install", struct_fields::<InstallConfig>()),
             ("update", struct_fields::<UpdateConfig>()),
             ("clipboard", struct_fields::<ClipboardConfig>()),
+            ("notebook", struct_fields::<NotebookConfig>()),
             // `Keymaps` deserializes by hand, so its one setting is named here.
             ("keymaps", &["timeout"]),
         ];

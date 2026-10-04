@@ -5692,7 +5692,8 @@ fn draw_notebook_page(
     let colors = bs.highlight_cache.map(|c| c.byte_colors.as_slice());
     let pane_w = rect.w as usize;
     let rows = rect.h as usize;
-    let page = crate::notebook_page::layout(bs.buffer, colors, pane_w, &app.config);
+    let page =
+        crate::notebook_page::layout(bs.buffer, colors, pane_w, &app.config, app.page_images());
     let top = win.page_top.min(page.max_top(rows));
     let marked = page.cell_of_line(win.cursor.line);
     let buf_bg = app.config.background_color();
@@ -5750,6 +5751,15 @@ fn draw_notebook_page(
         }
         queue!(out, Print(" ".repeat(1 + row.indent)))?;
         let mut used = page.gutter + row.indent;
+        if let Some(img) = row.image {
+            app.images.borrow_mut().send(out, img.id)?;
+            queue!(
+                out,
+                SetForegroundColor(crate::graphics::id_color(img.id)),
+                Print(crate::graphics::placeholder_row(img.row, img.cols))
+            )?;
+            used += img.cols;
+        }
         let mut last: Option<Style> = None;
         for s in &row.segs {
             if used + s.width > pane_w {

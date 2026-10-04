@@ -69,6 +69,9 @@ check = true               # Ask crates.io once a day whether a newer binvim is 
 [clipboard]
 osc52 = "auto"             # Emit OSC 52 over SSH so a remote yank reaches your local clipboard.
 
+[notebook]
+images = true              # Draw images on the notebook page where the terminal can.
+
 [keymaps.normal]
 H = "^"                    # A key → the keys it types instead. Unlisted keys keep their defaults.
 L = "$"
@@ -108,6 +111,8 @@ L = "$"
 The default is `"auto"` — emit it over SSH, skip it locally. Locally arboard has already done the job, and the sequence isn't free: it puts every yank, base64'd, into the terminal's output stream, which is where `script`, asciinema and tmux logging will keep it. Force it with `osc52 = true` (always) or `osc52 = false` (never).
 
 **Inside tmux or screen it needs one line of their config.** Both swallow an application's OSC 52 by default. Under tmux binvim sends the sequence raw *and* wrapped in tmux's DCS passthrough, so enabling either route is enough — `set -g set-clipboard on` **or** `set -g allow-passthrough on` in `~/.tmux.conf`. Under screen it is sent DCS-wrapped only. The sequence is skipped when stdout isn't a terminal or the yank is too large to encode. Your terminal emulator also has to support OSC 52 (most do; Terminal.app does not).
+
+**`[notebook]`** — `images = true` (the default) draws a notebook's images on its page in a terminal that draws kitty-protocol images through Unicode placeholders: Ghostty and kitty, outside tmux. `false` shows each as an `[image: …]` note, as other terminals do.
 
 **`[keymaps]`** — remap keys in Normal (`[keymaps.normal]`), Visual (`[keymaps.visual]`) and Insert (`[keymaps.insert]`) mode and on the `:` / `/` command line (`[keymaps.command]`), the way Vim's `nnoremap` / `vnoremap` / `inoremap` / `cnoremap` do. Each entry maps a key, or a sequence of keys, to the keys it should type instead, in Vim notation: `H = "^"`, `J = "10j"`, `gh = "^"`, `"<C-s>" = ":w<CR>"`, `"<leader>w" = ":w<CR>"`. Keys you don't list keep their defaults. Keys that start a longer mapping wait for the next one. If they already mean something by themselves — `x` with `xx` mapped, or `J` with both `J` and `Jk` mapped — they wait at most `[keymaps] timeout` milliseconds (default 1000, Vim's `timeoutlen`) and then run; a prefix that's unfinished anyway, like `g` or `<leader>`, waits as long as it would with nothing mapped. When the next key rules the longer mapping out, the held keys run as typed — or as the shorter mapping, when they're mapped on their own. In Insert mode and on the command line a held key always means something — it's text — so with `jk = "<Esc>"` a lone `j` is still typed, once the wait runs out or as soon as the next key isn't `k`. A value can also be a table with a description, `"<leader>x" = { keys = ":w<CR>", desc = "Save" }`: `<leader>` mappings show in the which-key popup under their `desc` (or their keys), replacing a built-in row on the same key. `<Space>`, `<CR>`, `<Esc>`, `<Tab>`, `<BS>`, `<Del>`, the arrows, `<Home>` / `<End>`, `<PageUp>` / `<PageDown>`, `<F1>`–`<F24>`, `<leader>` and the `<C-…>` / `<A-…>` / `<S-…>` modifiers are understood; `<lt>` is a literal `<`, and mapping a key to `"<Nop>"` switches it off.
 

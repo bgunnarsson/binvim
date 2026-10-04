@@ -1099,7 +1099,13 @@ pub enum OutputStyle {
 pub struct OutputRow {
     pub style: OutputStyle,
     pub text: String,
+    /// The output an image's note stands for, by index, so a terminal that
+    /// draws images can draw it instead.
+    pub image: Option<usize>,
 }
+
+/// A row's style, text and `OutputRow::image`.
+type OutputLine = (OutputStyle, String, Option<usize>);
 
 /// Rows a cell's outputs may take under it before the middle is elided;
 /// `:cell output` shows the whole of it.
@@ -1156,13 +1162,13 @@ fn html_only(data: &Map<String, Value>) -> bool {
 /// does HTML with nothing better to show (`html_only`). Markdown shows its
 /// source, since its `text/plain` is only
 /// `<IPython.core.display.Markdown object>`.
-fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
+fn output_lines(outputs: &[Value]) -> Vec<OutputLine> {
     let mut rows = Vec::new();
-    let mut push_text = |style, text: &str| {
+    let push_text = |rows: &mut Vec<OutputLine>, style, text: &str| {
         let text = text.strip_suffix('\n').unwrap_or(text);
-        rows.extend(text.split('\n').map(|l| (style, display_line(l))));
+        rows.extend(text.split('\n').map(|l| (style, display_line(l), None)));
     };
-    for out in outputs {
+    for (i, out) in outputs.iter().enumerate() {
         match out.get("output_type").and_then(Value::as_str) {
             Some("stream") => {
                 let style = if out.get("name").and_then(Value::as_str) == Some("stderr") {
@@ -1170,25 +1176,27 @@ fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
                 } else {
                     OutputStyle::Text
                 };
-                push_text(style, &multiline(out.get("text")));
+                push_text(&mut rows, style, &multiline(out.get("text")));
             }
             Some("execute_result" | "display_data") => {
                 let Some(data) = out.get("data").and_then(Value::as_object) else {
                     continue;
                 };
                 if let Some(mime) = image_mime(data) {
-                    push_text(
-                        OutputStyle::Note,
-                        &format!("[{mime}] :cell output opens it"),
-                    );
+                    let note = format!("[{mime}] :cell output opens it");
+                    rows.push((OutputStyle::Note, note, Some(i)));
                 } else if html_only(data) {
-                    push_text(OutputStyle::Note, "[text/html] :cell output opens it");
+                    push_text(
+                        &mut rows,
+                        OutputStyle::Note,
+                        "[text/html] :cell output opens it",
+                    );
                 } else if let Some(text) =
                     data.get("text/markdown").or_else(|| data.get("text/plain"))
                 {
-                    push_text(OutputStyle::Text, &multiline(Some(text)));
+                    push_text(&mut rows, OutputStyle::Text, &multiline(Some(text)));
                 } else if let Some(mime) = data.keys().next() {
-                    push_text(OutputStyle::Note, &format!("[{mime}]"));
+                    push_text(&mut rows, OutputStyle::Note, &format!("[{mime}]"));
                 }
             }
             Some("error") => {
@@ -1211,7 +1219,7 @@ fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
                 } else {
                     tb.join("\n")
                 };
-                push_text(OutputStyle::Error, &text);
+                push_text(&mut rows, OutputStyle::Error, &text);
             }
             _ => {}
         }
@@ -1224,7 +1232,7 @@ fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
 /// that names the error and a log keeps its last lines.
 pub fn output_rows(outputs: &[Value]) -> Vec<OutputRow> {
     let lines = output_lines(outputs);
-    let row = |(style, text): (OutputStyle, String)| OutputRow { style, text };
+    let row = |(style, text, image): OutputLine| OutputRow { style, text, image };
     if lines.len() <= MAX_OUTPUT_ROWS {
         return lines.into_iter().map(row).collect();
     }
@@ -1235,6 +1243,7 @@ pub fn output_rows(outputs: &[Value]) -> Vec<OutputRow> {
     rows.push(OutputRow {
         style: OutputStyle::Note,
         text: format!("… {hidden} more lines — :cell output shows them all"),
+        image: None,
     });
     rows.extend(lines[lines.len() - tail..].iter().cloned().map(row));
     rows
@@ -1244,7 +1253,7 @@ pub fn output_rows(outputs: &[Value]) -> Vec<OutputRow> {
 pub fn output_text(outputs: &[Value]) -> String {
     let mut text: String = output_lines(outputs)
         .into_iter()
-        .map(|(_, l)| l)
+        .map(|(_, l, _)| l)
         .collect::<Vec<_>>()
         .join("\n");
     text.push('\n');
@@ -1301,7 +1310,7 @@ pub fn output_html(outputs: &[Value]) -> Option<String> {
 }
 
 /// Standard base64, whitespace ignored, as Jupyter stores image data.
-fn base64_decode(text: &str) -> Option<Vec<u8>> {
+pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
     let mut acc = 0u32;
     let mut bits = 0;

@@ -8,14 +8,18 @@
 //! text view (`Enter` on the page, `<leader>nv` back) keeps the place, and
 //! undo, the kernel and saves need nothing of their own.
 
+use std::cell::RefCell;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossterm::style::Color;
+use serde_json::Value;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::buffer::Buffer;
 use crate::config::Config;
+use crate::graphics::ImageStore;
 use crate::markdown_render::{ConcealAction, MarkdownLineKind, MarkdownLineMeta, TableRowKind};
 use crate::notebook::{CellKind, CellSpan, OutputStyle};
 use crate::render::{TAB_WIDTH, cluster_width};
@@ -68,6 +72,16 @@ pub struct PageRow {
     /// Blank columns ahead of `segs`, inside the content area.
     pub indent: usize,
     pub segs: Vec<Seg>,
+    /// One row of an image, drawn in place of `segs`.
+    pub image: Option<ImageRow>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ImageRow {
+    /// The image's id in the `ImageStore`, which sends it.
+    pub id: u32,
+    pub row: usize,
+    pub cols: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -80,11 +94,14 @@ pub struct PageLayout {
     pub gutter: usize,
 }
 
+/// `images` is `None` where images aren't drawn, and each is a line naming
+/// it instead.
 pub fn layout(
     buffer: &Buffer,
     colors: Option<&[Option<Color>]>,
     width: usize,
     config: &Config,
+    images: Option<&RefCell<ImageStore>>,
 ) -> PageLayout {
     let gutter = if width >= NARROW { GUTTER } else { 2 };
     let content_w = width.saturating_sub(gutter + 1).max(1);
@@ -93,6 +110,12 @@ pub fn layout(
         buffer,
         colors,
         config,
+        images,
+        dir: buffer
+            .path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf),
         width: content_w,
         rows: Vec::new(),
         cell: 0,
@@ -107,6 +130,7 @@ pub fn layout(
                 fill: None,
                 indent: 0,
                 segs: Vec::new(),
+                image: None,
             });
         }
         page.cell = i;
@@ -198,6 +222,9 @@ struct Page<'a> {
     buffer: &'a Buffer,
     colors: Option<&'a [Option<Color>]>,
     config: &'a Config,
+    images: Option<&'a RefCell<ImageStore>>,
+    /// Where a markdown image's relative path starts: the notebook's folder.
+    dir: Option<PathBuf>,
     /// Columns a row's text wraps at.
     width: usize,
     rows: Vec<PageRow>,
@@ -238,6 +265,7 @@ impl Page<'_> {
                 fill,
                 indent,
                 segs,
+                image: None,
             });
         }
         first
@@ -264,11 +292,14 @@ impl Page<'_> {
             self.push(segs, false, fill);
         }
         self.rows[first].label = Some(label);
-        let outputs = match (id, doc) {
-            (Some(id), Some(doc)) => crate::notebook::output_rows(doc.outputs(id)),
-            _ => Vec::new(),
+        let outputs: &[Value] = match (id, doc) {
+            (Some(id), Some(doc)) => doc.outputs(id),
+            _ => &[],
         };
-        for out in outputs {
+        for out in crate::notebook::output_rows(outputs) {
+            if out.image.is_some_and(|i| self.output_image(&outputs[i])) {
+                continue;
+            }
             let (fg, italic) = match out.style {
                 OutputStyle::Text => (self.config.theme_fg(), false),
                 OutputStyle::Stderr => (self.config.diagnostic_warning(), false),
@@ -356,13 +387,25 @@ impl Page<'_> {
                 continue;
             }
             blank_run = false;
+            if let Some((alt, src)) = image_ref(text) {
+                if !self.markdown_image(src) {
+                    let style = Style {
+                        fg: Some(self.config.theme_dim()),
+                        italic: true,
+                        ..Style::default()
+                    };
+                    let name = if alt.trim().is_empty() { src } else { alt };
+                    self.push(plain_segs(&format!("[image: {name}]"), style), true, None);
+                }
+                continue;
+            }
             self.markdown_line(text, *byte, meta);
         }
         while self.rows.len() > start
             && self
                 .rows
                 .last()
-                .is_some_and(|r| r.segs.is_empty() && r.fill.is_none())
+                .is_some_and(|r| r.segs.is_empty() && r.fill.is_none() && r.image.is_none())
         {
             self.rows.pop();
         }
@@ -374,6 +417,72 @@ impl Page<'_> {
             };
             self.push(plain_segs("empty markdown cell", style), true, None);
         }
+    }
+
+    /// Rows for the image `key` names, read by `load` the first time; false
+    /// when images aren't drawn or it doesn't decode.
+    fn image(&mut self, key: &str, load: impl FnOnce() -> Option<Vec<u8>>) -> bool {
+        let Some(store) = self.images else { return false };
+        let mut store = store.borrow_mut();
+        let Some((w, h)) = store.size(key, load) else { return false };
+        let (cols, rows) = crate::graphics::fit(w, h, self.width);
+        let id = store.id(key, cols, rows);
+        for row in 0..rows {
+            self.rows.push(PageRow {
+                cell: Some(self.cell),
+                label: None,
+                cont: false,
+                fill: None,
+                indent: 0,
+                segs: Vec::new(),
+                image: Some(ImageRow { id, row, cols }),
+            });
+        }
+        true
+    }
+
+    /// A markdown image: a file beside the notebook, or a `data:` URI. Not
+    /// one on the web, or a notebook attachment.
+    fn markdown_image(&mut self, src: &str) -> bool {
+        if let Some(data) = src.strip_prefix("data:image/") {
+            let Some((_, b64)) = data.split_once(";base64,") else { return false };
+            let key = crate::graphics::content_key([b64]);
+            return self.image(&key, || crate::notebook::base64_decode(b64));
+        }
+        if src.contains("://") || src.starts_with("attachment:") {
+            return false;
+        }
+        let path = match &self.dir {
+            Some(dir) => dir.join(src),
+            None => PathBuf::from(src),
+        };
+        let Ok(meta) = std::fs::metadata(&path) else { return false };
+        if !meta.is_file() || meta.len() > crate::graphics::MAX_FILE {
+            return false;
+        }
+        // The time keys it too, so a file written again is read again.
+        let key = format!("{}@{:?}", path.display(), meta.modified().ok());
+        self.image(&key, || std::fs::read(&path).ok())
+    }
+
+    /// An image a cell printed, in place of its note.
+    fn output_image(&mut self, out: &Value) -> bool {
+        let Some(data) = out.get("data").and_then(Value::as_object) else {
+            return false;
+        };
+        let Some(v) = ["image/png", "image/jpeg", "image/gif"]
+            .iter()
+            .find_map(|m| data.get(*m))
+        else {
+            return false;
+        };
+        let parts: Vec<&str> = match v {
+            Value::String(s) => vec![s.as_str()],
+            Value::Array(a) => a.iter().filter_map(Value::as_str).collect(),
+            _ => return false,
+        };
+        let key = crate::graphics::content_key(parts.iter().copied());
+        self.image(&key, || crate::notebook::base64_decode(&parts.concat()))
     }
 
     fn markdown_line(&mut self, text: &str, byte: Option<usize>, meta: &MarkdownLineMeta) {
@@ -435,6 +544,7 @@ impl Page<'_> {
             fill: None,
             indent: 0,
             segs,
+            image: None,
         });
     }
 
@@ -587,11 +697,16 @@ fn html_to_markdown(src: &str) -> Option<String> {
                 ("br", _) => out.push('\n'),
                 ("hr", _) => block(&mut out, "\n---\n\n"),
                 ("img", _) => {
-                    let what = attr(body, "alt")
-                        .filter(|a| !a.trim().is_empty())
-                        .or_else(|| attr(body, "src"))
-                        .unwrap_or_default();
-                    block(&mut out, &format!("*[image: {}]*\n", what.trim()));
+                    let alt = attr(body, "alt")
+                        .unwrap_or_default()
+                        .replace(['[', ']'], "");
+                    let src = attr(body, "src").unwrap_or_default();
+                    let src = if src.contains(|c: char| c.is_whitespace() || c == ')') {
+                        format!("<{src}>")
+                    } else {
+                        src
+                    };
+                    block(&mut out, &format!("![{}]({src})\n", alt.trim()));
                 }
                 ("pre", false) => {
                     pre = true;
@@ -697,6 +812,19 @@ fn html_to_markdown(src: &str) -> Option<String> {
         md.pop();
     }
     Some(md)
+}
+
+/// The alt text and source of a line that is only a markdown image,
+/// `![alt](src "title")`.
+fn image_ref(line: &str) -> Option<(&str, &str)> {
+    let rest = line.trim().strip_prefix("![")?;
+    let (alt, rest) = rest.split_once("](")?;
+    let target = rest.strip_suffix(')')?.trim();
+    let src = match target.strip_prefix('<') {
+        Some(t) => t.split_once('>')?.0,
+        None => target.split_whitespace().next()?,
+    };
+    Some((alt, src))
 }
 
 /// A gap of `newlines` in HTML text: a space, or a paragraph break for a
@@ -970,6 +1098,40 @@ mod tests {
     }
 
     #[test]
+    fn images_draw_where_the_terminal_can_and_are_named_where_it_cannot() {
+        const PNG: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+        let buf = notebook(
+            "images",
+            &format!(
+                r##"{{"cell_type": "markdown", "id": "m", "metadata": {{}}, "source": "![dot](data:image/png;base64,{PNG})\n![logo](https://x.dev/logo.png)"}},
+                  {{"cell_type": "code", "execution_count": 1, "id": "c", "metadata": {{}}, "outputs": [{{"output_type": "display_data", "metadata": {{}}, "data": {{"image/png": "{PNG}", "text/plain": "<Figure>"}}}}], "source": "plot()"}}"##
+            ),
+        );
+        let store = RefCell::new(ImageStore::default());
+        let page = layout(&buf, None, 60, &Config::default(), Some(&store));
+        let images: Vec<bool> = page.rows.iter().map(|r| r.image.is_some()).collect();
+        assert_eq!(images, [true, false, false, false, true]);
+        assert_eq!(text(&page.rows[1]), "[image: logo]");
+        assert_eq!(
+            page.rows[0].image.unwrap().id,
+            page.rows[4].image.unwrap().id
+        );
+
+        let page = layout(&buf, None, 60, &Config::default(), None);
+        let rows: Vec<String> = page.rows.iter().map(text).collect();
+        assert_eq!(
+            rows,
+            [
+                "[image: dot]",
+                "[image: logo]",
+                "",
+                "plot()",
+                "[image/png] :cell output opens it"
+            ]
+        );
+    }
+
+    #[test]
     fn the_page_shows_cells_as_jupyter_does() {
         let buf = notebook(
             "layout",
@@ -977,7 +1139,7 @@ mod tests {
               {"cell_type": "code", "execution_count": 4, "id": "c", "metadata": {}, "outputs": [{"output_type": "stream", "name": "stdout", "text": "hi\n"}], "source": "print('hi')"},
               {"cell_type": "code", "execution_count": null, "id": "e", "metadata": {}, "outputs": [], "source": ""}"##,
         );
-        let page = layout(&buf, None, 60, &Config::default());
+        let page = layout(&buf, None, 60, &Config::default(), None);
         let rows: Vec<String> = page.rows.iter().map(text).collect();
         assert_eq!(
             rows,
@@ -1013,7 +1175,7 @@ Consider how you could <a href="https://x.dev">apply</a> it.</span>
         assert_eq!(
             html_to_markdown(cell).as_deref(),
             Some(
-                "*[image: ../assets/business.jpg]*\n\n## Business Applications\n\n\
+                "![](../assets/business.jpg)\n\n## Business Applications\n\n\
                  Gradio makes it **easy** & quick.\n\n\
                  Consider how you could [apply](https://x.dev) it.\n"
             )
@@ -1046,7 +1208,7 @@ Consider how you could <a href="https://x.dev">apply</a> it.</span>
             r#"{"cell_type": "code", "execution_count": null, "id": "a", "metadata": {}, "outputs": [], "source": "1\n2\n3\n4\n5\n6"},
               {"cell_type": "code", "execution_count": null, "id": "b", "metadata": {}, "outputs": [], "source": "x"}"#,
         );
-        let page = layout(&buf, None, 60, &Config::default());
+        let page = layout(&buf, None, 60, &Config::default(), None);
         assert_eq!(page.cells, [0..6, 7..8]);
         // Revealing the second cell from the top brings its row to the
         // bottom of a 4-row pane; revealing the tall first cell shows its top.

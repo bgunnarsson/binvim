@@ -95,7 +95,19 @@ impl super::App {
             .as_ref()
             .map(|c| c.byte_colors.as_slice());
         let width = self.active_pane_rect().w as usize;
-        crate::notebook_page::layout(&self.buffer, colors, width, &self.config)
+        crate::notebook_page::layout(
+            &self.buffer,
+            colors,
+            width,
+            &self.config,
+            self.page_images(),
+        )
+    }
+
+    /// The image store when images are drawn: the terminal can, and
+    /// `[notebook] images` hasn't turned them off.
+    pub(crate) fn page_images(&self) -> Option<&std::cell::RefCell<crate::graphics::ImageStore>> {
+        (self.graphics && self.config.notebook.images).then_some(&self.images)
     }
 
     /// `:notebook [page|text]` / `<leader>nv`: show the notebook as its
