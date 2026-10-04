@@ -9,6 +9,7 @@
 //! undo, the kernel and saves need nothing of their own.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use crossterm::style::Color;
 use unicode_segmentation::UnicodeSegmentation;
@@ -44,6 +45,8 @@ pub struct Seg {
     /// A list bullet or quote bar standing in for its markdown marker: a
     /// wrapped item's later rows hang under the text after it.
     marker: bool,
+    /// The URL a click on this cluster opens: one printed in an output.
+    pub link: Option<Arc<str>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -277,7 +280,8 @@ impl Page<'_> {
                 italic,
                 ..Style::default()
             };
-            let segs = plain_segs(&out.text, style);
+            let mut segs = plain_segs(&out.text, style);
+            link_urls(&mut segs);
             self.push(segs, false, None);
         }
     }
@@ -796,6 +800,47 @@ fn seg(g: &str, style: Style) -> Seg {
         width: cluster_width(g, TAB_WIDTH),
         style,
         marker: false,
+        link: None,
+    }
+}
+
+/// Underlines each URL in `segs` and links its clusters to it, so a click
+/// on `Running on local URL:  http://127.0.0.1:7860` opens the server. A
+/// URL is a blank-free run with a `://`, less the brackets and punctuation
+/// around it, as `gx` reads one.
+fn link_urls(segs: &mut [Seg]) {
+    let blank = |s: &Seg| s.text.trim().is_empty();
+    let mut i = 0;
+    while i < segs.len() {
+        if blank(&segs[i]) {
+            i += 1;
+            continue;
+        }
+        let end = (i..segs.len())
+            .find(|&j| blank(&segs[j]))
+            .unwrap_or(segs.len());
+        let mut start = i;
+        while start < end && matches!(segs[start].text.as_str(), "(" | "<" | "[" | "\"" | "'") {
+            start += 1;
+        }
+        let mut stop = end;
+        while stop > start
+            && matches!(
+                segs[stop - 1].text.as_str(),
+                "." | "," | ";" | ":" | "!" | "?" | ")" | "]" | "}" | ">" | "\"" | "'"
+            )
+        {
+            stop -= 1;
+        }
+        let url: String = segs[start..stop].iter().map(|s| s.text.as_str()).collect();
+        if url.contains("://") {
+            let link: Arc<str> = url.into();
+            for s in &mut segs[start..stop] {
+                s.link = Some(link.clone());
+                s.style.underline = true;
+            }
+        }
+        i = end;
     }
 }
 
@@ -979,6 +1024,19 @@ Consider how you could <a href="https://x.dev">apply</a> it.</span>
             html_to_markdown("<ol><li>one</li><li>two</li></ol><hr>").as_deref(),
             Some("1. one\n2. two\n\n---\n")
         );
+    }
+
+    #[test]
+    fn a_printed_url_is_underlined_and_linked() {
+        let mut segs = plain_segs("* Running on (http://127.0.0.1:7861).", Style::default());
+        link_urls(&mut segs);
+        let linked: String = segs
+            .iter()
+            .filter(|s| s.link.as_deref() == Some("http://127.0.0.1:7861"))
+            .map(|s| s.text.as_str())
+            .collect();
+        assert_eq!(linked, "http://127.0.0.1:7861");
+        assert!(segs.iter().all(|s| s.style.underline == s.link.is_some()));
     }
 
     #[test]

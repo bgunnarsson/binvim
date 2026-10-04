@@ -925,7 +925,7 @@ impl super::App {
                 && matches!(self.mode, Mode::Normal)
                 && row >= pane_top
             {
-                self.page_click(row - pane_top);
+                self.page_click(row - pane_top, pane_col);
             }
             return;
         }

@@ -253,10 +253,24 @@ impl super::App {
         self.page_scroll_in(&layout, delta);
     }
 
-    /// A click on the page's `row`th screen row marks the cell drawn there.
-    pub(super) fn page_click(&mut self, row: usize) {
+    /// A click on the page at pane-local `row` / `col` opens the URL drawn
+    /// there, or else marks the cell drawn there.
+    pub(super) fn page_click(&mut self, row: usize, col: usize) {
         let layout = self.page_layout();
-        if let Some(cell) = layout.cell_at_row(self.window.page_top + row) {
+        let row = self.window.page_top + row;
+        if let Some(page_row) = layout.rows.get(row) {
+            let mut x = layout.gutter + page_row.indent;
+            let link = page_row.segs.iter().find_map(|s| {
+                let hit = (x..x + s.width).contains(&col);
+                x += s.width;
+                if hit { s.link.clone() } else { None }
+            });
+            if let Some(url) = link {
+                self.open_url_in_browser(&url);
+                return;
+            }
+        }
+        if let Some(cell) = layout.cell_at_row(row) {
             self.page_select(&layout, cell);
         }
     }
