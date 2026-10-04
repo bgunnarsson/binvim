@@ -2159,7 +2159,7 @@ fn icon_for_basename(basename: &str) -> char {
     '\u{f15b}'
 }
 
-const START_LOGO: &[&str] = &[
+pub(crate) const START_LOGO: &[&str] = &[
     "██████╗ ██╗███╗   ██╗██╗   ██╗██╗███╗   ███╗",
     "██╔══██╗██║████╗  ██║██║   ██║██║████╗ ████║",
     "██████╔╝██║██╔██╗ ██║██║   ██║██║██╔████╔██║",

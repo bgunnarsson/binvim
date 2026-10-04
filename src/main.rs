@@ -16,6 +16,7 @@ mod dap;
 mod editorconfig;
 mod format;
 mod git;
+mod goodbye;
 mod graphics;
 mod kernel;
 mod keymap;
@@ -60,7 +61,10 @@ fn main() -> Result<()> {
     // brought up to date before the process goes. Signals are handled on
     // their own thread — see `App::spawn_signal_recovery`.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.run())) {
-        Ok(Ok(())) => Ok(()),
+        Ok(Ok(())) => {
+            goodbye::print(&app.config);
+            Ok(())
+        }
         Ok(Err(e)) => {
             app.write_recovery_now();
             Err(e)

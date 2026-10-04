@@ -34,6 +34,8 @@
 [start_page]
 # Lines drawn in place of the binvim logo, each centred; empty keeps the logo.
 # lines = []
+# Print the logo and a parting line to the terminal after quitting.
+# goodbye = true
 
 [whitespace]
 # Markers for tabs and trailing whitespace.

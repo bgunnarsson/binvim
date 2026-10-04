@@ -165,13 +165,30 @@ impl Default for LspConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct StartPageConfig {
     /// Lines to render in place of the baked-in `binvim` logo. Each entry is
     /// drawn on its own row, centered horizontally; the block as a whole is
     /// centered vertically. An empty / missing value falls back to the logo.
     #[serde(default)]
     pub lines: Vec<String>,
+    /// Print the logo (or `lines`) and a parting line to the shell after a
+    /// clean quit.
+    #[serde(default = "default_goodbye")]
+    pub goodbye: bool,
+}
+
+fn default_goodbye() -> bool {
+    true
+}
+
+impl Default for StartPageConfig {
+    fn default() -> Self {
+        Self {
+            lines: Vec::new(),
+            goodbye: true,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
