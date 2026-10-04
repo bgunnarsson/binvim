@@ -265,9 +265,9 @@ impl super::App {
         }
     }
 
-    /// `:cell output`: the cell's whole output as a buffer, and each image
-    /// in the system viewer — what the rows under a cell elide or can't
-    /// draw.
+    /// `:cell output`: the cell's whole output as a buffer, each image in
+    /// the system viewer and its HTML in the browser — what the rows under a
+    /// cell elide or can't draw.
     fn show_cell_output(&mut self) {
         let Some(id) = self.current_cell_id() else {
             self.status_msg = "no cell here".into();
@@ -300,11 +300,18 @@ impl super::App {
                 self.open_url_in_browser(&file.to_string_lossy());
             }
         }
+        let html = crate::notebook::output_html(&outputs);
+        if let Some(html) = &html {
+            let file = dir.join(format!("{key}-{id}.html"));
+            if std::fs::write(&file, html).is_ok() {
+                self.open_url_in_browser(&file.to_string_lossy());
+            }
+        }
         let text = crate::notebook::output_text(&outputs);
-        let only_images = text
-            .lines()
-            .all(|l| l.trim().is_empty() || l.starts_with("[image/"));
-        if only_images && !images.is_empty() {
+        let only_opened = text.lines().all(|l| {
+            l.trim().is_empty() || l.starts_with("[image/") || l.starts_with("[text/html]")
+        });
+        if only_opened && (!images.is_empty() || html.is_some()) {
             return;
         }
         let file = dir.join(format!("{key}-{id}.txt"));

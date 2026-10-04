@@ -1138,9 +1138,23 @@ fn image_mime(data: &Map<String, Value>) -> Option<&str> {
         .find(|k| k.starts_with("image/"))
 }
 
+/// True for HTML a browser shows better than the terminal: the output's
+/// `text/plain` is missing or only a repr like
+/// `<IPython.core.display.HTML object>`. A DataFrame's real `text/plain`
+/// table stays the row text.
+fn html_only(data: &Map<String, Value>) -> bool {
+    if !data.contains_key("text/html") {
+        return false;
+    }
+    let plain = multiline(data.get("text/plain"));
+    let plain = plain.trim();
+    plain.is_empty() || (plain.starts_with('<') && plain.ends_with(" object>"))
+}
+
 /// The text each output shows, with its style. An image shows a note in
-/// its place: its `text/plain` is only `<Figure size 640x480 …>`. Markdown
-/// shows its source, since its `text/plain` is only
+/// its place: its `text/plain` is only `<Figure size 640x480 …>`, and so
+/// does HTML with nothing better to show (`html_only`). Markdown shows its
+/// source, since its `text/plain` is only
 /// `<IPython.core.display.Markdown object>`.
 fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
     let mut rows = Vec::new();
@@ -1167,6 +1181,8 @@ fn output_lines(outputs: &[Value]) -> Vec<(OutputStyle, String)> {
                         OutputStyle::Note,
                         &format!("[{mime}] :cell output opens it"),
                     );
+                } else if html_only(data) {
+                    push_text(OutputStyle::Note, "[text/html] :cell output opens it");
                 } else if let Some(text) =
                     data.get("text/markdown").or_else(|| data.get("text/plain"))
                 {
@@ -1263,6 +1279,25 @@ pub fn output_images(outputs: &[Value]) -> Vec<(&'static str, Vec<u8>)> {
         }
     }
     images
+}
+
+/// The `html_only` outputs among `outputs` as one page, for `:cell output`
+/// to open in the browser. Gradio's embed is an iframe onto its local
+/// server, so the page is the running app.
+pub fn output_html(outputs: &[Value]) -> Option<String> {
+    let parts: Vec<String> = outputs
+        .iter()
+        .filter_map(|out| out.get("data").and_then(Value::as_object))
+        .filter(|data| image_mime(data).is_none() && html_only(data))
+        .map(|data| multiline(data.get("text/html")))
+        .collect();
+    if parts.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "<!doctype html>\n<meta charset=\"utf-8\">\n{}\n",
+        parts.join("\n")
+    ))
 }
 
 /// Standard base64, whitespace ignored, as Jupyter stores image data.
@@ -1682,6 +1717,27 @@ mod tests {
         assert_eq!(rows[MAX_OUTPUT_ROWS / 2].style, OutputStyle::Note);
         assert!(rows[MAX_OUTPUT_ROWS / 2].text.contains("71 more lines"));
         assert_eq!(rows.last().unwrap().text, "line 99");
+    }
+
+    #[test]
+    fn html_with_only_a_repr_opens_in_the_browser() {
+        let gradio = serde_json::json!({"output_type": "display_data", "metadata": {},
+            "data": {"text/html": ["<iframe src=\"http://127.0.0.1:7863/\"></iframe>"],
+                "text/plain": ["<IPython.core.display.HTML object>"]}});
+        let frame = serde_json::json!({"output_type": "execute_result",
+            "execution_count": 1, "metadata": {},
+            "data": {"text/html": ["<table></table>"], "text/plain": ["   a\n0  1"]}});
+        let rows = output_rows(&[gradio.clone(), frame.clone()]);
+        let shown: Vec<&str> = rows.iter().map(|r| r.text.as_str()).collect();
+        assert_eq!(shown, ["[text/html] :cell output opens it", "   a", "0  1"]);
+        assert_eq!(
+            output_html(&[gradio, frame.clone()]).as_deref(),
+            Some(
+                "<!doctype html>\n<meta charset=\"utf-8\">\n\
+                 <iframe src=\"http://127.0.0.1:7863/\"></iframe>\n"
+            )
+        );
+        assert_eq!(output_html(&[frame]), None);
     }
 
     #[test]
