@@ -420,7 +420,10 @@ impl ImageStore {
         let Some(key) = self.by_id.get(&id) else { return Ok(()) };
         let Some(&(_, cols, rows)) = self.ids.get(key) else { return Ok(()) };
         let Some(Some(d)) = self.decoded.get(key) else { return Ok(()) };
-        write_transmit(out, id, cols, rows, &d.png)?;
+        match pad_to_grid(d, cols, rows, cell_px()) {
+            Some(png) => write_transmit(out, id, cols, rows, &png)?,
+            None => write_transmit(out, id, cols, rows, &d.png)?,
+        }
         self.sent.insert(id);
         Ok(())
     }
@@ -510,6 +513,29 @@ fn decode(bytes: &[u8]) -> Option<Decoded> {
         w: img.width(),
         h: img.height(),
     })
+}
+
+/// The image with transparent space added right or below so its shape is
+/// the `cols` × `rows` grid's; `None` when it already is. A terminal fits an
+/// image of another shape into the grid by centring it, and Ghostty 1.3
+/// gets that offset wrong whenever it also scales: the image is drawn
+/// pushed down or across and cut off, or off the grid altogether.
+fn pad_to_grid(d: &Decoded, cols: usize, rows: usize, (cw, ch): (f64, f64)) -> Option<Vec<u8>> {
+    let (gw, gh) = (cols as f64 * cw, rows as f64 * ch);
+    let s = (gw / d.w as f64).min(gh / d.h as f64);
+    let w = ((gw / s).round() as u32).max(d.w);
+    let h = ((gh / s).round() as u32).max(d.h);
+    if (w, h) == (d.w, d.h) {
+        return None;
+    }
+    let img = image::load_from_memory(&d.png).ok()?.into_rgba8();
+    let mut canvas = image::RgbaImage::new(w, h);
+    image::imageops::overlay(&mut canvas, &img, 0, 0);
+    let mut png = Vec::new();
+    canvas
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .ok()?;
+    Some(png)
 }
 
 fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
@@ -605,6 +631,28 @@ mod tests {
         assert_eq!((d.w, d.h), (3, 2));
         assert_eq!(&*d.png, png.as_slice());
         assert!(decode(b"not an image").is_none());
+    }
+
+    #[test]
+    fn an_image_is_padded_to_its_grids_shape() {
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(516, 351, image::Rgba([255, 0, 0, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let d = decode(&png).unwrap();
+        // 52 × 20 cells of 10 × 17: wider than the image, so space goes right.
+        let padded = pad_to_grid(&d, 52, 20, (10.0, 17.0)).unwrap();
+        let img = image::load_from_memory(&padded).unwrap().into_rgba8();
+        assert_eq!(img.dimensions(), (537, 351));
+        assert_eq!(img.get_pixel(0, 0).0, [255, 0, 0, 255]);
+        assert_eq!(img.get_pixel(536, 350).0[3], 0);
+        // 52 × 22 cells: taller than the image, so space goes below.
+        let padded = pad_to_grid(&d, 52, 22, (10.0, 17.0)).unwrap();
+        let img = image::load_from_memory(&padded).unwrap();
+        assert_eq!((img.width(), img.height()), (516, 371));
+
+        let d = Decoded { w: 100, h: 34, ..d };
+        assert!(pad_to_grid(&d, 10, 2, (10.0, 17.0)).is_none());
     }
 
     #[test]
