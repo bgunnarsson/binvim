@@ -10,7 +10,7 @@ use std::io::{self, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const MESSAGES: &[&str] = &[
-    "You found the exit! We'll leave the light on for you.",
+    "You found the exit! Your secret's safe with us.",
     "Buffers closed, cursors parked. Go touch grass.",
     "Exited cleanly. Stack Overflow will not be needed today.",
     "Your undo history is safe with me. Your weekend plans are on you.",
