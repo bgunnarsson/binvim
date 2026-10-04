@@ -5679,7 +5679,7 @@ fn draw_pane_dividers(
 
 /// A notebook buffer as its page (`notebook_page.rs`): the marked cell's
 /// rows carry a bar in the first column, code sits on a slab under its
-/// `In [n]:` label, and the rest is drawn as the layout gives it.
+/// `▶ [n]` label, and the rest is drawn as the layout gives it.
 fn draw_notebook_page(
     out: &mut impl Write,
     app: &App,

@@ -1,5 +1,5 @@
 //! The notebook page: a notebook buffer drawn the way Jupyter draws it —
-//! markdown rendered and wrapped, code on a slab under its `In [n]:` label,
+//! markdown rendered and wrapped, code on a slab under its `▶ [n]` label,
 //! outputs beneath — in place of the percent text, where every cell header,
 //! line number and markdown marker competes with the content.
 //!
@@ -24,7 +24,7 @@ use crate::markdown_render::{ConcealAction, MarkdownLineKind, MarkdownLineMeta, 
 use crate::notebook::{CellKind, CellSpan, OutputStyle};
 use crate::render::{TAB_WIDTH, cluster_width};
 
-/// Wide enough for `In [999]:`; a longer label loses its left end.
+/// Wide enough for `▶ [9999]`; a longer label loses its left end.
 const LABEL_W: usize = 9;
 /// The selection bar, the label, and the slab's left padding column.
 const GUTTER: usize = 1 + LABEL_W + 1;
@@ -56,7 +56,8 @@ pub struct Seg {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LabelKind {
     In,
-    /// Sent to the kernel and not finished — Jupyter's `In [*]:`.
+    /// Sent to the kernel and not finished — Jupyter's `In [*]:`, with a
+    /// stop button where the play button was.
     Busy,
 }
 
@@ -277,9 +278,9 @@ impl Page<'_> {
         let (count, _) = id.and_then(|id| doc?.cell_info(id)).unwrap_or((None, 0));
         let busy = id.is_some_and(|id| doc.is_some_and(|d| d.is_busy(id)));
         let label = match count {
-            _ if busy => ("In [*]:".to_string(), LabelKind::Busy),
-            Some(n) => (format!("In [{n}]:"), LabelKind::In),
-            None => ("In [ ]:".to_string(), LabelKind::In),
+            _ if busy => ("■ [*]".to_string(), LabelKind::Busy),
+            Some(n) => (format!("▶ [{n}]"), LabelKind::In),
+            None => ("▶ [ ]".to_string(), LabelKind::In),
         };
         let fill = Some(self.config.theme_code_bg());
         let first = self.rows.len();
@@ -1146,10 +1147,10 @@ mod tests {
             ["Title", "", "bold text", "", "print('hi')", "hi", "", ""]
         );
         assert_eq!(page.cells, [0..3, 4..6, 7..8]);
-        assert_eq!(page.rows[4].label, Some(("In [4]:".into(), LabelKind::In)));
+        assert_eq!(page.rows[4].label, Some(("▶ [4]".into(), LabelKind::In)));
         assert!(page.rows[4].fill.is_some(), "code sits on a slab");
         assert!(page.rows[5].fill.is_none(), "output doesn't");
-        assert_eq!(page.rows[7].label, Some(("In [ ]:".into(), LabelKind::In)));
+        assert_eq!(page.rows[7].label, Some(("▶ [ ]".into(), LabelKind::In)));
         assert!(page.rows[2].segs[0].style.bold);
         assert_eq!(page.cell_at_row(3), Some(1), "a gap belongs below");
         assert_eq!(page.cell_of_line(7), Some(1));

@@ -4,6 +4,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::kernel::{KernelCmd, RunScope};
 use crate::mode::Mode;
 
 impl super::App {
@@ -271,6 +272,19 @@ impl super::App {
         let layout = self.page_layout();
         let row = self.window.page_top + row;
         if let Some(page_row) = layout.rows.get(row) {
+            // The label is a play button, a stop button while the cell runs.
+            if let (Some((_, kind)), Some(cell)) = (&page_row.label, page_row.cell)
+                && (1..layout.gutter.saturating_sub(1)).contains(&col)
+            {
+                let busy = *kind == crate::notebook_page::LabelKind::Busy;
+                self.page_select(&layout, cell);
+                self.kernel_cmd(if busy {
+                    KernelCmd::Interrupt
+                } else {
+                    KernelCmd::Run(RunScope::Cell)
+                });
+                return;
+            }
             let mut x = layout.gutter + page_row.indent;
             let link = page_row.segs.iter().find_map(|s| {
                 let hit = (x..x + s.width).contains(&col);
