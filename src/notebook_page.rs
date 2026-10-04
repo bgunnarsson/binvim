@@ -218,9 +218,10 @@ impl Page<'_> {
         (text, rope.line_to_byte(i))
     }
 
-    fn color_at(&self, byte: usize) -> Color {
-        self.colors
-            .and_then(|c| c.get(byte).copied().flatten())
+    /// The highlight colour at `byte`; `None` for text the page made, which
+    /// has no place in the buffer.
+    fn color_at(&self, byte: Option<usize>) -> Color {
+        byte.and_then(|b| self.colors?.get(b).copied().flatten())
             .unwrap_or_else(|| self.config.theme_fg())
     }
 
@@ -287,7 +288,7 @@ impl Page<'_> {
         let mut off = byte;
         for g in text.graphemes(true) {
             let style = Style {
-                fg: Some(self.color_at(off)),
+                fg: Some(self.color_at(Some(off))),
                 ..Style::default()
             };
             off += g.len();
@@ -319,7 +320,18 @@ impl Page<'_> {
     }
 
     fn markdown_cell(&mut self, span: &CellSpan) {
-        let lines: Vec<(String, usize)> = span.body.clone().map(|i| self.line(i)).collect();
+        let mut lines: Vec<(String, Option<usize>)> = span
+            .body
+            .clone()
+            .map(|i| {
+                let (text, byte) = self.line(i);
+                (text, Some(byte))
+            })
+            .collect();
+        let source: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
+        if let Some(md) = html_to_markdown(&source.join("\n")) {
+            lines = md.lines().map(|l| (l.to_string(), None)).collect();
+        }
         // A blank line ahead of the cell keeps its first line from reading
         // as the top of a file, where `---` opens frontmatter.
         let texts: Vec<String> = std::iter::once(String::new())
@@ -360,7 +372,7 @@ impl Page<'_> {
         }
     }
 
-    fn markdown_line(&mut self, text: &str, byte: usize, meta: &MarkdownLineMeta) {
+    fn markdown_line(&mut self, text: &str, byte: Option<usize>, meta: &MarkdownLineMeta) {
         let config = self.config;
         match meta.kind {
             MarkdownLineKind::Hidden => {}
@@ -424,15 +436,15 @@ impl Page<'_> {
 
     /// A markdown line with its markers hidden or swapped for glyphs and
     /// its emphasis applied, as the concealed view of a `.md` file draws it.
-    fn markdown_segs(&self, text: &str, byte: usize, meta: &MarkdownLineMeta) -> Vec<Seg> {
+    fn markdown_segs(&self, text: &str, byte: Option<usize>, meta: &MarkdownLineMeta) -> Vec<Seg> {
         let mut segs = Vec::new();
         let mut col = 0;
-        let mut off = byte;
+        let mut off = 0;
         let mut active: Option<usize> = None;
         for g in text.graphemes(true) {
             let here = col;
             col += g.chars().count();
-            let at = off;
+            let at = byte.map(|b| b + off);
             off += g.len();
             if active.is_some_and(|end| here < end) {
                 continue;
@@ -474,6 +486,308 @@ impl Page<'_> {
         }
         segs
     }
+}
+
+/// Tags that open a block of HTML in a markdown cell, the way CommonMark
+/// starts an HTML block. `<details>` / `<summary>` aren't among them: the
+/// markdown pass draws those itself.
+const HTML_BLOCKS: &[&str] = &[
+    "blockquote",
+    "center",
+    "div",
+    "figure",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "img",
+    "ol",
+    "p",
+    "pre",
+    "section",
+    "table",
+    "ul",
+];
+
+/// A markdown cell written in HTML — a notebook's banner table, a centred
+/// image — as the markdown it would render like, since the page can't lay
+/// out HTML: tags become line breaks, headings, emphasis and links, an
+/// image a note naming it, and the text loses HTML's indentation. `None`
+/// when no line opens an HTML block, or the cell has a code fence an HTML
+/// sample may sit in.
+fn html_to_markdown(src: &str) -> Option<String> {
+    let opens_block = |line: &str| {
+        let Some(rest) = line.trim_start().strip_prefix('<') else {
+            return false;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        HTML_BLOCKS.contains(&name.as_str())
+    };
+    if !src.lines().any(opens_block) || src.contains("```") || src.contains("~~~") {
+        return None;
+    }
+    let mut out = String::new();
+    let mut depth = 0usize;
+    let mut skip: Option<String> = None;
+    let mut pre = false;
+    let mut href: Vec<String> = Vec::new();
+    let mut lists: Vec<Option<usize>> = Vec::new();
+    let mut rest = src;
+    while !rest.is_empty() {
+        let tag = rest
+            .strip_prefix('<')
+            .filter(|r| r.starts_with(|c: char| c.is_ascii_alphabetic() || c == '/' || c == '!'))
+            .and_then(|r| {
+                if let Some(c) = r.strip_prefix("!--") {
+                    let end = c.find("-->")?;
+                    return Some((None, 1 + 3 + end + 3));
+                }
+                let end = tag_end(r)?;
+                Some((Some(&r[..end]), end + 2))
+            });
+        if let Some((body, len)) = tag {
+            rest = &rest[len..];
+            let Some(body) = body else { continue };
+            let closing = body.starts_with('/');
+            let body = body.trim_start_matches('/');
+            let name: String = body
+                .chars()
+                .take_while(char::is_ascii_alphanumeric)
+                .collect::<String>()
+                .to_ascii_lowercase();
+            if let Some(until) = &skip {
+                if closing && *until == name {
+                    skip = None;
+                }
+                continue;
+            }
+            let block = |out: &mut String, s: &str| {
+                if !out.is_empty() && !out.ends_with('\n') {
+                    out.push('\n');
+                }
+                out.push_str(s);
+            };
+            match (name.as_str(), closing) {
+                ("script" | "style", false) => skip = Some(name.clone()),
+                ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", false) => {
+                    let level = (name.as_bytes()[1] - b'0') as usize;
+                    block(&mut out, &format!("\n{} ", "#".repeat(level)));
+                }
+                ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", true) => block(&mut out, "\n"),
+                ("br", _) => out.push('\n'),
+                ("hr", _) => block(&mut out, "\n---\n\n"),
+                ("img", _) => {
+                    let what = attr(body, "alt")
+                        .filter(|a| !a.trim().is_empty())
+                        .or_else(|| attr(body, "src"))
+                        .unwrap_or_default();
+                    block(&mut out, &format!("*[image: {}]*\n", what.trim()));
+                }
+                ("pre", false) => {
+                    pre = true;
+                    block(&mut out, "\n");
+                }
+                ("pre", true) => {
+                    pre = false;
+                    block(&mut out, "\n");
+                }
+                ("ul", false) => lists.push(None),
+                ("ol", false) => lists.push(Some(0)),
+                ("ul" | "ol", true) => {
+                    lists.pop();
+                    block(&mut out, "\n");
+                }
+                ("li", false) => {
+                    let indent = "  ".repeat(lists.len().saturating_sub(1));
+                    let marker = match lists.last_mut() {
+                        Some(Some(n)) => {
+                            *n += 1;
+                            format!("{n}.")
+                        }
+                        _ => "-".to_string(),
+                    };
+                    block(&mut out, &format!("{indent}{marker} "));
+                }
+                ("strong" | "b", _) => out.push_str("**"),
+                ("em" | "i", _) => out.push('*'),
+                ("code", _) => out.push('`'),
+                ("s" | "del" | "strike", _) => out.push_str("~~"),
+                ("a", false) => {
+                    href.push(attr(body, "href").unwrap_or_default());
+                    out.push('[');
+                }
+                ("a", true) => {
+                    let target = href.pop().unwrap_or_default();
+                    out.push_str(&format!("]({target})"));
+                }
+                _ if HTML_BLOCKS.contains(&name.as_str())
+                    || matches!(
+                        name.as_str(),
+                        "tr" | "td" | "th" | "thead" | "tbody" | "li" | "details" | "summary"
+                    ) =>
+                {
+                    if closing {
+                        depth = depth.saturating_sub(1);
+                    } else if !body.ends_with('/') {
+                        depth += 1;
+                    }
+                    block(&mut out, "");
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let end = rest[1..].find('<').map_or(rest.len(), |i| i + 1);
+        let text = decode_entities(&rest[..end]);
+        rest = &rest[end..];
+        if skip.is_some() {
+            continue;
+        }
+        if depth == 0 || pre {
+            out.push_str(&text);
+            continue;
+        }
+        // HTML's whitespace: a run is one space, but a blank line still ends
+        // a paragraph, as it ends the HTML block in Jupyter's markdown.
+        let mut newlines = 0;
+        let mut gap = false;
+        for c in text.chars() {
+            if c.is_whitespace() {
+                gap = true;
+                newlines += (c == '\n') as usize;
+                continue;
+            }
+            if gap {
+                push_gap(&mut out, newlines);
+            }
+            out.push(c);
+            gap = false;
+            newlines = 0;
+        }
+        if gap {
+            push_gap(&mut out, newlines);
+        }
+    }
+    let mut md = String::new();
+    let mut blank = true;
+    for line in out.lines() {
+        let line = line.trim_end();
+        if line.trim().is_empty() {
+            if !blank {
+                md.push('\n');
+            }
+            blank = true;
+            continue;
+        }
+        blank = false;
+        md.push_str(line);
+        md.push('\n');
+    }
+    while md.ends_with("\n\n") {
+        md.pop();
+    }
+    Some(md)
+}
+
+/// A gap of `newlines` in HTML text: a space, or a paragraph break for a
+/// blank line. Nothing at the start of a line, so indentation goes.
+fn push_gap(out: &mut String, newlines: usize) {
+    if newlines >= 2 {
+        out.push_str("\n\n");
+    } else if !out.is_empty() && !out.ends_with(['\n', ' ']) {
+        out.push(' ');
+    }
+}
+
+/// Where the tag `r` (past its `<`) ends, with `>` inside a quoted
+/// attribute value passed over.
+fn tag_end(r: &str) -> Option<usize> {
+    let mut quote = None;
+    for (i, c) in r.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '>') => return Some(i),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The value of attribute `name` in a tag's body, quoted or not.
+fn attr(body: &str, name: &str) -> Option<String> {
+    let lower = body.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(i) = lower[from..].find(name) {
+        let at = from + i;
+        from = at + name.len();
+        let before = lower[..at].chars().next_back();
+        if !before.is_some_and(char::is_whitespace) {
+            continue;
+        }
+        let rest = body[from..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else { continue };
+        let rest = rest.trim_start();
+        return Some(match rest.chars().next() {
+            Some(q @ ('"' | '\'')) => rest[1..].split(q).next().unwrap_or("").to_string(),
+            _ => rest
+                .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .next()
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
+    None
+}
+
+fn decode_entities(text: &str) -> String {
+    if !text.contains('&') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let entity = rest[1..]
+            .find(';')
+            .filter(|&n| n <= 10)
+            .map(|n| &rest[1..=n]);
+        let ch = entity.and_then(|e| match e {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some(' '),
+            _ => {
+                let n = e.strip_prefix('#')?;
+                let code = match n.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+                    None => n.parse().ok()?,
+                };
+                char::from_u32(code)
+            }
+        });
+        match (ch, entity) {
+            (Some(c), Some(e)) => {
+                out.push(c);
+                rest = &rest[e.len() + 2..];
+            }
+            _ => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn seg(g: &str, style: Style) -> Seg {
@@ -634,6 +948,37 @@ mod tests {
         assert_eq!(page.cell_of_line(7), Some(1));
         assert_eq!(page.cell_line(1), Some(7));
         assert_eq!(page.cell_line(2), Some(9));
+    }
+
+    #[test]
+    fn an_html_cell_reads_as_the_markdown_it_would_render_like() {
+        let cell = r#"<table style="margin: 0; text-align: left;">
+    <tr>
+        <td style="width: 150px; height: 150px;">
+            <img src="../assets/business.jpg" width="150" height="150" />
+        </td>
+        <td>
+            <h2 style="color:#181;">Business Applications</h2>
+            <span style="color:#181;">Gradio makes it <b>easy</b> &amp; quick.
+
+Consider how you could <a href="https://x.dev">apply</a> it.</span>
+        </td>
+    </tr>
+</table>"#;
+        assert_eq!(
+            html_to_markdown(cell).as_deref(),
+            Some(
+                "*[image: ../assets/business.jpg]*\n\n## Business Applications\n\n\
+                 Gradio makes it **easy** & quick.\n\n\
+                 Consider how you could [apply](https://x.dev) it.\n"
+            )
+        );
+        assert_eq!(html_to_markdown("Some <b>bold</b> prose"), None);
+        assert_eq!(html_to_markdown("```html\n<div>x</div>\n```"), None);
+        assert_eq!(
+            html_to_markdown("<ol><li>one</li><li>two</li></ol><hr>").as_deref(),
+            Some("1. one\n2. two\n\n---\n")
+        );
     }
 
     #[test]

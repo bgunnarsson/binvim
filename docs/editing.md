@@ -64,7 +64,7 @@
 
 ## Notebooks
 
-A Jupyter notebook (`.ipynb`) opens as a page drawn the way Jupyter draws it: markdown cells rendered and wrapped to the pane, each code cell on a shaded slab under its `In [n]:` label (`In [*]:` while it runs), its outputs under it. A bar in the first column marks a cell, and the keys act on that cell:
+A Jupyter notebook (`.ipynb`) opens as a page drawn the way Jupyter draws it: markdown cells rendered and wrapped to the pane, each code cell on a shaded slab under its `In [n]:` label (`In [*]:` while it runs), its outputs under it. A markdown cell written in HTML (a banner table, a centred image) is shown as the markdown it would render like: headings, emphasis, links and paragraphs kept, layout dropped, and each image as an `[image: …]` note. A bar in the first column marks a cell, and the keys act on that cell:
 
 | Key | On the page |
 | --- | --- |
