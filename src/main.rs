@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     // their own thread — see `App::spawn_signal_recovery`.
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| app.run())) {
         Ok(Ok(())) => {
-            goodbye::print(&app.config);
+            goodbye::print(&app.config, app.update.available.as_deref());
             Ok(())
         }
         Ok(Err(e)) => {

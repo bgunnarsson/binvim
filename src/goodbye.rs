@@ -26,7 +26,11 @@ fn message(seed: u64) -> &'static str {
     MESSAGES[(seed % MESSAGES.len() as u64) as usize]
 }
 
-pub fn print(config: &Config) {
+const SITE: &str = "https://www.binvim.dev";
+
+/// `update` is the newer release the startup check found, if any — the last
+/// chance to mention it before the user is back in their shell.
+pub fn print(config: &Config, update: Option<&str>) {
     if !config.start_page.goodbye {
         return;
     }
@@ -43,7 +47,13 @@ pub fn print(config: &Config) {
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.subsec_nanos() as u64);
     let mut out = io::stdout();
-    let _ = write(&mut out, config, logo_fits.then_some(logo), message(seed));
+    let _ = write(
+        &mut out,
+        config,
+        logo_fits.then_some(logo),
+        message(seed),
+        update,
+    );
 }
 
 fn write(
@@ -51,6 +61,7 @@ fn write(
     config: &Config,
     logo: Option<&[&str]>,
     message: &str,
+    update: Option<&str>,
 ) -> io::Result<()> {
     if let Some(logo) = logo {
         queue!(out, SetForegroundColor(config.theme_info()))?;
@@ -63,9 +74,28 @@ fn write(
         out,
         SetForegroundColor(config.theme_dim()),
         Print(message),
+        Print("\n\n"),
+        SetForegroundColor(config.theme_info()),
+        Print(format!("binvim {}", crate::update::current())),
+        SetForegroundColor(config.theme_dim()),
+        Print(" · "),
+        SetForegroundColor(config.theme_fg()),
+        Print(SITE),
         ResetColor,
         Print("\n"),
     )?;
+    if let Some(latest) = update {
+        queue!(
+            out,
+            SetForegroundColor(config.theme_warning()),
+            Print(format!(
+                "▲ binvim {latest} is out (you have {})",
+                crate::update::current()
+            )),
+            ResetColor,
+            Print("\n"),
+        )?;
+    }
     out.flush()
 }
 
@@ -84,20 +114,31 @@ mod tests {
     fn writes_the_logo_then_the_message() {
         let config = Config::default();
         let mut out = Vec::new();
-        write(&mut out, &config, Some(&["AB", "CD"]), "bye").unwrap();
+        write(&mut out, &config, Some(&["AB", "CD"]), "bye", None).unwrap();
         let text = String::from_utf8(out).unwrap();
         let ab = text.find("AB").unwrap();
         let cd = text.find("CD").unwrap();
         let bye = text.find("bye").unwrap();
-        assert!(ab < cd && cd < bye);
+        let site = text.find(SITE).unwrap();
+        assert!(ab < cd && cd < bye && bye < site);
+        assert!(!text.contains('▲'));
     }
 
     #[test]
     fn writes_only_the_message_without_a_logo() {
         let config = Config::default();
         let mut out = Vec::new();
-        write(&mut out, &config, None, "bye").unwrap();
+        write(&mut out, &config, None, "bye", None).unwrap();
         let text = String::from_utf8(out).unwrap();
         assert!(text.contains("bye") && !text.contains('█'));
+    }
+
+    #[test]
+    fn names_a_newer_release_after_the_link() {
+        let config = Config::default();
+        let mut out = Vec::new();
+        write(&mut out, &config, None, "bye", Some("99.0.0")).unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(text.find(SITE).unwrap() < text.find("binvim 99.0.0 is out").unwrap());
     }
 }
