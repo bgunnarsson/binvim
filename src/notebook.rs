@@ -1309,6 +1309,34 @@ pub fn output_html(outputs: &[Value]) -> Option<String> {
     ))
 }
 
+/// The first address on this machine a stream output prints — what Gradio,
+/// Streamlit or Flask print once they listen. `0.0.0.0` is where a server
+/// listens, not an address a browser opens, so it reads as `127.0.0.1`.
+pub fn local_server_url(out: &Value) -> Option<String> {
+    if out.get("output_type").and_then(Value::as_str) != Some("stream") {
+        return None;
+    }
+    let text = multiline(out.get("text"));
+    text.split_whitespace().find_map(|word| {
+        let url = word
+            .trim_start_matches(['(', '<', '[', '"', '\''])
+            .trim_end_matches(['.', ',', ';', ')', ']', '>', '"', '\'']);
+        let rest = url
+            .strip_prefix("http://")
+            .or_else(|| url.strip_prefix("https://"))?;
+        let host = rest.split(['/', '?', '#']).next()?;
+        let name = match host.strip_prefix("[::1]") {
+            Some(_) => "[::1]",
+            None => host.split(':').next()?,
+        };
+        match name {
+            "0.0.0.0" => Some(url.replacen("0.0.0.0", "127.0.0.1", 1)),
+            "127.0.0.1" | "localhost" | "[::1]" => Some(url.to_string()),
+            _ => None,
+        }
+    })
+}
+
 /// Standard base64, whitespace ignored, as Jupyter stores image data.
 pub fn base64_decode(text: &str) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(text.len() * 3 / 4);
@@ -1726,6 +1754,32 @@ mod tests {
         assert_eq!(rows[MAX_OUTPUT_ROWS / 2].style, OutputStyle::Note);
         assert!(rows[MAX_OUTPUT_ROWS / 2].text.contains("71 more lines"));
         assert_eq!(rows.last().unwrap().text, "line 99");
+    }
+
+    #[test]
+    fn a_local_server_address_is_read_from_what_a_cell_prints() {
+        let stream = |text: &str| serde_json::json!({"output_type": "stream", "name": "stdout", "text": text});
+        let url = |text| local_server_url(&stream(text));
+        assert_eq!(
+            url("* Running on local URL:  http://127.0.0.1:7860\n").as_deref(),
+            Some("http://127.0.0.1:7860")
+        );
+        assert_eq!(
+            url(" * Running on http://0.0.0.0:5000/ (Press CTRL+C to quit)").as_deref(),
+            Some("http://127.0.0.1:5000/")
+        );
+        assert_eq!(
+            url("Local URL: <http://localhost:8501>.").as_deref(),
+            Some("http://localhost:8501")
+        );
+        assert_eq!(url("public: https://abc.gradio.live"), None);
+        assert_eq!(url("see http://127.0.0.1.evil.dev/"), None);
+        assert_eq!(
+            local_server_url(
+                &serde_json::json!({"output_type": "execute_result", "data": {"text/plain": "http://localhost:1"}})
+            ),
+            None
+        );
     }
 
     #[test]

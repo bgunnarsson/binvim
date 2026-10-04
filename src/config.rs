@@ -238,19 +238,26 @@ impl Default for HoverConfig {
 /// The notebook page. `images` draws images — a markdown cell's `<img>` or
 /// `![…](…)`, a plot a cell printed — in terminals that can (kitty,
 /// Ghostty); off, or elsewhere, they're a line naming the image.
+/// `open_in_browser` opens what a run serves or renders as HTML in the
+/// browser as it comes, rather than on `:cell output`.
 #[derive(Debug, Deserialize)]
 pub struct NotebookConfig {
-    #[serde(default = "default_notebook_images")]
+    #[serde(default = "default_true")]
     pub images: bool,
+    #[serde(default = "default_true")]
+    pub open_in_browser: bool,
 }
 
-fn default_notebook_images() -> bool {
+fn default_true() -> bool {
     true
 }
 
 impl Default for NotebookConfig {
     fn default() -> Self {
-        Self { images: true }
+        Self {
+            images: true,
+            open_in_browser: true,
+        }
     }
 }
 

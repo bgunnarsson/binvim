@@ -366,6 +366,9 @@ pub struct App {
     /// One Jupyter kernel per notebook that has run a cell, keyed by the
     /// notebook's path. Dropping one shuts its kernel down.
     pub kernels: HashMap<PathBuf, crate::kernel::Kernel>,
+    /// Cells, by notebook and id, whose running run has opened the server
+    /// address it printed, so it isn't opened twice.
+    pub served: std::collections::HashSet<(PathBuf, String)>,
     /// Images the notebook page draws, and which the terminal holds. A
     /// `RefCell` because layout and drawing take `&App`.
     pub images: std::cell::RefCell<crate::graphics::ImageStore>,
@@ -1049,6 +1052,7 @@ impl App {
             lsp: LspManager::new(),
             dap: DapManager::new(),
             kernels: HashMap::new(),
+            served: Default::default(),
             images: Default::default(),
             graphics: crate::graphics::terminal_supports(),
             last_sent_version: HashMap::new(),

@@ -84,6 +84,9 @@
 # Draw images on the notebook page — an <img> in a markdown cell, a plot a
 # cell printed — where the terminal can (kitty, Ghostty).
 # images = true
+# Open what a cell's run serves (the local address a Gradio or Flask app
+# prints) or renders as HTML (a Plotly chart) in the browser as it comes.
+# open_in_browser = true
 
 [keymaps]
 # Milliseconds a mapped key waits for the rest of a longer mapping.

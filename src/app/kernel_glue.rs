@@ -64,6 +64,7 @@ impl super::App {
     /// cells as running. False when there was none.
     fn stop_kernel(&mut self, path: &Path) -> bool {
         let had = self.kernels.remove(path).is_some();
+        self.served.retain(|(p, _)| p != path);
         if let Some(doc) = self.notebook_buffer(path).and_then(|b| b.notebook.as_mut()) {
             doc.clear_busy();
         }
@@ -200,10 +201,18 @@ impl super::App {
             }
             KernelEvent::Busy(_) => {}
             KernelEvent::Count(id, n) => self.with_doc(path, |doc| doc.set_count(&id, n)),
-            KernelEvent::Output(id, out, display) => self.with_doc(path, |doc| match display {
-                Some(display) => doc.push_display(&id, out, display),
-                None => doc.push_output(&id, out),
-            }),
+            KernelEvent::Output(id, out, display) => {
+                if let Some(url) = crate::notebook::local_server_url(&out)
+                    && self.config.notebook.open_in_browser
+                    && self.served.insert((path.to_path_buf(), id.clone()))
+                {
+                    self.open_url_in_browser(&url);
+                }
+                self.with_doc(path, |doc| match display {
+                    Some(display) => doc.push_display(&id, out, display),
+                    None => doc.push_output(&id, out),
+                });
+            }
             KernelEvent::Update(display, out) => {
                 self.with_doc(path, |doc| doc.update_display(&display, &out));
             }
@@ -214,8 +223,19 @@ impl super::App {
                 if let Some(k) = self.kernels.get_mut(path) {
                     k.outstanding = k.outstanding.saturating_sub(1);
                 }
-                if let Some(doc) = self.notebook_buffer(path).and_then(|b| b.notebook.as_mut()) {
-                    doc.finish_run(&id);
+                let Some(doc) = self.notebook_buffer(path).and_then(|b| b.notebook.as_mut()) else {
+                    return;
+                };
+                doc.finish_run(&id);
+                // A server's page is its HTML too (Gradio's is an iframe of
+                // the address it printed), so that run's HTML isn't opened again.
+                let html = crate::notebook::output_html(doc.outputs(&id));
+                let served = self.served.remove(&(path.to_path_buf(), id.clone()));
+                if let Some(html) = html
+                    && !served
+                    && self.config.notebook.open_in_browser
+                {
+                    self.open_output_html(path, &id, &html);
                 }
             }
         }
@@ -301,11 +321,8 @@ impl super::App {
             }
         }
         let html = crate::notebook::output_html(&outputs);
-        if let Some(html) = &html {
-            let file = dir.join(format!("{key}-{id}.html"));
-            if std::fs::write(&file, html).is_ok() {
-                self.open_url_in_browser(&file.to_string_lossy());
-            }
+        if let (Some(html), Some(path)) = (&html, self.buffer.path.clone()) {
+            self.open_output_html(&path, &id, html);
         }
         let text = crate::notebook::output_text(&outputs);
         let only_opened = text.lines().all(|l| {
@@ -325,6 +342,18 @@ impl super::App {
             Ok(()) => {
                 self.force_reload_from_disk();
             }
+            Err(e) => self.status_msg = format!("{}: {e}", file.display()),
+        }
+    }
+
+    /// A cell's HTML output as a file the browser opens.
+    fn open_output_html(&mut self, notebook: &Path, id: &str, html: &str) {
+        let Some(dir) = crate::paths::cache_dir().map(|d| d.join("notebook-output")) else {
+            return;
+        };
+        let file = dir.join(format!("{}-{id}.html", crate::paths::path_key(notebook)));
+        match crate::paths::create_private_dir(&dir).and_then(|()| std::fs::write(&file, html)) {
+            Ok(()) => self.open_url_in_browser(&file.to_string_lossy()),
             Err(e) => self.status_msg = format!("{}: {e}", file.display()),
         }
     }
