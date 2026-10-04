@@ -4,6 +4,47 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.1]
+
+### Added
+- **Quitting leaves a goodbye in the shell.** A clean quit prints the binvim
+  logo, a parting line, the version, binvim.dev and any newer release the
+  startup check found, after the alternate screen is gone so it stays in the
+  scrollback. Custom start-page lines replace the logo here too;
+  `[start_page] goodbye = false` turns it off.
+- **Code cells run from the notebook page with a click.** A cell's label reads
+  `▶ [n]`, and `■ [*]` while it runs; clicking it runs the cell, or interrupts
+  it mid-run.
+- **The notebook page draws images in terminals with kitty placeholders.**
+  Markdown-cell images and PNG / JPEG / GIF outputs scroll and crop like text.
+  Other terminals, tmux, web images and `[notebook] images = false` keep the
+  text note.
+- **Links open from the notebook page.** A URL printed in an output, or a URL
+  or `[text](url)` link in a markdown cell, opens on a click.
+- **A notebook run opens what it serves in the browser.** The local address
+  Gradio, Streamlit or Flask prints opens as it's printed, and HTML-only output
+  opens when the cell finishes; `:cell output` opens HTML outputs too.
+  `[notebook] open_in_browser = false` turns both off.
+- **`[notebook] save_outputs = false`** strips outputs and execution counts on
+  save, as nbstripout does, while keeping them on screen.
+
+### Changed
+- **A notebook run no longer counts as an unsaved edit.** `:w`, `:x` and `:wa`
+  still write its outputs, but `:q` doesn't refuse over them, and the tab and
+  status line mark them dimmer than an edit.
+- **Outputs read from the file show as stale** — dim, with `· saved` on the
+  text view's header — until the cell runs in the current kernel. A kernel
+  stop or restart makes every cell stale again.
+- **HTML markdown cells render on the notebook page.** A `<table>` banner with
+  `<img>` and styled text becomes headings, emphasis, links and paragraphs
+  instead of raw tags.
+
+### Fixed
+- **Notebook displays redraw on `update_display`.** A cell that streams into
+  `display(Markdown(''), display_id=True)` showed only
+  `<IPython.core.display.Markdown object>`; it now shows the markdown and
+  updates in place.
+
 ## [0.8.0] - 2026-10-03
 
 ### Added
