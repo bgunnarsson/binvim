@@ -4,7 +4,7 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.8.1]
+## [0.8.1] - 2026-10-04
 
 ### Added
 - **Quitting leaves a goodbye in the shell.** A clean quit prints the binvim
