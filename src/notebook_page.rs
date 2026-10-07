@@ -6,7 +6,7 @@
 //! The buffer stays the source of truth. The page is laid out from it
 //! again whenever it changes (`App::page_layout_for` keeps the last one),
 //! and the cell it marks is the one holding the cursor, so the
-//! text view (`Enter` on the page, `<leader>v` back) keeps the place, and
+//! text view (`Enter` on the page, `<leader>nv` back) keeps the place, and
 //! undo, the kernel and saves need nothing of their own.
 
 use std::cell::RefCell;

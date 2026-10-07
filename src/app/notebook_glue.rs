@@ -159,7 +159,7 @@ impl super::App {
         (self.graphics && self.config.notebook.images).then_some(&self.images)
     }
 
-    /// `:notebook [page|text]` / `<leader>v`: show a notebook or a
+    /// `:notebook [page|text]` / `<leader>nv` / `<leader>v`: show a notebook or a
     /// markdown file as its page or as its text; `None` flips between them.
     pub(super) fn notebook_view(&mut self, page: Option<bool>) {
         if !self.buffer.has_page() {
@@ -464,6 +464,9 @@ mod tests {
         assert!(!app.buffer.text_view);
         app.apply_action(crate::parser::Action::NotebookView);
         assert!(app.buffer.text_view);
+        app.apply_action(crate::parser::Action::MarkdownView);
+        assert!(app.buffer.text_view, "<leader>v is a markdown file's");
+        assert_eq!(app.status_msg, "not a markdown file");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -474,6 +477,9 @@ mod tests {
         std::fs::write(&path, "# Title\n\nfirst para\nstill first\n\nlast\n").unwrap();
         let mut app = crate::app::App::new(Some(path)).expect("App::new");
         assert!(!app.buffer.page_shown(), "the text by default");
+        press(&mut app, " nv");
+        assert!(!app.buffer.page_shown(), "<leader>nv is a notebook's");
+        assert_eq!(app.status_msg, "not a notebook");
         press(&mut app, " v");
         assert!(app.buffer.page_shown(), "<leader>v shows the page");
         app.window.cursor.line = 0;

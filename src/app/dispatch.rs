@@ -367,7 +367,13 @@ impl super::App {
             Action::ToggleComment => self.toggle_comment_range(),
             Action::Cell(edit) => self.cell_edit(edit),
             Action::Kernel(cmd) => self.kernel_cmd(cmd),
-            Action::NotebookView => self.notebook_view(None),
+            Action::NotebookView if !self.buffer.is_notebook() => {
+                self.status_msg = "not a notebook".into();
+            }
+            Action::MarkdownView if !self.buffer.is_markdown() => {
+                self.status_msg = "not a markdown file".into();
+            }
+            Action::NotebookView | Action::MarkdownView => self.notebook_view(None),
             Action::Debug(d) => {
                 use crate::command::DebugSubCmd;
                 use crate::parser::DebugAction;

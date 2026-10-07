@@ -842,7 +842,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("r".into(), "Rename".into()),
         ("f".into(), "Format".into()),
         ("/".into(), "Toggle comment".into()),
-        ("v".into(), "Page / text view".into()),
+        ("v".into(), "Markdown page / text".into()),
     ]
 }
 
@@ -898,6 +898,7 @@ pub fn notebook_prefix_entries() -> Vec<(String, String)> {
         ("c".into(), "Clear output".into()),
         ("C".into(), "Clear all output".into()),
         ("o".into(), "Show output".into()),
+        ("v".into(), "Page / text view".into()),
     ]
 }
 

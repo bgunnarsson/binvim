@@ -630,8 +630,10 @@ pub enum Action {
     /// `<leader>n` sub-menu — run cells, clear or show their outputs, or
     /// interrupt / restart the notebook's kernel.
     Kernel(crate::kernel::KernelCmd),
-    /// `<leader>v` — flip a notebook or a markdown file between its page and its text.
+    /// `<leader>nv` — flip a notebook between its page and its text.
     NotebookView,
+    /// `<leader>v` — flip a markdown file between its page and its text.
+    MarkdownView,
     /// `<leader>gg` — suspend the editor and hand the host terminal
     /// to `lazygit`. On exit binvim reclaims the terminal and
     /// refreshes git gutter state for every open buffer. Same effect
@@ -1639,7 +1641,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'l' => Some(Action::LspExecuteCodeLens),
             'i' => Some(Action::InstallToolchain),
             '/' => Some(Action::ToggleComment),
-            'v' => Some(Action::NotebookView),
+            'v' => Some(Action::MarkdownView),
             _ => None,
         };
         if let Some(a) = action {
@@ -1830,7 +1832,10 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'o' => Some(KernelCmd::Output),
             _ => None,
         };
-        let action = edit.map(Action::Cell).or(run.map(Action::Kernel));
+        let action = match ch {
+            'v' => Some(Action::NotebookView),
+            _ => edit.map(Action::Cell).or(run.map(Action::Kernel)),
+        };
         return finish_leader(state, action);
     }
 
@@ -2717,12 +2722,22 @@ mod tests {
     }
 
     #[test]
-    fn leader_v_toggles_the_page() {
+    fn leader_v_and_leader_nv_toggle_the_page() {
         let mut state = PendingCmd::default();
         assert!(matches!(
             parse(&mut state, key(' '), ParseCtx::Normal),
             ParseResult::Pending
         ));
+        assert!(matches!(
+            parse(&mut state, key('v'), ParseCtx::Normal),
+            ParseResult::Action(Action::MarkdownView)
+        ));
+        for ch in [' ', 'n'] {
+            assert!(matches!(
+                parse(&mut state, key(ch), ParseCtx::Normal),
+                ParseResult::Pending
+            ));
+        }
         assert!(matches!(
             parse(&mut state, key('v'), ParseCtx::Normal),
             ParseResult::Action(Action::NotebookView)
