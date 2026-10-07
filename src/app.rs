@@ -356,6 +356,10 @@ pub struct App {
     /// Normal mode (`markdown_render_active`). Insert/Visual flip back
     /// to raw markdown source.
     pub markdown_meta: Option<crate::app::state::MarkdownMetaCache>,
+    /// Pages laid out for the buffers windows show, newest last. A layout
+    /// wraps the whole file, and the run loop, the renderer and each page
+    /// key all ask for it.
+    pub(crate) page_layouts: std::cell::RefCell<Vec<crate::app::state::PageLayoutCache>>,
     pub picker: Option<PickerState>,
     pub config: Config,
     pub editorconfig: EditorConfig,
@@ -1049,6 +1053,7 @@ impl App {
             },
             highlight_cache: None,
             markdown_meta: None,
+            page_layouts: Default::default(),
             picker: None,
             config: Config::load(),
             editorconfig: EditorConfig::default(),

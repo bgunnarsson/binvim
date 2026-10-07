@@ -5714,11 +5714,9 @@ fn draw_notebook_page(
     is_active: bool,
 ) -> Result<()> {
     use crate::notebook_page::{LabelKind, Style};
-    let colors = bs.highlight_cache.map(|c| c.byte_colors.as_slice());
     let pane_w = rect.w as usize;
     let rows = rect.h as usize;
-    let page =
-        crate::notebook_page::layout(bs.buffer, colors, pane_w, &app.config, app.page_images());
+    let page = app.page_layout_for(bs.buffer, bs.highlight_cache, pane_w);
     let top = win.page_top.min(page.max_top(rows));
     let marked = page.cell_of_line(win.cursor.line);
     let buf_bg = app.config.background_color();

@@ -28,6 +28,26 @@ pub struct FindRecord {
     pub before: bool,
 }
 
+/// Enough for a page in every pane of a busy split.
+pub(crate) const PAGE_LAYOUTS: usize = 6;
+
+/// What a page layout is drawn from, besides the config: a reload clears
+/// the cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PageLayoutKey {
+    pub buffer: u64,
+    pub version: u64,
+    pub rev: Option<u64>,
+    pub width: usize,
+    pub highlights: Option<(crate::lang::Lang, u64)>,
+    pub images: bool,
+}
+
+pub(crate) struct PageLayoutCache {
+    pub key: PageLayoutKey,
+    pub layout: std::rc::Rc<crate::notebook_page::PageLayout>,
+}
+
 /// Cached per-line markdown render meta for the active buffer. Keyed
 /// by `(path, version)` so we recompute when the buffer changes or
 /// the user switches to a different file. The cache is mode-independent

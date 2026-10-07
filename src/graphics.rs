@@ -408,6 +408,12 @@ impl ImageStore {
         id
     }
 
+    /// `id` is still the one its image is shown under: a layout made before
+    /// the image was asked for at another size holds an id that's gone.
+    pub fn is_current(&self, id: u32) -> bool {
+        self.by_id.contains_key(&id)
+    }
+
     /// Sends image `id` to the terminal unless it already has it, and drops
     /// the ones a resize replaced.
     pub fn send(&mut self, out: &mut impl Write, id: u32) -> std::io::Result<()> {

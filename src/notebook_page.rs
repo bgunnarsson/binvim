@@ -3,8 +3,9 @@
 //! outputs beneath — in place of the percent text, where every cell header,
 //! line number and markdown marker competes with the content.
 //!
-//! The buffer stays the source of truth. The page is laid out from it on
-//! each frame, and the cell it marks is the one holding the cursor, so the
+//! The buffer stays the source of truth. The page is laid out from it
+//! again whenever it changes (`App::page_layout_for` keeps the last one),
+//! and the cell it marks is the one holding the cursor, so the
 //! text view (`Enter` on the page, `<leader>nv` back) keeps the place, and
 //! undo, the kernel and saves need nothing of their own.
 

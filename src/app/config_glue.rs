@@ -109,6 +109,7 @@ impl super::App {
     /// focused and a split may be showing it.
     fn recolour_highlights(&mut self) {
         self.highlight_cache = None;
+        self.page_layouts.get_mut().clear();
         for (i, stash) in self.buffers.iter_mut().enumerate() {
             // The active slot is a stale snapshot; `load_stash` never reads
             // it back.

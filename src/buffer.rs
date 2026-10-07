@@ -115,6 +115,9 @@ pub struct Buffer {
     pub outputs_dirty: bool,
     /// Bumped on every mutation; used to invalidate the syntax-highlight cache.
     pub version: u64,
+    /// Unique to this buffer. `version` starts at 0 in every buffer, so a
+    /// cache that outlives one (the page layout) keys on both.
+    pub id: u64,
     /// Hash of the text as last read from or written to disk — the key the
     /// undo history and cursor cache are stamped with, so a reopen restores
     /// them onto the same content. `None` when nothing is on disk yet.
@@ -213,6 +216,10 @@ impl Buffer {
             dirty: false,
             outputs_dirty: false,
             version: 0,
+            id: {
+                static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             clean_hash: None,
             disk_mtime: None,
             disk_len: None,

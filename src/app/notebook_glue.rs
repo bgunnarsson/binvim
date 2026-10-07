@@ -2,8 +2,11 @@
 //! top of `notebook.rs`'s projection. A notebook buffer is ordinary text, so
 //! everything here is a text edit and undoes like one.
 
+use std::rc::Rc;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::state::{PAGE_LAYOUTS, PageLayoutCache, PageLayoutKey};
 use crate::kernel::{KernelCmd, RunScope};
 use crate::mode::Mode;
 
@@ -90,19 +93,64 @@ impl super::App {
         self.buffer.page_shown()
     }
 
-    pub(super) fn page_layout(&self) -> crate::notebook_page::PageLayout {
-        let colors = self
-            .highlight_cache
-            .as_ref()
-            .map(|c| c.byte_colors.as_slice());
+    pub(super) fn page_layout(&self) -> Rc<crate::notebook_page::PageLayout> {
         let width = self.active_pane_rect().w as usize;
-        crate::notebook_page::layout(
-            &self.buffer,
+        self.page_layout_for(&self.buffer, self.highlight_cache.as_ref(), width)
+    }
+
+    /// The page of `buffer` at `width`, laid out again only when something
+    /// it's drawn from changed.
+    pub(crate) fn page_layout_for(
+        &self,
+        buffer: &crate::buffer::Buffer,
+        highlights: Option<&crate::lang::HighlightCache>,
+        width: usize,
+    ) -> Rc<crate::notebook_page::PageLayout> {
+        let images = self.page_images();
+        let key = PageLayoutKey {
+            buffer: buffer.id,
+            version: buffer.version,
+            rev: buffer.notebook.as_ref().map(|nb| nb.rev()),
+            width,
+            highlights: highlights.map(|h| (h.lang, h.buffer_version)),
+            images: images.is_some(),
+        };
+        let mut cache = self.page_layouts.borrow_mut();
+        if let Some(i) = cache.iter().position(|c| c.key == key) {
+            let images_current = images.is_none_or(|store| {
+                let store = store.borrow();
+                cache[i]
+                    .layout
+                    .rows
+                    .iter()
+                    .filter_map(|r| r.image)
+                    .all(|im| store.is_current(im.id))
+            });
+            if images_current {
+                let hit = cache.remove(i);
+                let layout = hit.layout.clone();
+                cache.push(hit);
+                return layout;
+            }
+            cache.remove(i);
+        }
+        let colors = highlights.map(|c| c.byte_colors.as_slice());
+        let layout = Rc::new(crate::notebook_page::layout(
+            buffer,
             colors,
             width,
             &self.config,
-            self.page_images(),
-        )
+            images,
+        ));
+        cache.retain(|c| c.key.buffer != key.buffer || c.key.width != key.width);
+        if cache.len() >= PAGE_LAYOUTS {
+            cache.remove(0);
+        }
+        cache.push(PageLayoutCache {
+            key,
+            layout: layout.clone(),
+        });
+        layout
     }
 
     /// The image store when images are drawn: the terminal can, and
@@ -438,6 +486,30 @@ mod tests {
         press(&mut app, "i");
         key(&mut app, KeyCode::Esc);
         assert!(app.buffer.text_view);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_page_is_laid_out_again_only_when_its_buffer_changes() {
+        let dir = crate::paths::test_scratch_dir("notebook", "page_cache");
+        let path = dir.join("notes.md");
+        std::fs::write(&path, "# Title\n\nbody\n").unwrap();
+        let mut app = crate::app::App::new(Some(path)).expect("App::new");
+        let first = app.page_layout();
+        assert!(std::rc::Rc::ptr_eq(&first, &app.page_layout()));
+        app.buffer.replace_all("# Title\n\nbody\n\nmore\n");
+        let edited = app.page_layout();
+        assert!(!std::rc::Rc::ptr_eq(&first, &edited));
+        assert_eq!(edited.spans.len(), 3);
+        // Another buffer at the same version is not the same page.
+        let mut other = crate::buffer::Buffer::from_path(dir.join("notes.md")).unwrap();
+        other.version = app.buffer.version;
+        let width = app.active_pane_rect().w as usize;
+        assert!(!std::rc::Rc::ptr_eq(
+            &edited,
+            &app.page_layout_for(&other, None, width)
+        ));
+        assert_eq!(app.page_layouts.borrow().len(), 2);
         std::fs::remove_dir_all(&dir).ok();
     }
 
