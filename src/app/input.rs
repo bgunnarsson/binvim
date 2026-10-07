@@ -1359,14 +1359,17 @@ impl super::App {
         {
             return;
         }
-        // `Esc` in a page's text, with nothing for it to cancel, goes back
-        // to the page — the way out that `Enter` on the page came in by.
+        // `Esc` in a notebook's text, with nothing for it to cancel, goes
+        // back to the page — the way out that `Enter` on the page came in by.
+        // Not in markdown's: the text is where it's edited, and a stray `Esc`
+        // there is a Vim habit, not a request for the preview.
         if matches!(ctx, parser::ParseCtx::Normal)
             && key.code == KeyCode::Esc
             && key.modifiers.is_empty()
             && self.pending.is_clean()
             && self.additional_cursors.is_empty()
             && self.buffer.has_page()
+            && !self.buffer.is_markdown()
             && self.buffer.text_view
         {
             self.notebook_view(Some(true));
@@ -1606,9 +1609,6 @@ impl super::App {
                 // A snippet session is Insert-mode-only — Esc ends it.
                 self.snippet_session = None;
                 self.end_insert_recording();
-                if std::mem::take(&mut self.page_return) && self.buffer.has_page() {
-                    self.notebook_view(Some(true));
-                }
             }
             // `Ctrl-C` leaves like Esc but, as in Vim, without Insert's
             // leave-time work: no blank-line strip, and nothing kept for `.`.
@@ -1625,9 +1625,6 @@ impl super::App {
                 self.snippet_session = None;
                 self.replace_session = None;
                 self.recording = None;
-                if std::mem::take(&mut self.page_return) && self.buffer.has_page() {
-                    self.notebook_view(Some(true));
-                }
             }
             // One Normal-mode command, then back to Insert. The session so far
             // ends here as Esc would end it, minus the step back and the

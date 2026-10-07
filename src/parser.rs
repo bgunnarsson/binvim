@@ -1639,6 +1639,7 @@ fn parse_key(state: &mut PendingCmd, key: KeyEvent, ctx: ParseCtx) -> ParseResul
             'l' => Some(Action::LspExecuteCodeLens),
             'i' => Some(Action::InstallToolchain),
             '/' => Some(Action::ToggleComment),
+            'v' => Some(Action::NotebookView),
             _ => None,
         };
         if let Some(a) = action {
@@ -2716,6 +2717,19 @@ mod tests {
             ParseResult::Action(Action::OperateTextObject { count, .. }) => assert_eq!(count, 6),
             other => panic!("2d3aw produced {:?}", std::mem::discriminant(&other)),
         }
+    }
+
+    #[test]
+    fn leader_v_toggles_the_page() {
+        let mut state = PendingCmd::default();
+        assert!(matches!(
+            parse(&mut state, key(' '), ParseCtx::Normal),
+            ParseResult::Pending
+        ));
+        assert!(matches!(
+            parse(&mut state, key('v'), ParseCtx::Normal),
+            ParseResult::Action(Action::NotebookView)
+        ));
     }
 
     #[test]

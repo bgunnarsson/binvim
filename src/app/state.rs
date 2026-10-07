@@ -842,6 +842,7 @@ pub fn leader_entries() -> Vec<(String, String)> {
         ("r".into(), "Rename".into()),
         ("f".into(), "Format".into()),
         ("/".into(), "Toggle comment".into()),
+        ("v".into(), "Page / text view".into()),
     ]
 }
 
