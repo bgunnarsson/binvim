@@ -159,7 +159,7 @@ impl super::App {
         (self.graphics && self.config.notebook.images).then_some(&self.images)
     }
 
-    /// `:notebook [page|text]` / `<leader>v` / `<leader>nv`: show a notebook or a
+    /// `:notebook [page|text]` / `<leader>v`: show a notebook or a
     /// markdown file as its page or as its text; `None` flips between them.
     pub(super) fn notebook_view(&mut self, page: Option<bool>) {
         if !self.buffer.has_page() {
