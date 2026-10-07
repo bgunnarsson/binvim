@@ -85,9 +85,9 @@ impl super::App {
         self.apply_formatted(&fixed);
     }
 
-    /// Whether the active buffer is drawn as the notebook page.
-    pub(super) fn notebook_page_shown(&self) -> bool {
-        self.buffer.is_notebook() && !self.buffer.notebook_text
+    /// Whether the active buffer is drawn as its page.
+    pub(super) fn page_shown(&self) -> bool {
+        self.buffer.page_shown()
     }
 
     pub(super) fn page_layout(&self) -> crate::notebook_page::PageLayout {
@@ -111,15 +111,15 @@ impl super::App {
         (self.graphics && self.config.notebook.images).then_some(&self.images)
     }
 
-    /// `:notebook [page|text]` / `<leader>nv`: show the notebook as its
-    /// page or as the percent text; `None` flips between them.
+    /// `:notebook [page|text]` / `<leader>nv`: show a notebook or a
+    /// markdown file as its page or as its text; `None` flips between them.
     pub(super) fn notebook_view(&mut self, page: Option<bool>) {
-        if !self.buffer.is_notebook() {
+        if !self.buffer.has_page() {
             self.status_msg = "not a notebook".into();
             return;
         }
-        let page = page.unwrap_or(self.buffer.notebook_text);
-        self.buffer.notebook_text = !page;
+        let page = page.unwrap_or(self.buffer.text_view);
+        self.buffer.text_view = !page;
         if !page {
             return;
         }
@@ -183,6 +183,7 @@ impl super::App {
             KeyCode::Char('b') if ctrl => return self.page_scroll_in(&layout, -full),
             KeyCode::PageDown => return self.page_scroll_in(&layout, full),
             KeyCode::PageUp => return self.page_scroll_in(&layout, -full),
+            _ if self.buffer.is_markdown() => return self.markdown_page_key(k, &layout, here),
             _ if ctrl => None,
             KeyCode::Char('r') => run(KernelCmd::Run(RunScope::Cell)),
             KeyCode::Char('n') => run(KernelCmd::Run(RunScope::Advance)),
@@ -218,13 +219,52 @@ impl super::App {
         }
         // An added or moved cell, or the next one a run advanced to, is
         // brought fully into view rather than left peeking at an edge.
-        if self.notebook_page_shown() {
+        if self.page_shown() {
             let layout = self.page_layout();
             if let Some(cell) = layout.cell_of_line(self.window.cursor.line) {
                 self.window.page_top = layout.reveal(cell, self.window.page_top, h);
             }
         }
         true
+    }
+
+    /// A markdown page has no cell commands: its other keys search, or
+    /// start Insert at the marked block's edge, to come back on `Esc`.
+    fn markdown_page_key(
+        &mut self,
+        k: KeyEvent,
+        layout: &crate::notebook_page::PageLayout,
+        here: Option<usize>,
+    ) -> bool {
+        if k.modifiers.contains(KeyModifiers::CONTROL) {
+            return true;
+        }
+        let KeyCode::Char(c) = k.code else { return true };
+        if matches!(c, '/' | '?' | 'n' | 'N') {
+            return false;
+        }
+        if !matches!(c, 'i' | 'I' | 'a' | 'A' | 'o' | 'O') {
+            return true;
+        }
+        if let Some(body) = here
+            .and_then(|i| layout.spans.get(i))
+            .map(|s| s.body.clone())
+        {
+            let first = matches!(c, 'i' | 'I' | 'O');
+            let line = if first {
+                body.start
+            } else {
+                body.end.saturating_sub(1).max(body.start)
+            };
+            self.window.cursor.line = line;
+            // `a` appends after the last character, so it rests there.
+            self.window.cursor.col = if first { 0 } else { self.buffer.line_len(line) };
+            self.clamp_cursor_normal();
+            self.window.cursor.want_col = self.window.cursor.col;
+        }
+        self.buffer.text_view = true;
+        self.page_return = true;
+        false
     }
 
     fn page_select(&mut self, layout: &crate::notebook_page::PageLayout, cell: usize) {
@@ -322,7 +362,7 @@ mod tests {
         .unwrap();
         let mut app = crate::app::App::new(Some(path.clone())).expect("App::new");
         // These tests drive the text; the page's tests switch it back.
-        app.buffer.notebook_text = true;
+        app.buffer.text_view = true;
         (dir, app)
     }
 
@@ -333,7 +373,7 @@ mod tests {
     #[test]
     fn the_page_moves_between_cells_and_enter_shows_the_text() {
         let (dir, mut app) = open("page");
-        app.buffer.notebook_text = false;
+        app.buffer.text_view = false;
         app.buffer
             .replace_all("# %% [markdown] id=a\n# Title\n# %% id=b\nx = 1\ny = 2\n# %% id=c\nz\n");
         app.window.cursor.line = 0;
@@ -348,7 +388,7 @@ mod tests {
         press(&mut app, "xp~");
         assert_eq!(app.buffer.rope.to_string(), before);
         key(&mut app, KeyCode::Enter);
-        assert!(app.buffer.notebook_text);
+        assert!(app.buffer.text_view);
         assert_eq!(
             app.window.cursor.line, 1,
             "the text opens where the page was"
@@ -358,18 +398,53 @@ mod tests {
         // Esc out of Insert stays in the text; Esc again goes to the page.
         press(&mut app, "i");
         key(&mut app, KeyCode::Esc);
-        assert!(app.buffer.notebook_text);
+        assert!(app.buffer.text_view);
         key(&mut app, KeyCode::Esc);
-        assert!(!app.buffer.notebook_text);
+        assert!(!app.buffer.text_view);
         app.apply_action(crate::parser::Action::NotebookView);
-        assert!(app.buffer.notebook_text);
+        assert!(app.buffer.text_view);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_markdown_file_opens_as_its_page_and_insert_returns_to_it() {
+        let dir = crate::paths::test_scratch_dir("notebook", "markdown_page");
+        let path = dir.join("notes.md");
+        std::fs::write(&path, "# Title\n\nfirst para\nstill first\n\nlast\n").unwrap();
+        let mut app = crate::app::App::new(Some(path)).expect("App::new");
+        assert!(app.buffer.page_shown(), "a page by default");
+        app.window.cursor.line = 0;
+        press(&mut app, "j");
+        assert_eq!(app.window.cursor.line, 2, "j marks the next block");
+        let before = app.buffer.rope.to_string();
+        press(&mut app, "xdd");
+        assert_eq!(app.buffer.rope.to_string(), before, "page keys don't edit");
+        press(&mut app, "A!");
+        assert!(app.buffer.text_view, "Insert shows the text");
+        key(&mut app, KeyCode::Esc);
+        assert!(!app.buffer.text_view, "Esc goes straight back to the page");
+        press(&mut app, "o");
+        press(&mut app, "new");
+        key(&mut app, KeyCode::Esc);
+        assert_eq!(
+            app.buffer.rope.to_string(),
+            "# Title\n\nfirst para\nstill first!\nnew\n\nlast\n"
+        );
+        press(&mut app, "kI>");
+        key(&mut app, KeyCode::Esc);
+        assert!(app.buffer.rope.to_string().starts_with(">#"));
+        // Insert entered from the text stays in the text.
+        key(&mut app, KeyCode::Enter);
+        press(&mut app, "i");
+        key(&mut app, KeyCode::Esc);
+        assert!(app.buffer.text_view);
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn page_edits_act_on_the_marked_cell_and_undo_as_text() {
         let (dir, mut app) = open("page_edit");
-        app.buffer.notebook_text = false;
+        app.buffer.text_view = false;
         app.buffer
             .replace_all("# %% id=a\nx = 1\n# %% id=b\ny = 2\n");
         app.window.cursor.line = 1;

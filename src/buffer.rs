@@ -166,9 +166,10 @@ pub struct Buffer {
     pub notebook: Option<crate::notebook::NotebookDoc>,
     /// Why a `.ipynb` couldn't be read as cells and opened as its raw JSON.
     pub notebook_error: Option<String>,
-    /// The notebook shows as its percent text rather than its rendered page
-    /// (`notebook_page.rs`). Kept on the buffer so it survives a switch away.
-    pub notebook_text: bool,
+    /// A buffer with a page (`has_page`) shows its text rather than the
+    /// rendered page (`notebook_page.rs`). Kept on the buffer so it survives
+    /// a switch away.
+    pub text_view: bool,
 }
 
 pub fn is_notebook_path(path: &Path) -> bool {
@@ -227,7 +228,7 @@ impl Buffer {
             change_idx: 0,
             notebook: None,
             notebook_error: None,
-            notebook_text: false,
+            text_view: false,
         }
     }
 
@@ -288,6 +289,23 @@ impl Buffer {
 
     pub fn is_notebook(&self) -> bool {
         self.notebook.is_some()
+    }
+
+    pub fn is_markdown(&self) -> bool {
+        self.notebook.is_none()
+            && matches!(
+                self.path.as_deref().and_then(crate::lang::Lang::detect),
+                Some(crate::lang::Lang::Markdown)
+            )
+    }
+
+    /// Drawn as a rendered page unless `text_view` is set.
+    pub fn has_page(&self) -> bool {
+        self.is_notebook() || self.is_markdown()
+    }
+
+    pub fn page_shown(&self) -> bool {
+        self.has_page() && !self.text_view
     }
 
     #[cfg(test)]

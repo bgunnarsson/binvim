@@ -209,7 +209,7 @@ impl super::App {
     /// next `adjust_viewport` doesn't snap the view back. Positive = down,
     /// negative = up.
     pub(super) fn scroll_view(&mut self, delta: i64) {
-        if self.notebook_page_shown() {
+        if self.page_shown() {
             self.notebook_page_scroll(delta as isize);
             return;
         }
@@ -244,11 +244,11 @@ impl super::App {
     }
 
     pub(super) fn adjust_viewport(&mut self) {
-        if self.notebook_page_shown() {
+        if self.page_shown() {
             // Typing or selecting needs the text on screen, however the
             // mode was entered.
             if matches!(self.mode, Mode::Insert | Mode::Visual(_)) {
-                self.buffer.notebook_text = true;
+                self.buffer.text_view = true;
             } else {
                 let layout = self.page_layout();
                 if let Some(cell) = layout.cell_of_line(self.window.cursor.line) {
@@ -1160,11 +1160,7 @@ pub(super) fn compute_markdown_meta(
 
 /// Markdown files, and notebooks for their markdown cells and cell bars.
 fn renders_markdown(buffer: &Buffer) -> bool {
-    buffer.is_notebook()
-        || matches!(
-            buffer.path.as_deref().and_then(crate::lang::Lang::detect),
-            Some(crate::lang::Lang::Markdown)
-        )
+    buffer.has_page()
 }
 
 /// A notebook's meta: each header a `CellHeader` bar, each markdown cell's

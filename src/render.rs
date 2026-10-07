@@ -133,7 +133,7 @@ pub fn draw(out: &mut impl Write, app: &App) -> Result<()> {
                         .expect("layout window id not present in App.windows")
                 };
                 let bs = app.buffer_state(window.buffer_idx);
-                if bs.buffer.is_notebook() && !bs.buffer.notebook_text {
+                if bs.buffer.page_shown() {
                     draw_notebook_page(out, app, &bs, window, *rect, is_active)?;
                 } else {
                     draw_buffer(out, app, &bs, window, *rect, is_active)?;
@@ -5734,7 +5734,11 @@ fn draw_notebook_page(
         queue!(out, Print(&blank), MoveTo(rect.x, y))?;
         if page.spans.is_empty() {
             if screen == 0 {
-                let hint = "empty notebook — a adds a cell, Enter shows the text";
+                let hint = if bs.buffer.is_notebook() {
+                    "empty notebook — a adds a cell, Enter shows the text"
+                } else {
+                    "empty file — i starts writing, Enter shows the text"
+                };
                 let hint: String = hint.chars().take(pane_w.saturating_sub(2)).collect();
                 queue!(out, SetForegroundColor(dim), Print("  "), Print(hint))?;
             }
@@ -8499,7 +8503,7 @@ fn place_cursor(out: &mut impl Write, app: &App) -> Result<()> {
     }
     // The page marks its cell with a bar; a cursor would sit on text the
     // page may have wrapped or hidden.
-    if app.buffer.is_notebook() && !app.buffer.notebook_text {
+    if app.buffer.page_shown() {
         queue!(out, Hide)?;
         return Ok(());
     }

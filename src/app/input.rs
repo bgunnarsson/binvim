@@ -919,7 +919,7 @@ impl super::App {
             return; // click landed in a left-side pane (tree), not the editor
         }
         let pane_col = col - pane_left;
-        if self.notebook_page_shown() {
+        if self.page_shown() {
             let pane_top = self.active_pane_rect().y as usize;
             if matches!(ev.kind, MouseEventKind::Down(MouseButton::Left))
                 && matches!(self.mode, Mode::Normal)
@@ -1352,22 +1352,22 @@ impl super::App {
         }
         if matches!(ctx, parser::ParseCtx::Normal)
             && self.pending.is_clean()
-            && self.notebook_page_shown()
+            && self.page_shown()
             && self.top_overlay().is_none()
             && !self.show_start_page
             && self.handle_page_key(key)
         {
             return;
         }
-        // `Esc` in a notebook's text, with nothing for it to cancel, goes
-        // back to the page — the way out that `Enter` on the page came in by.
+        // `Esc` in a page's text, with nothing for it to cancel, goes back
+        // to the page — the way out that `Enter` on the page came in by.
         if matches!(ctx, parser::ParseCtx::Normal)
             && key.code == KeyCode::Esc
             && key.modifiers.is_empty()
             && self.pending.is_clean()
             && self.additional_cursors.is_empty()
-            && self.buffer.is_notebook()
-            && self.buffer.notebook_text
+            && self.buffer.has_page()
+            && self.buffer.text_view
         {
             self.notebook_view(Some(true));
             return;
@@ -1606,6 +1606,9 @@ impl super::App {
                 // A snippet session is Insert-mode-only — Esc ends it.
                 self.snippet_session = None;
                 self.end_insert_recording();
+                if std::mem::take(&mut self.page_return) && self.buffer.has_page() {
+                    self.notebook_view(Some(true));
+                }
             }
             // `Ctrl-C` leaves like Esc but, as in Vim, without Insert's
             // leave-time work: no blank-line strip, and nothing kept for `.`.
@@ -1622,6 +1625,9 @@ impl super::App {
                 self.snippet_session = None;
                 self.replace_session = None;
                 self.recording = None;
+                if std::mem::take(&mut self.page_return) && self.buffer.has_page() {
+                    self.notebook_view(Some(true));
+                }
             }
             // One Normal-mode command, then back to Insert. The session so far
             // ends here as Esc would end it, minus the step back and the

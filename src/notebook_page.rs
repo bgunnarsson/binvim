@@ -107,9 +107,27 @@ pub fn layout(
     config: &Config,
     images: Option<&RefCell<ImageStore>>,
 ) -> PageLayout {
-    let gutter = if width >= NARROW { GUTTER } else { 2 };
+    let markdown = buffer.is_markdown();
+    // A markdown file has no labels to make room for.
+    let gutter = if width >= NARROW && !markdown {
+        GUTTER
+    } else {
+        2
+    };
     let content_w = width.saturating_sub(gutter + 1).max(1);
-    let spans = crate::notebook::cell_spans(&buffer.rope);
+    let spans = if markdown {
+        markdown_blocks(&buffer.rope)
+    } else {
+        crate::notebook::cell_spans(&buffer.rope)
+    };
+    // One pass over the whole file, which is what frontmatter, setext
+    // headings and fences are decided against.
+    let metas = markdown.then(|| {
+        let lines: Vec<String> = (0..buffer.rope.len_lines())
+            .map(|i| line_text(&buffer.rope, i))
+            .collect();
+        crate::markdown_render::compute_buffer_meta(&lines)
+    });
     let mut page = Page {
         buffer,
         colors,
@@ -139,10 +157,11 @@ pub fn layout(
         }
         page.cell = i;
         let start = page.rows.len();
-        match span.kind {
-            CellKind::Code => page.code_cell(span),
-            CellKind::Markdown => page.markdown_cell(span),
-            CellKind::Raw => page.raw_cell(span),
+        match (span.kind, &metas) {
+            (_, Some(metas)) => page.markdown_block(span, metas),
+            (CellKind::Code, _) => page.code_cell(span),
+            (CellKind::Markdown, _) => page.markdown_cell(span),
+            (CellKind::Raw, _) => page.raw_cell(span),
         }
         cells.push(start..page.rows.len());
     }
@@ -222,6 +241,109 @@ impl PageLayout {
     }
 }
 
+/// Line `i` without its line break.
+fn line_text(rope: &ropey::Rope, i: usize) -> String {
+    let text: String = rope.line(i).chars().collect();
+    text.trim_end_matches([
+        '\n', '\r', '\u{0b}', '\u{0c}', '\u{85}', '\u{2028}', '\u{2029}',
+    ])
+    .to_string()
+}
+
+/// Metas for lines that don't start a file: a blank line ahead of them
+/// keeps the first from reading as the top, where `---` opens frontmatter.
+fn after_blank_metas(lines: &[(String, Option<usize>)]) -> Vec<MarkdownLineMeta> {
+    let texts: Vec<String> = std::iter::once(String::new())
+        .chain(lines.iter().map(|(t, _)| t.clone()))
+        .collect();
+    let mut metas = crate::markdown_render::compute_buffer_meta(&texts);
+    metas.remove(0);
+    metas
+}
+
+/// A markdown file's blocks, the page's unit as cells are a notebook's:
+/// runs of lines between blank ones, with a fence or frontmatter kept
+/// whole across its blank lines and an ATX heading a block of its own.
+pub fn markdown_blocks(rope: &ropey::Rope) -> Vec<CellSpan> {
+    let lines: Vec<String> = (0..rope.len_lines()).map(|i| line_text(rope, i)).collect();
+    let mut blocks: Vec<Range<usize>> = Vec::new();
+    let mut open: Option<usize> = None;
+    let mut fence: Option<(char, usize)> = None;
+    let mut frontmatter = lines
+        .first()
+        .is_some_and(|l| matches!(l.trim(), "---" | "+++"));
+    let close = |blocks: &mut Vec<Range<usize>>, open: &mut Option<usize>, end: usize| {
+        if let Some(s) = open.take() {
+            blocks.push(s..end);
+        }
+    };
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if frontmatter {
+            open.get_or_insert(i);
+            if i > 0 && matches!(t, "---" | "..." | "+++") {
+                frontmatter = false;
+                close(&mut blocks, &mut open, i + 1);
+            }
+            continue;
+        }
+        if let Some((ch, n)) = fence {
+            if fence_marker(line).is_some_and(|(c, m)| c == ch && m >= n)
+                && t.chars().all(|c| c == ch)
+            {
+                fence = None;
+                close(&mut blocks, &mut open, i + 1);
+            }
+            continue;
+        }
+        if t.is_empty() {
+            close(&mut blocks, &mut open, i);
+            continue;
+        }
+        if let Some(f) = fence_marker(line) {
+            close(&mut blocks, &mut open, i);
+            open = Some(i);
+            fence = Some(f);
+            continue;
+        }
+        if is_atx_heading(line) {
+            close(&mut blocks, &mut open, i);
+            blocks.push(i..i + 1);
+            continue;
+        }
+        open.get_or_insert(i);
+    }
+    close(&mut blocks, &mut open, lines.len());
+    blocks
+        .into_iter()
+        .map(|body| CellSpan {
+            header: None,
+            body,
+            kind: CellKind::Markdown,
+            id: None,
+        })
+        .collect()
+}
+
+/// The fence character and run length opening a fenced code block.
+fn fence_marker(line: &str) -> Option<(char, usize)> {
+    let indent = line.chars().take_while(|c| *c == ' ').count();
+    if indent > 3 {
+        return None;
+    }
+    let rest = line.trim_start();
+    let ch = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let n = rest.chars().take_while(|c| *c == ch).count();
+    (n >= 3).then_some((ch, n))
+}
+
+fn is_atx_heading(line: &str) -> bool {
+    let indent = line.chars().take_while(|c| *c == ' ').count();
+    let rest = line.trim_start();
+    let n = rest.chars().take_while(|c| *c == '#').count();
+    indent <= 3 && (1..=6).contains(&n) && rest[n..].chars().next().is_none_or(char::is_whitespace)
+}
+
 struct Page<'a> {
     buffer: &'a Buffer,
     colors: Option<&'a [Option<Color>]>,
@@ -243,13 +365,7 @@ impl Page<'_> {
         if i >= rope.len_lines() {
             return (String::new(), rope.len_bytes());
         }
-        let text: String = rope.line(i).chars().collect();
-        let text = text
-            .trim_end_matches([
-                '\n', '\r', '\u{0b}', '\u{0c}', '\u{85}', '\u{2028}', '\u{2029}',
-            ])
-            .to_string();
-        (text, rope.line_to_byte(i))
+        (line_text(rope, i), rope.line_to_byte(i))
     }
 
     /// The highlight colour at `byte`; `None` for text the page made, which
@@ -362,7 +478,29 @@ impl Page<'_> {
     }
 
     fn markdown_cell(&mut self, span: &CellSpan) {
-        let mut lines: Vec<(String, Option<usize>)> = span
+        let lines = self.markdown_lines(span);
+        let metas = after_blank_metas(&lines);
+        self.markdown_rows(&lines, &metas, "empty markdown cell");
+    }
+
+    /// A block of a markdown file, against the metas of the whole file.
+    fn markdown_block(&mut self, span: &CellSpan, metas: &[MarkdownLineMeta]) {
+        let lines = self.markdown_lines(span);
+        let own;
+        let metas = if lines.iter().all(|(_, b)| b.is_some()) {
+            let end = span.body.end.min(metas.len());
+            &metas[span.body.start.min(end)..end]
+        } else {
+            own = after_blank_metas(&lines);
+            &own
+        };
+        self.markdown_rows(&lines, metas, "");
+    }
+
+    /// The span's lines with the byte each starts at, or an HTML block's
+    /// markdown, which has no place in the buffer.
+    fn markdown_lines(&self, span: &CellSpan) -> Vec<(String, Option<usize>)> {
+        let lines: Vec<(String, Option<usize>)> = span
             .body
             .clone()
             .map(|i| {
@@ -371,18 +509,23 @@ impl Page<'_> {
             })
             .collect();
         let source: Vec<&str> = lines.iter().map(|(t, _)| t.as_str()).collect();
-        if let Some(md) = html_to_markdown(&source.join("\n")) {
-            lines = md.lines().map(|l| (l.to_string(), None)).collect();
+        match html_to_markdown(&source.join("\n")) {
+            Some(md) => md.lines().map(|l| (l.to_string(), None)).collect(),
+            None => lines,
         }
-        // A blank line ahead of the cell keeps its first line from reading
-        // as the top of a file, where `---` opens frontmatter.
-        let texts: Vec<String> = std::iter::once(String::new())
-            .chain(lines.iter().map(|(t, _)| t.clone()))
-            .collect();
-        let metas = crate::markdown_render::compute_buffer_meta(&texts);
+    }
+
+    /// `empty` is the hint drawn when nothing else is, so the span keeps a
+    /// row to be marked on.
+    fn markdown_rows(
+        &mut self,
+        lines: &[(String, Option<usize>)],
+        metas: &[MarkdownLineMeta],
+        empty: &str,
+    ) {
         let start = self.rows.len();
         let mut blank_run = true;
-        for ((text, byte), meta) in lines.iter().zip(metas.iter().skip(1)) {
+        for ((text, byte), meta) in lines.iter().zip(metas) {
             // Markdown renders a run of blank lines as one paragraph break,
             // and none at the cell's edges.
             let blank = text.trim().is_empty() && meta.kind == MarkdownLineKind::Default;
@@ -422,7 +565,7 @@ impl Page<'_> {
                 italic: true,
                 ..Style::default()
             };
-            self.push(plain_segs("empty markdown cell", style), true, None);
+            self.push(plain_segs(empty, style), true, None);
         }
     }
 
@@ -1102,6 +1245,38 @@ mod tests {
         let buf = Buffer::from_path(path).unwrap();
         std::fs::remove_dir_all(&dir).ok();
         buf
+    }
+
+    #[test]
+    fn markdown_blocks_split_at_blank_lines_but_keep_fences_and_frontmatter_whole() {
+        let rope = ropey::Rope::from_str(
+            "---\ntitle: x\n\nmore: y\n---\n# Head\npara one\nstill one\n\n\n```\na\n\nb\n```\nafter\n## Two\n",
+        );
+        let blocks: Vec<Range<usize>> =
+            markdown_blocks(&rope).into_iter().map(|s| s.body).collect();
+        assert_eq!(blocks, vec![0..5, 5..6, 6..8, 10..15, 15..16, 16..17]);
+        assert!(markdown_blocks(&ropey::Rope::from_str("\n\n")).is_empty());
+        assert!(!is_atx_heading("#hashtag"));
+    }
+
+    #[test]
+    fn a_markdown_file_lays_out_its_blocks_and_frontmatter() {
+        let dir = crate::paths::test_scratch_dir("notebook_page", "markdown");
+        let path = dir.join("a.md");
+        std::fs::write(&path, "---\ntitle: x\n---\n\n# Head\n\nbody\n").unwrap();
+        let buf = Buffer::from_path(path).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+        let page = layout(&buf, None, 60, &Config::default(), None);
+        assert_eq!(page.spans.len(), 3);
+        assert_eq!(page.gutter, 2);
+        let all: Vec<String> = page.rows.iter().map(text).collect();
+        assert!(all.iter().any(|r| r.contains("title: x")), "{all:?}");
+        assert!(
+            all.iter().any(|r| r.contains("Head") && !r.contains('#')),
+            "{all:?}"
+        );
+        assert!(all.iter().any(|r| r.contains("body")), "{all:?}");
+        assert!(page.cells.iter().all(|c| !c.is_empty()));
     }
 
     #[test]
