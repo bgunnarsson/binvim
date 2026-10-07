@@ -455,12 +455,14 @@ mod tests {
     }
 
     #[test]
-    fn a_markdown_file_opens_as_its_page_and_insert_returns_to_it() {
+    fn a_markdown_file_opens_as_its_text_and_insert_from_its_page_returns_to_it() {
         let dir = crate::paths::test_scratch_dir("notebook", "markdown_page");
         let path = dir.join("notes.md");
         std::fs::write(&path, "# Title\n\nfirst para\nstill first\n\nlast\n").unwrap();
         let mut app = crate::app::App::new(Some(path)).expect("App::new");
-        assert!(app.buffer.page_shown(), "a page by default");
+        assert!(!app.buffer.page_shown(), "the text by default");
+        app.notebook_view(Some(true));
+        assert!(app.buffer.page_shown());
         app.window.cursor.line = 0;
         press(&mut app, "j");
         assert_eq!(app.window.cursor.line, 2, "j marks the next block");

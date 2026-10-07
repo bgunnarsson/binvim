@@ -170,8 +170,8 @@ pub struct Buffer {
     /// Why a `.ipynb` couldn't be read as cells and opened as its raw JSON.
     pub notebook_error: Option<String>,
     /// A buffer with a page (`has_page`) shows its text rather than the
-    /// rendered page (`notebook_page.rs`). Kept on the buffer so it survives
-    /// a switch away.
+    /// rendered page (`notebook_page.rs`). Set for markdown when it's opened.
+    /// Kept on the buffer so it survives a switch away.
     pub text_view: bool,
 }
 
@@ -243,7 +243,7 @@ impl Buffer {
         // Absolute from the start, so a `:cd` can't move a buffer onto another
         // file. Not canonicalised: the path stays the way it was named.
         let path = std::path::absolute(&path).unwrap_or(path);
-        if path.exists() {
+        let mut buf = if path.exists() {
             let mut file =
                 File::open(&path).with_context(|| format!("opening {}", path.display()))?;
             let meta = file.metadata().ok();
@@ -266,7 +266,7 @@ impl Buffer {
                 (text, None, None)
             };
             let rope = Rope::from_str(&text);
-            Ok(Self {
+            Self {
                 rope,
                 path: Some(path),
                 clean_hash: Some(crate::undo::hash_text(&text)),
@@ -277,15 +277,19 @@ impl Buffer {
                 notebook,
                 notebook_error,
                 ..Self::empty()
-            })
+            }
         } else {
             let notebook = is_notebook_path(&path).then(crate::notebook::empty_notebook);
-            Ok(Self {
+            Self {
                 path: Some(path),
                 notebook,
                 ..Self::empty()
-            })
-        }
+            }
+        };
+        // Markdown is edited more than read, and the page swallows Vim's
+        // editing keys, so it opens as its text; a notebook opens as its page.
+        buf.text_view = buf.is_markdown();
+        Ok(buf)
     }
 
     /// Anything a write would put on disk that isn't there: edits, or a
