@@ -4,6 +4,22 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.2]
+
+### Added
+- **Markdown files have a rendered page.** `<leader>v` flips a `.md` file
+  between its text and the notebook page's markdown rendering, block by block.
+  Files still open as their text, which conceals markers in Normal mode. The
+  page is a preview: it keeps navigation and search, and any other key shows
+  the text and runs there.
+
+### Fixed
+- **Long pages scroll without lag.** The page was laid out again on every
+  frame, 30ms or more on a 3,000-line file; it is now laid out only when its
+  buffer changes.
+- **Images draw in place in Ghostty.** A plot whose shape differed from its
+  cell grid was drawn pushed down and cut off, or not at all.
+
 ## [0.8.1] - 2026-10-04
 
 ### Added
