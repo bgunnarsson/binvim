@@ -4,7 +4,7 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
-## [0.8.2]
+## [0.8.2] - 2026-10-07
 
 ### Added
 - **Markdown files have a rendered page.** `<leader>v` flips a `.md` file
