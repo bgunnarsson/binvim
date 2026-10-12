@@ -4,6 +4,18 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.3]
+
+### Fixed
+- **`EDITOR=binvim crontab -e` works on macOS.** A file under the temp
+  directory (`/tmp`, `$TMPDIR`) is now written in place, keeping its inode, as
+  Vim and Neovim do; crontab refused the edit with `temp file must be edited in
+  place` when a save replaced the file.
+- **Horizontal scroll sticks.** `zh` / `zl` and the horizontal wheel were undone
+  on the next frame whenever the cursor would have left the screen; they now
+  drag the cursor along, as in Vim. Markdown table rows and `<summary>` titles
+  scroll with the rest of the line instead of staying put.
+
 ## [0.8.2] - 2026-10-07
 
 ### Added
