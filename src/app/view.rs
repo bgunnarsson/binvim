@@ -167,13 +167,44 @@ impl super::App {
         }
     }
 
-    /// Nudge the horizontal viewport without moving the cursor. The cursor's
-    /// visual column may end up off-screen; that's intentional — `zh`/`zl`
-    /// in Vim does the same. The next motion will pull the viewport back
-    /// via `adjust_viewport`.
+    /// Nudge the horizontal viewport, dragging the cursor along when it would
+    /// leave the screen, as Vim's `zh`/`zl` do. `adjust_viewport` runs before
+    /// every frame and follows the cursor, so a cursor left behind would pull
+    /// the viewport straight back and the scroll would never show.
     pub fn scroll_horizontal(&mut self, delta: i64) {
         let new_left = (self.window.view_left as i64 + delta).max(0) as usize;
         self.window.view_left = new_left;
+        let cols = self.text_area_cols();
+        if cols == 0 {
+            return;
+        }
+        // The same margins `adjust_viewport` keeps, or it would still move.
+        let scrolloff_h = 5.min(cols / 4);
+        let lo = if new_left == 0 {
+            0
+        } else {
+            new_left + scrolloff_h
+        };
+        let hi = (new_left + cols.saturating_sub(scrolloff_h))
+            .saturating_sub(1)
+            .max(lo);
+        let cur = self.cursor_visual_col();
+        let target = cur.clamp(lo, hi);
+        if target == cur {
+            return;
+        }
+        let line = self.window.cursor.line;
+        let hint_widths = crate::render::inlay_hint_widths_for_line(self, line);
+        let col = super::input::visual_col_to_char_col_with_hints(
+            &self.buffer,
+            line,
+            target,
+            self.buffer.line_len(line),
+            &hint_widths,
+            matches!(self.mode, Mode::Insert),
+        );
+        self.window.cursor.col = col;
+        self.window.cursor.want_col = col;
     }
 
     pub(super) fn cursor_to_idx(&mut self, idx: usize) {
@@ -1419,6 +1450,22 @@ mod tests {
             on_screen < rows,
             "cursor row {on_screen} outside a {rows}-row pane"
         );
+    }
+
+    #[test]
+    fn horizontal_scroll_survives_the_next_frames_viewport_adjust() {
+        let mut app = crate::app::App::new(None).expect("App::new");
+        app.width = 80;
+        app.height = 40;
+        app.buffer = buf(&format!("{}\n", "x".repeat(300)));
+        app.adjust_viewport();
+        app.scroll_horizontal(40);
+        app.adjust_viewport();
+        assert_eq!(app.window.view_left, 40);
+        assert!(app.cursor_visual_col() >= 40);
+        app.scroll_horizontal(-40);
+        app.adjust_viewport();
+        assert_eq!(app.window.view_left, 0);
     }
 
     #[test]

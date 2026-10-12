@@ -80,6 +80,29 @@ pub(crate) fn visible_cells(
     right.saturating_sub(left)
 }
 
+/// The part of a pre-rendered line (a concealed table row, a `<summary>`
+/// title) that falls inside the horizontal viewport `[view_left, view_left +
+/// avail)`. A wide glyph cut by either edge becomes spaces for the cells it
+/// keeps, since the terminal can't draw half of one.
+fn visible_slice(rendered: &str, view_left: usize, avail: usize) -> String {
+    let mut out = String::new();
+    let mut pos = 0usize;
+    for c in rendered.chars() {
+        if pos >= view_left + avail {
+            break;
+        }
+        let w = char_width(c, 1);
+        let shown = visible_cells(pos, w, view_left, avail);
+        if shown == w {
+            out.push(c);
+        } else {
+            out.extend(std::iter::repeat_n(' ', shown));
+        }
+        pos += w;
+    }
+    out
+}
+
 /// Reset SGR state and immediately re-apply the optional theme background so
 /// subsequent unstyled `Print` calls land on the theme bg instead of the
 /// terminal's default. When `buf_bg` is `None` (`background = "Reset"`)
@@ -5124,7 +5147,7 @@ mod tests {
     use super::{
         DebugPalette, TAB_WIDTH, cluster_widths, cursor_visual_col_walk, display_lsp_root,
         draw_line_with_selection, find_match_ranges, home_relative_with, tokenize_console_line,
-        truncate, visible_cells,
+        truncate, visible_cells, visible_slice,
     };
 
     #[test]
@@ -5307,6 +5330,16 @@ mod tests {
         assert!(!printed.contains('\u{1F469}'), "{printed:?}");
         assert!(!printed.contains('\u{200D}'), "{printed:?}");
         assert!(printed.contains("<b"), "{printed:?}");
+    }
+
+    #[test]
+    fn visible_slice_scrolls_a_pre_rendered_row() {
+        assert_eq!(visible_slice("│ abc │ def │", 0, 5), "│ abc");
+        assert_eq!(visible_slice("│ abc │ def │", 4, 5), "c │ d");
+        assert_eq!(visible_slice("│ abc │", 20, 5), "");
+        // A wide glyph cut by an edge keeps only the cells it has, as spaces.
+        assert_eq!(visible_slice("a漢b", 2, 3), " b");
+        assert_eq!(visible_slice("a漢b", 0, 2), "a ");
     }
 
     #[test]
@@ -6303,7 +6336,7 @@ fn draw_line_with_selection(
                             (app.config.theme_fg(), false)
                         }
                     };
-                    let printable: String = rendered.chars().take(avail).collect();
+                    let printable = visible_slice(rendered, view_left, avail);
                     queue!(out, SetForegroundColor(color))?;
                     if bold {
                         queue!(out, SetAttribute(Attribute::Bold))?;
@@ -6320,7 +6353,7 @@ fn draw_line_with_selection(
                 // into `replacement`. Same return-after-paint shape
                 // as the Table arm.
                 if let Some(rendered) = meta.replacement.as_deref() {
-                    let printable: String = rendered.chars().take(avail).collect();
+                    let printable = visible_slice(rendered, view_left, avail);
                     queue!(
                         out,
                         SetForegroundColor(app.config.theme_accent()),

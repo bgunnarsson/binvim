@@ -94,7 +94,7 @@ fn visual_col_to_char_col(
 /// `allow_past_eol` lifts the trailing clamp from `line_len - 1` (the
 /// Normal-mode "cursor sits on a char" rule) to `line_len` (the
 /// Insert-mode "cursor can sit past the last char" rule).
-fn visual_col_to_char_col_with_hints(
+pub(super) fn visual_col_to_char_col_with_hints(
     buffer: &crate::buffer::Buffer,
     line: usize,
     visual_col: usize,
