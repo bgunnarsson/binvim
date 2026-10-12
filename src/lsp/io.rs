@@ -490,11 +490,10 @@ mod cap_tests {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn pyright_is_told_the_project_env_for_its_python_section() {
         let proj = std::env::temp_dir().join(format!("binvim-lsp-config-{}", std::process::id()));

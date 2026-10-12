@@ -333,6 +333,7 @@ mod tests {
         assert_eq!(parse_event(r#"{"ev":"busy"}"#), None);
     }
 
+    #[cfg(unix)]
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("binvim-kernel-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
