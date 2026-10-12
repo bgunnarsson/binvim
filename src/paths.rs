@@ -411,10 +411,11 @@ pub(crate) fn tidy_private_dir(
 /// rather than its contents are handled here. A symlink is written through to
 /// what it names, and the temp file is created with the target's permissions
 /// and given its owner and group. Where the rename would still change the file,
-/// it's written in place instead, keeping the inode: other hard links (a rename
-/// would split them), an owner or group this user can't give the temp file
-/// (`sudo binvim` on someone else's file), a directory the temp file can't be
-/// created in (a file the user may write but not replace), and a rename that
+/// it's written in place instead, keeping the inode: a file under the system
+/// temp directory (`temp_dirs` — what `crontab -e` checks), other hard links (a
+/// rename would split them), an owner or group this user can't give the temp
+/// file (`sudo binvim` on someone else's file), a directory the temp file can't
+/// be created in (a file the user may write but not replace), and a rename that
 /// fails. ACLs and extended
 /// attributes aren't carried over. Writing in place truncates first, so the
 /// file is copied aside beforehand (`write_in_place`).
@@ -429,17 +430,55 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let backup_dir = cache_dir()
         .filter(|_| !cfg!(test))
         .map(|dir| dir.join("backup"));
-    write_atomic_with(path, bytes, backup_dir.as_deref(), |from, to| {
-        std::fs::rename(from, to)
-    })
+    write_atomic_with(
+        path,
+        bytes,
+        backup_dir.as_deref(),
+        &temp_dirs(),
+        |from, to| std::fs::rename(from, to),
+    )
 }
 
-/// `write_atomic` with the backup directory and the rename passed in, so a
-/// test can make the rename fail.
+/// The directories whose files are written in place, whatever the rename would
+/// rather do. `crontab -e` hands the editor a temp file and then checks the
+/// same dev+ino is still there — a rename gives it a new file, and it answers
+/// "temp file must be edited in place", dropping the edit. Vim and Neovim never
+/// rename one either, by a different route: their `'backupskip'` default lists
+/// these directories, and a file with no backup is written in place. `/tmp` is
+/// named as well as the environment's temp directory because macOS's `/tmp` is
+/// `/private/tmp`, and either name has to match.
+fn temp_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![std::env::temp_dir()];
+    #[cfg(unix)]
+    dirs.push(PathBuf::from("/tmp"));
+    for var in ["TMPDIR", "TEMP", "TMP"] {
+        if let Some(dir) = std::env::var_os(var).filter(|d| !d.is_empty()) {
+            dirs.push(PathBuf::from(dir));
+        }
+    }
+    dirs
+}
+
+/// Is `path` inside one of `dirs`? Both sides are canonicalised, so macOS's
+/// `/tmp` and `/private/tmp` are one directory, and a file reached through a
+/// symlinked temp directory still matches. A path that can't be resolved —
+/// no search permission on one of its directories — is not one of them.
+fn in_temp_dir(path: &Path, dirs: &[PathBuf]) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    dirs.iter()
+        .any(|dir| dir.canonicalize().is_ok_and(|dir| path.starts_with(dir)))
+}
+
+/// `write_atomic` with the backup directory, the temp directories and the
+/// rename passed in, so a test can make the rename fail and can keep its own
+/// files — which all sit under the temp directory — on the atomic path.
 fn write_atomic_with(
     path: &Path,
     bytes: &[u8],
     backup_dir: Option<&Path>,
+    temp_dirs: &[PathBuf],
     rename: fn(&Path, &Path) -> std::io::Result<()>,
 ) -> std::io::Result<()> {
     let in_place =
@@ -460,7 +499,15 @@ fn write_atomic_with(
         // A rename only needs the directory to be writable, so without this a
         // read-only file would be replaced. Asking to open it for writing —
         // what writing in place needed — keeps it refusing as it always did.
+        // Ahead of the temp-dir branch below, so a save it refuses leaves no
+        // backup copy behind and reports the permission error.
         std::fs::OpenOptions::new().write(true).open(&target)?;
+    }
+    // Only a file that's there has an inode to keep: a new one under a temp
+    // directory is still created beside the target and renamed into place,
+    // which is also what keeps a planted symlink from taking the write.
+    if existing.is_some() && in_temp_dir(&target, temp_dirs) {
+        return in_place(&target);
     }
     let (tmp, file) = match create_temp_beside(&target, existing.as_ref()) {
         Ok(created) => created,
@@ -744,6 +791,23 @@ mod tests {
             .collect()
     }
 
+    /// `write_atomic` on the atomic path, for the tests below about it: their
+    /// own files are all under the temp directory, where `write_atomic` writes
+    /// in place instead.
+    fn write_atomic_elsewhere(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+        write_atomic_with(path, bytes, None, &[], |from, to| std::fs::rename(from, to))
+    }
+
+    /// Set by `mark_rename`, so the one test that needs it can see the rename
+    /// was taken without a second test racing on the same flag.
+    static NEW_TEMP_RENAMED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+
+    fn mark_rename(from: &Path, to: &Path) -> std::io::Result<()> {
+        NEW_TEMP_RENAMED.store(true, std::sync::atomic::Ordering::Relaxed);
+        std::fs::rename(from, to)
+    }
+
     #[test]
     fn path_key_is_pinned() {
         // Session files already on disk are named by this value; a change
@@ -755,11 +819,63 @@ mod tests {
     fn write_atomic_creates_and_replaces_a_file() {
         let dir = scratch("replace");
         let file = dir.join("a.txt");
-        write_atomic(&file, b"one\n").unwrap();
+        write_atomic_elsewhere(&file, b"one\n").unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"one\n");
-        write_atomic(&file, b"two\n").unwrap();
+        write_atomic_elsewhere(&file, b"two\n").unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"two\n");
         assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_in_the_temp_directory_keeps_its_inode() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = scratch("temp-inode");
+        let file = dir.join("crontab.abc123");
+        std::fs::write(&file, "old").unwrap();
+        let inode = std::fs::metadata(&file).unwrap().ino();
+        // The rename is what `crontab -e` refuses, so it fails loudly here.
+        write_atomic_with(&file, b"new", None, &[std::env::temp_dir()], |_, _| {
+            panic!("renamed a temp file")
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
+    }
+
+    #[test]
+    fn a_new_file_in_the_temp_directory_is_still_renamed_into_place() {
+        let dir = scratch("temp-new");
+        let file = dir.join("new.txt");
+        NEW_TEMP_RENAMED.store(false, std::sync::atomic::Ordering::Relaxed);
+        write_atomic_with(&file, b"x", None, &[std::env::temp_dir()], mark_rename).unwrap();
+        assert!(NEW_TEMP_RENAMED.load(std::sync::atomic::Ordering::Relaxed));
+        assert_eq!(std::fs::read(&file).unwrap(), b"x");
+        assert!(leftover_temp_files(&dir).is_empty());
+    }
+
+    /// The wiring, not just the branch: `write_atomic` is what has to hand the
+    /// temp directories over. The test above would pass with it passing `&[]`.
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_writes_an_existing_temp_file_in_place() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = scratch("temp-wired");
+        let file = dir.join("crontab.xyz");
+        std::fs::write(&file, "old").unwrap();
+        let inode = std::fs::metadata(&file).unwrap().ino();
+        write_atomic(&file, b"new").unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
+    }
+
+    #[test]
+    fn the_temp_directory_is_the_only_place_a_path_counts_as_being_in() {
+        let dirs = temp_dirs();
+        let file = scratch("temp-check").join("a.txt");
+        std::fs::write(&file, "x").unwrap();
+        assert!(in_temp_dir(&file, &dirs));
+        assert!(!in_temp_dir(Path::new("/etc/hosts"), &dirs));
     }
 
     #[cfg(unix)]
@@ -770,7 +886,7 @@ mod tests {
         let file = dir.join("a.txt");
         std::fs::write(&file, "old").unwrap();
         let inode = std::fs::metadata(&file).unwrap().ino();
-        write_atomic_with(&file, b"new", None, |_, _| {
+        write_atomic_with(&file, b"new", None, &[], |_, _| {
             Err(std::io::Error::other("busy"))
         })
         .unwrap();
@@ -785,7 +901,7 @@ mod tests {
         let file = dir.join("a.txt");
         std::fs::write(&file, "old").unwrap();
         let backups = dir.join("backup");
-        write_atomic_with(&file, b"new", Some(&backups), |_, _| {
+        write_atomic_with(&file, b"new", Some(&backups), &[], |_, _| {
             Err(std::io::Error::other("busy"))
         })
         .unwrap();
@@ -984,7 +1100,7 @@ mod tests {
         if std::fs::OpenOptions::new().write(true).open(&file).is_ok() {
             return;
         }
-        let err = write_atomic(&file, b"new").unwrap_err();
+        let err = write_atomic_elsewhere(&file, b"new").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "old");
     }
@@ -997,7 +1113,7 @@ mod tests {
         let file = dir.join("a.txt");
         std::fs::write(&file, "old").unwrap();
         let before = std::fs::metadata(&file).unwrap();
-        write_atomic(&file, b"new").unwrap();
+        write_atomic_elsewhere(&file, b"new").unwrap();
         let after = std::fs::metadata(&file).unwrap();
         assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
     }
@@ -1010,7 +1126,7 @@ mod tests {
         let file = dir.join("secret.txt");
         std::fs::write(&file, "old").unwrap();
         std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).unwrap();
-        write_atomic(&file, b"new").unwrap();
+        write_atomic_elsewhere(&file, b"new").unwrap();
         let mode = std::fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
     }
@@ -1023,7 +1139,7 @@ mod tests {
         let link = dir.join("link.txt");
         std::fs::write(&real, "old").unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
-        write_atomic(&link, b"new").unwrap();
+        write_atomic_elsewhere(&link, b"new").unwrap();
         assert!(
             std::fs::symlink_metadata(&link)
                 .unwrap()
@@ -1056,7 +1172,7 @@ mod tests {
         // Root ignores directory permissions, so the temp file gets created
         // and this would test the ordinary path instead.
         let root = std::fs::File::create(dir.join("probe")).is_ok();
-        let result = write_atomic(&file, b"new");
+        let result = write_atomic_elsewhere(&file, b"new");
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
         if root {
             return;
