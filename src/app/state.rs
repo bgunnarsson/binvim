@@ -750,6 +750,31 @@ pub struct IncSearch {
     pub current: Option<(usize, usize)>,
 }
 
+/// A `:s` being typed, shown in the buffer as it would leave it.
+pub struct SubPreview {
+    pub origin: crate::cursor::Cursor,
+    pub view_top: usize,
+    pub view_left: usize,
+    /// The buffer as the preview found it, to put back on the next key —
+    /// `None` while the preview only highlights matches.
+    pub saved: Option<SubPreviewSaved>,
+    /// What it highlights, as char ranges in the buffer as it is now: the
+    /// replacements made, or the matches while only the pattern is typed.
+    /// `None` when the line isn't a `:s` it can preview.
+    pub marks: Option<Vec<(usize, usize)>>,
+}
+
+/// What a `:s` preview's edits change in the buffer, put back as it was so
+/// the edits leave no trace on marks, the change list or the dirty flag.
+pub struct SubPreviewSaved {
+    pub rope: ropey::Rope,
+    pub dirty: bool,
+    pub marks: std::collections::HashMap<char, usize>,
+    pub changes: Vec<usize>,
+    pub change_idx: usize,
+    pub change_open: bool,
+}
+
 /// The last `:s`, for `&`, `g&`, `:&`, `:&&` and `:~` to run again — its
 /// pattern as it resolved, so a search since doesn't change it.
 #[derive(Clone)]

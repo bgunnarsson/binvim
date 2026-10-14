@@ -6,7 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use std::time::Instant;
 
-use crate::command::split_pattern;
+use crate::command::{self, ExCommand, split_pattern};
 use crate::cursor::Cursor;
 use crate::keymap::MapMode;
 use crate::mode::{Mode, VisualKind};
@@ -767,6 +767,213 @@ impl super::App {
         }
     }
 
+    /// Shows the `:s` being typed in the buffer as it would leave it — or,
+    /// until the replacement is begun, highlights what it matches — and
+    /// moves to the first match, as Neovim's `inccommand` does. Every key
+    /// puts the text back first, so the range and the pattern are read from
+    /// the buffer as it was.
+    pub(super) fn update_sub_preview(&mut self) {
+        if !matches!(self.mode, Mode::Command) {
+            self.end_sub_preview();
+            return;
+        }
+        let mut preview = match self.sub_preview.take() {
+            Some(mut preview) => {
+                self.restore_sub_preview(&mut preview);
+                preview
+            }
+            None => super::state::SubPreview {
+                origin: self.window.cursor,
+                view_top: self.window.view_top,
+                view_left: self.window.view_left,
+                saved: None,
+                marks: None,
+            },
+        };
+        if let Some(typed) = self.typed_substitute() {
+            let marks = match &typed.replacement {
+                None => self.sub_preview_matches(&typed),
+                Some(repl) => {
+                    let (saved, marks) = self.sub_preview_replace(&typed, repl);
+                    preview.saved = saved;
+                    marks
+                }
+            };
+            if let Some(&(start, _)) = marks.first() {
+                self.cursor_to_idx(start);
+            }
+            preview.marks = Some(marks);
+        }
+        self.sub_preview = Some(preview);
+    }
+
+    /// Ends the `:s` preview, putting back the text, cursor and view.
+    pub(super) fn end_sub_preview(&mut self) {
+        if let Some(mut preview) = self.sub_preview.take() {
+            self.restore_sub_preview(&mut preview);
+        }
+    }
+
+    /// The buffer holds a `:s` preview's edits rather than its own text,
+    /// which nothing outside the preview may take for it: language servers,
+    /// recovery files.
+    pub(super) fn previewing_substitute(&self) -> bool {
+        self.sub_preview.as_ref().is_some_and(|p| p.saved.is_some())
+    }
+
+    fn restore_sub_preview(&mut self, preview: &mut super::state::SubPreview) {
+        if let Some(saved) = preview.saved.take() {
+            let buf = &mut self.buffer;
+            buf.rope = saved.rope;
+            buf.dirty = saved.dirty;
+            buf.marks = saved.marks;
+            buf.changes = saved.changes;
+            buf.change_idx = saved.change_idx;
+            buf.change_open = saved.change_open;
+            // On, never back: a cache keyed on a version the preview used
+            // would otherwise match text it wasn't made from.
+            buf.version = buf.version.wrapping_add(1);
+        }
+        self.window.cursor = preview.origin;
+        self.window.view_top = preview.view_top;
+        self.window.view_left = preview.view_left;
+        preview.marks = None;
+    }
+
+    /// The command line as a `:s` with something to preview. A pattern that
+    /// doesn't compile — half typed — previews nothing rather than an error,
+    /// and so does a file too large to redo on every key.
+    fn typed_substitute(&self) -> Option<TypedSubstitute> {
+        if self.buffer.is_large() {
+            return None;
+        }
+        let ExCommand::Substitute {
+            range,
+            pattern,
+            replacement,
+            flags,
+        } = self.parse_command_line(&self.cmdline).ok()?
+        else {
+            return None;
+        };
+        // `n` changes nothing, so it shows what it would count.
+        let replacing = !flags.count_only && command::substitute_has_replacement(&self.cmdline);
+        if pattern.is_empty() && !replacing {
+            return None;
+        }
+        let pattern = self.pattern_or_last(&pattern).ok()?;
+        let re = compile_search(&self.cased(&with_case(&pattern, flags.ignore_case))).ok()?;
+        let (first, last) = self.resolve_range(range, true);
+        Some(TypedSubstitute {
+            re,
+            first,
+            last: last.min(self.last_text_line()),
+            global: flags.global,
+            replacement: replacing.then_some(replacement),
+        })
+    }
+
+    /// Every match in the typed `:s`'s range, as char ranges.
+    fn sub_preview_matches(&self, typed: &TypedSubstitute) -> Vec<(usize, usize)> {
+        let mut marks = Vec::new();
+        for line in typed.first..=typed.last {
+            let (start, text) = self.sub_preview_line(line);
+            if self.is_cell_header(&text) {
+                continue;
+            }
+            for (s, e) in hits(&typed.re, &text) {
+                let s_chars = text[..s].chars().count();
+                marks.push((
+                    start + s_chars,
+                    start + s_chars + text[s..e].chars().count(),
+                ));
+            }
+        }
+        marks
+    }
+
+    /// Makes the typed `:s`'s replacements, as `replace_matches` would, and
+    /// says what they replaced, to put back, and where the new text is.
+    fn sub_preview_replace(
+        &mut self,
+        typed: &TypedSubstitute,
+        repl: &str,
+    ) -> (Option<super::state::SubPreviewSaved>, Vec<(usize, usize)>) {
+        let groups = vim_groups(&typed.re);
+        let with = |caps: &regex::Captures, matched: &str| {
+            expand_replacement(repl, caps, &groups, matched)
+        };
+        let mut edits = Vec::new();
+        for line in typed.first..=typed.last {
+            let (start, text) = self.sub_preview_line(line);
+            if self.is_cell_header(&text) {
+                continue;
+            }
+            let (new_text, spans) = substitute_line_spans(&typed.re, &text, typed.global, &with);
+            if !spans.is_empty() {
+                edits.push((start, text.chars().count(), new_text, spans));
+            }
+        }
+        if edits.is_empty() {
+            return (None, Vec::new());
+        }
+        let buf = &self.buffer;
+        let saved = super::state::SubPreviewSaved {
+            rope: buf.rope.clone(),
+            dirty: buf.dirty,
+            marks: buf.marks.clone(),
+            changes: buf.changes.clone(),
+            change_idx: buf.change_idx,
+            change_open: buf.change_open,
+        };
+        // Bottom-up, so each edit leaves the lines above it where they were.
+        for (start, len, new_text, _) in edits.iter().rev() {
+            self.buffer.replace_range(*start, start + len, new_text);
+        }
+        let mut marks = Vec::new();
+        let mut shift = 0isize;
+        for (start, len, new_text, spans) in &edits {
+            let at = start.saturating_add_signed(shift);
+            for &(s, e) in spans {
+                let s_chars = new_text[..s].chars().count();
+                marks.push((at + s_chars, at + s_chars + new_text[s..e].chars().count()));
+            }
+            shift += new_text.chars().count() as isize - *len as isize;
+        }
+        (Some(saved), marks)
+    }
+
+    /// Where `line` starts, and its text without the line break.
+    fn sub_preview_line(&self, line: usize) -> (usize, String) {
+        let start = self.buffer.line_start_idx(line);
+        let len = self.buffer.line_len(line);
+        (
+            start,
+            self.buffer.rope.slice(start..start + len).to_string(),
+        )
+    }
+
+    /// The `:s` preview's highlights on `line`, as char columns — `None`
+    /// when no `:s` is being previewed.
+    fn line_sub_preview_marks(
+        &self,
+        buffer: &crate::buffer::Buffer,
+        line: usize,
+    ) -> Option<Vec<(usize, usize)>> {
+        let marks = self.sub_preview.as_ref()?.marks.as_ref()?;
+        let start = buffer.line_start_idx(line);
+        let end = start + buffer.line_len(line);
+        let first = marks.partition_point(|&(_, e)| e <= start);
+        Some(
+            marks[first..]
+                .iter()
+                .take_while(|&&(s, _)| s < end)
+                .map(|&(s, e)| (s.max(start) - start, e.min(end) - start))
+                .filter(|(s, e)| e > s)
+                .collect(),
+        )
+    }
+
     pub(super) fn execute_search(&mut self, query: &str, backward: bool) {
         let delim = if backward { '?' } else { '/' };
         let (typed, offset) = split_pattern(query, delim);
@@ -922,6 +1129,11 @@ impl super::App {
         buffer: &crate::buffer::Buffer,
         line: usize,
     ) -> Vec<(usize, usize)> {
+        if std::ptr::eq(buffer, &self.buffer)
+            && let Some(marks) = self.line_sub_preview_marks(buffer, line)
+        {
+            return marks;
+        }
         // While a search is typed, the pattern so far shows instead.
         let typing = self.typed_search().and_then(|inc| inc.pattern.as_ref());
         let last = self
@@ -1181,6 +1393,16 @@ pub(super) fn vim_groups(re: &regex::Regex) -> Vec<usize> {
         .collect()
 }
 
+/// A `:s` on the command line, read for its preview: what it matches, on
+/// which lines, and what replaces it once the replacement is begun.
+struct TypedSubstitute {
+    re: regex::Regex,
+    first: usize,
+    last: usize,
+    global: bool,
+    replacement: Option<String>,
+}
+
 /// One replacement `:s` would make: the whole hit, the bytes it replaces —
 /// only the `\zs` / `\ze` part — and the text it puts there.
 pub(super) struct Hit {
@@ -1236,16 +1458,29 @@ pub(super) fn substitute_line(
     global: bool,
     with: &dyn Fn(&regex::Captures, &str) -> String,
 ) -> (String, usize) {
+    let (out, spans) = substitute_line_spans(re, line, global, with);
+    (out, spans.len())
+}
+
+/// `substitute_line`, with where each replacement landed in the new line,
+/// as byte ranges.
+pub(super) fn substitute_line_spans(
+    re: &regex::Regex,
+    line: &str,
+    global: bool,
+    with: &dyn Fn(&regex::Captures, &str) -> String,
+) -> (String, Vec<(usize, usize)>) {
     let mut out = String::new();
     let mut copied = 0;
     let mut from = 0;
     let mut last_end = None;
-    let mut count = 0;
+    let mut spans = Vec::new();
     while let Some(hit) = next_hit(re, line, from, last_end, with) {
         out.push_str(&line[copied..hit.part.0]);
+        let at = out.len();
         out.push_str(&hit.with);
+        spans.push((at, out.len()));
         copied = hit.part.1;
-        count += 1;
         if !global {
             break;
         }
@@ -1253,7 +1488,7 @@ pub(super) fn substitute_line(
         from = hit.resume(line);
     }
     out.push_str(&line[copied..]);
-    (out, count)
+    (out, spans)
 }
 
 /// A `:s` replacement for one match: `&` and `\0` are the match, `\1`–`\9`

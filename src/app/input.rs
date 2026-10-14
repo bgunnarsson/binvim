@@ -681,6 +681,7 @@ impl super::App {
                 for c in text.chars().filter(|c| *c != '\n' && *c != '\r') {
                     self.cmdline_insert_char_at_cursor(c);
                 }
+                self.update_sub_preview();
             }
             // Picker query is likewise single-line.
             Mode::Picker => {
@@ -2194,6 +2195,11 @@ impl super::App {
     }
 
     pub(super) fn handle_command_key(&mut self, key: KeyEvent) {
+        self.command_key(key);
+        self.update_sub_preview();
+    }
+
+    fn command_key(&mut self, key: KeyEvent) {
         use super::cmdline_history::HistoryKind;
         // The register name after `Ctrl-R` is a literal here as it is in
         // Insert — the prompt has no parser state, so nothing else stops a
@@ -2220,6 +2226,8 @@ impl super::App {
                 self.history_record(HistoryKind::Command, &line);
                 self.history_reset();
                 self.mode = Mode::Normal;
+                // The command runs on the text the preview was made from.
+                self.end_sub_preview();
                 self.exec_command(&line);
             }
             KeyCode::Backspace => {
@@ -2280,18 +2288,25 @@ impl super::App {
         }
     }
 
-    pub(super) fn exec_command(&mut self, line: &str) {
-        let cmd = match command::parse(line) {
-            ExCommand::Ranged { spec, rest } => match self.resolve_spec(&spec) {
-                Ok((l1, l2)) => {
-                    command::parse_after_range(ExRange::Lines(l1 + 1, l2 + 1), &rest, line)
-                }
-                Err(e) => {
-                    self.status_msg = e;
-                    return;
-                }
-            },
+    /// `line` parsed, with a range that needs the buffer — a mark, a
+    /// search — resolved against it.
+    pub(super) fn parse_command_line(&self, line: &str) -> Result<ExCommand, String> {
+        Ok(match command::parse(line) {
+            ExCommand::Ranged { spec, rest } => {
+                let (l1, l2) = self.resolve_spec(&spec)?;
+                command::parse_after_range(ExRange::Lines(l1 + 1, l2 + 1), &rest, line)
+            }
             cmd => cmd,
+        })
+    }
+
+    pub(super) fn exec_command(&mut self, line: &str) {
+        let cmd = match self.parse_command_line(line) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                self.status_msg = e;
+                return;
+            }
         };
         match cmd {
             ExCommand::Write => self.write_and_report(false),
@@ -2913,7 +2928,7 @@ impl super::App {
 
     /// Resolve an `ExRange` to a 0-based inclusive `(start_line, end_line)` pair,
     /// clamped to the current buffer's bounds.
-    fn resolve_range(&self, range: ExRange, default_current: bool) -> (usize, usize) {
+    pub(super) fn resolve_range(&self, range: ExRange, default_current: bool) -> (usize, usize) {
         let last = self.buffer.line_count().saturating_sub(1);
         match range {
             ExRange::Implicit => {
@@ -3664,7 +3679,7 @@ impl super::App {
     /// A notebook's cell header, which `:s` and `:S` leave alone: a header a
     /// substitution broke would turn its cell into the text above it, and
     /// the save would fold every cell into one and drop their outputs.
-    fn is_cell_header(&self, line: &str) -> bool {
+    pub(super) fn is_cell_header(&self, line: &str) -> bool {
         self.buffer.is_notebook() && crate::notebook::parse_header(line).is_some()
     }
 
@@ -5113,6 +5128,76 @@ mod tests {
         let mut app = app_with_keymaps("a\n", "");
         press(&mut app, "&");
         assert!(app.status_msg.contains("E35"), "{}", app.status_msg);
+    }
+
+    #[test]
+    fn a_substitute_being_typed_shows_in_the_buffer_and_esc_puts_it_back() {
+        let text = "one\nalpha foo two\nfoo foo\n";
+        let mut app = app_with_keymaps(text, "");
+        app.buffer.set_mark('a', 2, 4);
+        let version = app.buffer.version;
+        // The pattern alone highlights its matches and changes nothing.
+        press(&mut app, ":%s/fo");
+        assert_eq!(app.buffer.rope.to_string(), text);
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (1, 6));
+        assert_eq!(
+            app.line_search_matches_in(&app.buffer, 2),
+            vec![(0, 2), (4, 6)]
+        );
+        // Once the replacement is begun, an empty one deletes the match.
+        press(&mut app, "o/");
+        assert_eq!(app.buffer.rope.to_string(), "one\nalpha  two\n foo\n");
+        press(&mut app, "bar/g");
+        assert_eq!(app.buffer.rope.to_string(), "one\nalpha bar two\nbar bar\n");
+        assert_eq!(app.line_search_matches_in(&app.buffer, 1), vec![(6, 9)]);
+        assert_eq!(
+            app.line_search_matches_in(&app.buffer, 2),
+            vec![(0, 3), (4, 7)]
+        );
+        tap(&mut app, KeyCode::Esc);
+        assert_eq!(app.buffer.rope.to_string(), text);
+        assert!(!app.buffer.dirty);
+        assert!(app.buffer.version > version);
+        assert_eq!(app.buffer.mark('a'), Some((2, 4)));
+        assert_eq!((app.window.cursor.line, app.window.cursor.col), (0, 0));
+        assert!(app.last_substitute.is_none());
+        assert!(app.line_search_matches_in(&app.buffer, 2).is_empty());
+    }
+
+    #[test]
+    fn a_substitute_preview_runs_once_on_enter_and_undoes_in_one_step() {
+        let text = "a foo\nb foo\nc foo\n";
+        let mut app = app_with_keymaps(text, "");
+        app.window.cursor.line = 1;
+        // `.` stays the line the typing began on, though the preview moves.
+        press(&mut app, ":.,+1s/foo/x\\ry");
+        assert_eq!(app.buffer.rope.to_string(), "a foo\nb x\ny\nc x\ny\n");
+        tap(&mut app, KeyCode::Enter);
+        assert_eq!(app.buffer.rope.to_string(), "a foo\nb x\ny\nc x\ny\n");
+        assert!(app.sub_preview.is_none());
+        press(&mut app, "u");
+        assert_eq!(app.buffer.rope.to_string(), text);
+    }
+
+    #[test]
+    fn a_substitute_that_cannot_change_anything_yet_is_not_previewed() {
+        let text = "foo\n";
+        let mut app = app_with_keymaps(text, "");
+        // `n` only counts.
+        press(&mut app, ":s/foo/bar/n");
+        assert_eq!(app.buffer.rope.to_string(), text);
+        assert_eq!(app.line_search_matches_in(&app.buffer, 0), vec![(0, 3)]);
+        tap(&mut app, KeyCode::Esc);
+        // Half a pattern previews nothing and reports nothing.
+        press(&mut app, ":s/\\(/x/");
+        assert_eq!(app.buffer.rope.to_string(), text);
+        assert!(app.status_msg.is_empty(), "{}", app.status_msg);
+        tap(&mut app, KeyCode::Esc);
+        // Nor does a command that isn't `:s`.
+        press(&mut app, ":sort");
+        assert_eq!(app.buffer.rope.to_string(), text);
+        tap(&mut app, KeyCode::Esc);
+        assert!(app.sub_preview.is_none());
     }
 
     #[test]

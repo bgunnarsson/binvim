@@ -1020,7 +1020,7 @@ impl super::App {
     /// before a request that needs fresh text (completion / hover / goto)
     /// and from `lsp_sync_active_debounced` once the burst window expires.
     pub(super) fn lsp_sync_active(&mut self) {
-        if self.buffer.is_large() {
+        if self.buffer.is_large() || self.previewing_substitute() {
             return;
         }
         let Some(path) = self.buffer.path.clone() else {
@@ -1081,6 +1081,11 @@ impl super::App {
     /// Earliest wall-clock at which a debounced sync would fire if no key
     /// arrived first. `None` when the buffer is already fully shipped.
     pub(super) fn lsp_sync_due_at(&self) -> Option<Instant> {
+        // No sync goes out until the preview's text is put back, and a
+        // deadline that passes unmet spins the loop (see below).
+        if self.previewing_substitute() {
+            return None;
+        }
         let path = self.buffer.path.as_ref()?;
         let last = self
             .last_sent_version

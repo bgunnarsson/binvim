@@ -22,7 +22,7 @@ impl super::App {
     }
 
     pub(super) fn recover_if_due(&mut self) {
-        if Instant::now() < self.recovery_due_at() {
+        if Instant::now() < self.recovery_due_at() || self.previewing_substitute() {
             return;
         }
         self.recovery_checked_at = Instant::now();
@@ -54,6 +54,8 @@ impl super::App {
     /// buffer has gone clean (undone back to what's on disk). Called on the
     /// interval, and straight away when the editor is about to die.
     pub fn write_recovery_now(&mut self) {
+        // On the way out mid-`:s`, the preview's edits aren't the buffer's.
+        self.end_sub_preview();
         let mut writes: Vec<(RecoveryKey, u64, String)> = Vec::new();
         let mut cleaned: Vec<RecoveryKey> = Vec::new();
         for i in 0..self.buffers.len() {
@@ -194,6 +196,10 @@ impl super::App {
     /// shares its nodes, so this costs a `Vec` per iteration, not the text.
     #[cfg(unix)]
     pub(super) fn refresh_recovery_snapshot(&mut self) {
+        // The last snapshot holds the text a `:s` preview is shown over.
+        if self.previewing_substitute() {
+            return;
+        }
         let mut dirty: Vec<(RecoveryKey, ropey::Rope)> = Vec::new();
         for i in 0..self.buffers.len() {
             let buf = if i == self.active {

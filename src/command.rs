@@ -1720,9 +1720,17 @@ fn parse_substitute_args(args: &str) -> Option<Result<(String, String, SubFlags)
     if delim.is_alphanumeric() || matches!(delim, ' ' | '\\' | '"' | '|') {
         return None;
     }
-    let body = &args[delim.len_utf8()..];
+    let (fields, flags) = substitute_fields(&args[delim.len_utf8()..], delim);
+    let mut fields = fields.into_iter();
+    let pattern = fields.next().unwrap_or_default();
+    let replacement = fields.next().unwrap_or_default();
+    Some(parse_sub_flags(flags.trim()).map(|flags| (pattern, replacement, flags)))
+}
+
+/// The pattern and, once its delimiter is typed, the replacement of `:s`
+/// arguments after the first delimiter — and the flags after the last.
+fn substitute_fields(body: &str, delim: char) -> (Vec<String>, &str) {
     let mut fields = vec![String::new()];
-    let mut flags = "";
     let mut escaped = false;
     for (i, c) in body.char_indices() {
         if escaped || c != delim {
@@ -1730,16 +1738,28 @@ fn parse_substitute_args(args: &str) -> Option<Result<(String, String, SubFlags)
             let last = fields.len() - 1;
             fields[last].push(c);
         } else if fields.len() == 2 {
-            flags = &body[i + c.len_utf8()..];
-            break;
+            return (fields, &body[i + c.len_utf8()..]);
         } else {
             fields.push(String::new());
         }
     }
-    let mut fields = fields.into_iter();
-    let pattern = fields.next().unwrap_or_default();
-    let replacement = fields.next().unwrap_or_default();
-    Some(parse_sub_flags(flags.trim()).map(|flags| (pattern, replacement, flags)))
+    (fields, "")
+}
+
+/// Whether a `:s` line has got as far as its replacement. Run, `:s/foo`
+/// deletes the match as `:s/foo/` does; while it's typed, only the pattern
+/// is there yet.
+pub fn substitute_has_replacement(line: &str) -> bool {
+    let Ok((_, rest)) = split_range(line.trim_start()) else {
+        return false;
+    };
+    let Some(args) = rest.trim().strip_prefix('s') else {
+        return false;
+    };
+    let Some(delim) = args.chars().next() else {
+        return false;
+    };
+    substitute_fields(&args[delim.len_utf8()..], delim).0.len() == 2
 }
 
 fn parse_sub_flags(text: &str) -> Result<SubFlags, String> {
@@ -1919,6 +1939,15 @@ mod tests {
         ));
         assert!(matches!(parse("s/x/y/q"), ExCommand::Invalid(e) if e.contains("E488")));
         assert!(!matches!(parse("set"), ExCommand::Substitute { .. }));
+    }
+
+    #[test]
+    fn a_substitute_has_a_replacement_once_its_delimiter_is_typed() {
+        assert!(!substitute_has_replacement("%s/foo"));
+        assert!(!substitute_has_replacement("s/a\\/b"));
+        assert!(substitute_has_replacement("%s/foo/"));
+        assert!(substitute_has_replacement("'a,'bs#foo#bar#g"));
+        assert!(!substitute_has_replacement("sort"));
     }
 
     #[test]
