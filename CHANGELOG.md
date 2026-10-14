@@ -4,6 +4,28 @@ All notable changes to binvim are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.8.4]
+
+### Added
+- **`:s` previews as you type it**, as Neovim's `inccommand` does. The pattern
+  alone highlights its matches in the range; once the replacement is begun the
+  buffer shows the text as it would be, with the cursor on the first match.
+  `Esc` puts text, cursor and the modified flag back, and `<CR>` runs it once,
+  undone in one step. `n` only highlights; `:S` isn't previewed.
+  ([#15](https://github.com/bgunnarsson/binvim/issues/15))
+- **Razor files get IntelliSense from the Roslyn language server.** `.cshtml` /
+  `.razor` attach `roslyn-language-server` ahead of OmniSharp, and HTML
+  completion and hover in views come from `vscode-html-language-server`
+  through Roslyn's forwards.
+
+### Fixed
+- **A bare `:s` repeats the last substitute**, as `:&` does, instead of
+  reporting E492.
+- **A UTF-8 BOM is kept off the text** and written back on save. Left in, it
+  sat before a Razor view's `@model`, which Razor then rejected.
+- **Hover popups read cleanly:** markdown backslash escapes, HTML entities and
+  images (the HTML server's base64 badges) no longer show literally.
+
 ## [0.8.3] - 2026-10-12
 
 ### Fixed
