@@ -1255,7 +1255,7 @@ fn wrap_notification(msg: &str, width: usize) -> Vec<String> {
 }
 
 /// Layout for the floating command line — returns (left_col, top_row, width).
-fn cmdline_box_layout(app: &App) -> (usize, usize, usize) {
+pub(crate) fn cmdline_box_layout(app: &App) -> (usize, usize, usize) {
     let total_w = app.width as usize;
     let total_h = app.height as usize;
     let box_w = total_w.saturating_sub(20).clamp(24, 60);

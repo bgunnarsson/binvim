@@ -5165,6 +5165,27 @@ mod tests {
     }
 
     #[test]
+    fn a_previewed_match_is_scrolled_out_from_under_the_command_line() {
+        let text: String = (0..40).map(|n| format!("line {n}\n")).collect();
+        let mut app = app_with_keymaps(&text, "");
+        app.width = 80;
+        app.height = 30;
+        let (_, box_top, _) = crate::render::cmdline_box_layout(&app);
+        let target = format!("line {}", box_top - app.active_pane_rect().y as usize);
+        let row = |app: &crate::app::App| {
+            app.active_pane_rect().y as usize
+                + app.visible_rows_between(app.window.view_top, app.window.cursor.line)
+        };
+        for start in [":%s/", "/"] {
+            press(&mut app, &format!("{start}{target}$"));
+            app.adjust_viewport();
+            assert!(row(&app) < box_top, "{start}: row {}", row(&app));
+            tap(&mut app, KeyCode::Esc);
+            assert_eq!(app.window.view_top, 0);
+        }
+    }
+
+    #[test]
     fn a_substitute_preview_runs_once_on_enter_and_undoes_in_one_step() {
         let text = "a foo\nb foo\nc foo\n";
         let mut app = app_with_keymaps(text, "");

@@ -309,6 +309,18 @@ impl super::App {
                     self.window.view_top = self.view_top_above_cursor(cur, max_on_screen);
                 }
             }
+            // A preview that put the cursor under the floating command line
+            // would hide the match it moved to. Leaving the prompt puts the
+            // view back, so this scroll doesn't stay.
+            if self.previewing_a_match() {
+                let (_, box_top, _) = crate::render::cmdline_box_layout(self);
+                let pane_top = self.active_pane_rect().y as usize;
+                let row = pane_top + self.visible_rows_between(self.window.view_top, cur);
+                if (box_top..box_top + 3).contains(&row) {
+                    let above = box_top.saturating_sub(pane_top + 2);
+                    self.window.view_top = self.view_top_above_cursor(cur, above);
+                }
+            }
         }
 
         // Horizontal — track the cursor's visual column instead of the char

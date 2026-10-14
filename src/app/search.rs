@@ -814,6 +814,22 @@ impl super::App {
         }
     }
 
+    /// The cursor is on a match a `:s` or `/` being typed moved it to.
+    pub(super) fn previewing_a_match(&self) -> bool {
+        match self.mode {
+            Mode::Command => self
+                .sub_preview
+                .as_ref()
+                .and_then(|p| p.marks.as_ref())
+                .is_some_and(|marks| !marks.is_empty()),
+            Mode::Search { .. } => self
+                .incsearch
+                .as_ref()
+                .is_some_and(|inc| inc.current.is_some()),
+            _ => false,
+        }
+    }
+
     /// The buffer holds a `:s` preview's edits rather than its own text,
     /// which nothing outside the preview may take for it: language servers,
     /// recovery files.
