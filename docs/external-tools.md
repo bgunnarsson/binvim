@@ -32,7 +32,8 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `emmet-ls`                      | Emmet abbreviation completion in HTML / CSS / JSX / TSX / Vue / Svelte / Astro / Razor buffers (`emmet-language-server` is tried as a fallback) | `npm i -g emmet-ls`                                                      |
 | `astro-ls`                      | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |
 | `csharp-ls`                     | C# LSP (Roslyn-based, preferred)         | `dotnet tool install --global csharp-ls`                                 |
-| `OmniSharp`                     | Razor / `.cshtml` IntelliSense (full)    | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
+| `roslyn-language-server`        | Razor / `.cshtml` IntelliSense (preferred) — `@Model.` completion, hover, definition and diagnostics against the loaded solution. Needs the .NET 10 runtime. | `dotnet tool install --global roslyn-language-server --version 5.13.0-1.26507.4` |
+| `OmniSharp`                     | Razor / `.cshtml` fallback when Roslyn isn't installed (completion guesses from symbol names) | binvim probes `~/.local/bin/omnisharp/OmniSharp` plus `$PATH`. Drop the official tarball there. |
 | `biome`                         | JSON LSP + JS / TS / JSON formatter — project-local `node_modules/.bin/` first, then `$PATH` | `npm i -D @biomejs/biome` in the project, or `npm i -g @biomejs/biome`   |
 | `copilot-language-server`       | GitHub Copilot ghost completions, with `[copilot] enabled = true` — project-local `node_modules/.bin/` first, then `$PATH` | `npm i -g @github/copilot-language-server`                               |
 | `csharpier`                     | `.cs` formatter                          | `dotnet tool install --global csharpier`                                 |

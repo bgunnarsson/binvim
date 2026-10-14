@@ -96,6 +96,9 @@ fn dispatch(
             return;
         }
         auto_respond(stdin, id, &method, msg.get("params"));
+        if method == "workspace/diagnostic/refresh" {
+            let _ = tx.send(LspIncoming::DiagnosticsRefresh);
+        }
         return;
     }
 
@@ -203,6 +206,36 @@ fn dispatch(
                 }
             }
         }
+        // Roslyn finished loading the solution: diagnostics pulled before
+        // now were answered against a file it hadn't placed in a project.
+        "workspace/projectInitializationComplete" => {
+            let _ = tx.send(LspIncoming::DiagnosticsRefresh);
+        }
+        // Roslyn's own popup channel — "problems loading project X" and
+        // the like. Its buttons run VS Code commands, so only the text is
+        // worth keeping.
+        "window/_roslyn_showToast" => {
+            let text = msg
+                .get("params")
+                .and_then(|p| p.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if !text.is_empty() {
+                let severity = match msg
+                    .get("params")
+                    .and_then(|p| p.get("messageType"))
+                    .and_then(Value::as_u64)
+                {
+                    Some(1) => MessageSeverity::Error,
+                    _ => MessageSeverity::Warning,
+                };
+                let _ = tx.send(LspIncoming::ServerMessage {
+                    severity,
+                    text: text.to_string(),
+                    is_show: false,
+                });
+            }
+        }
         _ => {}
     }
 }
@@ -230,6 +263,10 @@ fn auto_respond(stdin: &Arc<Mutex<ChildStdin>>, id: u64, method: &str, params: O
         // see `dispatch`. Default arm here just to keep this match
         // exhaustive on future adds.
         "workspace/applyEdit" => json!({ "applied": false }),
+        // Roslyn hands Razor's HTML completions to the client to answer.
+        // A `null` reply fails that request and Razor drops its own items
+        // along with it, so say "no HTML items" instead.
+        "textDocument/completion" => json!({ "isIncomplete": false, "items": [] }),
         // Various capability registrations / progress windows → null is fine.
         _ => Value::Null,
     };
@@ -351,6 +388,17 @@ fn extract_workspace_folders_supported(init_result: &Value) -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+/// The diagnostics in a `textDocument/diagnostic` reply. `None` for an
+/// `unchanged` report (or anything unreadable), which leaves the stored
+/// list alone; a `full` report replaces it, empty included.
+pub(super) fn parse_pull_diagnostics(result: &Value) -> Option<Vec<Diagnostic>> {
+    if result.get("kind").and_then(Value::as_str) != Some("full") {
+        return None;
+    }
+    let params = json!({ "uri": "", "diagnostics": result.get("items")? });
+    parse_publish_diagnostics(&params).map(|d| d.diagnostics)
 }
 
 fn parse_publish_diagnostics(params: &Value) -> Option<DiagnosticsMessage> {
@@ -493,6 +541,32 @@ mod cap_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pulled_report_replaces_diagnostics_only_when_full() {
+        let full = json!({
+            "kind": "full",
+            "resultId": "1",
+            "items": [{
+                "range": {
+                    "start": { "line": 3, "character": 1 },
+                    "end": { "line": 3, "character": 22 }
+                },
+                "severity": 1,
+                "code": "CS0119",
+                "message": "'ContactFormController' is a type"
+            }]
+        });
+        let diags = parse_pull_diagnostics(&full).unwrap();
+        assert_eq!(diags.len(), 1);
+        assert_eq!((diags[0].line, diags[0].col, diags[0].end_col), (3, 1, 22));
+        assert_eq!(diags[0].severity, Severity::Error);
+        let empty = json!({ "kind": "full", "items": [] });
+        assert_eq!(parse_pull_diagnostics(&empty).map(|d| d.len()), Some(0));
+        let unchanged = json!({ "kind": "unchanged", "resultId": "1" });
+        assert!(parse_pull_diagnostics(&unchanged).is_none());
+        assert!(parse_pull_diagnostics(&Value::Null).is_none());
+    }
 
     #[test]
     fn pyright_is_told_the_project_env_for_its_python_section() {

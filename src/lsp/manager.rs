@@ -4,19 +4,24 @@
 
 use ropey::Rope;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::client::LspClient;
+use super::io::parse_pull_diagnostics;
 use super::parse::{
     parse_code_actions_response, parse_completion_response, parse_def_response,
     parse_hover_response, parse_locations_response, parse_signature_help_response,
     parse_symbols_response,
 };
 use super::position::{Direction, PosConv};
-use super::specs::{find_workspace_root, resolve_command, specs_for_path};
+use super::specs::{
+    drops_info_logs, find_workspace_root, pulls_diagnostics, resolve_command,
+    roslyn_open_notification, specs_for_path,
+};
 use super::types::{
-    ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming, path_to_uri, uri_to_path,
+    ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming, MessageSeverity,
+    path_to_uri, uri_to_path,
 };
 
 #[derive(Debug, Clone)]
@@ -99,6 +104,11 @@ pub(super) enum PendingRequest {
         col: usize,
         buffer_version: u64,
     },
+    /// `textDocument/diagnostic` — the reply is the document's full
+    /// diagnostic list, stored like a `publishDiagnostics` for `path`.
+    PullDiagnostics {
+        path: PathBuf,
+    },
 }
 
 /// Container for per-language LSP clients keyed by `ServerSpec.key`.
@@ -135,6 +145,10 @@ pub struct LspManager {
     /// a position's `character` against, so columns convert between its
     /// encoding and chars against the same line.
     docs: HashMap<PathBuf, Rope>,
+    /// `(client key, path)` for every document opened in a client that
+    /// only reports diagnostics when asked — what `did_change_all` and a
+    /// refresh pull for, without rebuilding the path's specs per keystroke.
+    pull_docs: HashSet<(String, PathBuf)>,
 }
 
 /// How long a server must survive for its next crash to count as fresh
@@ -182,6 +196,7 @@ impl LspManager {
             crashed: Vec::new(),
             crash_counts: HashMap::new(),
             docs: HashMap::new(),
+            pull_docs: HashSet::new(),
         }
     }
 
@@ -247,7 +262,11 @@ impl LspManager {
                 // doesn't model multiple folders would be ignored at
                 // best and confusing at worst.
                 let Some(root) = &root else { continue };
-                if client.add_workspace_folder(root) && client.supports_workspace_folders() {
+                let added = client.add_workspace_folder(root);
+                if added && spec.key == "roslyn" {
+                    load_into_roslyn(client, root);
+                }
+                if added && client.supports_workspace_folders() {
                     let folder_name = root
                         .file_name()
                         .map(|s| s.to_string_lossy().to_string())
@@ -283,6 +302,11 @@ impl LspManager {
                 if key == "copilot" {
                     self.request_copilot_check_status();
                     self.copilot_status = CopilotStatus::Checking;
+                }
+                if key == "roslyn" {
+                    if let Some(client) = self.clients.get(&key) {
+                        load_into_roslyn(client, &root);
+                    }
                 }
             }
         }
@@ -463,6 +487,7 @@ impl LspManager {
         let mut processed = 0usize;
         let mut more = false;
         let mut exited: Vec<(String, i32, bool)> = Vec::new();
+        let mut refresh: Vec<String> = Vec::new();
         for (client_key, client) in self.clients.iter() {
             while processed < MAX_PER_CALL {
                 let Ok(msg) = client.incoming_rx.try_recv() else {
@@ -482,18 +507,7 @@ impl LspManager {
                             if !suppress_diagnostics_from(client_key, &path) {
                                 let mut diags = d.diagnostics;
                                 let mut conv = PosConv::new(client.position_encoding(), &self.docs);
-                                if !conv.is_identity() {
-                                    for diag in &mut diags {
-                                        diag.col =
-                                            conv.col(&path, diag.line, diag.col, Direction::ToChar);
-                                        diag.end_col = conv.col(
-                                            &path,
-                                            diag.end_line,
-                                            diag.end_col,
-                                            Direction::ToChar,
-                                        );
-                                    }
-                                }
+                                diagnostics_to_char_cols(&mut diags, &mut conv, &path);
                                 self.diagnostics.insert(path, diags);
                                 diagnostics_changed = true;
                             }
@@ -501,6 +515,18 @@ impl LspManager {
                     }
                     LspIncoming::Response { id, mut result } => {
                         if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
+                            if let PendingRequest::PullDiagnostics { path } = req {
+                                // `unchanged` answers carry no items — the
+                                // list stored last time still stands.
+                                if let Some(mut diags) = parse_pull_diagnostics(&result) {
+                                    let mut conv =
+                                        PosConv::new(client.position_encoding(), &self.docs);
+                                    diagnostics_to_char_cols(&mut diags, &mut conv, &path);
+                                    self.diagnostics.insert(path, diags);
+                                    diagnostics_changed = true;
+                                }
+                                continue;
+                            }
                             let mut conv = PosConv::new(client.position_encoding(), &self.docs);
                             match &req {
                                 // Lenses are placed by line only, and a
@@ -575,12 +601,23 @@ impl LspManager {
                         text,
                         is_show,
                     } => {
+                        if !is_show
+                            && matches!(severity, MessageSeverity::Info | MessageSeverity::Log)
+                            && drops_info_logs(client_key)
+                        {
+                            continue;
+                        }
                         events.push(LspEvent::ServerMessage {
                             client_key: client_key.clone(),
                             severity,
                             text,
                             is_show,
                         });
+                    }
+                    LspIncoming::DiagnosticsRefresh => {
+                        if !refresh.contains(client_key) {
+                            refresh.push(client_key.clone());
+                        }
                     }
                 }
             }
@@ -604,6 +641,7 @@ impl LspManager {
             // forever; the pending entries would otherwise never resolve.
             self.clients.remove(&key);
             self.pending.retain(|(k, _), _| k != &key);
+            self.pull_docs.retain(|(k, _)| k != &key);
             self.crashed.retain(|(k, _)| k != &key);
             self.crashed.push((key.clone(), code));
             let count = self.crash_counts.entry(key.clone()).or_insert(0);
@@ -617,6 +655,17 @@ impl LspManager {
                 exit_code: code,
                 gave_up: *count >= MAX_QUICK_EXITS,
             });
+        }
+        for key in refresh {
+            let paths: Vec<PathBuf> = self
+                .pull_docs
+                .iter()
+                .filter(|(k, _)| k == &key)
+                .map(|(_, p)| p.clone())
+                .collect();
+            for path in paths {
+                self.pull_diagnostics(&key, &path);
+            }
         }
         if diagnostics_changed {
             events.push(LspEvent::DiagnosticsUpdated);
@@ -650,6 +699,35 @@ impl LspManager {
         for client in self.clients.values() {
             let _ = client.did_change(path, version, text);
         }
+        let pullers: Vec<String> = self
+            .pull_docs
+            .iter()
+            .filter(|(_, p)| p == path)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for key in pullers {
+            self.pull_diagnostics(&key, path);
+        }
+    }
+
+    /// Ask `key`'s server for `path`'s diagnostics; the reply is stored in
+    /// `drain` like a published list.
+    fn pull_diagnostics(&mut self, key: &str, path: &Path) {
+        let Some(client) = self.clients.get(key) else {
+            return;
+        };
+        let id = client.alloc_id();
+        let _ = client.send_request(
+            id,
+            "textDocument/diagnostic",
+            json!({ "textDocument": { "uri": path_to_uri(path) } }),
+        );
+        self.pending.insert(
+            (key.to_string(), id),
+            PendingRequest::PullDiagnostics {
+                path: path.to_path_buf(),
+            },
+        );
     }
 
     /// Send `textDocument/didOpen` to every running client that should
@@ -663,6 +741,11 @@ impl LspManager {
         for spec in self.specs_for(path) {
             if let Some(client) = self.clients.get(&spec.key) {
                 let _ = client.did_open(path, text, &spec.language_id);
+                if pulls_diagnostics(&spec.key) {
+                    self.pull_docs
+                        .insert((spec.key.clone(), path.to_path_buf()));
+                    self.pull_diagnostics(&spec.key, path);
+                }
             }
         }
     }
@@ -1179,6 +1262,26 @@ fn pending_request_kind(req: &PendingRequest) -> &'static str {
         PendingRequest::CopilotCheckStatus => "CopilotCheckStatus",
         PendingRequest::CopilotSignIn => "CopilotSignIn",
         PendingRequest::CopilotInline { .. } => "CopilotInline",
+        PendingRequest::PullDiagnostics { .. } => "PullDiagnostics",
+    }
+}
+
+/// Send Roslyn the solution or projects in `root` — it loads nothing on its
+/// own, and a file outside a loaded project only gets syntax-level answers.
+fn load_into_roslyn(client: &LspClient, root: &Path) {
+    if let Some((method, params)) = roslyn_open_notification(root) {
+        let _ = client.send_notification(method, params);
+    }
+}
+
+/// Server columns → char columns for a diagnostic list about `path`.
+fn diagnostics_to_char_cols(diags: &mut [Diagnostic], conv: &mut PosConv, path: &Path) {
+    if conv.is_identity() {
+        return;
+    }
+    for diag in diags {
+        diag.col = conv.col(path, diag.line, diag.col, Direction::ToChar);
+        diag.end_col = conv.col(path, diag.end_line, diag.end_col, Direction::ToChar);
     }
 }
 
@@ -1434,5 +1537,7 @@ fn handle_response(
                 buffer_version,
             })
         }
+        // Stored straight into `diagnostics` by `drain`.
+        PendingRequest::PullDiagnostics { .. } => None,
     }
 }

@@ -60,6 +60,10 @@ pub enum LspIncoming {
         text: String,
         is_show: bool,
     },
+    /// The server says diagnostics it answered before may be stale — a
+    /// `workspace/diagnostic/refresh`, or Roslyn's project load finishing.
+    /// Pull-diagnostics clients are asked again for every open document.
+    DiagnosticsRefresh,
 }
 
 /// LSP `MessageType` enum values: 1 = Error, 2 = Warning, 3 = Info,

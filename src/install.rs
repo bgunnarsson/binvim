@@ -479,10 +479,9 @@ pub const BUNDLES: &[Bundle] = &[
             )] },
     ]},
     Bundle { name: "Razor / .cshtml", tools: &[
-        Tool { bin: "OmniSharp", label: "OmniSharp (Razor IntelliSense)", role: Role::Lsp,
-            installers: &[Installer::Manual(
-                "Download the official OmniSharp tarball and unpack to ~/.local/bin/omnisharp/ (binvim probes that path plus $PATH).",
-            )] },
+        Tool { bin: "roslyn-language-server", label: "Roslyn (Razor IntelliSense)",
+            role: Role::Lsp,
+            installers: &[Installer::DotnetTool("roslyn-language-server", Some("5.13.0-1.26507.4"))] },
         EMMET_LS,
     ]},
     Bundle { name: "Bash / Shell", tools: &[
@@ -1664,12 +1663,8 @@ mod tests {
 
     #[test]
     fn missing_core_tools_never_reports_manual_only_tools() {
-        // The first-run prompt must not nag about things it can't install:
-        // Razor's OmniSharp (Manual LSP) and C#'s netcoredbg (Manual DAP).
-        let razor = bundle_index_by_name("Razor / .cshtml").unwrap();
-        // Razor's only core tool is a Manual LSP with no formatter — so
-        // regardless of PATH there is never anything to auto-install.
-        assert!(missing_core_tools(razor).is_empty());
+        // The first-run prompt must not nag about things it can't install,
+        // such as C#'s netcoredbg (Manual DAP).
         for (i, bundle) in BUNDLES.iter().enumerate() {
             for t in missing_core_tools(i) {
                 assert!(

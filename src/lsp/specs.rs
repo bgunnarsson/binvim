@@ -218,10 +218,36 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             initialization_options: Value::Null,
         }),
         "cshtml" | "razor" => {
-            // OmniSharp handles .cshtml as a C# document and gives real
-            // IntelliSense for the embedded code blocks (@{}, @Model.X, etc.).
-            // If OmniSharp isn't installed, fall back to the html LSP so at
-            // least markup completion still works.
+            // Roslyn runs the Razor compiler in-process ("cohosting"), so a
+            // view gets completion against its real generated class —
+            // `@Model.` lists the model's members. OmniSharp only guesses
+            // from symbol names, so it stays as the fallback, then the html
+            // LSP so at least markup completion still works.
+            let mut args = vec![
+                "--stdio".to_string(),
+                "--clientProcessId".to_string(),
+                std::process::id().to_string(),
+                "--logLevel".to_string(),
+                "Warning".to_string(),
+            ];
+            if let Some(targets) = razor_design_time_targets() {
+                args.push("--csharpDesignTimePath".to_string());
+                args.push(targets.to_string_lossy().into_owned());
+            }
+            let roslyn = ServerSpec {
+                key: "roslyn".into(),
+                language_id: "razor".into(),
+                cmd_candidates: vec![
+                    "roslyn-language-server".into(),
+                    join_home(".dotnet/tools/roslyn-language-server"),
+                ],
+                args,
+                root_markers: roslyn_root_markers(path),
+                initialization_options: Value::Null,
+            };
+            if resolve_command(&roslyn.cmd_candidates).is_some() {
+                return Some(roslyn);
+            }
             let omnisharp = ServerSpec {
                 key: "omnisharp".into(),
                 language_id: "razor".into(),
@@ -882,6 +908,109 @@ pub fn copilot_spec_for_path(path: &Path) -> Option<ServerSpec> {
     })
 }
 
+const SOLUTION_MARKERS: [&str; 2] = ["*.sln", "*.slnx"];
+
+/// Roslyn loads what it's told to, so its root is the solution when one is
+/// above the file — the nearest `.csproj` alone would leave the projects it
+/// references unloaded. A project with no solution roots at its `.csproj`.
+fn roslyn_root_markers(path: &Path) -> Vec<String> {
+    let in_solution = path
+        .parent()
+        .and_then(|dir| crate::paths::find_marker_root(dir, &SOLUTION_MARKERS))
+        .is_some();
+    let markers: &[&str] = if in_solution {
+        &SOLUTION_MARKERS
+    } else {
+        &["*.csproj", ".git"]
+    };
+    markers.iter().map(|m| m.to_string()).collect()
+}
+
+/// The notification that loads `root` into Roslyn: `solution/open` for the
+/// first solution in it (sorted, so the pick is stable), else `project/open`
+/// for every project in it. `None` when it holds neither — Roslyn then
+/// treats the file as loose, which still gives syntax-level answers.
+pub fn roslyn_open_notification(root: &Path) -> Option<(&'static str, Value)> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_file())
+        .collect();
+    entries.sort();
+    let has_ext = |p: &Path, ext: &str| {
+        p.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+    };
+    if let Some(sln) = entries
+        .iter()
+        .find(|p| has_ext(p, "sln") || has_ext(p, "slnx"))
+    {
+        return Some((
+            "solution/open",
+            json!({ "solution": super::types::path_to_uri(sln) }),
+        ));
+    }
+    let projects: Vec<String> = entries
+        .iter()
+        .filter(|p| has_ext(p, "csproj"))
+        .map(|p| super::types::path_to_uri(p))
+        .collect();
+    if projects.is_empty() {
+        return None;
+    }
+    Some(("project/open", json!({ "projects": projects })))
+}
+
+/// Umbraco sites (and any project whose views compile at runtime) set
+/// `RazorCompileOnBuild=false`, which keeps `.cshtml` files out of the Razor
+/// source generator — and Roslyn's Razor support is that generator, so those
+/// views get nothing. Roslyn imports the file named by
+/// `--csharpDesignTimePath` after the project body, so setting the property
+/// back there reaches only the server's design-time load, never a build.
+const RAZOR_DESIGN_TIME_TARGETS: &str = "<Project>
+  <PropertyGroup>
+    <RazorCompileOnBuild>true</RazorCompileOnBuild>
+  </PropertyGroup>
+</Project>
+";
+
+/// Path of the targets file above, written to the cache once per process —
+/// specs are rebuilt on every request, the file only needs checking once.
+/// `None` when there's no cache directory, or under test.
+fn razor_design_time_targets() -> Option<PathBuf> {
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        if cfg!(test) {
+            return None;
+        }
+        let dir = crate::paths::cache_dir()?.join("roslyn");
+        let path = dir.join("razor.targets");
+        if std::fs::read(&path).ok().as_deref() != Some(RAZOR_DESIGN_TIME_TARGETS.as_bytes()) {
+            crate::paths::create_private_dir(&dir).ok()?;
+            crate::paths::write_atomic(&path, RAZOR_DESIGN_TIME_TARGETS.as_bytes()).ok()?;
+        }
+        Some(path)
+    })
+    .clone()
+}
+
+/// Servers that only report diagnostics when asked (`textDocument/diagnostic`)
+/// rather than publishing them. Roslyn publishes nothing for a client that
+/// doesn't advertise pull support, and advertising it to every server would
+/// switch the ones that push today over to a protocol nothing else here uses.
+pub fn pulls_diagnostics(key: &str) -> bool {
+    key == "roslyn"
+}
+
+/// Servers whose Info / Log `logMessage`s are left out of `:messages`.
+/// Roslyn's Razor layer logs every diagnostics pass at Info whatever
+/// `--logLevel` says, and would push every other entry out of the log.
+pub fn drops_info_logs(key: &str) -> bool {
+    key == "roslyn"
+}
+
 pub(crate) fn resolve_command(candidates: &[String]) -> Option<(String, Vec<String>)> {
     for c in candidates {
         let path = if let Some(rest) = c.strip_prefix("~/") {
@@ -996,6 +1125,48 @@ mod tests {
             find_tailwind_config(&project),
             Some(root.join("package.json"))
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn roslyn_loads_the_solution_before_the_projects_beside_it() {
+        let root = scratch("roslyn-open");
+        set_mode(&root, 0o755);
+        assert_eq!(roslyn_open_notification(&root), None);
+        std::fs::write(root.join("Web.csproj"), "").unwrap();
+        std::fs::write(root.join("Core.csproj"), "").unwrap();
+        let uri = |name: &str| super::super::types::path_to_uri(&root.join(name));
+        assert_eq!(
+            roslyn_open_notification(&root),
+            Some((
+                "project/open",
+                json!({ "projects": [uri("Core.csproj"), uri("Web.csproj")] })
+            ))
+        );
+        std::fs::write(root.join("B.slnx"), "").unwrap();
+        std::fs::write(root.join("A.sln"), "").unwrap();
+        assert_eq!(
+            roslyn_open_notification(&root),
+            Some(("solution/open", json!({ "solution": uri("A.sln") })))
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_razor_view_roots_at_its_solution_over_its_project() {
+        let root = scratch("roslyn-root");
+        set_mode(&root, 0o755);
+        let site = root.join("Site");
+        std::fs::create_dir_all(site.join("Views")).unwrap();
+        std::fs::write(site.join("Site.csproj"), "").unwrap();
+        let view = site.join("Views/Home.cshtml");
+        let markers = roslyn_root_markers(&view);
+        assert_eq!(markers, ["*.csproj", ".git"]);
+        assert_eq!(find_workspace_root(&site.join("Views"), &markers), site);
+        std::fs::write(root.join("App.sln"), "").unwrap();
+        let markers = roslyn_root_markers(&view);
+        assert_eq!(markers, ["*.sln", "*.slnx"]);
+        assert_eq!(find_workspace_root(&site.join("Views"), &markers), root);
         std::fs::remove_dir_all(&root).ok();
     }
 }
