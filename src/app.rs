@@ -1453,6 +1453,9 @@ impl App {
             if lens_retry_due {
                 poll_dur = poll_dur.min(Duration::from_millis(250));
             }
+            if self.lsp.awaiting_forward() {
+                poll_dur = poll_dur.min(Duration::from_millis(5));
+            }
             // A partly typed `[keymaps]` sequence is waiting on its next
             // key — wake at the timeout so it resolves even if none comes.
             if let Some(at) = self.keymap_held_at {

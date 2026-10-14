@@ -27,7 +27,7 @@ binvim spawns these on demand. Each is optional — when a binary isn't on `$PAT
 | `docker-langserver`             | Dockerfile LSP                           | `npm i -g dockerfile-language-server-nodejs`                              |
 | `sqls`                          | SQL LSP                                  | `go install github.com/sqls-server/sqls@latest`                          |
 | `vscode-css-language-server`    | CSS / SCSS / Less LSP                    | `npm i -g vscode-langservers-extracted`                                  |
-| `vscode-html-language-server`   | HTML LSP                                 | `npm i -g vscode-langservers-extracted`                                  |
+| `vscode-html-language-server`   | HTML LSP, and HTML completion inside Razor views | `npm i -g vscode-langservers-extracted`                                  |
 | `tailwindcss-language-server`   | Tailwind class-name completion — project-local `node_modules/.bin/` first, then `$PATH` | `npm i -g @tailwindcss/language-server` (the unscoped npm package is an empty stub — use the scoped one) |
 | `emmet-ls`                      | Emmet abbreviation completion in HTML / CSS / JSX / TSX / Vue / Svelte / Astro / Razor buffers (`emmet-language-server` is tried as a fallback) | `npm i -g emmet-ls`                                                      |
 | `astro-ls`                      | Astro LSP                                | `npm i -g @astrojs/language-server`                                      |

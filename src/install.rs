@@ -482,6 +482,10 @@ pub const BUNDLES: &[Bundle] = &[
         Tool { bin: "roslyn-language-server", label: "Roslyn (Razor IntelliSense)",
             role: Role::Lsp,
             installers: &[Installer::DotnetTool("roslyn-language-server", Some("5.13.0-1.26507.4"))] },
+        // Roslyn hands the markup back to the client: completion and hover
+        // in HTML come from this server, against the file's HTML projection.
+        Tool { bin: "vscode-html-language-server", label: "vscode-langservers-extracted", role: Role::Lsp,
+            installers: &[Installer::Npm(&["vscode-langservers-extracted@4.10.0"])] },
         EMMET_LS,
     ]},
     Bundle { name: "Bash / Shell", tools: &[

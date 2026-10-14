@@ -95,7 +95,12 @@ fn dispatch(
             let _ = tx.send(LspIncoming::ApplyEditRequest { id, edit });
             return;
         }
-        auto_respond(stdin, id, &method, msg.get("params"));
+        let params = msg.get("params").cloned().unwrap_or(Value::Null);
+        if method == "razor/updateHtml" || is_html_forward(&params) {
+            let _ = tx.send(LspIncoming::ServerRequest { id, method, params });
+            return;
+        }
+        auto_respond(stdin, id, &method, Some(&params));
         if method == "workspace/diagnostic/refresh" {
             let _ = tx.send(LspIncoming::DiagnosticsRefresh);
         }
@@ -240,6 +245,12 @@ fn dispatch(
     }
 }
 
+/// A request Razor forwards for the HTML at a position — the original
+/// request wrapped with the checksum of the HTML text it was asked against.
+fn is_html_forward(params: &Value) -> bool {
+    params.get("checksum").is_some() && params.get("request").is_some()
+}
+
 /// Reply to server-to-client requests with reasonable defaults so the server's
 /// initialization (and ongoing operation) isn't blocked waiting for us.
 fn auto_respond(stdin: &Arc<Mutex<ChildStdin>>, id: u64, method: &str, params: Option<&Value>) {
@@ -263,10 +274,6 @@ fn auto_respond(stdin: &Arc<Mutex<ChildStdin>>, id: u64, method: &str, params: O
         // see `dispatch`. Default arm here just to keep this match
         // exhaustive on future adds.
         "workspace/applyEdit" => json!({ "applied": false }),
-        // Roslyn hands Razor's HTML completions to the client to answer.
-        // A `null` reply fails that request and Razor drops its own items
-        // along with it, so say "no HTML items" instead.
-        "textDocument/completion" => json!({ "isIncomplete": false, "items": [] }),
         // Various capability registrations / progress windows → null is fine.
         _ => Value::Null,
     };
@@ -541,6 +548,21 @@ mod cap_tests {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_forwarded_html_request_is_told_from_an_ordinary_one() {
+        let forwarded = json!({
+            "textDocument": { "uri": "file:///site/Views/Index.cshtml" },
+            "checksum": "FfGTFuohk6tCPFylEZKZcg==",
+            "request": {
+                "textDocument": { "uri": "file:///site/Views/Index.cshtml" },
+                "position": { "line": 1, "character": 5 },
+            },
+        });
+        assert!(is_html_forward(&forwarded));
+        assert!(!is_html_forward(&json!({ "items": [] })));
+        assert!(!is_html_forward(&Value::Null));
+    }
 
     #[test]
     fn a_pulled_report_replaces_diagnostics_only_when_full() {

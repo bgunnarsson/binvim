@@ -16,8 +16,9 @@ use super::parse::{
 };
 use super::position::{Direction, PosConv};
 use super::specs::{
-    drops_info_logs, find_workspace_root, pulls_diagnostics, resolve_command,
-    roslyn_open_notification, specs_for_path,
+    drops_info_logs, find_workspace_root, forwards_html, is_virtual_html, primary_spec_for_path,
+    pulls_diagnostics, resolve_command, roslyn_open_notification, specs_for_path,
+    virtual_html_path,
 };
 use super::types::{
     ActiveBufferLspStatus, Diagnostic, LspEvent, LspHealth, LspIncoming, MessageSeverity,
@@ -109,6 +110,13 @@ pub(super) enum PendingRequest {
     PullDiagnostics {
         path: PathBuf,
     },
+    /// An HTML request Razor forwarded, sent on to the HTML server — the
+    /// reply goes back to `from` as the answer to its request `id`.
+    HtmlForward {
+        from: String,
+        id: u64,
+        method: String,
+    },
 }
 
 /// Container for per-language LSP clients keyed by `ServerSpec.key`.
@@ -149,7 +157,14 @@ pub struct LspManager {
     /// only reports diagnostics when asked — what `did_change_all` and a
     /// refresh pull for, without rebuilding the path's specs per keystroke.
     pull_docs: HashSet<(String, PathBuf)>,
+    /// Razor file → the checksum and version of its HTML projection as last
+    /// sent to the HTML server. A forwarded request names the checksum it
+    /// was asked against; one that doesn't match is about other text.
+    html_docs: HashMap<PathBuf, (String, u64)>,
 }
+
+/// The server Razor's HTML projections are opened in.
+const HTML_KEY: &str = "html";
 
 /// How long a server must survive for its next crash to count as fresh
 /// rather than consecutive.
@@ -197,6 +212,7 @@ impl LspManager {
             crash_counts: HashMap::new(),
             docs: HashMap::new(),
             pull_docs: HashSet::new(),
+            html_docs: HashMap::new(),
         }
     }
 
@@ -488,6 +504,7 @@ impl LspManager {
         let mut more = false;
         let mut exited: Vec<(String, i32, bool)> = Vec::new();
         let mut refresh: Vec<String> = Vec::new();
+        let mut server_requests: Vec<(String, u64, String, Value)> = Vec::new();
         for (client_key, client) in self.clients.iter() {
             while processed < MAX_PER_CALL {
                 let Ok(msg) = client.incoming_rx.try_recv() else {
@@ -504,7 +521,9 @@ impl LspManager {
                             // "Unexpected character '@'", …). Drop its
                             // diagnostics for those extensions; completions
                             // and hover still flow through.
-                            if !suppress_diagnostics_from(client_key, &path) {
+                            if !suppress_diagnostics_from(client_key, &path)
+                                && !is_virtual_html(&path)
+                            {
                                 let mut diags = d.diagnostics;
                                 let mut conv = PosConv::new(client.position_encoding(), &self.docs);
                                 diagnostics_to_char_cols(&mut diags, &mut conv, &path);
@@ -515,6 +534,15 @@ impl LspManager {
                     }
                     LspIncoming::Response { id, mut result } => {
                         if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
+                            if let PendingRequest::HtmlForward { from, id, method } = req {
+                                if result.is_null() {
+                                    result = html_forward_fallback(&method);
+                                }
+                                if let Some(from) = self.clients.get(&from) {
+                                    let _ = from.send_response(id, result);
+                                }
+                                continue;
+                            }
                             if let PendingRequest::PullDiagnostics { path } = req {
                                 // `unchanged` answers carry no items — the
                                 // list stored last time still stands.
@@ -579,6 +607,12 @@ impl LspManager {
                     }
                     LspIncoming::ErrorReply { id, .. } => {
                         if let Some(req) = self.pending.remove(&(client_key.clone(), id)) {
+                            if let PendingRequest::HtmlForward { from, id, method } = req {
+                                if let Some(from) = self.clients.get(&from) {
+                                    let _ = from.send_response(id, html_forward_fallback(&method));
+                                }
+                                continue;
+                            }
                             let kind = pending_request_kind(&req);
                             let path = pending_request_path(&req);
                             events.push(LspEvent::RequestFailed { kind, path });
@@ -614,6 +648,9 @@ impl LspManager {
                             is_show,
                         });
                     }
+                    LspIncoming::ServerRequest { id, method, params } => {
+                        server_requests.push((client_key.clone(), id, method, params));
+                    }
                     LspIncoming::DiagnosticsRefresh => {
                         if !refresh.contains(client_key) {
                             refresh.push(client_key.clone());
@@ -642,6 +679,27 @@ impl LspManager {
             self.clients.remove(&key);
             self.pending.retain(|(k, _), _| k != &key);
             self.pull_docs.retain(|(k, _)| k != &key);
+            // A forward the dead server owed an answer is answered empty, so
+            // the server that asked isn't left waiting on it.
+            let owed: Vec<(String, u64, String)> = self
+                .pending
+                .iter()
+                .filter_map(|((k, _), req)| match req {
+                    PendingRequest::HtmlForward { from, id, method } if k == &key => {
+                        Some((from.clone(), *id, method.clone()))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (from, id, method) in owed {
+                if let Some(from) = self.clients.get(&from) {
+                    let _ = from.send_response(id, html_forward_fallback(&method));
+                }
+            }
+            self.pending.retain(|(k, _), _| k != &key);
+            if key == HTML_KEY {
+                self.html_docs.clear();
+            }
             self.crashed.retain(|(k, _)| k != &key);
             self.crashed.push((key.clone(), code));
             let count = self.crash_counts.entry(key.clone()).or_insert(0);
@@ -655,6 +713,9 @@ impl LspManager {
                 exit_code: code,
                 gave_up: *count >= MAX_QUICK_EXITS,
             });
+        }
+        for (key, id, method, params) in server_requests {
+            self.answer_server_request(&key, id, &method, &params);
         }
         for key in refresh {
             let paths: Vec<PathBuf> = self
@@ -692,6 +753,105 @@ impl LspManager {
         }
         let canon = path.canonicalize().ok()?;
         self.diagnostics.get(&canon)
+    }
+
+    /// Answer a request a server sent the client. `razor/updateHtml` opens
+    /// or updates the Razor file's HTML projection in the HTML server; a
+    /// forwarded request is sent on to the HTML server against that
+    /// projection, and answered when the reply comes back (in `drain`).
+    fn answer_server_request(&mut self, key: &str, id: u64, method: &str, params: &Value) {
+        let razor = params
+            .get("textDocument")
+            .and_then(|d| d.get("uri"))
+            .and_then(Value::as_str)
+            .and_then(uri_to_path);
+        let checksum = params.get("checksum").and_then(Value::as_str).unwrap_or("");
+        if method == "razor/updateHtml" {
+            let text = params.get("text").and_then(Value::as_str).unwrap_or("");
+            if let Some(razor) = razor {
+                self.update_html(&razor, checksum, text);
+            }
+            if let Some(client) = self.clients.get(key) {
+                let _ = client.send_response(id, Value::Null);
+            }
+            return;
+        }
+        let html = self.clients.get(HTML_KEY).filter(|_| forwards_html(key));
+        if let (Some(html), Some(razor)) = (html, razor) {
+            if self
+                .html_docs
+                .get(&razor)
+                .is_some_and(|(sum, _)| sum == checksum)
+            {
+                let mut request = params.get("request").cloned().unwrap_or(Value::Null);
+                request["textDocument"] = json!({ "uri": path_to_uri(&virtual_html_path(&razor)) });
+                let html_id = html.alloc_id();
+                if html.send_request(html_id, method, request).is_ok() {
+                    self.pending.insert(
+                        (HTML_KEY.to_string(), html_id),
+                        PendingRequest::HtmlForward {
+                            from: key.to_string(),
+                            id,
+                            method: method.to_string(),
+                        },
+                    );
+                    return;
+                }
+            }
+        }
+        if let Some(client) = self.clients.get(key) {
+            let _ = client.send_response(id, html_forward_fallback(method));
+        }
+    }
+
+    /// Open `razor`'s HTML projection in the HTML server, starting the
+    /// server if it isn't running, or send it the new text.
+    fn update_html(&mut self, razor: &Path, checksum: &str, text: &str) {
+        if !self.clients.contains_key(HTML_KEY) && !self.gave_up_on(HTML_KEY) {
+            let virtual_path = virtual_html_path(razor);
+            let Some(spec) = primary_spec_for_path(&virtual_path) else { return };
+            let start = razor.parent().unwrap_or(razor);
+            let root = find_workspace_root(start, &spec.root_markers);
+            if crate::paths::others_can_plant(&root, "") {
+                return;
+            }
+            let Some(client) = LspClient::spawn_spec(&spec, &root) else { return };
+            self.crashed.retain(|(k, _)| k != HTML_KEY);
+            self.clients.insert(HTML_KEY.to_string(), client);
+        }
+        let Some(html) = self.clients.get(HTML_KEY) else { return };
+        let virtual_path = virtual_html_path(razor);
+        let version = match self.html_docs.get(razor) {
+            Some((_, version)) => {
+                let _ = html.did_change(&virtual_path, version + 1, text);
+                version + 1
+            }
+            None => {
+                let _ = html.did_open(&virtual_path, text, "html");
+                1
+            }
+        };
+        self.html_docs
+            .insert(razor.to_path_buf(), (checksum.to_string(), version));
+    }
+
+    /// True while a server is working on a request that may come back to
+    /// the client first — Razor forwards HTML completion, hover and the
+    /// like, and holds its own answer until the forward is answered. Each
+    /// hop waits on the run loop's next drain, so the loop polls quickly
+    /// until the request is done rather than idling up to 100ms per hop.
+    pub fn awaiting_forward(&self) -> bool {
+        self.pending.iter().any(|((key, _), req)| {
+            matches!(req, PendingRequest::HtmlForward { .. })
+                || (forwards_html(key)
+                    && matches!(
+                        req,
+                        PendingRequest::Completion { .. }
+                            | PendingRequest::Hover
+                            | PendingRequest::SignatureHelp
+                            | PendingRequest::DocumentHighlight { .. }
+                    ))
+        })
     }
 
     pub fn did_change_all(&mut self, path: &Path, version: u64, text: &str) {
@@ -1263,6 +1423,18 @@ fn pending_request_kind(req: &PendingRequest) -> &'static str {
         PendingRequest::CopilotSignIn => "CopilotSignIn",
         PendingRequest::CopilotInline { .. } => "CopilotInline",
         PendingRequest::PullDiagnostics { .. } => "PullDiagnostics",
+        PendingRequest::HtmlForward { .. } => "HtmlForward",
+    }
+}
+
+/// The answer to a forwarded HTML request the HTML server couldn't give.
+/// A `null` completion fails the request in Razor, which then drops its own
+/// items along with the HTML ones — so it's an empty list instead.
+fn html_forward_fallback(method: &str) -> Value {
+    match method {
+        "textDocument/completion" => json!({ "isIncomplete": false, "items": [] }),
+        "textDocument/documentColor" => json!([]),
+        _ => Value::Null,
     }
 }
 
@@ -1538,6 +1710,6 @@ fn handle_response(
             })
         }
         // Stored straight into `diagnostics` by `drain`.
-        PendingRequest::PullDiagnostics { .. } => None,
+        PendingRequest::PullDiagnostics { .. } | PendingRequest::HtmlForward { .. } => None,
     }
 }

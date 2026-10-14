@@ -82,7 +82,7 @@ fn java_debug_init_options() -> Value {
     }
 }
 
-fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
+pub(super) fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
     let home = crate::paths::home_dir();
     let join_home = |rel: &str| -> String {
         match home.as_ref() {
@@ -223,30 +223,30 @@ fn primary_spec_for_path(path: &Path) -> Option<ServerSpec> {
             // `@Model.` lists the model's members. OmniSharp only guesses
             // from symbol names, so it stays as the fallback, then the html
             // LSP so at least markup completion still works.
-            let mut args = vec![
-                "--stdio".to_string(),
-                "--clientProcessId".to_string(),
-                std::process::id().to_string(),
-                "--logLevel".to_string(),
-                "Warning".to_string(),
+            let roslyn_candidates = vec![
+                "roslyn-language-server".into(),
+                join_home(".dotnet/tools/roslyn-language-server"),
             ];
-            if let Some(targets) = razor_design_time_targets() {
-                args.push("--csharpDesignTimePath".to_string());
-                args.push(targets.to_string_lossy().into_owned());
-            }
-            let roslyn = ServerSpec {
-                key: "roslyn".into(),
-                language_id: "razor".into(),
-                cmd_candidates: vec![
-                    "roslyn-language-server".into(),
-                    join_home(".dotnet/tools/roslyn-language-server"),
-                ],
-                args,
-                root_markers: roslyn_root_markers(path),
-                initialization_options: Value::Null,
-            };
-            if resolve_command(&roslyn.cmd_candidates).is_some() {
-                return Some(roslyn);
+            if let Some((server, _)) = resolve_command(&roslyn_candidates) {
+                let mut args = vec![
+                    "--stdio".to_string(),
+                    "--clientProcessId".to_string(),
+                    std::process::id().to_string(),
+                    "--logLevel".to_string(),
+                    "Warning".to_string(),
+                ];
+                if let Some(targets) = razor_design_time_targets(Path::new(&server)) {
+                    args.push("--csharpDesignTimePath".to_string());
+                    args.push(targets.to_string_lossy().into_owned());
+                }
+                return Some(ServerSpec {
+                    key: "roslyn".into(),
+                    language_id: "razor".into(),
+                    cmd_candidates: roslyn_candidates,
+                    args,
+                    root_markers: roslyn_root_markers(path),
+                    initialization_options: Value::Null,
+                });
             }
             let omnisharp = ServerSpec {
                 key: "omnisharp".into(),
@@ -969,27 +969,72 @@ pub fn roslyn_open_notification(root: &Path) -> Option<(&'static str, Value)> {
 /// views get nothing. Roslyn imports the file named by
 /// `--csharpDesignTimePath` after the project body, so setting the property
 /// back there reaches only the server's design-time load, never a build.
-const RAZOR_DESIGN_TIME_TARGETS: &str = "<Project>
+///
+/// That flag is also how VS Code hands Roslyn the polyfill shipped beside the
+/// server, which wires the generator into projects that hold views without
+/// the Razor SDK. There's one flag, so this file imports the polyfill.
+fn razor_design_time_targets_text(polyfill: Option<&Path>) -> String {
+    let import = polyfill
+        .map(|p| {
+            let p = msbuild_attr(&p.to_string_lossy());
+            format!("  <Import Project=\"{p}\" Condition=\"Exists('{p}')\" />\n")
+        })
+        .unwrap_or_default();
+    format!(
+        "<Project>
   <PropertyGroup>
     <RazorCompileOnBuild>true</RazorCompileOnBuild>
   </PropertyGroup>
-</Project>
-";
+{import}</Project>
+"
+    )
+}
+
+/// A path as an MSBuild attribute value: MSBuild's own escapes for the
+/// characters it expands (`$(…)`, `@(…)`, `%(…)`, `;` lists, the quote in
+/// the `Exists('…')` condition), then XML's.
+fn msbuild_attr(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            '$' => out.push_str("%24"),
+            '@' => out.push_str("%40"),
+            ';' => out.push_str("%3B"),
+            '\'' => out.push_str("%27"),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
 
 /// Path of the targets file above, written to the cache once per process —
 /// specs are rebuilt on every request, the file only needs checking once.
 /// `None` when there's no cache directory, or under test.
-fn razor_design_time_targets() -> Option<PathBuf> {
+fn razor_design_time_targets(server: &Path) -> Option<PathBuf> {
     static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
         if cfg!(test) {
             return None;
         }
+        // The dotnet tool shim on `$PATH` is a symlink into the tool's
+        // store, where `Targets/` sits beside the real binary.
+        let polyfill = std::fs::canonicalize(server).ok().and_then(|real| {
+            let p = real
+                .parent()?
+                .join("Targets/Microsoft.CSharpExtension.DesignTime.targets");
+            p.is_file().then_some(p)
+        });
+        let text = razor_design_time_targets_text(polyfill.as_deref());
         let dir = crate::paths::cache_dir()?.join("roslyn");
         let path = dir.join("razor.targets");
-        if std::fs::read(&path).ok().as_deref() != Some(RAZOR_DESIGN_TIME_TARGETS.as_bytes()) {
+        if std::fs::read(&path).ok().as_deref() != Some(text.as_bytes()) {
             crate::paths::create_private_dir(&dir).ok()?;
-            crate::paths::write_atomic(&path, RAZOR_DESIGN_TIME_TARGETS.as_bytes()).ok()?;
+            crate::paths::write_atomic(&path, text.as_bytes()).ok()?;
         }
         Some(path)
     })
@@ -1002,6 +1047,28 @@ fn razor_design_time_targets() -> Option<PathBuf> {
 /// switch the ones that push today over to a protocol nothing else here uses.
 pub fn pulls_diagnostics(key: &str) -> bool {
     key == "roslyn"
+}
+
+/// Servers that hand the HTML parts of a Razor file back to the client:
+/// they send `razor/updateHtml` with the file's HTML projection, then
+/// forward HTML-position requests for the client to answer.
+pub fn forwards_html(key: &str) -> bool {
+    key == "roslyn"
+}
+
+/// Where a Razor file's HTML projection lives in the HTML server — a path
+/// no buffer opens, beside the file so its root and relative links resolve.
+/// The suffix is the one VS Code uses.
+pub fn virtual_html_path(razor: &Path) -> PathBuf {
+    let mut s = razor.as_os_str().to_owned();
+    s.push("__virtual.html");
+    PathBuf::from(s)
+}
+
+pub fn is_virtual_html(path: &Path) -> bool {
+    path.as_os_str()
+        .to_string_lossy()
+        .ends_with("__virtual.html")
 }
 
 /// Servers whose Info / Log `logMessage`s are left out of `:messages`.
@@ -1051,6 +1118,27 @@ fn which_in_path(name: &str) -> Option<String> {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_razor_targets_import_the_polyfill_with_its_path_escaped() {
+        let bare = razor_design_time_targets_text(None);
+        assert!(bare.contains("<RazorCompileOnBuild>true</RazorCompileOnBuild>"));
+        assert!(!bare.contains("Import"));
+        let text = razor_design_time_targets_text(Some(Path::new("/a b/R&D's $x/T.targets")));
+        assert!(text.contains(
+            "<Import Project=\"/a b/R&amp;D%27s %24x/T.targets\" \
+             Condition=\"Exists('/a b/R&amp;D%27s %24x/T.targets')\" />"
+        ));
+    }
+
+    #[test]
+    fn a_razor_file_projects_its_html_beside_itself() {
+        let view = Path::new("/site/Views/Home.cshtml");
+        let html = virtual_html_path(view);
+        assert_eq!(html, Path::new("/site/Views/Home.cshtml__virtual.html"));
+        assert!(is_virtual_html(&html));
+        assert!(!is_virtual_html(view));
+    }
 
     /// A fresh directory per test, canonical so it compares with what the
     /// searches return (`/var` is a symlink on macOS).

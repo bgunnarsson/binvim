@@ -60,6 +60,15 @@ pub enum LspIncoming {
         text: String,
         is_show: bool,
     },
+    /// A server-to-client request the manager answers: Roslyn's
+    /// `razor/updateHtml`, and the HTML requests Razor forwards to the
+    /// client — both go on to the HTML server, so they can't be answered
+    /// from the reader thread.
+    ServerRequest {
+        id: u64,
+        method: String,
+        params: Value,
+    },
     /// The server says diagnostics it answered before may be stale — a
     /// `workspace/diagnostic/refresh`, or Roslyn's project load finishing.
     /// Pull-diagnostics clients are asked again for every open document.
