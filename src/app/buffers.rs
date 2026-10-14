@@ -439,9 +439,8 @@ impl super::App {
         let raw = std::fs::read_to_string(path).ok()?;
         // Read as a string, so the file is valid UTF-8 now.
         self.buffer.lossy = false;
-        // Normalize CRLF → LF (matches Buffer::from_path) so reloaded
-        // CRLF files don't leak `\r` chars into the rope.
-        let text = raw.replace("\r\n", "\n");
+        let (text, bom) = crate::buffer::decode_file_text(&raw);
+        self.buffer.bom = bom;
         let text = if crate::buffer::is_notebook_path(path) {
             let (text, notebook, error) = crate::buffer::project_notebook(&text);
             // Without nbformat ids a cell is named `~N` by its position, and

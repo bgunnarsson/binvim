@@ -355,9 +355,10 @@ impl super::App {
 }
 
 /// `path`'s text as a buffer opened on it holds it: a notebook's cells,
-/// not its JSON, since that's what a dump of its buffer holds.
+/// not its JSON, and without CRLFs or a BOM, since that's what a dump of
+/// its buffer holds.
 fn disk_text(path: &Path) -> std::io::Result<String> {
-    let raw = std::fs::read_to_string(path)?;
+    let (raw, _) = crate::buffer::decode_file_text(&std::fs::read_to_string(path)?);
     Ok(if crate::buffer::is_notebook_path(path) {
         crate::buffer::project_notebook(&raw).0
     } else {

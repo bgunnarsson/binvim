@@ -38,6 +38,21 @@ impl LineEnding {
     }
 }
 
+const BOM: char = '\u{feff}';
+
+/// A file's text as a buffer holds it: CRLF folded to LF, and a leading
+/// UTF-8 byte-order mark taken off — the bool says one was there, so `save`
+/// can put it back. Left in, the BOM is a character every language server
+/// counts: Razor rejects a first-line `@model` behind it, and every column on
+/// line 0 is off by one.
+pub fn decode_file_text(raw: &str) -> (String, bool) {
+    let (raw, bom) = match raw.strip_prefix(BOM) {
+        Some(rest) => (rest, true),
+        None => (raw, false),
+    };
+    (raw.replace("\r\n", "\n"), bom)
+}
+
 /// Walk `bytes` counting CRLF vs bare-LF occurrences and pick the
 /// majority. Files with neither (no newlines at all) get the platform
 /// default — same heuristic editors like VS Code use.
@@ -147,6 +162,9 @@ pub struct Buffer {
     /// buffers). `save` emits the matching ending; `.editorconfig`'s
     /// `end_of_line` overrides this when set.
     pub line_ending: LineEnding,
+    /// The file started with a UTF-8 byte-order mark, which the rope doesn't
+    /// hold (`decode_file_text`) and `save` writes back.
+    pub bom: bool,
     /// Marks by name — `ma`, and the ones Vim keeps itself (`'.`, `'[`, …) —
     /// as char indices, so every edit can move them with the text it shifts.
     pub marks: HashMap<char, usize>,
@@ -228,6 +246,7 @@ impl Buffer {
             display_name: None,
             unnamed_key: None,
             line_ending: LineEnding::platform_default(),
+            bom: false,
             marks: HashMap::new(),
             change_open: false,
             last_visual: None,
@@ -259,7 +278,7 @@ impl Buffer {
                 .with_context(|| format!("reading {}", path.display()))?;
             let line_ending = detect_line_ending(&bytes);
             let lossy = std::str::from_utf8(&bytes).is_err();
-            let text = String::from_utf8_lossy(&bytes).replace("\r\n", "\n");
+            let (text, bom) = decode_file_text(&String::from_utf8_lossy(&bytes));
             let (text, notebook, notebook_error) = if is_notebook_path(&path) {
                 project_notebook(&text)
             } else {
@@ -274,6 +293,7 @@ impl Buffer {
                 disk_len,
                 lossy,
                 line_ending,
+                bom,
                 notebook,
                 notebook_error,
                 ..Self::empty()
@@ -331,7 +351,7 @@ impl Buffer {
             .path
             .as_ref()
             .context("no file path set (use :w {filename})")?;
-        let (bytes, notebook) = match &self.notebook {
+        let (mut bytes, notebook) = match &self.notebook {
             Some(doc) => {
                 let (json, saved) = doc.save_with(&self.rope.to_string(), keep_outputs);
                 // JSON escapes every newline inside a string, so each one in
@@ -351,6 +371,10 @@ impl Buffer {
                 (bytes, None)
             }
         };
+        if self.bom {
+            let mut mark = [0; 3];
+            bytes.splice(0..0, BOM.encode_utf8(&mut mark).bytes());
+        }
         crate::paths::write_atomic(path, &bytes)
             .with_context(|| format!("writing {}", path.display()))?;
         if notebook.is_some() {
@@ -967,6 +991,30 @@ mod tests {
         let out = std::fs::read(&tmp).unwrap();
         assert_eq!(out, b"hello\nworld\n");
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn a_bom_is_kept_off_the_rope_and_written_back() {
+        let tmp = std::env::temp_dir().join("binvim_bom_roundtrip.cshtml");
+        let _ = std::fs::remove_file(&tmp);
+        std::fs::write(&tmp, "\u{feff}@model Foo\r\n<p>\r\n").unwrap();
+        let mut buf = Buffer::from_path(tmp.clone()).unwrap();
+        assert!(buf.bom);
+        assert_eq!(buf.rope.to_string(), "@model Foo\n<p>\n");
+        assert_eq!(
+            buf.clean_hash,
+            Some(crate::undo::hash_text("@model Foo\n<p>\n"))
+        );
+        buf.save().unwrap();
+        assert_eq!(
+            std::fs::read(&tmp).unwrap(),
+            "\u{feff}@model Foo\r\n<p>\r\n".as_bytes()
+        );
+        let _ = std::fs::remove_file(&tmp);
+        assert_eq!(
+            decode_file_text("a\u{feff}b"),
+            ("a\u{feff}b".to_string(), false)
+        );
     }
 
     #[test]
