@@ -1274,15 +1274,12 @@ impl HoverState {
             }
             // ATX heading — leading `#`s, up to 6, followed by space.
             if let Some(level) = atx_heading_level(trimmed_full) {
-                let text = trimmed_full
-                    .trim_start_matches('#')
-                    .trim_start()
-                    .to_string();
+                let text = unescape_markdown(trimmed_full.trim_start_matches('#').trim_start());
                 lines.push(HoverLine::Heading { level, text });
                 continue;
             }
             // Plain prose — wrap with leading-whitespace preserved.
-            for w in wrap_prose(stripped, wrap_width) {
+            for w in wrap_prose(&unescape_markdown(stripped), wrap_width) {
                 lines.push(HoverLine::Prose(w));
             }
         }
@@ -1429,6 +1426,51 @@ fn emit_code_lines(
 /// Returns 1..=6 if `line` is an ATX-style markdown heading. The convention
 /// requires a single space between the `#`s and the heading text — e.g.
 /// `## Title`. A bare `#` or `#identifier` is not a heading.
+/// Prose as it reads once rendered: CommonMark backslash escapes and the
+/// few HTML entities servers write (Roslyn sends `RazorPage\<TModel\>` and
+/// `&nbsp;`) turned back into their characters. Inline code spans are left
+/// as written — an escape means nothing inside backticks.
+fn unescape_markdown(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut in_code = false;
+    let mut rest = line;
+    while let Some(c) = rest.chars().next() {
+        rest = &rest[c.len_utf8()..];
+        match c {
+            '`' => {
+                in_code = !in_code;
+                out.push(c);
+            }
+            '\\' if !in_code => match rest.chars().next() {
+                Some(next) if next.is_ascii_punctuation() => {
+                    out.push(next);
+                    rest = &rest[1..];
+                }
+                _ => out.push(c),
+            },
+            '&' if !in_code => {
+                let entity = [
+                    ("&nbsp;", ' '),
+                    ("&lt;", '<'),
+                    ("&gt;", '>'),
+                    ("&amp;", '&'),
+                ]
+                .into_iter()
+                .find(|(name, _)| rest.starts_with(&name[1..]));
+                match entity {
+                    Some((name, ch)) => {
+                        out.push(ch);
+                        rest = &rest[name.len() - 1..];
+                    }
+                    None => out.push(c),
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 fn atx_heading_level(line: &str) -> Option<u8> {
     let mut chars = line.chars();
     let mut hashes = 0u8;
@@ -1745,6 +1787,21 @@ mod tests {
             total,
             long.len(),
             "chunks together cover the whole source line"
+        );
+    }
+
+    #[test]
+    fn hover_prose_reads_without_markdown_escapes() {
+        assert_eq!(
+            unescape_markdown(
+                "Gets the Model property of the&nbsp;Microsoft\\.AspNetCore\\.Mvc\\.Razor\\.RazorPage\\<TModel\\>"
+            ),
+            "Gets the Model property of the Microsoft.AspNetCore.Mvc.Razor.RazorPage<TModel>"
+        );
+        assert_eq!(unescape_markdown("`a\\.b` c\\.d"), "`a\\.b` c.d");
+        assert_eq!(
+            unescape_markdown("C:\\dir &copy; a\\"),
+            "C:\\dir &copy; a\\"
         );
     }
 
