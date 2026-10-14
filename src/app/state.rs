@@ -1423,13 +1423,12 @@ fn emit_code_lines(
     }
 }
 
-/// Returns 1..=6 if `line` is an ATX-style markdown heading. The convention
-/// requires a single space between the `#`s and the heading text — e.g.
-/// `## Title`. A bare `#` or `#identifier` is not a heading.
 /// Prose as it reads once rendered: CommonMark backslash escapes and the
 /// few HTML entities servers write (Roslyn sends `RazorPage\<TModel\>` and
 /// `&nbsp;`) turned back into their characters. Inline code spans are left
-/// as written — an escape means nothing inside backticks.
+/// as written — an escape means nothing inside backticks. Images are
+/// dropped: the HTML server puts a base64 `data:` badge in every element's
+/// hover, which a terminal can only print as a wall of base64.
 fn unescape_markdown(line: &str) -> String {
     let mut out = String::with_capacity(line.len());
     let mut in_code = false;
@@ -1448,6 +1447,15 @@ fn unescape_markdown(line: &str) -> String {
                 }
                 _ => out.push(c),
             },
+            '!' if !in_code && rest.starts_with('[') => {
+                let end = rest
+                    .find("](")
+                    .and_then(|i| rest[i..].find(')').map(|j| i + j + 1));
+                match end {
+                    Some(end) => rest = rest[end..].trim_start(),
+                    None => out.push(c),
+                }
+            }
             '&' if !in_code => {
                 let entity = [
                     ("&nbsp;", ' '),
@@ -1471,6 +1479,9 @@ fn unescape_markdown(line: &str) -> String {
     out
 }
 
+/// Returns 1..=6 if `line` is an ATX-style markdown heading. The convention
+/// requires a single space between the `#`s and the heading text — e.g.
+/// `## Title`. A bare `#` or `#identifier` is not a heading.
 fn atx_heading_level(line: &str) -> Option<u8> {
     let mut chars = line.chars();
     let mut hashes = 0u8;
@@ -1803,6 +1814,21 @@ mod tests {
             unescape_markdown("C:\\dir &copy; a\\"),
             "C:\\dir &copy; a\\"
         );
+    }
+
+    #[test]
+    fn hover_prose_drops_images() {
+        assert_eq!(
+            unescape_markdown(
+                "![Baseline icon](data:image/svg+xml;base64,PHN2Zz4=) _Widely available_"
+            ),
+            "_Widely available_"
+        );
+        assert_eq!(
+            unescape_markdown("Wow! `![a](b)` [x]"),
+            "Wow! `![a](b)` [x]"
+        );
+        assert_eq!(unescape_markdown("![unclosed"), "![unclosed");
     }
 
     #[test]
