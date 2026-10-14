@@ -759,6 +759,18 @@ pub fn parse_after_range(range: ExRange, rest: &str, line: &str) -> ExCommand {
         };
     }
     if let Some(args) = rest.strip_prefix('s') {
+        // `:s` with no pattern is `:&`: the last `:s` again, its flags not kept.
+        if args.is_empty() || args.starts_with(char::is_whitespace) {
+            return match parse_sub_flags(args.trim()) {
+                Ok(flags) => ExCommand::RepeatSubstitute {
+                    range,
+                    last_search: false,
+                    keep_flags: false,
+                    flags,
+                },
+                Err(e) => ExCommand::Invalid(e),
+            };
+        }
         match parse_substitute_args(args) {
             Some(Ok((pattern, replacement, flags))) => {
                 return ExCommand::Substitute {
@@ -1978,6 +1990,23 @@ mod tests {
             }
         ));
         assert!(matches!(parse("&x"), ExCommand::Invalid(_)));
+        assert!(matches!(
+            parse("%s"),
+            ExCommand::RepeatSubstitute {
+                range: ExRange::Whole,
+                last_search: false,
+                keep_flags: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse("s g"),
+            ExCommand::RepeatSubstitute {
+                flags: SubFlags { global: true, .. },
+                ..
+            }
+        ));
+        assert!(matches!(parse("s x"), ExCommand::Invalid(_)));
     }
 
     #[test]
