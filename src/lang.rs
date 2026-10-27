@@ -898,9 +898,25 @@ pub(crate) fn parse_bounded(parser: &mut Parser, source: &str, deadline: Instant
             ControlFlow::Continue(())
         }
     };
+    // tree-sitter-bash's scanner calls `isdigit` on the codepoint after a `{`
+    // and after `{1..` (brace ranges), and glibc's `isdigit` indexes a table
+    // that ends at 255, so `{€` reads past it. Upstream still does this, and
+    // vendoring the grammar means a 9.5 MB parser.c, so Bash is handed its text
+    // with every non-ASCII byte as `a` instead: a byte for a byte, so every
+    // offset in the tree still points into `source`, and still a word
+    // character to a grammar whose words are anything that isn't syntax.
+    let masked;
+    let bytes = if parser.language().and_then(|l| l.name()) == Some("bash") && !source.is_ascii() {
+        masked = source
+            .bytes()
+            .map(|b| if b.is_ascii() { b } else { b'a' })
+            .collect::<Vec<u8>>();
+        masked.as_slice()
+    } else {
+        source.as_bytes()
+    };
     // The chunk callback mirrors what `Parser::parse` does internally — it's
     // the only form that takes options alongside the text.
-    let bytes = source.as_bytes();
     let len = bytes.len();
     parser.parse_with_options(
         &mut |i, _| if i < len { &bytes[i..] } else { &[] },
@@ -2688,13 +2704,8 @@ export function Page() {
     // `compute_byte_colors`), so per-test isolation also means a
     // crashing grammar can't leak state into the next one's run.
     macro_rules! fuzz_lang {
-        // Default alphabet: any non-control Unicode scalar, up to 400 chars.
+        // Any non-control Unicode scalar, up to 400 chars.
         ($name:ident, $lang:expr) => {
-            fuzz_lang!($name, $lang, "\\PC{0,400}");
-        };
-        // Custom alphabet — used by the bash-backed grammars (see
-        // `BASH_FUZZ_ALPHABET`).
-        ($name:ident, $lang:expr, $alphabet:expr) => {
             proptest! {
                 // 64 cases per grammar keeps the aggregate CI cost
                 // similar to the original combined test (30 × 64
@@ -2702,7 +2713,7 @@ export function Page() {
                 #![proptest_config(ProptestConfig::with_cases(64))]
 
                 #[test]
-                fn $name(src in $alphabet) {
+                fn $name(src in "\\PC{0,400}") {
                     let cfg = Config::default();
                     if let Some(colors) = compute_byte_colors($lang, &src, &cfg) {
                         // The colour map is keyed by byte offset; if
@@ -2716,21 +2727,30 @@ export function Page() {
         };
     }
 
-    // tree-sitter-bash's C external scanner has a latent out-of-bounds
-    // read when fed adversarial *multibyte* UTF-8 (supplementary-plane
-    // and combining-mark soup). It doesn't fault on any single input —
-    // the bad read only lands on an unmapped page once enough prior
-    // parses have shaped the allocator's heap — so it surfaced as a
-    // non-deterministic SIGSEGV in `fuzz_bash` on native x86_64 CI only
-    // (never on aarch64 / under qemu, and never reproducible from a
-    // captured single input). The other 30 grammars chew through the
-    // same `\PC` multibyte stream without issue, which pins the bug to
-    // bash's scanner. Restricting the three bash-backed grammars to
-    // printable ASCII + tab/newline keeps full coverage of our
-    // byte-offset invariant and every bash token shape while never
-    // exercising the buggy multibyte path. Drop this and restore
-    // `\PC{0,400}` if a fixed tree-sitter-bash lands upstream.
-    const BASH_FUZZ_ALPHABET: &str = "[\t\n -~]{0,400}";
+    // Bash's scanner never sees a non-ASCII byte (`parse_bounded`), so a
+    // codepoint after `{` or `{1..` — the `isdigit` calls glibc reads past its
+    // table for — highlights, and the string around it keeps its colour over
+    // exactly its bytes.
+    #[test]
+    fn bash_highlights_a_brace_range_of_wide_codepoints() {
+        let cfg = Config::default();
+        for src in [
+            "echo {\u{1F600}..1}\n",
+            "echo {1..\u{4e00}}\n",
+            "x=\"\u{e9}\u{4e00}\"\n",
+        ] {
+            for lang in [Lang::Bash, Lang::EditorConfig, Lang::GitIgnore] {
+                let colors = compute_byte_colors(lang, src, &cfg).unwrap();
+                assert_eq!(colors.len(), src.len());
+            }
+        }
+        let src = "x=\"\u{e9}\u{4e00}\"\n";
+        let colors = compute_byte_colors(Lang::Bash, src, &cfg).unwrap();
+        let open = src.find('"').unwrap();
+        let close = src.rfind('"').unwrap();
+        assert!(colors[open].is_some());
+        assert!(colors[open..=close].iter().all(|c| *c == colors[open]));
+    }
 
     // The vendored scanner reads an ordered-list marker's digits by range, not
     // with `isdigit` on a Unicode scalar (vendor/tree-sitter-markdown/README.md).
@@ -2766,11 +2786,11 @@ export function Page() {
     fuzz_lang!(fuzz_markdown, Lang::Markdown);
     fuzz_lang!(fuzz_csharp, Lang::CSharp);
     fuzz_lang!(fuzz_razor, Lang::Razor);
-    fuzz_lang!(fuzz_bash, Lang::Bash, BASH_FUZZ_ALPHABET);
+    fuzz_lang!(fuzz_bash, Lang::Bash);
     fuzz_lang!(fuzz_yaml, Lang::Yaml);
     fuzz_lang!(fuzz_xml, Lang::Xml);
-    fuzz_lang!(fuzz_editorconfig, Lang::EditorConfig, BASH_FUZZ_ALPHABET);
-    fuzz_lang!(fuzz_gitignore, Lang::GitIgnore, BASH_FUZZ_ALPHABET);
+    fuzz_lang!(fuzz_editorconfig, Lang::EditorConfig);
+    fuzz_lang!(fuzz_gitignore, Lang::GitIgnore);
     fuzz_lang!(fuzz_python, Lang::Python);
     fuzz_lang!(fuzz_c, Lang::C);
     fuzz_lang!(fuzz_cpp, Lang::Cpp);
