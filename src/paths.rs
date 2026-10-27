@@ -237,9 +237,132 @@ pub fn others_can_plant(dir: &Path, rel: impl AsRef<Path>) -> bool {
         })
 }
 
-#[cfg(not(unix))]
+/// Windows has no mode bits to read, so this is the owner half of the Unix
+/// check: every step from `dir` down through `rel` is this user's, SYSTEM's,
+/// the Administrators group's (what an elevated process's files get) or
+/// TrustedInstaller's. Any signed-in user may create a folder at a drive's
+/// root, and it is theirs, so a `C:\node_modules\.bin\biome` another account
+/// planted is passed over. A step whose owner can't be read counts as planted.
+#[cfg(windows)]
+pub fn others_can_plant(dir: &Path, rel: impl AsRef<Path>) -> bool {
+    let mut path = dir.to_path_buf();
+    !win_owner::trusted(&path)
+        || rel.as_ref().components().any(|c| {
+            path.push(c);
+            !win_owner::trusted(&path)
+        })
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn others_can_plant(_: &Path, _: impl AsRef<Path>) -> bool {
     false
+}
+
+#[cfg(windows)]
+mod win_owner {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::Path;
+    use std::ptr::null_mut;
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, HANDLE, LocalFree,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertSidToStringSidW, GetNamedSecurityInfoW, SE_FILE_OBJECT,
+    };
+    use windows_sys::Win32::Security::{
+        GetTokenInformation, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, TOKEN_QUERY,
+        TOKEN_USER, TokenUser,
+    };
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// SYSTEM, Administrators, TrustedInstaller.
+    const SYSTEM_OWNERS: [&str; 3] = [
+        "S-1-5-18",
+        "S-1-5-32-544",
+        "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",
+    ];
+
+    /// A path that doesn't exist is safe, as on Unix: the searches check
+    /// existence themselves.
+    pub(super) fn trusted(path: &Path) -> bool {
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+        let mut owner: PSID = null_mut();
+        let mut sd: PSECURITY_DESCRIPTOR = null_mut();
+        // SAFETY: `wide` is NUL-terminated; on success `sd` is a LocalAlloc'd
+        // descriptor `owner` points into, freed once `owner` has been read.
+        let err = unsafe {
+            GetNamedSecurityInfoW(
+                wide.as_ptr(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION,
+                &mut owner,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut sd,
+            )
+        };
+        if err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND {
+            return true;
+        }
+        if err != 0 {
+            return false;
+        }
+        // SAFETY: `owner` points into `sd`, which is still alive.
+        let owner = unsafe { sid_string(owner) };
+        // SAFETY: `sd` came from GetNamedSecurityInfoW and isn't used again.
+        unsafe { LocalFree(sd) };
+        owner.is_some_and(|owner| {
+            SYSTEM_OWNERS.contains(&owner.as_str()) || me().is_some_and(|me| me == owner)
+        })
+    }
+
+    /// # Safety
+    /// `sid` must point to a valid SID.
+    unsafe fn sid_string(sid: PSID) -> Option<String> {
+        let mut text = null_mut();
+        // SAFETY: the caller vouches for `sid`; on success `text` is a
+        // LocalAlloc'd NUL-terminated string, freed after it's copied.
+        unsafe {
+            if ConvertSidToStringSidW(sid, &mut text) == 0 {
+                return None;
+            }
+            let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+            let out = String::from_utf16_lossy(std::slice::from_raw_parts(text, len));
+            LocalFree(text.cast());
+            Some(out)
+        }
+    }
+
+    /// This process's user, as a SID string.
+    fn me() -> Option<&'static str> {
+        static ME: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+        ME.get_or_init(|| {
+            let mut token: HANDLE = null_mut();
+            // SAFETY: the pseudo-handle from GetCurrentProcess needs no
+            // closing; `token` is closed below.
+            if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+                return None;
+            }
+            let mut len = 0u32;
+            // SAFETY: a null buffer of size 0 only asks for the length.
+            unsafe { GetTokenInformation(token, TokenUser, null_mut(), 0, &mut len) };
+            // u64s, so the TOKEN_USER read out of it is aligned.
+            let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+            // SAFETY: `buf` holds at least `len` bytes; on success it starts
+            // with a TOKEN_USER whose SID points into `buf`.
+            unsafe {
+                let ok =
+                    GetTokenInformation(token, TokenUser, buf.as_mut_ptr().cast(), len, &mut len);
+                CloseHandle(token);
+                if ok == 0 {
+                    return None;
+                }
+                sid_string((*buf.as_ptr().cast::<TOKEN_USER>()).User.Sid)
+            }
+        })
+        .as_deref()
+    }
 }
 
 /// Every step from `base` down through `rel` is this process's effective

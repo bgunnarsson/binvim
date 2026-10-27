@@ -115,6 +115,16 @@ signal-hook = "0.3"
 # (`paths::cache_dir`). Already in the tree through crossterm.
 libc = "0.2"
 
+# The owner of a file, for `paths::others_can_plant`: std reads no security
+# descriptors. Already in the tree through crossterm's mio.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 # proptest drives the property-based test suite for motion / text_object
 # invariants and the panic-hardening passes over compute_byte_colors and the
