@@ -69,8 +69,9 @@ impl super::App {
     /// `workspace/applyEdit` request. The server is blocked waiting
     /// for a response, so we stash `(client_key, request_id)` on the
     /// preview state; accept replies `applied: true`, cancel replies
-    /// `applied: false`. If a preview is already open we reject the
-    /// new request immediately so the server doesn't hang.
+    /// `applied: false`. If a preview is already open, or there's nothing
+    /// to apply, we reply `applied: false` right away so the server doesn't
+    /// hang — never apply it unseen, which is what the preview opted out of.
     ///
     /// `label` is a short human-readable description used in the
     /// title bar — typically the client_key, since the server didn't
@@ -81,13 +82,16 @@ impl super::App {
         request_id: u64,
         label: String,
         edit: &JsonValue,
-    ) -> bool {
-        if self.pending_rename_preview.is_some() {
-            return false;
-        }
-        let parsed = self.parse_workspace_edit(edit);
+    ) {
+        let parsed = if self.pending_rename_preview.is_some() {
+            Vec::new()
+        } else {
+            self.parse_workspace_edit(edit)
+        };
         if parsed.is_empty() {
-            return false;
+            self.lsp
+                .send_apply_edit_response(&client_key, request_id, false);
+            return;
         }
         let kind = PreviewKind::ApplyEditFromServer {
             label,
@@ -95,7 +99,6 @@ impl super::App {
             request_id,
         };
         self.show_preview_overlay(kind, parsed);
-        true
     }
 
     /// Shared body — caches per-file line text and switches into

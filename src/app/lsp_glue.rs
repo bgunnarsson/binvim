@@ -70,14 +70,14 @@ impl super::App {
                     // through `Mode::RenamePreview` and reply when the user
                     // accepts / cancels (or right away if there's nothing
                     // to apply or a preview is already on screen).
-                    let routed = self.config.lsp.preview_workspace_edits
-                        && self.open_server_apply_edit_preview(
+                    if self.config.lsp.preview_workspace_edits {
+                        self.open_server_apply_edit_preview(
                             client_key.clone(),
                             id,
-                            client_key.clone(),
+                            client_key,
                             &edit,
                         );
-                    if !routed {
+                    } else {
                         let applied = match self.apply_workspace_edit(&edit) {
                             Ok((edits, _)) => edits > 0,
                             Err(_) => false,
