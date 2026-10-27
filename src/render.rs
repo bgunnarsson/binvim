@@ -31,6 +31,31 @@ pub(crate) fn char_width(c: char, tab_width: usize) -> usize {
     }
 }
 
+/// What the terminal is sent for a character of document text. A control
+/// character printed raw is a command to the terminal rather than a glyph —
+/// an OSC 52 sequence in a file would set the clipboard just by scrolling
+/// into view — so it is drawn as its Control Pictures glyph (`␛` for ESC),
+/// one cell, the width `char_width` already gives it. Tabs are left to the
+/// callers, which expand them.
+pub(crate) fn shown_char(c: char) -> char {
+    match c {
+        '\t' => c,
+        '\0'..='\x1f' => char::from_u32(0x2400 + c as u32).unwrap_or('\u{fffd}'),
+        '\x7f' => '\u{2421}',
+        '\u{80}'..='\u{9f}' => '\u{fffd}',
+        c => c,
+    }
+}
+
+/// `shown_char` over a string, borrowing it when nothing needs replacing.
+pub(crate) fn shown_str(s: &str) -> std::borrow::Cow<'_, str> {
+    if s.chars().any(|c| shown_char(c) != c) {
+        std::borrow::Cow::Owned(s.chars().map(shown_char).collect())
+    } else {
+        std::borrow::Cow::Borrowed(s)
+    }
+}
+
 /// Terminal cell width of one grapheme cluster. A single-char cluster keeps
 /// `char_width`'s answer (tab stop, control char → 1); a longer one is measured
 /// whole, since a terminal draws `👨‍👩‍👧` in 2 cells, not the 6 its codepoints sum
@@ -94,7 +119,7 @@ fn visible_slice(rendered: &str, view_left: usize, avail: usize) -> String {
         let w = char_width(c, 1);
         let shown = visible_cells(pos, w, view_left, avail);
         if shown == w {
-            out.push(c);
+            out.push(shown_char(c));
         } else {
             out.extend(std::iter::repeat_n(' ', shown));
         }
@@ -2120,7 +2145,7 @@ fn paint_chars(
     abs_start: usize,
 ) -> Result<()> {
     if matched.is_empty() {
-        let s: String = slice.iter().collect();
+        let s: String = slice.iter().copied().map(shown_char).collect();
         queue!(out, SetForegroundColor(base_color), Print(&s))?;
         return Ok(());
     }
@@ -2144,7 +2169,7 @@ fn paint_chars(
             }
             prev_highlighted = highlighted;
         }
-        queue!(out, Print(ch))?;
+        queue!(out, Print(shown_char(*ch)))?;
     }
     if prev_highlighted {
         queue!(out, SetAttribute(Attribute::NormalIntensity))?;
@@ -5333,6 +5358,25 @@ mod tests {
     }
 
     #[test]
+    fn draw_walk_shows_control_characters_instead_of_sending_them() {
+        let raw = {
+            let mut app = crate::app::App::new(None).expect("App::new");
+            app.buffer.rope = ropey::Rope::from_str("a\u{1b}]52;c;YXVkaXQ=\u{7}b\u{9b}\n");
+            let bs = app.buffer_state(app.active);
+            let mut out = Vec::new();
+            draw_line_with_selection(&mut out, &app, &bs, &app.window, 0, 40, false, None)
+                .expect("draw");
+            String::from_utf8(out).expect("utf-8")
+        };
+        assert!(!raw.contains("\u{1b}]"), "{raw:?}");
+        assert!(!raw.contains('\u{7}'), "{raw:?}");
+        assert!(!raw.contains('\u{9b}'), "{raw:?}");
+        assert!(raw.contains("a␛]52;c;YXVkaXQ=␇b\u{fffd}"), "{raw:?}");
+        assert_eq!(visible_slice("x\u{1b}y", 0, 5), "x␛y");
+        assert_eq!(super::shown_str("a\tb"), "a\tb");
+    }
+
+    #[test]
     fn visible_slice_scrolls_a_pre_rendered_row() {
         assert_eq!(visible_slice("│ abc │ def │", 0, 5), "│ abc");
         assert_eq!(visible_slice("│ abc │ def │", 4, 5), "c │ d");
@@ -5842,7 +5886,7 @@ fn draw_notebook_page(
                 }
                 last = Some(s.style);
             }
-            queue!(out, Print(&s.text))?;
+            queue!(out, Print(shown_str(&s.text)))?;
             used += s.width;
         }
         queue!(out, SetAttribute(Attribute::Reset))?;
@@ -6733,7 +6777,7 @@ fn draw_line_with_selection(
             queue!(out, Print(marker.to_string().repeat(visible_w)))?;
             cluster_hidden = true;
         } else {
-            queue!(out, Print(c.to_string()))?;
+            queue!(out, Print(shown_char(*c)))?;
         }
         if diag_severity.is_some() {
             queue!(out, SetAttribute(Attribute::NoUnderline))?;
@@ -6865,7 +6909,8 @@ fn draw_line_with_selection(
                 // Truncate so the ghost can't wrap past the pane edge.
                 let remaining = avail.saturating_sub(visual_used);
                 if remaining > 0 && !first_line.is_empty() {
-                    let truncated: String = first_line.chars().take(remaining).collect();
+                    let truncated: String =
+                        first_line.chars().take(remaining).map(shown_char).collect();
                     queue!(
                         out,
                         SetForegroundColor(app.config.theme_dim()),
