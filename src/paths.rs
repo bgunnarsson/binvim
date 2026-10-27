@@ -100,12 +100,12 @@ pub fn data_dir() -> Option<PathBuf> {
     }
 }
 
-/// XDG-style resolution: honour `$var` if set + non-empty, otherwise
-/// fall back to `$HOME/<sub>`. Returns the path with `binvim` appended
+/// XDG-style resolution: honour `$var` if set to an absolute path (the spec
+/// says to ignore a relative one), otherwise fall back to `$HOME/<sub>`. Returns the path with `binvim` appended
 /// so call sites get the per-app subdirectory in one shot.
 #[cfg(unix)]
 fn xdg_or_home(var: &str, sub: &str) -> Option<PathBuf> {
-    if let Some(v) = std::env::var_os(var).filter(|v| !v.is_empty()) {
+    if let Some(v) = std::env::var_os(var).filter(|v| Path::new(v).is_absolute()) {
         return Some(PathBuf::from(v).join(APP));
     }
     home_dir().map(|h| h.join(sub).join(APP))

@@ -876,9 +876,20 @@ fn python_module_argvs(pkg: &str, upgrade: bool) -> Vec<(String, Vec<String>)> {
     python_module_steps(base, venv.as_deref(), ready, pkg, upgrade)
 }
 
+/// A `python -m venv` / `-m pip` step, run outside the project: `-m` puts the
+/// current directory first on `sys.path`, so a `pip/` or `venv.py` in the
+/// directory binvim was started from would run in place of the real module.
+/// `PYTHONPATH` is dropped for the reason `python_has_module` gives. Every
+/// path in the arguments is absolute, so the directory changes nothing else.
 fn argv_command((program, args): (String, Vec<String>)) -> Command {
     let mut c = Command::new(program);
-    c.args(args);
+    c.args(args)
+        .env_remove("PYTHONPATH")
+        .current_dir(if cfg!(unix) {
+            PathBuf::from("/")
+        } else {
+            std::env::temp_dir()
+        });
     c
 }
 
@@ -2046,6 +2057,15 @@ mod tests {
             joined(python_module_steps("python", None, false, "debugpy", false)),
             ["python -m pip install --user debugpy"]
         );
+    }
+
+    #[test]
+    fn python_module_steps_run_outside_the_project() {
+        let c = argv_command(("python3".into(), vec!["-m".into(), "pip".into()]));
+        let dir = c.get_current_dir().expect("a working directory");
+        assert!(dir.is_absolute());
+        assert_ne!(Some(dir), std::env::current_dir().ok().as_deref());
+        assert!(c.get_envs().any(|(k, v)| k == "PYTHONPATH" && v.is_none()));
     }
 
     #[test]
