@@ -413,11 +413,12 @@ pub(crate) fn tidy_private_dir(
 /// and given its owner and group. Where the rename would still change the file,
 /// it's written in place instead, keeping the inode: a file under the system
 /// temp directory (`temp_dirs` — what `crontab -e` checks), other hard links (a
-/// rename would split them), an owner or group this user can't give the temp
+/// rename would split them), an access control list (`has_acl` — the temp
+/// file would get its directory's instead, which can let in a user the file's
+/// own kept out), an owner or group this user can't give the temp
 /// file (`sudo binvim` on someone else's file), a directory the temp file can't
 /// be created in (a file the user may write but not replace), and a rename that
-/// fails. ACLs and extended
-/// attributes aren't carried over. Writing in place truncates first, so the
+/// fails. Other extended attributes aren't carried over. Writing in place truncates first, so the
 /// file is copied aside beforehand (`write_in_place`).
 ///
 /// The temp file sits beside the target, possibly in a directory other users
@@ -492,7 +493,7 @@ fn write_atomic_with(
         _ => path.to_path_buf(),
     };
     let existing = std::fs::metadata(&target).ok();
-    if existing.as_ref().is_some_and(has_other_links) {
+    if existing.as_ref().is_some_and(has_other_links) || has_acl(&target) {
         return in_place(&target);
     }
     if existing.is_some() {
@@ -726,6 +727,56 @@ fn has_other_links(_: &std::fs::Metadata) -> bool {
     false
 }
 
+/// Does `path` carry an access control list beyond its mode bits? Linux keeps
+/// one in the `system.posix_acl_access` attribute, which a file without one
+/// doesn't have; macOS answers through `acl_get_link_np`, which has no binding
+/// in `libc`. A file that can't be asked counts as having none.
+#[cfg(target_os = "linux")]
+fn has_acl(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: both strings are NUL-terminated, and a null buffer of size 0
+    // only asks for the value's length.
+    unsafe {
+        libc::getxattr(
+            c_path.as_ptr(),
+            c"system.posix_acl_access".as_ptr(),
+            std::ptr::null_mut(),
+            0,
+        ) >= 0
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn has_acl(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    const ACL_TYPE_EXTENDED: libc::c_int = 0x100;
+    unsafe extern "C" {
+        fn acl_get_link_np(path: *const libc::c_char, ty: libc::c_int) -> *mut libc::c_void;
+        fn acl_free(obj: *mut libc::c_void) -> libc::c_int;
+    }
+    let Ok(c_path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `c_path` is NUL-terminated; a non-null result is an ACL this
+    // call owns, freed before returning.
+    unsafe {
+        let acl = acl_get_link_np(c_path.as_ptr(), ACL_TYPE_EXTENDED);
+        if acl.is_null() {
+            return false;
+        }
+        acl_free(acl);
+        true
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn has_acl(_: &Path) -> bool {
+    false
+}
+
 /// Test support shared by the specs modules' upward-search tests: a fresh
 /// canonical scratch directory, unique per prefix + name + pid so parallel
 /// runs don't share files.
@@ -841,6 +892,41 @@ mod tests {
         .unwrap();
         assert_eq!(std::fs::read(&file).unwrap(), b"new");
         assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn a_file_with_an_acl_keeps_it() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = scratch("acl");
+        let file = dir.join("guarded.txt");
+        std::fs::write(&file, "old").unwrap();
+        let set = if cfg!(target_os = "macos") {
+            std::process::Command::new("chmod")
+                .args(["+a", "user:nobody deny read"])
+                .arg(&file)
+                .status()
+        } else {
+            std::process::Command::new("setfacl")
+                .args(["-m", "u:nobody:---"])
+                .arg(&file)
+                .status()
+        };
+        // No `setfacl`, or a filesystem without ACLs: nothing to keep.
+        if !set.is_ok_and(|s| s.success()) || !has_acl(&file) {
+            return;
+        }
+        let inode = std::fs::metadata(&file).unwrap().ino();
+        write_atomic_with(&file, b"new", None, &[], |_, _| {
+            panic!("renamed over an ACL")
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"new");
+        assert_eq!(std::fs::metadata(&file).unwrap().ino(), inode);
+        assert!(has_acl(&file));
+        let plain = dir.join("plain.txt");
+        std::fs::write(&plain, "x").unwrap();
+        assert!(!has_acl(&plain));
     }
 
     #[test]
