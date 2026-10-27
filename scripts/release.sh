@@ -445,8 +445,8 @@ fi
 # first sign of a stale token is a 403 at step 3b, by which point the
 # bump commit is already pushed to main.
 #
-# The token is only ever passed to curl through this variable; nothing
-# echoes it. Non-auth failures (offline, crates.io 5xx, no curl) warn
+# The token reaches curl on its stdin (`-H @-`), never in its arguments,
+# which any local user can read off the process list; nothing echoes it. Non-auth failures (offline, crates.io 5xx, no curl) warn
 # and continue rather than block — publish will surface those anyway,
 # and a flaky network shouldn't veto a release.
 probe_crates_token() {
@@ -485,8 +485,8 @@ probe_crates_token() {
     #
     # crates.io rejects requests without a User-Agent.
     local resp code body
-    resp="$(curl -s -w '\n%{http_code}' --max-time 15 \
-        -H "Authorization: ${token}" \
+    resp="$(printf 'Authorization: %s\n' "$token" | curl -s -w '\n%{http_code}' --max-time 15 \
+        -H @- \
         -H "User-Agent: binvim-release-script (github.com/${OWNER}/${REPO})" \
         https://crates.io/api/v1/me 2>/dev/null || true)"
     code="$(printf '%s' "$resp" | tail -n1)"
